@@ -1,0 +1,49 @@
+name: Build ARM64 Series Category Fix
+
+on:
+  push:
+    branches:
+      - fix/vod-series-category-selection
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: movhika/dispatcharr
+
+jobs:
+  build-and-push:
+    name: Build and push ARM64 image
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ARM64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:series-category-fix-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64
+          labels: |
+            org.opencontainers.image.source=https://github.com/Movhika/Dispatcharr
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Dispatcharr with relation-specific VOD series category selection fix

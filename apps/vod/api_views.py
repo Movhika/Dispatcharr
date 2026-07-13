@@ -309,7 +309,9 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         relations = M3USeriesRelation.objects.filter(
             series=series,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category')
+        ).select_related('m3u_account', 'category').order_by(
+            '-m3u_account__priority', 'id'
+        )
 
         serializer = M3USeriesRelationSerializer(relations, many=True)
         return Response(serializer.data)
@@ -388,9 +390,21 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             custom_props = relation.custom_properties or {}
             episodes_fetched = custom_props.get('episodes_fetched', False)
             detailed_fetched = custom_props.get('detailed_fetched', False)
+            missing_episode_links = (
+                episodes_fetched
+                and series.episodes.exists()
+                and not M3UEpisodeRelation.objects.filter(
+                    series_relation=relation
+                ).exists()
+            )
 
             # Force refresh if episodes have never been fetched or if forced
-            if not episodes_fetched or not detailed_fetched or force_refresh:
+            if (
+                not episodes_fetched
+                or not detailed_fetched
+                or missing_episode_links
+                or force_refresh
+            ):
                 force_refresh = True
                 logger.debug(f"Series {series.id} needs detailed/episode refresh, forcing refresh")
             elif last_refreshed is None or (now - last_refreshed) > timedelta(hours=refresh_interval_hours):
@@ -442,33 +456,62 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             if include_episodes and custom_props.get('episodes_fetched', False):
                 logger.debug(f"Including episodes for series {series.id}")
                 episodes_by_season = {}
-                for episode in series.episodes.all().order_by('season_number', 'episode_number'):
+                episode_relations = M3UEpisodeRelation.objects.filter(
+                    series_relation=relation,
+                    m3u_account__is_active=True
+                ).select_related('episode').order_by(
+                    'episode__season_number', 'episode__episode_number', 'id'
+                )
+
+                for episode_relation in episode_relations:
+                    episode = episode_relation.episode
                     season_key = str(episode.season_number or 0)
                     if season_key not in episodes_by_season:
                         episodes_by_season[season_key] = []
 
-                    # Get episode relation for additional data
-                    episode_relation = M3UEpisodeRelation.objects.filter(
-                        episode=episode,
-                        m3u_account=relation.m3u_account
-                    ).first()
+                    relation_props = episode_relation.custom_properties or {}
+                    provider_episode = relation_props.get('info') or {}
+                    if not isinstance(provider_episode, dict):
+                        provider_episode = {}
+                    provider_info = provider_episode.get('info') or {}
+                    if not isinstance(provider_info, dict):
+                        provider_info = {}
+                    episode_title = (
+                        provider_episode.get('title')
+                        or provider_info.get('name')
+                        or episode.name
+                    )
+                    episode_description = (
+                        provider_info.get('plot')
+                        or provider_info.get('overview')
+                        or episode.description
+                    )
 
                     episode_data = {
                         'id': episode.id,
+                        'relation_id': episode_relation.id,
+                        'stream_id': episode_relation.stream_id,
                         'uuid': episode.uuid,
-                        'name': episode.name,
-                        'title': episode.name,
-                        'episode_number': episode.episode_number,
+                        'name': episode_title,
+                        'title': episode_title,
+                        'episode_number': provider_episode.get(
+                            'episode_num', episode.episode_number
+                        ),
                         'season_number': episode.season_number,
-                        'description': episode.description,
-                        'air_date': episode.air_date,
-                        'plot': episode.description,
-                        'duration_secs': episode.duration_secs,
-                        'rating': episode.rating,
-                        'tmdb_id': episode.tmdb_id,
-                        'imdb_id': episode.imdb_id,
-                        'movie_image': episode.custom_properties.get('movie_image', '') if episode.custom_properties else '',
-                        'container_extension': episode_relation.container_extension if episode_relation else 'mp4',
+                        'description': episode_description,
+                        'air_date': provider_info.get('air_date') or episode.air_date,
+                        'plot': episode_description,
+                        'duration_secs': provider_info.get(
+                            'duration_secs', episode.duration_secs
+                        ),
+                        'rating': provider_info.get('rating') or episode.rating,
+                        'tmdb_id': provider_info.get('tmdb_id') or episode.tmdb_id,
+                        'imdb_id': provider_info.get('imdb_id') or episode.imdb_id,
+                        'movie_image': provider_info.get('movie_image') or (
+                            episode.custom_properties.get('movie_image', '')
+                            if episode.custom_properties else ''
+                        ),
+                        'container_extension': episode_relation.container_extension or 'mp4',
                         'type': 'episode',
                         'series': {
                             'id': series.id,

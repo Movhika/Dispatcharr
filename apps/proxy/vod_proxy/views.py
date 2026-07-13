@@ -89,7 +89,10 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
             # Filter by preferred stream ID first (most specific)
             relations_query = content_obj.m3u_relations.filter(m3u_account__is_active=True)
             if preferred_stream_id:
-                specific_relation = relations_query.filter(stream_id=preferred_stream_id).first()
+                relation_filters = {'stream_id': preferred_stream_id}
+                if preferred_m3u_account_id:
+                    relation_filters['m3u_account_id'] = preferred_m3u_account_id
+                specific_relation = relations_query.filter(**relation_filters).first()
                 if specific_relation:
                     logger.info(f"[STREAM-SELECTED] Using specific stream: {specific_relation.stream_id} from provider: {specific_relation.m3u_account.name}")
                     return content_obj, specific_relation
@@ -157,7 +160,10 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
             # Filter by preferred stream ID first (most specific)
             relations_query = content_obj.m3u_relations.filter(m3u_account__is_active=True)
             if preferred_stream_id:
-                specific_relation = relations_query.filter(stream_id=preferred_stream_id).first()
+                relation_filters = {'stream_id': preferred_stream_id}
+                if preferred_m3u_account_id:
+                    relation_filters['m3u_account_id'] = preferred_m3u_account_id
+                specific_relation = relations_query.filter(**relation_filters).first()
                 if specific_relation:
                     logger.info(f"[STREAM-SELECTED] Using specific stream: {specific_relation.stream_id} from provider: {specific_relation.m3u_account.name}")
                     return content_obj, specific_relation
@@ -387,7 +393,16 @@ def _transform_url(original_url, m3u_profile):
 @api_view(["GET"])
 @authentication_classes([JWTAuthentication, ApiKeyAuthentication, QueryParamJWTAuthentication])
 @permission_classes([AllowAny])
-def stream_vod(request, content_type, content_id, session_id=None, profile_id=None, user=None):
+def stream_vod(
+    request,
+    content_type,
+    content_id,
+    session_id=None,
+    profile_id=None,
+    user=None,
+    preferred_m3u_account_id=None,
+    preferred_stream_id=None,
+):
     """
     Stream VOD content (movies or series episodes) with session-based connection reuse
 
@@ -396,6 +411,8 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
         content_id: ID of the content
         session_id: Optional session ID from URL path (for persistent connections)
         profile_id: Optional M3U profile ID for authentication
+        preferred_m3u_account_id: Optional exact upstream account selection
+        preferred_stream_id: Optional exact upstream stream selection
     """
     if not network_access_allowed(request, "STREAMS"):
         return JsonResponse({"error": "Forbidden"}, status=403)
@@ -482,6 +499,10 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             query_params = dict(request.GET)
             query_params.pop('session_id', None)
             query_params.pop('token', None)  # Token not needed after session is established
+            if preferred_m3u_account_id is not None:
+                query_params['m3u_account_id'] = preferred_m3u_account_id
+            if preferred_stream_id is not None:
+                query_params['stream_id'] = preferred_stream_id
 
             # The VOD proxy URL patterns accept session_id in the path, so we redirect
             # to a path-based URL. XC endpoints (/movie/<user>/<pass>/<id>.<ext>) have
@@ -546,8 +567,10 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                 )
 
         # Extract preferred M3U account ID and stream ID from query parameters
-        preferred_m3u_account_id = request.GET.get('m3u_account_id')
-        preferred_stream_id = request.GET.get('stream_id')
+        if preferred_m3u_account_id is None:
+            preferred_m3u_account_id = request.GET.get('m3u_account_id')
+        if preferred_stream_id is None:
+            preferred_stream_id = request.GET.get('stream_id')
 
         if preferred_m3u_account_id:
             try:
@@ -1199,12 +1222,24 @@ def stream_xc_episode(request, username, password, stream_id, extension):
     if custom_properties["xc_password"] != password:
         return Response({"error": "Invalid credentials"}, status=401)
 
-    # All authenticated users get access to series/episodes from all active M3U accounts
-    filters = {"episode_id": stream_id, "m3u_account__is_active": True}
-
-    try:
-        episode_relation = M3UEpisodeRelation.objects.select_related('episode').filter(**filters).order_by('-m3u_account__priority', 'id').first()
-    except M3UEpisodeRelation.DoesNotExist:
+    # xc_get_series_info exposes the concrete episode-relation ID. Resolving
+    # that same row here preserves the category/provider selected by the player.
+    episode_relation = M3UEpisodeRelation.objects.select_related(
+        'episode', 'm3u_account'
+    ).filter(
+        id=stream_id,
+        m3u_account__is_active=True
+    ).first()
+    if not episode_relation:
         return JsonResponse({"error": "Episode not found"}, status=404)
 
-    return stream_vod(request._request, 'episode', episode_relation.episode.uuid, session_id, profile_id, user)
+    return stream_vod(
+        request._request,
+        'episode',
+        episode_relation.episode.uuid,
+        session_id,
+        profile_id,
+        user,
+        preferred_m3u_account_id=episode_relation.m3u_account_id,
+        preferred_stream_id=episode_relation.stream_id,
+    )

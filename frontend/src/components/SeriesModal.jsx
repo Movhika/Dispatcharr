@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -349,13 +349,22 @@ const SeriesModal = ({ series, opened, onClose }) => {
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const detailsRequestId = useRef(0);
 
   useEffect(() => {
     if (opened && series) {
+      let cancelled = false;
+      const requestId = ++detailsRequestId.current;
+
+      setDetailedSeries(null);
+      setProviders([]);
+      setSelectedProvider(null);
+
       // Fetch detailed series info which now includes episodes
       setLoadingDetails(true);
       fetchSeriesInfo(series.id)
         .then((details) => {
+          if (cancelled || requestId !== detailsRequestId.current) return;
           setDetailedSeries(details);
           // Check if episodes were fetched
           if (!details.episodes_fetched) {
@@ -367,34 +376,45 @@ const SeriesModal = ({ series, opened, onClose }) => {
             'Failed to fetch series details, using basic info:',
             error
           );
-          setDetailedSeries(series); // Fallback to basic data
+          if (!cancelled && requestId === detailsRequestId.current) {
+            setDetailedSeries(series); // Fallback to basic data
+          }
         })
         .finally(() => {
-          setLoadingDetails(false);
+          if (!cancelled && requestId === detailsRequestId.current) {
+            setLoadingDetails(false);
+          }
         });
 
       // Fetch available providers
       setLoadingProviders(true);
       fetchSeriesProviders(series.id)
         .then((providersData) => {
+          if (cancelled) return;
           setProviders(providersData);
-          // Set the first provider as default if none selected
-          if (providersData.length > 0 && !selectedProvider) {
+          // The backend returns providers in the same priority order used by
+          // the default provider-info request.
+          if (providersData.length > 0) {
             setSelectedProvider(providersData[0]);
           }
         })
         .catch((error) => {
           console.error('Failed to fetch series providers:', error);
-          setProviders([]);
+          if (!cancelled) setProviders([]);
         })
         .finally(() => {
-          setLoadingProviders(false);
+          if (!cancelled) setLoadingProviders(false);
         });
+
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [opened, series, fetchSeriesInfo, fetchSeriesProviders, selectedProvider]);
+  }, [opened, series, fetchSeriesInfo, fetchSeriesProviders]);
 
   useEffect(() => {
     if (!opened) {
+      detailsRequestId.current += 1;
       setDetailedSeries(null);
       setLoadingDetails(false);
       setProviders([]);
@@ -468,14 +488,23 @@ const SeriesModal = ({ series, opened, onClose }) => {
   };
 
   const onChangeSelectedProvider = (value) => {
-    const provider = providers.find((p) => p.id.toString() === value);
+    const provider = providers.find((p) => p.id.toString() === value) || null;
     setSelectedProvider(provider);
     if (provider) {
+      const requestId = ++detailsRequestId.current;
       setLoadingDetails(true);
       fetchSeriesInfo(series.id, provider.id)
-        .then((details) => setDetailedSeries(details))
+        .then((details) => {
+          if (requestId === detailsRequestId.current) {
+            setDetailedSeries(details);
+          }
+        })
         .catch(() => {})
-        .finally(() => setLoadingDetails(false));
+        .finally(() => {
+          if (requestId === detailsRequestId.current) {
+            setLoadingDetails(false);
+          }
+        });
     }
   };
 
@@ -563,12 +592,15 @@ const SeriesModal = ({ series, opened, onClose }) => {
                   <Group spacing="md">
                     <Badge color="blue" variant="light">
                       {displaySeries.m3u_account.name}
+                      {displaySeries.category_name
+                        ? ` — ${displaySeries.category_name}`
+                        : ''}
                     </Badge>
                   </Group>
                 ) : providers.length === 1 ? (
                   <Group spacing="md">
                     <Badge color="blue" variant="light">
-                      {providers[0].m3u_account.name}
+                      {formatStreamLabel(providers[0])}
                     </Badge>
                     {providers[0].stream_id && (
                       <Badge color="orange" variant="outline" size="xs">

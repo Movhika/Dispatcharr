@@ -212,6 +212,7 @@ describe('SeriesModal', () => {
   const mockEpisode = {
     id: 1,
     uuid: 'episode-uuid-1',
+    stream_id: 'episode-stream-100',
     series_id: 1,
     season_number: 1,
     episode_number: 1,
@@ -234,7 +235,8 @@ describe('SeriesModal', () => {
       id: 1,
       stream_id: 100,
       account_id: 5,
-      m3u_account: { name: 'Provider 1' },
+      m3u_account: { id: 5, name: 'Provider 1' },
+      category: { id: 10, name: 'NETFLIX Kids' },
       stream_name: 'Test Series 1080p',
       quality_info: { quality: '1080p' },
     },
@@ -242,7 +244,8 @@ describe('SeriesModal', () => {
       id: 2,
       stream_id: 101,
       account_id: 5,
-      m3u_account: { name: 'Provider 2' },
+      m3u_account: { id: 5, name: 'Provider 2' },
+      category: { id: 11, name: 'German Kinder' },
       stream_name: 'Test Series 720p',
       quality_info: null,
     },
@@ -461,7 +464,9 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/Provider 1 — NETFLIX Kids - 1080p/)
+        ).toBeInTheDocument();
       });
     });
 
@@ -584,7 +589,7 @@ describe('SeriesModal', () => {
       );
     });
 
-    it('should include provider stream_id in URL when provider selected', async () => {
+    it('should include the selected episode stream_id in the URL', async () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
@@ -600,7 +605,7 @@ describe('SeriesModal', () => {
       });
 
       expect(mockVideoStore.showVideo).toHaveBeenCalledWith(
-        expect.stringContaining('stream_id=100'),
+        expect.stringContaining('stream_id=episode-stream-100'),
         'vod',
         mockEpisode
       );
@@ -754,7 +759,9 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/Provider 1 — NETFLIX Kids - 1080p/)
+        ).toBeInTheDocument();
       });
     });
 
@@ -778,7 +785,9 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/Provider 1 — NETFLIX Kids - 1080p/)
+        ).toBeInTheDocument();
       });
     });
 
@@ -798,7 +807,9 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 720p/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/Provider 1 — NETFLIX Kids - 720p/)
+        ).toBeInTheDocument();
       });
     });
 
@@ -822,7 +833,9 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 4K/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/Provider 1 — NETFLIX Kids - 4K/)
+        ).toBeInTheDocument();
       });
     });
 
