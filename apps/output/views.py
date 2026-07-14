@@ -24,6 +24,7 @@ from apps.m3u.utils import calculate_tuner_count
 from apps.proxy.utils import get_user_active_connections
 import regex
 from core.utils import log_system_event, build_absolute_uri_with_port
+from apps.vod.utils import get_vod_source_name
 import hashlib
 from apps.output.epg import generate_epg, generate_dummy_programs
 
@@ -919,14 +920,14 @@ def xc_get_epg(request, user, short=False):
 
 
 XC_MOVIE_VALUE_FIELDS = (
-    'id', 'movie_id', 'category_id', 'container_extension',
+    'id', 'movie_id', 'category_id', 'container_extension', 'custom_properties',
     'movie__id', 'movie__name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__custom_properties', 'movie__logo_id',
 )
 
 XC_SERIES_VALUE_FIELDS = (
-    'id', 'series_id', 'category_id', 'updated_at',
+    'id', 'series_id', 'category_id', 'updated_at', 'custom_properties',
     'series__id', 'series__name', 'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
@@ -1047,6 +1048,7 @@ def xc_get_vod_streams(request, user, category_id=None):
     streams = []
     append = streams.append
     for num, row in enumerate(relations, 1):
+        relation_props = row['custom_properties'] or {}
         custom_props = row['movie__custom_properties'] or {}
         category_id = row['category_id']
         category_id_str = str(category_id) if category_id else "0"
@@ -1056,7 +1058,10 @@ def xc_get_vod_streams(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['movie__name'],
+            "name": get_vod_source_name(
+                relation_props,
+                row['movie__name'],
+            ),
             "stream_type": "movie",
             # Expose the concrete relation ID so get_vod_info and playback can
             # preserve the category/provider selected by the Xtream client.
@@ -1137,6 +1142,7 @@ def xc_get_series(request, user, category_id=None):
     series_list = []
     append = series_list.append
     for num, row in enumerate(relations, 1):
+        relation_props = row['custom_properties'] or {}
         custom_props = row['series__custom_properties'] or {}
         category_id = row['category_id']
         rating = row['series__rating']
@@ -1146,7 +1152,10 @@ def xc_get_series(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['series__name'],
+            "name": get_vod_source_name(
+                relation_props,
+                row['series__name'],
+            ),
             "series_id": row['id'],
             "cover": (
                 f"{_logo_url_prefix}{logo_id}{_logo_url_suffix}" if logo_id else None
@@ -1385,11 +1394,17 @@ def xc_get_series_info(request, user, series_id):
         {"season_number": int(season_num), "name": f"Season {season_num}"}
         for season_num in sorted(seasons.keys(), key=lambda x: int(x))
     ]
+    clean_series_name = series_data['name']
+    source_series_name = get_vod_source_name(
+        series_relation,
+        clean_series_name,
+    )
 
     info = {
         'seasons': seasons_list,
         "info": {
-            "name": series_data['name'],
+            "name": source_series_name,
+            "o_name": clean_series_name,
             "cover": (
                 None if not series.logo
                 else build_absolute_uri_with_port(
@@ -1513,11 +1528,19 @@ def xc_get_vod_info(request, user, vod_id):
     except Exception as e:
         logger.error(f"Failed to process movie data: {e}")
 
+    # Keep the source-list title (including provider prefixes) separate from
+    # the cleaned detail title used as o_name.
+    clean_movie_name = movie_data.get('name', movie.name)
+    source_movie_name = get_vod_source_name(
+        movie_relation,
+        clean_movie_name,
+    )
+
     # Transform API response to XtreamCodes format
     info = {
         "info": {
-            "name": movie_data.get('name', movie.name),
-            "o_name": movie_data.get('name', movie.name),
+            "name": source_movie_name,
+            "o_name": clean_movie_name,
             "cover_big": (
                 None if not movie.logo
                 else build_absolute_uri_with_port(
@@ -1553,7 +1576,7 @@ def xc_get_vod_info(request, user, vod_id):
         },
         "movie_data": {
             "stream_id": movie_relation.id,
-            "name": movie.name,
+            "name": source_movie_name,
             "added": str(int(movie_relation.created_at.timestamp())),
             "category_id": str(movie_relation.category.id) if movie_relation.category else "0",
             "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],
