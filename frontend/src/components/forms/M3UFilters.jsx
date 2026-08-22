@@ -11,6 +11,10 @@ import {
   Flex,
   Group,
   Modal,
+  Tabs,
+  TabsList,
+  TabsPanel,
+  TabsTab,
   Text,
   useMantineTheme,
 } from '@mantine/core';
@@ -39,6 +43,7 @@ import {
   deleteM3UFilter,
   updateM3UFilter,
 } from '../../utils/forms/M3uFilterUtils.js';
+import M3UGroupRules from './M3UGroupRules';
 
 const RowDragHandleCell = ({ rowId }) => {
   const { attributes, listeners, setNodeRef } = useDraggable({
@@ -244,7 +249,7 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
         )
       );
       await fetchPlaylist(playlist.id);
-    } catch (e) {
+    } catch {
       setFilters(originalFilters);
     }
   };
@@ -260,57 +265,76 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
         opened={isOpen}
         onClose={onClose}
         title="Filters"
-        size="lg"
+        size="95vw"
         scrollAreaComponent={Modal.NativeScrollArea}
         lockScroll={false}
         withinPortal={true}
         yOffset="2vh"
       >
-        <Alert
-          icon={<Info size={16} />}
-          color="blue"
-          variant="light"
-          style={{ marginBottom: 5 }}
-        >
-          <Text size="sm">
-            <strong>Order Matters!</strong> Rules are processed in the order
-            below. Once a stream matches a given rule, no other rules are
-            checked.
-          </Text>
-        </Alert>
+        <Tabs defaultValue="streams">
+          <TabsList>
+            <TabsTab value="streams">Stream filters</TabsTab>
+            <TabsTab value="live">Live discovery</TabsTab>
+            <TabsTab value="movie">Movie discovery</TabsTab>
+            <TabsTab value="series">Series discovery</TabsTab>
+          </TabsList>
+          <TabsPanel value="streams" pt="md">
+            <Alert
+              icon={<Info size={16} />}
+              color="blue"
+              variant="light"
+              style={{ marginBottom: 5 }}
+            >
+              <Text size="sm">
+                <strong>Order Matters!</strong> Rules are processed in the order
+                below. Once a stream matches a given rule, no other rules are
+                checked.
+              </Text>
+            </Alert>
 
-        <DndContext
-          collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis]}
-          onDragEnd={handleDragEnd}
-          sensors={sensors}
-        >
-          <SortableContext
-            items={filters.map(({ id }) => id)}
-            strategy={verticalListSortingStrategy}
-          >
-            {filters.map((filter) => (
-              <DraggableRow
-                key={filter.id}
-                filter={filter}
-                editFilter={editFilter}
-                onDelete={onDelete}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
+            <DndContext
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis]}
+              onDragEnd={handleDragEnd}
+              sensors={sensors}
+            >
+              <SortableContext
+                items={filters.map(({ id }) => id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {filters.map((streamFilter) => (
+                  <DraggableRow
+                    key={streamFilter.id}
+                    filter={streamFilter}
+                    editFilter={editFilter}
+                    onDelete={onDelete}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
 
-        <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => editFilter()}
-            style={{ width: '100%' }}
-          >
-            New
-          </Button>
-        </Flex>
+            <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => editFilter()}
+                style={{ width: '100%' }}
+              >
+                New
+              </Button>
+            </Flex>
+          </TabsPanel>
+          <TabsPanel value="live">
+            <M3UGroupRules accountId={playlist.id} scope="live" />
+          </TabsPanel>
+          <TabsPanel value="movie">
+            <M3UGroupRules accountId={playlist.id} scope="movie" />
+          </TabsPanel>
+          <TabsPanel value="series">
+            <M3UGroupRules accountId={playlist.id} scope="series" />
+          </TabsPanel>
+        </Tabs>
       </Modal>
 
       <M3UFilter

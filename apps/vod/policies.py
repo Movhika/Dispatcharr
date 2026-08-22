@@ -3,7 +3,8 @@
 from django.db.models import Q
 
 from .catalog_cache import catalog_generation, safe_cache_get, safe_cache_set
-from .models import VODAccessPolicy
+from .metadata import normalize_language_list
+from .models import M3UVODCategoryRelation, VODAccessPolicy
 
 
 def policy_for_user(user):
@@ -26,17 +27,28 @@ def policy_for_user(user):
     return policy
 
 
-def policy_category_map(policy):
-    if not policy:
-        return {}
-    return {
-        (row.category_relation.m3u_account_id, row.category_relation.category_id): row
-        for row in policy.vodpolicycategory_set.filter(
-            enabled=True,
-            category_relation__enabled=True,
-            category_relation__m3u_account__is_active=True,
-        ).select_related("category_relation")
+def enabled_category_map():
+    """Global source availability and category defaults, independent of users."""
+    cache_key = f"vod_enabled_categories:{catalog_generation()}"
+    cached = safe_cache_get(cache_key)
+    if isinstance(cached, dict):
+        return cached
+    mapping = {
+        (account_id, category_id): metadata_defaults or {}
+        for account_id, category_id, metadata_defaults in (
+            M3UVODCategoryRelation.objects.filter(
+                enabled=True,
+                m3u_account__is_active=True,
+            ).values_list("m3u_account_id", "category_id", "metadata_defaults")
+        )
     }
+    safe_cache_set(cache_key, mapping, timeout=3600)
+    return mapping
+
+
+def policy_category_map(policy):
+    """Backward-compatible alias; category priority is no longer user policy."""
+    return enabled_category_map()
 
 
 def relation_category_id(relation):
@@ -57,25 +69,16 @@ def relation_category(relation):
 def allowed_category_query(policy):
     mapping = policy_category_map(policy)
     query = Q(pk__in=[])
+    categories_by_account = {}
     for account_id, category_id in mapping:
-        query |= Q(m3u_account_id=account_id, category_id=category_id)
+        categories_by_account.setdefault(account_id, []).append(category_id)
+    for account_id, category_ids in categories_by_account.items():
+        query |= Q(m3u_account_id=account_id, category_id__in=category_ids)
     return query
 
 
 def _language_set(value):
-    if isinstance(value, str):
-        value = [part.strip() for part in value.replace(";", ",").split(",")]
-    if not isinstance(value, (list, tuple, set)):
-        return set()
-    aliases = {
-        "de": "deu", "ger": "deu", "german": "deu", "deutsch": "deu",
-        "en": "eng", "english": "eng", "englisch": "eng",
-    }
-    return {
-        aliases.get(str(item).strip().lower(), str(item).strip().lower())
-        for item in value
-        if str(item).strip()
-    }
+    return set(normalize_language_list(value))
 
 
 def _height(metadata):
@@ -97,7 +100,11 @@ def _constraint_int(constraints, key):
 
 
 def relation_metadata(relation, category_relation=None):
-    defaults = category_relation.metadata_defaults if category_relation else {}
+    defaults = (
+        category_relation
+        if isinstance(category_relation, dict)
+        else category_relation.metadata_defaults if category_relation else {}
+    )
     from .metadata import relation_declared_metadata
 
     declared = relation_declared_metadata(relation)
@@ -113,13 +120,13 @@ def relation_allowed(relation, policy, category_mapping=None):
     if not policy:
         return True
     category_mapping = category_mapping or policy_category_map(policy)
-    category_rule = category_mapping.get(
+    category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
     )
-    if category_rule is None:
+    if category_relation is None:
         return False
 
-    metadata = relation_metadata(relation, category_rule.category_relation)
+    metadata = relation_metadata(relation, category_relation)
     constraints = policy.hard_constraints or {}
     allow_unknown = constraints.get("allow_unknown_metadata", True)
 
@@ -157,31 +164,61 @@ def relation_allowed(relation, policy, category_mapping=None):
     return True
 
 
+def _preference_score(observed, preferred):
+    preferred = normalize_language_list(preferred)
+    observed = _language_set(observed)
+    if not preferred:
+        return 0
+    for index, code in enumerate(preferred):
+        if code in observed:
+            return len(preferred) - index
+    return 0
+
+
+def _resolution_score(height, preferred):
+    values = []
+    for value in preferred or []:
+        parsed = _height({"resolution": value})
+        if parsed and parsed not in values:
+            values.append(parsed)
+    if not values:
+        return height
+    try:
+        return len(values) - values.index(height)
+    except ValueError:
+        return 0
+
+
 def relation_rank(relation, category_mapping, policy=None):
-    category_rule = category_mapping.get(
+    category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
     )
     metadata = relation_metadata(
         relation,
-        category_rule.category_relation if category_rule else None,
+        category_relation,
     )
-    manual_preferred = bool(metadata.get("preferred"))
+    constraints = (policy.hard_constraints if policy else None) or {}
     dimensions = {
-        "category_priority": category_rule.priority if category_rule else 0,
-        "resolution": _height(metadata),
-        "account_priority": relation.m3u_account.priority,
+        "audio_language": _preference_score(
+            metadata.get("audio_languages") or metadata.get("languages"),
+            constraints.get("required_audio_languages"),
+        ),
+        "subtitle_language": _preference_score(
+            metadata.get("subtitle_languages"),
+            constraints.get("required_subtitle_languages"),
+        ),
+        "resolution": _resolution_score(
+            _height(metadata), constraints.get("preferred_resolutions")
+        ),
     }
     requested = list((policy.ranking if policy else None) or [])
-    order = [
-        key
-        for key in requested + [
-            "category_priority", "resolution", "account_priority"
-        ]
-        if key in dimensions
-    ]
-    order = list(dict.fromkeys(order))
+    allowed_order = ["audio_language", "subtitle_language", "resolution"]
+    order = list(
+        dict.fromkeys(
+            [key for key in requested + allowed_order if key in dimensions]
+        )
+    )
     return (
-        int(manual_preferred),
         *(dimensions[key] for key in order),
         -relation.id,
     )

@@ -229,6 +229,8 @@ class VODSourceAsset(models.Model):
 
     def effective_metadata(self, category_defaults=None, relation_declared=None):
         """Resolve metadata and per-field provenance in priority order."""
+        from .metadata import normalize_source_metadata
+
         values = {}
         provenance = {}
         for source, payload in (
@@ -242,10 +244,16 @@ class VODSourceAsset(models.Model):
                 if value not in (None, "", [], {}):
                     values[key] = value
                     provenance[key] = source
-        return {"values": values, "provenance": provenance}
+        return {
+            "values": normalize_source_metadata(values),
+            "provenance": provenance,
+        }
 
     def apply_observation(self, metadata):
         """Apply playback telemetry without overwriting manual fields."""
+        from .metadata import normalize_source_metadata
+
+        metadata = normalize_source_metadata(metadata)
         manual = self.manual_metadata or {}
         locked = set(self.locked_fields or []) | set(manual)
         observed = dict(self.observed_metadata or {})

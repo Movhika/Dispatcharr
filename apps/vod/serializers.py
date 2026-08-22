@@ -7,6 +7,7 @@ from .models import (
     VODSourceAsset, VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
 )
 from apps.m3u.serializers import M3UAccountSerializer
+from .metadata import normalize_language_list, normalize_source_metadata
 
 
 class VODLogoSerializer(serializers.ModelSerializer):
@@ -96,7 +97,6 @@ class M3UVODCategoryRelationSerializer(serializers.ModelSerializer):
             "resolution",
             "height",
             "quality",
-            "preferred",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -387,10 +387,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         ])
 
     def validate_ranking(self, value):
-        allowed = {"category_priority", "resolution", "account_priority"}
+        allowed = {"audio_language", "subtitle_language", "resolution"}
         if not isinstance(value, list) or set(value) - allowed:
             raise serializers.ValidationError(
-                "Use only category_priority, resolution, and account_priority"
+                "Use only audio_language, subtitle_language, and resolution"
             )
         return list(dict.fromkeys(value))
 
@@ -400,7 +400,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
             "min_height", "max_height", "allow_unknown_metadata",
-            "cross_category_failover",
+            "preferred_resolutions",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
@@ -411,11 +411,15 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {field: "Must be a list of language codes"}
                 )
-            normalized[field] = [
-                str(language).strip()
-                for language in languages
-                if str(language).strip()
-            ]
+            normalized[field] = normalize_language_list(languages)
+        resolutions = normalized.get("preferred_resolutions", [])
+        if not isinstance(resolutions, list):
+            raise serializers.ValidationError(
+                {"preferred_resolutions": "Must be a list of resolutions"}
+            )
+        normalized["preferred_resolutions"] = list(
+            dict.fromkeys(str(value).strip() for value in resolutions if str(value).strip())
+        )
         for field in ("min_height", "max_height"):
             try:
                 normalized[field] = max(0, int(normalized.get(field) or 0))
@@ -431,7 +435,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "min_height cannot be greater than max_height"
             )
-        for field in ("allow_unknown_metadata", "cross_category_failover"):
+        for field in ("allow_unknown_metadata",):
             if field in normalized and not isinstance(normalized[field], bool):
                 raise serializers.ValidationError({field: "Must be a boolean"})
         return normalized
@@ -491,11 +495,24 @@ class VODPlaybackSessionSerializer(serializers.ModelSerializer):
         ]
 
     def get_source_effective_metadata(self, obj) -> dict:
-        return (
+        snapshot = (obj.custom_properties or {}).get(
+            "source_effective_metadata", {}
+        )
+        snapshot = normalize_source_metadata(
+            snapshot if isinstance(snapshot, dict) else {}
+        )
+        current = (
             obj.source_asset.effective_metadata()
             if obj.source_asset_id
             else {"values": {}, "provenance": {}}
         )
+        return {
+            "values": {**snapshot, **current["values"]},
+            "provenance": {
+                **{field: "playback" for field in snapshot},
+                **current["provenance"],
+            },
+        }
 
 
 class EnhancedSeriesSerializer(serializers.ModelSerializer):

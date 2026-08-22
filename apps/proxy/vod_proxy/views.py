@@ -92,16 +92,12 @@ def _find_idle_vod_session(
     from apps.vod.policies import ordered_candidates, policy_for_user
 
     policy = policy_for_user(user)
-    scope_preferred_category = not bool(
-        policy
-        and (policy.hard_constraints or {}).get("cross_category_failover", False)
-    )
     content_obj, relation, _candidates = _get_content_and_relation(
         content_type,
         content_id,
         preferred_m3u_account_id,
         preferred_stream_id,
-        scope_preferred_category=scope_preferred_category,
+        scope_preferred_category=False,
     )
     if not content_obj or not relation:
         return None
@@ -193,16 +189,12 @@ def _select_vod_stream(
     from apps.vod.policies import ordered_candidates, policy_for_user
 
     policy = policy_for_user(user)
-    scope_preferred_category = not bool(
-        policy
-        and (policy.hard_constraints or {}).get("cross_category_failover", False)
-    )
     content_obj, relation, candidates = _get_content_and_relation(
         content_type,
         content_id,
         preferred_m3u_account_id,
         preferred_stream_id,
-        scope_preferred_category=scope_preferred_category,
+        scope_preferred_category=False,
     )
     if not content_obj or not relation:
         return None
@@ -275,7 +267,7 @@ def _get_content_and_relation(
     content_id,
     preferred_m3u_account_id=None,
     preferred_stream_id=None,
-    scope_preferred_category=True,
+    scope_preferred_category=False,
 ):
     """Get the content object and its M3U relation"""
     try:
@@ -594,6 +586,7 @@ def _build_vod_source_metadata(content_type, content_obj, relation):
         get_vod_display_name,
         get_vod_source_name,
     )
+    from apps.vod.metadata import effective_relation_metadata
 
     if not relation:
         return {}
@@ -640,6 +633,9 @@ def _build_vod_source_metadata(content_type, content_obj, relation):
         'source_name': source_name,
         'display_name': display_name,
         'episode_name': episode_name,
+        'technical_metadata': effective_relation_metadata(relation).get(
+            'values', {}
+        ),
     }
 
 
@@ -1000,6 +996,11 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                         client_ip=client_ip,
                         user_agent=client_user_agent,
                         failover_chain=selected.get("failover_chain"),
+                        custom_properties={
+                            "source_effective_metadata": selected.get(
+                                "source_metadata", {}
+                            ).get("technical_metadata", {})
+                        },
                     )
                 close_old_connections()
                 return HttpResponseRedirect(selected["final_stream_url"])
@@ -1088,11 +1089,11 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
         )
 
         selected_relation = selected.get("relation")
-        if selected_relation is not None:
+        if selected_relation is not None and response.status_code < 400:
             from apps.vod.models import VODPlaybackSession
 
             _record_playback_best_effort(
-                session_id=session_id,
+                session_id=response.get("X-Dispatcharr-Session", session_id),
                 user=user,
                 relation=selected_relation,
                 mode=VODPlaybackSession.Mode.PROXY,
@@ -1100,6 +1101,11 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                 client_ip=client_ip,
                 user_agent=client_user_agent,
                 failover_chain=selected.get("failover_chain"),
+                custom_properties={
+                    "source_effective_metadata": source_metadata.get(
+                        "technical_metadata", {}
+                    )
+                },
             )
 
         logger.info(f"[VOD-SUCCESS] Stream response created successfully, type: {type(response)}")
@@ -1526,6 +1532,9 @@ def build_vod_stats_data(redis_client):
                             'content_name': content_name,
                             'content_metadata': content_metadata,
                             'source': source_metadata,
+                            'technical_metadata': source_metadata.get(
+                                'technical_metadata', {}
+                            ),
                             'm3u_profile': m3u_profile_info,
                             'client_id': client_id,
                             'client_ip': combined_data.get('client_ip', 'Unknown'),

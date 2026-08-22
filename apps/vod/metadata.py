@@ -2,6 +2,8 @@
 
 from urllib.parse import urlsplit
 
+from collections import defaultdict
+
 from django.db import transaction
 
 from .models import (
@@ -18,6 +20,64 @@ RELATION_CONFIG = {
     M3USeriesRelation: (VODSourceAsset.AssetType.SERIES, "external_series_id"),
     M3UEpisodeRelation: (VODSourceAsset.AssetType.EPISODE, "stream_id"),
 }
+
+
+LANGUAGE_ALIASES = {
+    "de": "ger",
+    "deu": "ger",
+    "ger": "ger",
+    "german": "ger",
+    "deutsch": "ger",
+    "en": "eng",
+    "eng": "eng",
+    "english": "eng",
+    "englisch": "eng",
+    "fr": "fre",
+    "fra": "fre",
+    "fre": "fre",
+    "french": "fre",
+    "français": "fre",
+    "es": "spa",
+    "spa": "spa",
+    "spanish": "spa",
+    "español": "spa",
+    "it": "ita",
+    "ita": "ita",
+    "italian": "ita",
+    "nl": "dut",
+    "nld": "dut",
+    "dut": "dut",
+    "dutch": "dut",
+}
+
+
+def normalize_language_code(value):
+    """Return Dispatcharr's English ISO-639-2/B language code."""
+    code = str(value or "").strip().lower()
+    return LANGUAGE_ALIASES.get(code, code)
+
+
+def normalize_language_list(value):
+    if isinstance(value, str):
+        value = [part.strip() for part in value.replace(";", ",").split(",")]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return list(
+        dict.fromkeys(
+            normalized
+            for normalized in (normalize_language_code(item) for item in value)
+            if normalized
+        )
+    )
+
+
+def normalize_source_metadata(metadata):
+    """Normalize metadata at every API/provider/telemetry boundary."""
+    normalized = dict(metadata or {})
+    for field in ("audio_languages", "subtitle_languages", "languages"):
+        if field in normalized:
+            normalized[field] = normalize_language_list(normalized[field])
+    return normalized
 
 
 def provider_origin_key(account):
@@ -47,6 +107,51 @@ def ensure_source_asset(relation):
     relation.source_asset = asset
     relation.save(update_fields=["source_asset"])
     return asset
+
+
+@transaction.atomic
+def ensure_source_assets(relations):
+    """Create missing source assets in batches and return every asset ID.
+
+    This is used by mass editing. A series can contain thousands of episode
+    relations, so calling ensure_source_asset once per row would otherwise
+    produce an avoidable query-per-episode write path.
+    """
+    ids_by_model = defaultdict(set)
+    for relation in relations:
+        ids_by_model[type(relation)].add(relation.pk)
+
+    asset_ids = set()
+    for model, relation_ids in ids_by_model.items():
+        locked = list(
+            model.objects.select_for_update()
+            .select_related("m3u_account__server_group")
+            .filter(pk__in=relation_ids)
+            .order_by("pk")
+        )
+        missing = [relation for relation in locked if not relation.source_asset_id]
+        assets = []
+        for relation in missing:
+            asset_type, id_field = RELATION_CONFIG[model]
+            assets.append(
+                VODSourceAsset(
+                    asset_type=asset_type,
+                    provider_origin_key=provider_origin_key(relation.m3u_account),
+                    provider_asset_id=str(getattr(relation, id_field) or ""),
+                )
+            )
+        if assets:
+            VODSourceAsset.objects.bulk_create(assets, batch_size=1000)
+            for relation, asset in zip(missing, assets):
+                relation.source_asset = asset
+            model.objects.bulk_update(missing, ["source_asset"], batch_size=1000)
+
+        asset_ids.update(
+            relation.source_asset_id
+            for relation in locked
+            if relation.source_asset_id
+        )
+    return asset_ids
 
 
 def category_defaults_for_relation(relation):
@@ -102,7 +207,7 @@ def relation_declared_metadata(relation):
                 languages.append(language)
         if languages:
             result["subtitle_languages"] = languages
-    return result
+    return normalize_source_metadata(result)
 
 
 def effective_relation_metadata(relation):

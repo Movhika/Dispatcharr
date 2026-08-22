@@ -70,10 +70,8 @@ vi.mock('../VODCategoryFilter', () => ({
   ),
 }));
 
-vi.mock('../M3UGroupRules', () => ({
-  default: ({ scope }) => (
-    <div data-testid={`m3u-group-rules-${scope}`}>Rules {scope}</div>
-  ),
+vi.mock('../M3UDeveloperCatalog', () => ({
+  default: () => <div data-testid="m3u-developer-catalog">Developer</div>,
 }));
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
@@ -204,6 +202,8 @@ describe('M3UGroupFilter', () => {
       expect(screen.getByTestId('tab-live')).toBeInTheDocument();
       expect(screen.getByTestId('tab-vod-movie')).toBeInTheDocument();
       expect(screen.getByTestId('tab-vod-series')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-developer')).toBeInTheDocument();
+      expect(screen.getByTestId('m3u-developer-catalog')).toBeInTheDocument();
     });
 
     it('renders LiveGroupFilter panel', () => {

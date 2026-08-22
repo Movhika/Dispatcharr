@@ -54,6 +54,8 @@ class UserSerializer(serializers.ModelSerializer):
         queryset=ChannelProfile.objects.all(), many=True, required=False
     )
     api_key = serializers.CharField(read_only=True, allow_null=True)
+    vod_policy = serializers.SerializerMethodField()
+    vod_policy_settings = serializers.JSONField(write_only=True, required=False)
 
     class Meta:
         model = User
@@ -74,7 +76,105 @@ class UserSerializer(serializers.ModelSerializer):
             "date_joined",
             "first_name",
             "last_name",
+            "vod_policy",
+            "vod_policy_settings",
         ]
+
+    def get_vod_policy(self, obj):
+        from apps.vod.models import VODAccessPolicy
+
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get(
+            "vod_access_policies"
+        )
+        if prefetched is None:
+            assigned = list(
+                obj.vod_access_policies.filter(is_active=True).order_by("id")[:1]
+            )
+        else:
+            assigned = sorted(
+                (policy for policy in prefetched if policy.is_active),
+                key=lambda policy: policy.id,
+            )[:1]
+        if assigned:
+            policy = assigned[0]
+            inherited = False
+        else:
+            if not hasattr(self, "_default_vod_policy"):
+                self._default_vod_policy = (
+                    VODAccessPolicy.objects.filter(is_active=True, is_default=True)
+                    .order_by("id")
+                    .first()
+                )
+            policy = self._default_vod_policy
+            inherited = policy is not None
+        if not policy:
+            return None
+        return {
+            "id": policy.id,
+            "name": policy.name,
+            "export_mode": policy.export_mode,
+            "hard_constraints": policy.hard_constraints or {},
+            "ranking": policy.ranking or [],
+            "inherited": inherited,
+        }
+
+    def validate_vod_policy_settings(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be an object")
+        from apps.vod.models import VODAccessPolicy
+        from apps.vod.serializers import VODAccessPolicySerializer
+
+        export_mode = value.get("export_mode", VODAccessPolicy.ExportMode.COMPACT)
+        if export_mode not in VODAccessPolicy.ExportMode.values:
+            raise serializers.ValidationError({"export_mode": "Unsupported mode"})
+        validator = VODAccessPolicySerializer()
+        constraints = validator.validate_hard_constraints(
+            value.get("hard_constraints", {})
+        )
+        ranking = validator.validate_ranking(
+            value.get(
+                "ranking",
+                ["audio_language", "subtitle_language", "resolution"],
+            )
+        )
+        return {
+            "export_mode": export_mode,
+            "hard_constraints": constraints,
+            "ranking": ranking,
+        }
+
+    def _save_vod_policy(self, user, settings):
+        if settings is None:
+            return
+        from apps.vod.models import VODAccessPolicy
+
+        assigned = (
+            user.vod_access_policies.filter(is_active=True).order_by("id").first()
+        )
+        shared = bool(
+            assigned
+            and (
+                assigned.is_default
+                or assigned.users.exclude(pk=user.pk).exists()
+            )
+        )
+        if assigned is None or shared:
+            assigned, _created = VODAccessPolicy.objects.get_or_create(
+                name=f"VOD preferences — user {user.pk}",
+                defaults={"is_active": True, "is_default": False},
+            )
+        for other in VODAccessPolicy.objects.exclude(pk=assigned.pk).filter(users=user):
+            other.users.remove(user)
+        assigned.export_mode = settings["export_mode"]
+        assigned.hard_constraints = settings["hard_constraints"]
+        assigned.ranking = settings["ranking"]
+        assigned.is_active = True
+        assigned.save(
+            update_fields=[
+                "export_mode", "hard_constraints", "ranking", "is_active", "updated_at"
+            ]
+        )
+        assigned.users.add(user)
 
     def validate_username(self, value):
         if not SAFE_CREDENTIAL_RE.fullmatch(value):
@@ -118,18 +218,21 @@ class UserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         channel_profiles = validated_data.pop("channel_profiles", [])
+        vod_policy_settings = validated_data.pop("vod_policy_settings", None)
 
         user = User(**validated_data)
         user.set_password(validated_data["password"])
         user.save()
 
         user.channel_profiles.set(channel_profiles)
+        self._save_vod_policy(user, vod_policy_settings)
 
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", None)
         channel_profiles = validated_data.pop("channel_profiles", None)
+        vod_policy_settings = validated_data.pop("vod_policy_settings", None)
 
         # Merge custom_properties instead of replacing (prevents data loss)
         # null values are explicit deletions; all other values overwrite existing
@@ -161,5 +264,7 @@ class UserSerializer(serializers.ModelSerializer):
 
         if channel_profiles is not None:
             instance.channel_profiles.set(channel_profiles)
+
+        self._save_vod_policy(instance, vod_policy_settings)
 
         return instance

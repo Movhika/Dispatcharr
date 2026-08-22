@@ -1431,12 +1431,37 @@ export default class API {
     );
   }
 
+  static async getM3UDeveloperCatalog(accountId, scope, search = '', page = 1) {
+    const params = new URLSearchParams({
+      scope,
+      search,
+      page: String(page),
+      page_size: '100',
+    });
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/developer-catalog/?${params}`
+    );
+  }
+
   static async updateVODCategoryMetadata(relationId, metadataDefaults) {
     return await request(
       `${host}/api/vod/category-relations/${relationId}/metadata-defaults/`,
       {
         method: 'PATCH',
         body: { metadata_defaults: metadataDefaults },
+      }
+    );
+  }
+
+  static async bulkUpdateVODCategoryMetadata(relationIds, metadataDefaults) {
+    return await request(
+      `${host}/api/vod/category-relations/bulk-metadata-defaults/`,
+      {
+        method: 'PATCH',
+        body: {
+          relation_ids: relationIds,
+          metadata_defaults: metadataDefaults,
+        },
       }
     );
   }
@@ -1479,6 +1504,16 @@ export default class API {
       {
         method: 'PATCH',
         body: { metadata, locked_fields: lockedFields },
+      }
+    );
+  }
+
+  static async bulkUpdateVODSourceMetadata(selections, metadata) {
+    return await request(
+      `${host}/api/vod/source-assets/bulk-manual-metadata/`,
+      {
+        method: 'PATCH',
+        body: { selections, metadata },
       }
     );
   }

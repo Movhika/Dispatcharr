@@ -32,6 +32,8 @@ export const revokeApiKey = (payload) => {
 export const userToFormValues = (user) => {
   const customProps = user.custom_properties || {};
   const networks = customProps.allowed_networks || {};
+  const vodPolicy = user.vod_policy || {};
+  const vodConstraints = vodPolicy.hard_constraints || {};
 
   return {
     username: user.username,
@@ -60,6 +62,13 @@ export const userToFormValues = (user) => {
         )
       ),
     ],
+    vod_export_mode: vodPolicy.export_mode || 'compact',
+    vod_audio_languages: vodConstraints.required_audio_languages || [],
+    vod_subtitle_languages: vodConstraints.required_subtitle_languages || [],
+    vod_preferred_resolutions: vodConstraints.preferred_resolutions || [],
+    vod_min_height: vodConstraints.min_height || 0,
+    vod_max_height: vodConstraints.max_height || 0,
+    vod_allow_unknown: vodConstraints.allow_unknown_metadata !== false,
   };
 };
 
@@ -100,6 +109,28 @@ export const formValuesToPayload = (values, existingUser) => {
   }
   customProps.allowed_networks = allowed_networks;
 
+  payload.vod_policy_settings = {
+    export_mode: payload.vod_export_mode || 'compact',
+    hard_constraints: {
+      required_audio_languages: payload.vod_audio_languages || [],
+      required_subtitle_languages: payload.vod_subtitle_languages || [],
+      preferred_resolutions: payload.vod_preferred_resolutions || [],
+      min_height: payload.vod_min_height || 0,
+      max_height: payload.vod_max_height || 0,
+      allow_unknown_metadata: payload.vod_allow_unknown !== false,
+    },
+    ranking: ['audio_language', 'subtitle_language', 'resolution'],
+  };
+  [
+    'vod_export_mode',
+    'vod_audio_languages',
+    'vod_subtitle_languages',
+    'vod_preferred_resolutions',
+    'vod_min_height',
+    'vod_max_height',
+    'vod_allow_unknown',
+  ].forEach((key) => delete payload[key]);
+
   payload.custom_properties = customProps;
 
   if (payload.channel_profiles?.includes('0')) {
@@ -127,6 +158,13 @@ export const getFormInitialValues = () => {
     epg_days: 0,
     epg_prev_days: 0,
     allowed_ips: [],
+    vod_export_mode: 'compact',
+    vod_audio_languages: [],
+    vod_subtitle_languages: [],
+    vod_preferred_resolutions: [],
+    vod_min_height: 0,
+    vod_max_height: 0,
+    vod_allow_unknown: true,
   };
 };
 

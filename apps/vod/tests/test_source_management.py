@@ -2,16 +2,20 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 
 from apps.m3u.models import M3UAccount
-from apps.output.views import xc_get_vod_streams
-from apps.vod.metadata import ensure_source_asset
+from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
+from apps.vod.metadata import (
+    ensure_source_asset,
+    ensure_source_assets,
+    normalize_language_list,
+)
 from apps.vod.playback import record_playback_selection
+from apps.vod.serializers import VODPlaybackSessionSerializer
 from apps.vod.models import (
     M3UMovieRelation,
     M3UVODCategoryRelation,
     Movie,
     VODAccessPolicy,
     VODPlaybackSession,
-    VODPolicyCategory,
     VODSourceAsset,
     VODCategory,
 )
@@ -84,19 +88,7 @@ class VODSourceManagementTests(TestCase):
                 "required_audio_languages": ["deu"],
                 "allow_unknown_metadata": False,
             },
-            ranking=["resolution", "category_priority", "account_priority"],
-        )
-        VODPolicyCategory.objects.create(
-            policy=self.policy,
-            category_relation=self.german_category,
-            enabled=True,
-            priority=5,
-        )
-        VODPolicyCategory.objects.create(
-            policy=self.policy,
-            category_relation=self.english_category,
-            enabled=True,
-            priority=100,
+            ranking=["audio_language", "subtitle_language", "resolution"],
         )
 
     def test_failover_never_uses_disallowed_language(self):
@@ -105,6 +97,26 @@ class VODSourceManagementTests(TestCase):
             self.policy,
         )
         self.assertEqual([relation.id for relation in ordered], [self.german_relation.id])
+
+    def test_language_aliases_use_english_iso_639_2_b_codes(self):
+        self.assertEqual(
+            normalize_language_list(["deu", "de", "Deutsch", "eng"]),
+            ["ger", "eng"],
+        )
+
+    def test_language_preference_wins_over_account_and_category_priority(self):
+        self.policy.hard_constraints = {
+            "required_audio_languages": ["ger", "eng"],
+            "preferred_resolutions": ["1080p", "2160p"],
+            "allow_unknown_metadata": False,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+
+        ordered = ordered_failover_candidates(
+            [self.english_relation, self.german_relation], self.policy
+        )
+
+        self.assertEqual(ordered[0].id, self.german_relation.id)
 
     def test_compact_and_variants_share_explicit_asset_identity(self):
         compact = select_relations_for_policy(
@@ -177,6 +189,20 @@ class VODSourceManagementTests(TestCase):
             [self.english_relation.id],
         )
 
+    def test_xc_categories_follow_global_enabled_categories_not_old_priorities(self):
+        user = get_user_model().objects.create_user(
+            username="category-user",
+            password="test-password",
+        )
+        self.policy.users.add(user)
+
+        rows = xc_get_vod_categories(user)
+
+        self.assertEqual(
+            {row["category_id"] for row in rows},
+            {str(self.german.id), str(self.english.id)},
+        )
+
     def test_same_provider_id_is_not_automatically_linked_across_accounts(self):
         first = ensure_source_asset(self.german_relation)
         second = ensure_source_asset(self.english_relation)
@@ -184,6 +210,19 @@ class VODSourceManagementTests(TestCase):
         self.assertNotEqual(first.id, second.id)
         self.assertEqual(first.provider_asset_id, second.provider_asset_id)
         self.assertEqual(first.provider_origin_key, second.provider_origin_key)
+
+    def test_bulk_source_asset_creation_keeps_relations_distinct(self):
+        asset_ids = ensure_source_assets(
+            [self.german_relation, self.english_relation]
+        )
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+
+        self.assertEqual(len(asset_ids), 2)
+        self.assertNotEqual(
+            self.german_relation.source_asset_id,
+            self.english_relation.source_asset_id,
+        )
 
     def test_manual_metadata_wins_and_is_not_overwritten(self):
         asset = VODSourceAsset.objects.create(
@@ -203,7 +242,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(asset.observed_metadata["resolution"], "1080p")
         self.assertEqual(
             asset.effective_metadata()["values"]["audio_languages"],
-            ["deu"],
+            ["ger"],
         )
 
     def test_playback_history_keeps_the_exact_account_and_category(self):
@@ -226,6 +265,28 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(playback.bytes_sent, 0)
         self.assertIsNotNone(self.german_relation.source_asset_id)
 
+    def test_playback_history_exposes_the_recorded_technical_snapshot(self):
+        playback = record_playback_selection(
+            session_id="proxy-test-1",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.PROXYING,
+            custom_properties={
+                "source_effective_metadata": {
+                    "audio_languages": ["deu"],
+                    "resolution": "1080p",
+                }
+            },
+        )
+
+        metadata = VODPlaybackSessionSerializer(playback).data[
+            "source_effective_metadata"
+        ]
+        self.assertEqual(metadata["values"]["audio_languages"], ["ger"])
+        self.assertEqual(metadata["values"]["resolution"], "1080p")
+        self.assertEqual(metadata["provenance"]["resolution"], "playback")
+
     def test_metadata_precedence_is_category_provider_observed_manual(self):
         asset = VODSourceAsset.objects.create(
             asset_type=VODSourceAsset.AssetType.MOVIE,
@@ -247,11 +308,11 @@ class VODSourceManagementTests(TestCase):
             relation_declared={"resolution": "2160p"},
         )
 
-        self.assertEqual(effective["values"]["audio_languages"], ["deu"])
+        self.assertEqual(effective["values"]["audio_languages"], ["ger"])
         self.assertEqual(effective["provenance"]["audio_languages"], "manual")
         self.assertEqual(effective["values"]["resolution"], "1080p")
         self.assertEqual(effective["provenance"]["resolution"], "observed")
-        self.assertEqual(effective["values"]["subtitle_languages"], ["deu"])
+        self.assertEqual(effective["values"]["subtitle_languages"], ["ger"])
         self.assertEqual(
             effective["provenance"]["subtitle_languages"], "category"
         )

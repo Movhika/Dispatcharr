@@ -1133,12 +1133,13 @@ def _xc_fetch_priority_distinct_relations(
     canonical_field=None,
 ):
     """
-    Return one row dict per distinct content key (highest account priority wins).
+    Return one row dict per selected source key.
 
     On PostgreSQL, dedupe on narrow relation rows first, then fetch display
     columns via values() (no ORM model instantiation). That avoids sorting
     wide joined rows during DISTINCT ON and reduces parallel worker /dev/shm
-    pressure in Docker.
+    pressure in Docker. With a VOD user policy, the streaming selector chooses
+    by language, subtitles, and resolution before the wide rows are fetched.
     """
     from django.db import connection, transaction
 
@@ -1243,20 +1244,14 @@ def xc_get_vod_categories(user, request=None):
 
     response = []
 
-    # All authenticated users get access to VOD from all active M3U accounts
-    if policy:
-        category_ids = policy.vodpolicycategory_set.filter(
-            enabled=True,
-            category_relation__enabled=True,
-            category_relation__m3u_account__is_active=True,
-            category_relation__category__category_type="movie",
-        ).values_list("category_relation__category_id", flat=True)
-        categories = VODCategory.objects.filter(id__in=category_ids)
-    else:
-        categories = VODCategory.objects.filter(
-            category_type='movie',
-            m3umovierelation__m3u_account__is_active=True
-        )
+    # Category availability is global. Per-user policies only choose source
+    # editions using language, subtitle, and resolution metadata.
+    categories = VODCategory.objects.filter(
+        category_type='movie',
+        m3u_relations__enabled=True,
+        m3u_relations__m3u_account__is_active=True,
+        m3umovierelation__m3u_account__is_active=True,
+    )
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:
@@ -1376,20 +1371,12 @@ def xc_get_series_categories(user, request=None):
 
     response = []
 
-    # All authenticated users get access to series from all active M3U accounts
-    if policy:
-        category_ids = policy.vodpolicycategory_set.filter(
-            enabled=True,
-            category_relation__enabled=True,
-            category_relation__m3u_account__is_active=True,
-            category_relation__category__category_type="series",
-        ).values_list("category_relation__category_id", flat=True)
-        categories = VODCategory.objects.filter(id__in=category_ids)
-    else:
-        categories = VODCategory.objects.filter(
-            category_type='series',
-            m3useriesrelation__m3u_account__is_active=True
-        )
+    categories = VODCategory.objects.filter(
+        category_type='series',
+        m3u_relations__enabled=True,
+        m3u_relations__m3u_account__is_active=True,
+        m3useriesrelation__m3u_account__is_active=True,
+    )
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:

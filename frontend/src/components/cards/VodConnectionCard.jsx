@@ -40,6 +40,9 @@ import {
 import useUsersStore from '../../store/users.jsx';
 
 const ClientDetails = ({ connection, connectionStartTime }) => {
+  const technical = connection.technical_metadata || {};
+  const audio = technical.audio_languages || technical.languages || [];
+  const subtitles = technical.subtitle_languages || [];
   return (
     <Stack
       gap="xs"
@@ -137,6 +140,35 @@ const ClientDetails = ({ connection, connectionStartTime }) => {
           </Text>
         </Group>
       )}
+
+      {(technical.resolution || technical.height) && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Resolution:
+          </Text>
+          <Text size="xs">
+            {technical.resolution || `${technical.height}p`}
+          </Text>
+        </Group>
+      )}
+
+      {audio.length > 0 && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Audio:
+          </Text>
+          <Text size="xs">{audio.join(', ')}</Text>
+        </Group>
+      )}
+
+      {subtitles.length > 0 && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Subtitles:
+          </Text>
+          <Text size="xs">{subtitles.join(', ')}</Text>
+        </Group>
+      )}
     </Stack>
   );
 };
@@ -205,6 +237,7 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
     vodContent.individual_connection ||
     (vodContent.connections && vodContent.connections[0]);
   const source = connection?.source || {};
+  const technical = connection?.technical_metadata || {};
 
   // Get poster/logo URL
   const posterUrl = metadata.logo_url || logo;
@@ -397,6 +430,23 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
               </Badge>
             </Tooltip>
           )}
+          {(technical.resolution || technical.height) && (
+            <Badge size="sm" variant="light" color="cyan">
+              {technical.resolution || `${technical.height}p`}
+            </Badge>
+          )}
+          {(technical.audio_languages || technical.languages || []).map(
+            (language) => (
+              <Badge key={`audio-${language}`} size="sm" variant="light">
+                Audio {language}
+              </Badge>
+            )
+          )}
+          {(technical.subtitle_languages || []).map((language) => (
+            <Badge key={`subtitle-${language}`} size="sm" variant="outline">
+              Subs {language}
+            </Badge>
+          ))}
         </Group>
 
         {/* Progress bar - show current position in content */}

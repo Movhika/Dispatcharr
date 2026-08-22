@@ -15,7 +15,7 @@ import useChannelsStore from '../../store/channels';
 import useVODStore from '../../store/useVODStore';
 import LiveGroupFilter from './LiveGroupFilter';
 import VODCategoryFilter from './VODCategoryFilter';
-import M3UGroupRules from './M3UGroupRules';
+import M3UDeveloperCatalog from './M3UDeveloperCatalog';
 import { showNotification } from '../../utils/notificationUtils.js';
 import {
   buildGroupStates,
@@ -140,6 +140,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
             <TabsTab value="live">Live</TabsTab>
             <TabsTab value="vod-movie">VOD - Movies</TabsTab>
             <TabsTab value="vod-series">VOD - Series</TabsTab>
+            <TabsTab value="developer">Developer</TabsTab>
           </TabsList>
 
           <TabsPanel value="live">
@@ -150,7 +151,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               autoEnableNewGroupsLive={autoEnableNewGroupsLive}
               setAutoEnableNewGroupsLive={setAutoEnableNewGroupsLive}
             />
-            <M3UGroupRules accountId={playlist.id} scope="live" />
           </TabsPanel>
 
           <TabsPanel value="vod-movie">
@@ -162,7 +162,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               autoEnableNewGroups={autoEnableNewGroupsVod}
               setAutoEnableNewGroups={setAutoEnableNewGroupsVod}
             />
-            <M3UGroupRules accountId={playlist.id} scope="movie" />
           </TabsPanel>
 
           <TabsPanel value="vod-series">
@@ -174,7 +173,10 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               autoEnableNewGroups={autoEnableNewGroupsSeries}
               setAutoEnableNewGroups={setAutoEnableNewGroupsSeries}
             />
-            <M3UGroupRules accountId={playlist.id} scope="series" />
+          </TabsPanel>
+
+          <TabsPanel value="developer">
+            <M3UDeveloperCatalog accountId={playlist.id} />
           </TabsPanel>
         </Tabs>
 

@@ -242,7 +242,9 @@ class AuthViewSet(viewsets.ViewSet):
 class UserViewSet(viewsets.ModelViewSet):
     """Handles CRUD operations for Users"""
 
-    queryset = User.objects.all().prefetch_related('channel_profiles')
+    queryset = User.objects.all().prefetch_related(
+        'channel_profiles', 'vod_access_policies'
+    )
     serializer_class = UserSerializer
 
     def get_permissions(self):
@@ -282,7 +284,14 @@ class UserViewSet(viewsets.ModelViewSet):
     def me(self, request):
         user = request.user
         if request.method == "PATCH":
-            ALLOWED_FIELDS = {"custom_properties", "first_name", "last_name", "email", "password"}
+            ALLOWED_FIELDS = {
+                "custom_properties",
+                "first_name",
+                "last_name",
+                "email",
+                "password",
+                "vod_policy_settings",
+            }
             disallowed = set(request.data.keys()) - ALLOWED_FIELDS
 
             for key in disallowed:

@@ -1,21 +1,23 @@
-// Modal.js
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  TextInput,
   Button,
-  Flex,
-  Stack,
-  Group,
-  SimpleGrid,
-  Text,
-  Box,
   Checkbox,
+  Flex,
+  Group,
+  Modal,
   SegmentedControl,
-  Popover,
   Select,
+  Stack,
+  Table,
+  TableTbody,
+  TableTd,
+  TableTh,
+  TableThead,
+  TableTr,
   TagsInput,
+  Text,
+  TextInput,
 } from '@mantine/core';
-import { CircleCheck, CircleX } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
@@ -31,255 +33,302 @@ const VODCategoryFilter = ({
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selected, setSelected] = useState(new Set());
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [metadata, setMetadata] = useState({
+    audio_languages: [],
+    subtitle_languages: [],
+    resolution: '',
+  });
 
   useEffect(() => {
-    if (Object.keys(categories).length === 0) {
-      return;
-    }
-
-    console.log(categories);
+    if (Object.keys(categories).length === 0) return;
 
     setCategoryStates(
       Object.values(categories)
         .filter(
-          (cat) =>
-            cat.m3u_accounts.find((acc) => acc.m3u_account == playlist.id) &&
-            cat.category_type == type
+          (category) =>
+            category.m3u_accounts.find(
+              (account) => account.m3u_account == playlist.id
+            ) && category.category_type == type
         )
-        .map((cat) => {
-          const match = cat.m3u_accounts.find(
-            (acc) => acc.m3u_account == playlist.id
+        .map((category) => {
+          const relation = category.m3u_accounts.find(
+            (account) => account.m3u_account == playlist.id
           );
-          if (match) {
-            return {
-              ...cat,
-              relation_id: match.id,
-              metadata_defaults: match.metadata_defaults || {},
-              enabled: match.enabled || false, // Keep user's previous choice, default to false for new categories
-              original_enabled: match.enabled,
-            };
-          }
+          return {
+            ...category,
+            relation_id: relation.id,
+            metadata_defaults: relation.metadata_defaults || {},
+            enabled: relation.enabled || false,
+            original_enabled: relation.enabled,
+          };
         })
     );
   }, [categories, playlist.id, setCategoryStates, type]);
 
-  const toggleEnabled = (id) => {
-    setCategoryStates(
-      categoryStates.map((state) => ({
-        ...state,
-        enabled: state.id == id ? !state.enabled : state.enabled,
-      }))
-    );
-  };
+  const visible = useMemo(
+    () =>
+      categoryStates
+        .filter((category) => {
+          const matchesText = category.name
+            .toLowerCase()
+            .includes(filter.toLowerCase());
+          const matchesStatus =
+            statusFilter === 'all' ||
+            (statusFilter === 'enabled' && category.enabled) ||
+            (statusFilter === 'disabled' && !category.enabled);
+          return matchesText && matchesStatus;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [categoryStates, filter, statusFilter]
+  );
 
-  const updateMetadata = (id, values) => {
-    setCategoryStates(
-      categoryStates.map((state) =>
-        state.id === id
-          ? {
-              ...state,
-              metadata_defaults: {
-                ...(state.metadata_defaults || {}),
-                ...values,
-              },
-            }
-          : state
+  const updateSelected = (changes) => {
+    setCategoryStates((current) =>
+      current.map((category) =>
+        selected.has(category.id) ? { ...category, ...changes } : category
       )
     );
   };
 
-  const saveMetadata = async (category) => {
-    const metadata = Object.fromEntries(
-      Object.entries(category.metadata_defaults || {}).filter(
-        ([, value]) => value !== '' && value !== null && value !== undefined
-      )
-    );
-    await API.updateVODCategoryMetadata(category.relation_id, metadata);
-    showNotification({
-      title: 'Category metadata saved',
-      message: `${category.name} will use these values until playback or manual metadata provides a more reliable value.`,
-      color: 'green',
+  const toggleSelected = (id, checked) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
     });
   };
 
-  const isVisible = (category) => {
-    const matchesText = category.name
-      .toLowerCase()
-      .includes(filter.toLowerCase());
-    const matchesStatus =
-      statusFilter === 'all' ||
-      (statusFilter === 'enabled' && category.enabled) ||
-      (statusFilter === 'disabled' && !category.enabled);
-    return matchesText && matchesStatus;
+  const toggleVisibleSelection = (checked) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      visible.forEach((category) =>
+        checked ? next.add(category.id) : next.delete(category.id)
+      );
+      return next;
+    });
   };
 
-  const selectAll = () => {
-    setCategoryStates(
-      categoryStates.map((state) => ({
-        ...state,
-        enabled: isVisible(state) ? true : state.enabled,
-      }))
+  const saveBulkMetadata = async () => {
+    const values = Object.fromEntries(
+      Object.entries(metadata).filter(
+        ([, value]) => value !== '' && (!Array.isArray(value) || value.length)
+      )
     );
+    const targets = categoryStates.filter((category) =>
+      selected.has(category.id)
+    );
+    setSaving(true);
+    try {
+      await API.bulkUpdateVODCategoryMetadata(
+        targets.map((category) => category.relation_id),
+        values
+      );
+      setCategoryStates((current) =>
+        current.map((category) =>
+          selected.has(category.id)
+            ? {
+                ...category,
+                metadata_defaults: {
+                  ...(category.metadata_defaults || {}),
+                  ...values,
+                },
+              }
+            : category
+        )
+      );
+      showNotification({
+        title: 'Category metadata updated',
+        message: `${targets.length} categories were updated. These defaults have lower priority than manual source metadata.`,
+        color: 'green',
+      });
+      setEditorOpen(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const deselectAll = () => {
-    setCategoryStates(
-      categoryStates.map((state) => ({
-        ...state,
-        enabled: isVisible(state) ? false : state.enabled,
-      }))
-    );
-  };
+  const allVisibleSelected =
+    visible.length > 0 &&
+    visible.every((category) => selected.has(category.id));
 
   return (
-    <Stack style={{ paddingTop: 10 }}>
-      <Checkbox
-        label={`Automatically enable new ${type === 'movie' ? 'movie' : 'series'} categories discovered on future scans`}
-        checked={autoEnableNewGroups}
-        onChange={(event) =>
-          setAutoEnableNewGroups(event.currentTarget.checked)
-        }
-        size="sm"
-        description="When disabled, new categories from the provider will be created but disabled by default. You can enable them manually later."
-      />
-
-      <Flex gap="sm" align="center">
-        <TextInput
-          placeholder="Filter categories..."
-          value={filter}
-          onChange={(event) => setFilter(event.currentTarget.value)}
-          style={{ flex: 1 }}
-          size="xs"
+    <>
+      <Stack pt="sm">
+        <Checkbox
+          label={`Automatically enable new ${type === 'movie' ? 'movie' : 'series'} categories discovered on future scans`}
+          checked={autoEnableNewGroups}
+          onChange={(event) =>
+            setAutoEnableNewGroups(event.currentTarget.checked)
+          }
+          size="sm"
+          description="Discovery rules in the account Filters dialog can override this default for matching new categories."
         />
-        <SegmentedControl
-          value={statusFilter}
-          onChange={setStatusFilter}
-          size="xs"
-          data={[
-            { label: 'All', value: 'all' },
-            { label: 'Enabled', value: 'enabled' },
-            { label: 'Disabled', value: 'disabled' },
-          ]}
-        />
-        <Button variant="default" size="xs" onClick={selectAll}>
-          Select Visible
-        </Button>
-        <Button variant="default" size="xs" onClick={deselectAll}>
-          Deselect Visible
-        </Button>
-      </Flex>
 
-      <Box style={{ maxHeight: '50vh', overflowY: 'auto' }}>
-        <SimpleGrid
-          cols={{ base: 1, sm: 2, md: 3 }}
-          spacing="xs"
-          verticalSpacing="xs"
-        >
-          {categoryStates
-            .filter((category) => isVisible(category))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((category) => (
-              <Group
-                key={category.id}
-                spacing="xs"
-                style={{
-                  padding: '8px',
-                  border: '1px solid #444',
-                  borderRadius: '8px',
-                  backgroundColor: category.enabled ? '#2A2A2E' : '#1E1E22',
-                  flexDirection: 'column',
-                  alignItems: 'stretch',
-                }}
-              >
-                {/* Group Enable/Disable Button */}
-                <Button
-                  color={category.enabled ? 'green' : 'gray'}
-                  variant="filled"
-                  onClick={() => toggleEnabled(category.id)}
-                  radius="md"
-                  size="xs"
-                  leftSection={
-                    category.enabled ? (
-                      <CircleCheck size={14} />
-                    ) : (
-                      <CircleX size={14} />
-                    )
+        <Flex gap="sm" align="end" wrap="wrap">
+          <TextInput
+            label="Search categories"
+            placeholder="Filter categories..."
+            value={filter}
+            onChange={(event) => setFilter(event.currentTarget.value)}
+            style={{ flex: 1 }}
+            size="xs"
+          />
+          <SegmentedControl
+            value={statusFilter}
+            onChange={setStatusFilter}
+            size="xs"
+            data={[
+              { label: 'All', value: 'all' },
+              { label: 'Enabled', value: 'enabled' },
+              { label: 'Disabled', value: 'disabled' },
+            ]}
+          />
+          <Button
+            variant="default"
+            size="xs"
+            disabled={!selected.size}
+            onClick={() => updateSelected({ enabled: true })}
+          >
+            Enable selected
+          </Button>
+          <Button
+            variant="default"
+            size="xs"
+            disabled={!selected.size}
+            onClick={() => updateSelected({ enabled: false })}
+          >
+            Disable selected
+          </Button>
+          <Button
+            variant="default"
+            size="xs"
+            disabled={!selected.size}
+            onClick={() => setEditorOpen(true)}
+          >
+            Edit metadata ({selected.size})
+          </Button>
+        </Flex>
+
+        <Table striped highlightOnHover withTableBorder stickyHeader>
+          <TableThead>
+            <TableTr>
+              <TableTh w={44}>
+                <Checkbox
+                  aria-label="Select visible categories"
+                  checked={allVisibleSelected}
+                  onChange={(event) =>
+                    toggleVisibleSelection(event.currentTarget.checked)
                   }
-                  fullWidth
-                >
-                  <Text size="xs" truncate>
-                    {category.name}
-                  </Text>
-                </Button>
-                <Popover width={320} position="bottom" withArrow shadow="md">
-                  <Popover.Target>
-                    <Button size="compact-xs" variant="subtle" fullWidth>
-                      Expected language & quality
-                    </Button>
-                  </Popover.Target>
-                  <Popover.Dropdown>
-                    <Stack gap="xs">
-                      <Text size="xs" c="dimmed">
-                        Category defaults have the lowest confidence. Observed
-                        playback data can replace them; manual source values
-                        cannot.
-                      </Text>
-                      <TagsInput
-                        size="xs"
-                        label="Audio languages"
-                        placeholder="deu, eng"
-                        value={
-                          category.metadata_defaults?.audio_languages || []
-                        }
-                        onChange={(value) =>
-                          updateMetadata(category.id, {
-                            audio_languages: value,
-                          })
-                        }
-                      />
-                      <TagsInput
-                        size="xs"
-                        label="Subtitle languages"
-                        placeholder="deu, eng"
-                        value={
-                          category.metadata_defaults?.subtitle_languages || []
-                        }
-                        onChange={(value) =>
-                          updateMetadata(category.id, {
-                            subtitle_languages: value,
-                          })
-                        }
-                      />
-                      <Select
-                        size="xs"
-                        clearable
-                        label="Expected maximum resolution"
-                        value={category.metadata_defaults?.resolution || null}
-                        data={[
-                          '480p',
-                          '576p',
-                          '720p',
-                          '1080p',
-                          '1440p',
-                          '2160p',
-                        ]}
-                        onChange={(value) =>
-                          updateMetadata(category.id, {
-                            resolution: value || '',
-                          })
-                        }
-                      />
-                      <Button size="xs" onClick={() => saveMetadata(category)}>
-                        Save metadata
-                      </Button>
-                    </Stack>
-                  </Popover.Dropdown>
-                </Popover>
-              </Group>
+                />
+              </TableTh>
+              <TableTh>Category</TableTh>
+              <TableTh w={100}>Enabled</TableTh>
+              <TableTh>Default audio</TableTh>
+              <TableTh>Default subtitles</TableTh>
+              <TableTh w={110}>Resolution</TableTh>
+            </TableTr>
+          </TableThead>
+          <TableTbody>
+            {visible.map((category) => (
+              <TableTr key={category.id}>
+                <TableTd>
+                  <Checkbox
+                    aria-label={`Select ${category.name}`}
+                    checked={selected.has(category.id)}
+                    onChange={(event) =>
+                      toggleSelected(category.id, event.currentTarget.checked)
+                    }
+                  />
+                </TableTd>
+                <TableTd>{category.name}</TableTd>
+                <TableTd>
+                  <Checkbox
+                    aria-label={`Enable ${category.name}`}
+                    checked={category.enabled}
+                    onChange={(event) =>
+                      setCategoryStates((current) =>
+                        current.map((item) =>
+                          item.id === category.id
+                            ? {
+                                ...item,
+                                enabled: event.currentTarget.checked,
+                              }
+                            : item
+                        )
+                      )
+                    }
+                  />
+                </TableTd>
+                <TableTd>
+                  {(category.metadata_defaults?.audio_languages || []).join(
+                    ', '
+                  ) || '—'}
+                </TableTd>
+                <TableTd>
+                  {(category.metadata_defaults?.subtitle_languages || []).join(
+                    ', '
+                  ) || '—'}
+                </TableTd>
+                <TableTd>
+                  {category.metadata_defaults?.resolution || '—'}
+                </TableTd>
+              </TableTr>
             ))}
-        </SimpleGrid>
-      </Box>
-    </Stack>
+          </TableTbody>
+        </Table>
+      </Stack>
+
+      <Modal
+        opened={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title={`Edit defaults for ${selected.size} categories`}
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Only filled fields are changed. Category defaults are initial
+            assumptions; manual source metadata remains authoritative.
+          </Text>
+          <TagsInput
+            label="Audio languages"
+            description="English ISO 639-2/B codes"
+            placeholder="ger, eng"
+            value={metadata.audio_languages}
+            onChange={(value) =>
+              setMetadata({ ...metadata, audio_languages: value })
+            }
+          />
+          <TagsInput
+            label="Subtitle languages"
+            placeholder="ger, eng"
+            value={metadata.subtitle_languages}
+            onChange={(value) =>
+              setMetadata({ ...metadata, subtitle_languages: value })
+            }
+          />
+          <Select
+            clearable
+            label="Expected maximum resolution"
+            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            value={metadata.resolution || null}
+            onChange={(value) =>
+              setMetadata({ ...metadata, resolution: value || '' })
+            }
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setEditorOpen(false)}>
+              Cancel
+            </Button>
+            <Button loading={saving} onClick={saveBulkMetadata}>
+              Apply to selected
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 };
 

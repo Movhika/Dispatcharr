@@ -39,6 +39,12 @@ vi.mock('../M3UFilter', () => ({
     ) : null,
 }));
 
+vi.mock('../M3UGroupRules', () => ({
+  default: ({ scope }) => (
+    <div data-testid={`group-rules-${scope}`}>Discovery rules {scope}</div>
+  ),
+}));
+
 vi.mock('../../ConfirmationDialog', () => ({
   default: ({ opened, onConfirm, onClose, title }) =>
     opened ? (
@@ -152,6 +158,10 @@ vi.mock('@mantine/core', () => ({
         {children}
       </div>
     ) : null,
+  Tabs: ({ children }) => <div>{children}</div>,
+  TabsList: ({ children }) => <div>{children}</div>,
+  TabsPanel: ({ children }) => <div>{children}</div>,
+  TabsTab: ({ children }) => <button>{children}</button>,
   Text: ({ children, size, c, fw }) => (
     <span data-size={size} data-color={c} data-fw={fw}>
       {children}

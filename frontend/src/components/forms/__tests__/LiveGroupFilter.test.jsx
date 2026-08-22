@@ -154,14 +154,17 @@ vi.mock('@mantine/core', async () => ({
       {children}
     </button>
   ),
-  Checkbox: ({ label, checked, onChange, description, disabled }) => (
+  Checkbox: ({ label, checked, onChange, description, disabled, ...props }) => (
     <label>
       <input
         type="checkbox"
         checked={checked ?? false}
         onChange={onChange}
         disabled={disabled}
-        aria-label={typeof label === 'string' ? label : 'checkbox'}
+        aria-label={
+          props['aria-label'] ||
+          (typeof label === 'string' ? label : 'checkbox')
+        }
       />
       {typeof label === 'string' ? label : label}
       {description && <span>{description}</span>}
@@ -190,6 +193,12 @@ vi.mock('@mantine/core', async () => ({
   ),
   SimpleGrid: ({ children }) => <div>{children}</div>,
   Stack: ({ children, style }) => <div style={style}>{children}</div>,
+  Table: ({ children }) => <table>{children}</table>,
+  TableTbody: ({ children }) => <tbody>{children}</tbody>,
+  TableTd: ({ children }) => <td>{children}</td>,
+  TableTh: ({ children }) => <th>{children}</th>,
+  TableThead: ({ children }) => <thead>{children}</thead>,
+  TableTr: ({ children }) => <tr>{children}</tr>,
   Text: ({ children }) => <span>{children}</span>,
   TextInput: ({ placeholder, value, onChange }) => (
     <input
@@ -381,10 +390,13 @@ describe('LiveGroupFilter', () => {
       expect(screen.getByTestId('seg-disabled')).toBeInTheDocument();
     });
 
-    it('renders Select Visible and Deselect Visible buttons', () => {
+    it('renders bulk-selection and update controls', () => {
       renderWith();
-      expect(screen.getByText('Select Visible')).toBeInTheDocument();
-      expect(screen.getByText('Deselect Visible')).toBeInTheDocument();
+      expect(
+        screen.getByLabelText('Select visible groups')
+      ).toBeInTheDocument();
+      expect(screen.getByText('Enable selected')).toBeInTheDocument();
+      expect(screen.getByText('Disable selected')).toBeInTheDocument();
     });
 
     it('renders a card for each group in groupStates', () => {
@@ -647,34 +659,36 @@ describe('LiveGroupFilter', () => {
     });
   });
 
-  // ── Select Visible / Deselect Visible ─────────────────────────────────────
+  // ── Bulk selection and changes ────────────────────────────────────────────
 
-  describe('Select Visible / Deselect Visible', () => {
-    it('Select Visible enables all currently visible groups', () => {
+  describe('bulk selection and changes', () => {
+    it('enables all selected visible groups', () => {
       renderWith({
         initialGroups: [
           makeGroup({ channel_group: 1, name: 'Sports', enabled: false }),
           makeGroup({ channel_group: 2, name: 'News', enabled: false }),
         ],
       });
-      fireEvent.click(screen.getByText('Select Visible'));
-      // Both groups remain visible (isGroupVisible still returns true)
-      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+      fireEvent.click(screen.getByLabelText('Select visible groups'));
+      fireEvent.click(screen.getByText('Enable selected'));
+      expect(screen.getByLabelText('Enable Sports')).toBeChecked();
+      expect(screen.getByLabelText('Enable News')).toBeChecked();
     });
 
-    it('Deselect Visible disables all currently visible groups', () => {
+    it('disables all selected visible groups', () => {
       renderWith({
         initialGroups: [
           makeGroup({ channel_group: 1, name: 'Sports', enabled: true }),
           makeGroup({ channel_group: 2, name: 'News', enabled: true }),
         ],
       });
-      // With status=all, isGroupVisible still returns true after deselect
-      fireEvent.click(screen.getByText('Deselect Visible'));
-      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+      fireEvent.click(screen.getByLabelText('Select visible groups'));
+      fireEvent.click(screen.getByText('Disable selected'));
+      expect(screen.getByLabelText('Enable Sports')).not.toBeChecked();
+      expect(screen.getByLabelText('Enable News')).not.toBeChecked();
     });
 
-    it('Select Visible only applies to groups passing the current filter', () => {
+    it('bulk changes only apply to groups passing the current filter', () => {
       // With Enabled filter active, only already-enabled groups are "visible"
       // so disabling one and clicking Select Visible should not re-enable the hidden one
       renderWith({
@@ -684,7 +698,8 @@ describe('LiveGroupFilter', () => {
         ],
       });
       fireEvent.click(screen.getByTestId('seg-enabled'));
-      fireEvent.click(screen.getByText('Select Visible'));
+      fireEvent.click(screen.getByLabelText('Select visible groups'));
+      fireEvent.click(screen.getByText('Enable selected'));
       // News (disabled) is not visible in Enabled filter, so it stays hidden
       expect(screen.queryByText('News')).not.toBeInTheDocument();
     });

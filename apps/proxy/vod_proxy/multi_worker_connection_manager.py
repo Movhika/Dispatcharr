@@ -106,6 +106,11 @@ def _update_playback_history(session_id, status, bytes_sent=0, error=""):
             return
         playback.status = status
         playback.bytes_sent = max(playback.bytes_sent, int(bytes_sent or 0))
+        if playback.started_at:
+            playback.watched_seconds = max(
+                playback.watched_seconds,
+                max(0, int((timezone.now() - playback.started_at).total_seconds())),
+            )
         if status in {
             VODPlaybackSession.Status.COMPLETED,
             VODPlaybackSession.Status.STOPPED,
@@ -115,7 +120,9 @@ def _update_playback_history(session_id, status, bytes_sent=0, error=""):
         if error:
             playback.error = str(error)[:2000]
         playback.save(
-            update_fields=["status", "bytes_sent", "ended_at", "error"]
+            update_fields=[
+                "status", "bytes_sent", "watched_seconds", "ended_at", "error"
+            ]
         )
     except Exception as exc:
         logger.warning("[%s] Could not update playback history: %s", session_id, exc)
@@ -1460,6 +1467,7 @@ class MultiWorkerVODConnectionManager:
             response['X-Content-Type-Options'] = 'nosniff'
             response['Connection'] = 'keep-alive'
             response['X-Worker-ID'] = self.worker_id  # Identify which worker served this
+            response['X-Dispatcharr-Session'] = effective_session_id
 
             if connection_headers.get('content_length'):
                 response['Accept-Ranges'] = 'bytes'

@@ -384,6 +384,13 @@ describe('UserUtils', () => {
         epg_days: 0,
         epg_prev_days: 0,
         allowed_ips: [],
+        vod_export_mode: 'compact',
+        vod_audio_languages: [],
+        vod_subtitle_languages: [],
+        vod_preferred_resolutions: [],
+        vod_min_height: 0,
+        vod_max_height: 0,
+        vod_allow_unknown: true,
       });
     });
 
@@ -432,7 +439,9 @@ describe('UserUtils', () => {
           username: 'alice+123',
           user_level: '0',
         });
-        expect(result.username).toBe('Username may only contain letters, numbers, periods (.), underscores (_), at signs (@), and hyphens (-)');
+        expect(result.username).toBe(
+          'Username may only contain letters, numbers, periods (.), underscores (_), at signs (@), and hyphens (-)'
+        );
       });
     });
 

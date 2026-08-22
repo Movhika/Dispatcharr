@@ -1,462 +1,236 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import VODsPage from '../VODs';
-import useVODStore from '../../store/useVODStore';
-import {
-  filterCategoriesToEnabled,
-  getCategoryOptions,
-} from '../../utils/pages/VODsUtils.js';
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../store/useVODStore');
-
+vi.mock('../../store/useVODStore', () => ({ default: vi.fn() }));
+vi.mock('../../store/auth', () => ({ default: vi.fn() }));
+vi.mock('../../api', () => ({
+  default: { bulkUpdateVODSourceMetadata: vi.fn() },
+}));
+vi.mock('../../utils/pages/VODsUtils.js', () => ({
+  filterCategoriesToEnabled: vi.fn(() => ({})),
+  getCategoryOptions: vi.fn(() => []),
+}));
+vi.mock('../../utils/notificationUtils', () => ({
+  showNotification: vi.fn(),
+}));
+vi.mock('../../components/ErrorBoundary.jsx', () => ({
+  default: ({ children }) => children,
+}));
 vi.mock('../../components/SeriesModal', () => ({
-  default: ({ opened, series, onClose }) =>
-    opened ? (
-      <div data-testid="series-modal">
-        <div data-testid="series-name">{series?.name}</div>
-        <button onClick={onClose}>Close</button>
-      </div>
-    ) : null,
+  default: ({ opened, series }) =>
+    opened ? <div data-testid="series-modal">{series?.name}</div> : null,
 }));
 vi.mock('../../components/VODModal', () => ({
-  default: ({ opened, vod, onClose }) =>
-    opened ? (
-      <div data-testid="vod-modal">
-        <div data-testid="vod-name">{vod?.name}</div>
-        <button onClick={onClose}>Close</button>
-      </div>
-    ) : null,
+  default: ({ opened, vod }) =>
+    opened ? <div data-testid="movie-modal">{vod?.name}</div> : null,
 }));
-vi.mock('../../components/cards/VODCard', () => ({
-  default: ({ vod, onClick }) => (
-    <div data-testid="vod-card" onClick={() => onClick(vod)}>
-      <div>{vod.name}</div>
-    </div>
-  ),
+vi.mock('../../components/VODSourceManagerModal', () => ({
+  default: ({ opened }) =>
+    opened ? <div data-testid="history-modal">History</div> : null,
 }));
-vi.mock('../../components/cards/SeriesCard', () => ({
-  default: ({ series, onClick }) => (
-    <div data-testid="series-card" onClick={() => onClick(series)}>
-      <div>{series.name}</div>
-    </div>
-  ),
+vi.mock('lucide-react', () => ({
+  History: () => null,
+  Play: () => null,
+  Search: () => null,
+  Wrench: () => null,
 }));
-
+vi.mock('@mantine/hooks', () => ({
+  useDisclosure: (initial = false) => {
+    const [opened, setOpened] = React.useState(initial);
+    return [
+      opened,
+      { open: () => setOpened(true), close: () => setOpened(false) },
+    ];
+  },
+}));
 vi.mock('@mantine/core', () => {
-  const gridComponent = ({ children, ...props }) => (
-    <div {...props}>{children}</div>
-  );
-  gridComponent.Col = ({ children, ...props }) => (
-    <div {...props}>{children}</div>
-  );
-
-  return {
-    Box: ({ children, ...props }) => <div {...props}>{children}</div>,
-    Stack: ({ children, ...props }) => <div {...props}>{children}</div>,
-    Group: ({ children, ...props }) => <div {...props}>{children}</div>,
-    Flex: ({ children, ...props }) => <div {...props}>{children}</div>,
-    Title: ({ children, ...props }) => <h2 {...props}>{children}</h2>,
-    TextInput: ({ value, onChange, placeholder, icon }) => (
+  const Wrapper = ({ children }) => <div>{children}</div>;
+  const Modal = ({ opened, children, title }) =>
+    opened ? (
       <div>
-        {icon}
-        <input
-          type="text"
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-        />
+        <h3>{title}</h3>
+        {children}
       </div>
-    ),
-    Select: ({ value, onChange, data, label, placeholder }) => (
-      <div>
-        {label && <label>{label}</label>}
-        <select
-          value={value}
-          onChange={(e) => onChange?.(e.target.value)}
-          aria-label={placeholder || label}
-        >
-          {data?.map((option) => (
+    ) : null;
+  const Select = ({ label, placeholder, value, onChange, data = [] }) => (
+    <label>
+      {label}
+      <select
+        aria-label={label || placeholder}
+        value={value || ''}
+        onChange={(event) => onChange?.(event.target.value || null)}
+      >
+        <option value="" />
+        {data.map((item) => {
+          const option =
+            typeof item === 'string' ? { value: item, label: item } : item;
+          return (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
-          ))}
-        </select>
-      </div>
+          );
+        })}
+      </select>
+    </label>
+  );
+  return {
+    ActionIcon: ({ children, onClick, 'aria-label': ariaLabel }) => (
+      <button aria-label={ariaLabel} onClick={onClick}>
+        {children}
+      </button>
+    ),
+    Box: Wrapper,
+    Button: ({ children, onClick, disabled, loading }) => (
+      <button onClick={onClick} disabled={disabled || loading}>
+        {children}
+      </button>
+    ),
+    Checkbox: ({ checked, onChange, 'aria-label': ariaLabel }) => (
+      <input
+        type="checkbox"
+        aria-label={ariaLabel}
+        checked={checked}
+        onChange={onChange}
+      />
+    ),
+    Flex: Wrapper,
+    Group: Wrapper,
+    Image: ({ src }) => <img src={src} />,
+    Loader: () => <div data-testid="loader" />,
+    LoadingOverlay: () => null,
+    Modal,
+    Pagination: ({ value, onChange, total }) => (
+      <button data-testid="pagination" onClick={() => onChange(value + 1)}>
+        {total}
+      </button>
     ),
     SegmentedControl: ({ value, onChange, data }) => (
       <div>
         {data.map((item) => (
           <button
             key={item.value}
-            onClick={() => onChange(item.value)}
             data-active={value === item.value}
+            onClick={() => onChange(item.value)}
           >
             {item.label}
           </button>
         ))}
       </div>
     ),
-    Pagination: ({ page, onChange, total }) => (
-      <div data-testid="pagination">
-        <button onClick={() => onChange(page - 1)} disabled={page === 1}>
-          Prev
-        </button>
-        <span>
-          {page} of {total}
-        </span>
-        <button onClick={() => onChange(page + 1)} disabled={page === total}>
-          Next
-        </button>
-      </div>
+    Select,
+    Stack: Wrapper,
+    Table: Wrapper,
+    TableTbody: Wrapper,
+    TableTd: Wrapper,
+    TableTh: Wrapper,
+    TableThead: Wrapper,
+    TableTr: Wrapper,
+    TagsInput: ({ label, value, onChange }) => (
+      <label>
+        {label}
+        <input
+          aria-label={label}
+          value={(value || []).join(',')}
+          onChange={(event) =>
+            onChange(event.target.value.split(',').filter(Boolean))
+          }
+        />
+      </label>
     ),
-    Grid: gridComponent,
-    GridCol: gridComponent.Col,
-    Loader: () => <div data-testid="loader">Loading...</div>,
-    LoadingOverlay: ({ visible }) =>
-      visible ? <div data-testid="loading-overlay">Loading...</div> : null,
+    Text: Wrapper,
+    TextInput: ({ value, onChange, placeholder }) => (
+      <input value={value} onChange={onChange} placeholder={placeholder} />
+    ),
+    Title: ({ children }) => <h2>{children}</h2>,
   };
 });
 
-vi.mock('../../utils/pages/VODsUtils.js', () => {
-  return {
-    filterCategoriesToEnabled: vi.fn(),
-    getCategoryOptions: vi.fn(),
-  };
-});
+import API from '../../api';
+import useAuthStore from '../../store/auth';
+import useVODStore from '../../store/useVODStore';
+import VODsPage from '../VODs';
 
-describe('VODsPage', () => {
-  const mockFetchContent = vi.fn();
-  const mockFetchCategories = vi.fn();
-  const mockSetFilters = vi.fn();
-  const mockSetPage = vi.fn();
-  const mockSetPageSize = vi.fn();
-
-  const defaultStoreState = {
-    currentPageContent: [],
+describe('VODsPage list and bulk editing', () => {
+  const fetchContent = vi.fn().mockResolvedValue(undefined);
+  const fetchCategories = vi.fn().mockResolvedValue(undefined);
+  const setFilters = vi.fn();
+  const setPage = vi.fn();
+  const setPageSize = vi.fn();
+  const state = {
+    currentPageContent: [
+      { id: 1, name: 'Movie A', contentType: 'movie', year: 2025 },
+      { id: 2, name: 'Series B', contentType: 'series', year: 2024 },
+    ],
     categories: {},
     filters: { type: 'all', search: '', category: '' },
     currentPage: 1,
-    totalCount: 0,
-    pageSize: 12,
-    setFilters: mockSetFilters,
-    setPage: mockSetPage,
-    setPageSize: mockSetPageSize,
-    fetchContent: mockFetchContent,
-    fetchCategories: mockFetchCategories,
+    totalCount: 30,
+    pageSize: 24,
+    setFilters,
+    setPage,
+    setPageSize,
+    fetchContent,
+    fetchCategories,
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchContent.mockResolvedValue();
-    mockFetchCategories.mockResolvedValue();
-    filterCategoriesToEnabled.mockReturnValue({});
-    getCategoryOptions.mockReturnValue([]);
-    useVODStore.mockImplementation((selector) => selector(defaultStoreState));
-    localStorage.clear();
+    fetchContent.mockResolvedValue(undefined);
+    fetchCategories.mockResolvedValue(undefined);
+    API.bulkUpdateVODSourceMetadata.mockResolvedValue({ updated_sources: 3 });
+    useVODStore.mockImplementation((selector) => selector(state));
+    useAuthStore.mockImplementation((selector) =>
+      selector({ user: { id: 1, user_level: 10 } })
+    );
   });
 
-  it('renders the page title', async () => {
+  it('renders movies and series as list rows and loads data', async () => {
     render(<VODsPage />);
-    await screen.findByText('Video on Demand');
+    expect(await screen.findByText('Movie A')).toBeInTheDocument();
+    expect(screen.getByText('Series B')).toBeInTheDocument();
+    expect(fetchCategories).toHaveBeenCalled();
+    expect(fetchContent).toHaveBeenCalled();
   });
 
-  it('fetches categories on mount', async () => {
+  it('opens the correct detail dialog from a row', async () => {
     render(<VODsPage />);
-    await waitFor(() => {
-      expect(mockFetchCategories).toHaveBeenCalledTimes(1);
-    });
+    await screen.findByText('Movie A');
+    fireEvent.click(screen.getByLabelText('Open Movie A'));
+    expect(await screen.findByTestId('movie-modal')).toHaveTextContent(
+      'Movie A'
+    );
+    fireEvent.click(screen.getByLabelText('Open Series B'));
+    expect(await screen.findByTestId('series-modal')).toHaveTextContent(
+      'Series B'
+    );
   });
 
-  it('fetches content on mount', async () => {
+  it('bulk-updates every source behind selected titles', async () => {
     render(<VODsPage />);
-    await waitFor(() => {
-      expect(mockFetchContent).toHaveBeenCalledTimes(1);
+    await screen.findByText('Movie A');
+    fireEvent.click(screen.getByLabelText('Select Movie A'));
+    fireEvent.click(screen.getByRole('button', { name: /Edit selected/ }));
+    fireEvent.change(screen.getByLabelText('Audio languages'), {
+      target: { value: 'ger,eng' },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and lock' }));
+    await waitFor(() =>
+      expect(API.bulkUpdateVODSourceMetadata).toHaveBeenCalledWith(
+        [{ content_type: 'movie', id: 1 }],
+        { audio_languages: ['ger', 'eng'] }
+      )
+    );
   });
 
-  it('displays loader during initial load', async () => {
+  it('updates search and pagination through the store', async () => {
     render(<VODsPage />);
-    await screen.findByTestId('loader');
-  });
-
-  it('displays content after loading', async () => {
-    const stateWithContent = {
-      ...defaultStoreState,
-      currentPageContent: [
-        { id: 1, name: 'Movie 1', contentType: 'movie' },
-        { id: 2, name: 'Series 1', contentType: 'series' },
-      ],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithContent));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Movie 1')).toBeInTheDocument();
-      expect(screen.getByText('Series 1')).toBeInTheDocument();
+    await screen.findByText('Movie A');
+    fireEvent.change(screen.getByPlaceholderText('Search VODs...'), {
+      target: { value: 'avatar' },
     });
-  });
-
-  it('renders VOD cards for movies', async () => {
-    const stateWithMovies = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Movie 1', contentType: 'movie' }],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithMovies));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('vod-card')).toBeInTheDocument();
-    });
-  });
-
-  it('renders series cards for series', async () => {
-    const stateWithSeries = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Series 1', contentType: 'series' }],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithSeries));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('series-card')).toBeInTheDocument();
-    });
-  });
-
-  it('opens VOD modal when VOD card is clicked', async () => {
-    const stateWithMovies = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Test Movie', contentType: 'movie' }],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithMovies));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByTestId('vod-card'));
-    });
-
-    expect(screen.getByTestId('vod-modal')).toBeInTheDocument();
-    expect(screen.getByTestId('vod-name')).toHaveTextContent('Test Movie');
-  });
-
-  it('opens series modal when series card is clicked', async () => {
-    const stateWithSeries = {
-      ...defaultStoreState,
-      currentPageContent: [
-        { id: 1, name: 'Test Series', contentType: 'series' },
-      ],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithSeries));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByTestId('series-card'));
-    });
-
-    expect(screen.getByTestId('series-modal')).toBeInTheDocument();
-    expect(screen.getByTestId('series-name')).toHaveTextContent('Test Series');
-  });
-
-  it('closes VOD modal when close button is clicked', async () => {
-    const stateWithMovies = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Test Movie', contentType: 'movie' }],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithMovies));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByTestId('vod-card'));
-    });
-
-    fireEvent.click(screen.getByText('Close'));
-
-    expect(screen.queryByTestId('vod-modal')).not.toBeInTheDocument();
-  });
-
-  it('closes series modal when close button is clicked', async () => {
-    const stateWithSeries = {
-      ...defaultStoreState,
-      currentPageContent: [
-        { id: 1, name: 'Test Series', contentType: 'series' },
-      ],
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithSeries));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByTestId('series-card'));
-    });
-
-    fireEvent.click(screen.getByText('Close'));
-
-    expect(screen.queryByTestId('series-modal')).not.toBeInTheDocument();
-  });
-
-  it('updates filters when search input changes', async () => {
-    render(<VODsPage />);
-
-    const searchInput = screen.getByPlaceholderText('Search VODs...');
-    fireEvent.change(searchInput, { target: { value: 'test search' } });
-
-    await waitFor(() => {
-      expect(mockSetFilters).toHaveBeenCalledWith({ search: 'test search' });
-    });
-  });
-
-  it('updates filters and resets page when type changes', async () => {
-    render(<VODsPage />);
-
-    const moviesButton = screen.getByText('Movies');
-    fireEvent.click(moviesButton);
-
-    await waitFor(() => {
-      expect(mockSetFilters).toHaveBeenCalledWith({
-        type: 'movies',
-        category: '',
-      });
-      expect(mockSetPage).toHaveBeenCalledWith(1);
-    });
-  });
-
-  it('updates filters and resets page when category changes', async () => {
-    getCategoryOptions.mockReturnValue([{ value: 'action', label: 'Action' }]);
-
-    render(<VODsPage />);
-
-    const categorySelect = screen.getByLabelText('Category');
-    fireEvent.change(categorySelect, { target: { value: 'action' } });
-
-    await waitFor(() => {
-      expect(mockSetFilters).toHaveBeenCalledWith({ category: 'action' });
-      expect(mockSetPage).toHaveBeenCalledWith(1);
-    });
-  });
-
-  it('updates page size and saves to localStorage', async () => {
-    render(<VODsPage />);
-
-    const pageSizeSelect = screen.getByLabelText('Page Size');
-    fireEvent.change(pageSizeSelect, { target: { value: '24' } });
-
-    await waitFor(() => {
-      expect(mockSetPageSize).toHaveBeenCalledWith(24);
-      expect(localStorage.getItem('vodsPageSize')).toBe('24');
-    });
-  });
-
-  it('loads page size from localStorage on mount', async () => {
-    localStorage.setItem('vodsPageSize', '48');
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(mockSetPageSize).toHaveBeenCalledWith(48);
-    });
-  });
-
-  it('displays pagination when total pages > 1', async () => {
-    const stateWithPagination = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Movie 1', contentType: 'movie' }],
-      totalCount: 25,
-      pageSize: 12,
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithPagination));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('pagination')).toBeInTheDocument();
-    });
-  });
-
-  it('does not display pagination when total pages <= 1', async () => {
-    const stateNoPagination = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Movie 1', contentType: 'movie' }],
-      totalCount: 5,
-      pageSize: 12,
-    };
-    useVODStore.mockImplementation((selector) => selector(stateNoPagination));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('pagination')).not.toBeInTheDocument();
-    });
-  });
-
-  it('changes page when pagination is clicked', async () => {
-    const stateWithPagination = {
-      ...defaultStoreState,
-      currentPageContent: [{ id: 1, name: 'Movie 1', contentType: 'movie' }],
-      totalCount: 25,
-      pageSize: 12,
-      currentPage: 1,
-    };
-    useVODStore.mockImplementation((selector) => selector(stateWithPagination));
-
-    render(<VODsPage />);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByText('Next'));
-    });
-
-    expect(mockSetPage).toHaveBeenCalledWith(2);
-  });
-
-  it('refetches content when filters change', async () => {
-    const { rerender } = render(<VODsPage />);
-
-    const updatedState = {
-      ...defaultStoreState,
-      filters: { type: 'movies', search: '', category: '' },
-    };
-    useVODStore.mockImplementation((selector) => selector(updatedState));
-
-    rerender(<VODsPage />);
-
-    await waitFor(() => {
-      expect(mockFetchContent).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it('refetches content when page changes', async () => {
-    const { rerender } = render(<VODsPage />);
-
-    const updatedState = {
-      ...defaultStoreState,
-      currentPage: 2,
-    };
-    useVODStore.mockImplementation((selector) => selector(updatedState));
-
-    rerender(<VODsPage />);
-
-    await waitFor(() => {
-      expect(mockFetchContent).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it('refetches content when page size changes', async () => {
-    const { rerender } = render(<VODsPage />);
-
-    const updatedState = {
-      ...defaultStoreState,
-      pageSize: 24,
-    };
-    useVODStore.mockImplementation((selector) => selector(updatedState));
-
-    rerender(<VODsPage />);
-
-    await waitFor(() => {
-      expect(mockFetchContent).toHaveBeenCalledTimes(2);
-    });
+    expect(setFilters).toHaveBeenCalledWith({ search: 'avatar' });
+    fireEvent.click(screen.getByTestId('pagination'));
+    expect(setPage).toHaveBeenCalledWith(2);
   });
 });

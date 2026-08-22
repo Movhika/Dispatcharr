@@ -9,6 +9,7 @@ from apps.accounts.permissions import (
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from django.core.cache import cache
@@ -95,6 +96,110 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             context={**self.get_serializer_context(), "stream_counts": stream_counts},
         )
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="developer-catalog")
+    def developer_catalog(self, request, pk=None):
+        """Read-only, paginated view of the parsed provider catalog."""
+        account = self.get_object()
+        if getattr(request.user, "user_level", 0) < 10:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        scope = request.query_params.get("scope", "live")
+        search = request.query_params.get("search", "").strip()
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+            page_size = min(
+                500, max(1, int(request.query_params.get("page_size", 100)))
+            )
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "page and page_size must be integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        offset = (page - 1) * page_size
+
+        if scope == "live":
+            from apps.channels.models import Stream
+
+            queryset = Stream.objects.filter(m3u_account=account).select_related(
+                "channel_group"
+            )
+            if search:
+                queryset = queryset.filter(
+                    Q(name__icontains=search) | Q(tvg_id__icontains=search)
+                )
+            total = queryset.count()
+            rows = [
+                {
+                    "id": row.id,
+                    "provider_id": row.stream_id,
+                    "name": row.name,
+                    "group": row.channel_group.name if row.channel_group else "",
+                    "url": row.url,
+                    "properties": row.custom_properties or {},
+                }
+                for row in queryset.order_by("channel_group__name", "name")[
+                    offset : offset + page_size
+                ]
+            ]
+        elif scope == "movie":
+            from apps.vod.models import M3UMovieRelation
+
+            queryset = M3UMovieRelation.objects.filter(
+                m3u_account=account
+            ).select_related("movie", "category")
+            if search:
+                queryset = queryset.filter(movie__name__icontains=search)
+            total = queryset.count()
+            rows = [
+                {
+                    "id": row.id,
+                    "provider_id": row.stream_id,
+                    "name": row.movie.name,
+                    "group": row.category.name if row.category else "",
+                    "url": row.get_stream_url(),
+                    "properties": row.custom_properties or {},
+                }
+                for row in queryset.order_by("category__name", "movie__name")[
+                    offset : offset + page_size
+                ]
+            ]
+        elif scope == "series":
+            from apps.vod.models import M3USeriesRelation
+
+            queryset = M3USeriesRelation.objects.filter(
+                m3u_account=account
+            ).select_related("series", "category")
+            if search:
+                queryset = queryset.filter(series__name__icontains=search)
+            total = queryset.count()
+            rows = [
+                {
+                    "id": row.id,
+                    "provider_id": row.external_series_id,
+                    "name": row.series.name,
+                    "group": row.category.name if row.category else "",
+                    "url": "",
+                    "properties": row.custom_properties or {},
+                }
+                for row in queryset.order_by("category__name", "series__name")[
+                    offset : offset + page_size
+                ]
+            ]
+        else:
+            return Response(
+                {"detail": "scope must be live, movie, or series"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "scope": scope,
+                "count": total,
+                "page": page,
+                "page_size": page_size,
+                "results": rows,
+            }
+        )
 
     def create(self, request, *args, **kwargs):
         # Handle file upload first, if any
@@ -573,6 +678,13 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                         unique_fields=["m3u_account", "category"],
                         update_fields=["enabled", "custom_properties"],
                     )
+
+            # bulk_create(update_conflicts=True) bypasses post_save signals.
+            # Invalidate the versioned XC catalog explicitly so category
+            # enable/disable changes take effect immediately.
+            from apps.vod.catalog_cache import bump_catalog_generation
+
+            bump_catalog_generation()
 
             return Response({"message": "Group settings updated successfully"})
 

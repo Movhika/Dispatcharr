@@ -2,7 +2,6 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
   Alert,
-  Box,
   Button,
   Checkbox,
   Divider,
@@ -10,13 +9,18 @@ import {
   Group,
   Loader,
   SegmentedControl,
-  SimpleGrid,
   Stack,
+  Table,
+  TableTbody,
+  TableTd,
+  TableTh,
+  TableThead,
+  TableTr,
   Text,
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { CircleCheck, CircleX, Info, Settings as Cog } from 'lucide-react';
+import { Info, Settings as Cog } from 'lucide-react';
 import GroupConfigureModal from './GroupConfigureModal';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
@@ -51,6 +55,7 @@ const LiveGroupFilter = ({
   const fetchStreamProfiles = useStreamProfilesStore((s) => s.fetchProfiles);
   const [groupFilter, setGroupFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedGroupIds, setSelectedGroupIds] = useState(new Set());
   const [epgSources, setEpgSources] = useState([]);
 
   const {
@@ -495,26 +500,42 @@ const LiveGroupFilter = ({
     setCurrentEditingGroupId(null);
   };
 
-  const selectAll = () => {
+  const updateSelectedGroups = (changes) => {
     setGroupStates((prev) =>
-      prev.map((state) => ({
-        ...state,
-        enabled: isGroupVisible(state, groupFilter, statusFilter)
-          ? true
-          : state.enabled,
-      }))
+      prev.map((state) =>
+        selectedGroupIds.has(state.channel_group)
+          ? { ...state, ...changes }
+          : state
+      )
     );
   };
 
-  const deselectAll = () => {
-    setGroupStates((prev) =>
-      prev.map((state) => ({
-        ...state,
-        enabled: isGroupVisible(state, groupFilter, statusFilter)
-          ? false
-          : state.enabled,
-      }))
-    );
+  const toggleSelectedGroup = (id, checked) => {
+    setSelectedGroupIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const visibleGroups = groupStates
+    .filter((group) => isGroupVisible(group, groupFilter, statusFilter))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const allVisibleSelected =
+    visibleGroups.length > 0 &&
+    visibleGroups.every((group) => selectedGroupIds.has(group.channel_group));
+
+  const toggleVisibleSelection = (checked) => {
+    setSelectedGroupIds((current) => {
+      const next = new Set(current);
+      visibleGroups.forEach((group) =>
+        checked
+          ? next.add(group.channel_group)
+          : next.delete(group.channel_group)
+      );
+      return next;
+    });
   };
 
   return (
@@ -535,7 +556,7 @@ const LiveGroupFilter = ({
           setAutoEnableNewGroupsLive(event.currentTarget.checked)
         }
         size="sm"
-        description="When disabled, new groups from the M3U source will be created but disabled by default. You can enable them manually later."
+        description="Discovery rules in the account Filters dialog can override this default for matching new groups."
       />
 
       <OrphanCleanupControl playlist={playlist} />
@@ -558,205 +579,166 @@ const LiveGroupFilter = ({
             { label: 'Disabled', value: 'disabled' },
           ]}
         />
-        <Button variant="default" size="xs" onClick={selectAll}>
-          Select Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() => updateSelectedGroups({ enabled: true })}
+        >
+          Enable selected
         </Button>
-        <Button variant="default" size="xs" onClick={deselectAll}>
-          Deselect Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() => updateSelectedGroups({ enabled: false })}
+        >
+          Disable selected
+        </Button>
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() =>
+            updateSelectedGroups({ enabled: true, auto_channel_sync: true })
+          }
+        >
+          Enable auto sync
         </Button>
       </Flex>
 
       <Divider label="Groups & Auto Sync Settings" labelPosition="center" />
 
-      <Box style={{ maxHeight: 'calc(50vh - 80px)', overflowY: 'auto' }}>
-        <SimpleGrid
-          cols={{ base: 1, sm: 2, md: 3 }}
-          spacing="xs"
-          verticalSpacing="xs"
-        >
-          {groupStates
-            .filter((group) => isGroupVisible(group, groupFilter, statusFilter))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((group) => (
-              <Group
-                key={group.channel_group}
-                spacing="xs"
-                style={{
-                  padding: '8px',
-                  border: '1px solid #444',
-                  borderRadius: '8px',
-                  backgroundColor: group.enabled ? '#2A2A2E' : '#1E1E22',
-                  flexDirection: 'column',
-                  alignItems: 'stretch',
-                }}
-              >
-                {/* Group Enable/Disable Button */}
-                <Tooltip
-                  label={
-                    group.enabled && group.is_stale
-                      ? 'This group was not seen in the last M3U refresh and will be deleted after the retention period expires'
-                      : ''
+      <div style={{ maxHeight: 'calc(50vh - 80px)', overflow: 'auto' }}>
+        <Table striped highlightOnHover withTableBorder stickyHeader miw={1050}>
+          <TableThead>
+            <TableTr>
+              <TableTh w={44}>
+                <Checkbox
+                  aria-label="Select visible groups"
+                  checked={allVisibleSelected}
+                  onChange={(event) =>
+                    toggleVisibleSelection(event.currentTarget.checked)
                   }
-                  disabled={!group.enabled || !group.is_stale}
-                  multiline
-                  w={220}
-                >
-                  <Button
-                    color={
-                      group.enabled
-                        ? group.is_stale
-                          ? 'orange'
-                          : 'green'
-                        : 'gray'
-                    }
-                    variant="filled"
-                    onClick={() => toggleGroupEnabled(group.channel_group)}
-                    radius="md"
-                    size="xs"
-                    leftSection={
-                      group.enabled ? (
-                        <CircleCheck size={14} />
-                      ) : (
-                        <CircleX size={14} />
+                />
+              </TableTh>
+              <TableTh>Group</TableTh>
+              <TableTh w={100}>Enabled</TableTh>
+              <TableTh w={130}>Auto sync</TableTh>
+              <TableTh w={300}>Numbering mode</TableTh>
+              <TableTh w={330}>Channel range</TableTh>
+              <TableTh w={70}>Setup</TableTh>
+            </TableTr>
+          </TableThead>
+          <TableTbody>
+            {visibleGroups.map((group) => (
+              <TableTr key={group.channel_group}>
+                <TableTd>
+                  <Checkbox
+                    aria-label={`Select ${group.name}`}
+                    checked={selectedGroupIds.has(group.channel_group)}
+                    onChange={(event) =>
+                      toggleSelectedGroup(
+                        group.channel_group,
+                        event.currentTarget.checked
                       )
                     }
-                    fullWidth
+                  />
+                </TableTd>
+                <TableTd>
+                  <Tooltip
+                    label="This group was not seen in the last M3U refresh and may be removed after its retention period."
+                    disabled={!group.is_stale}
                   >
-                    <Text size="xs" truncate>
+                    <Text c={group.is_stale ? 'orange' : undefined}>
                       {group.name}
                     </Text>
-                  </Button>
-                </Tooltip>
-
-                {/* Auto Sync Controls */}
-                <Stack spacing="xs" style={{ '--stack-gap': '4px' }}>
-                  <Flex align="center" gap="xs" justify="space-between">
-                    <Checkbox
-                      label="Auto Channel Sync"
-                      checked={group.auto_channel_sync && group.enabled}
-                      disabled={!group.enabled}
-                      onChange={() => toggleAutoSync(group.channel_group)}
-                      size="xs"
+                  </Tooltip>
+                </TableTd>
+                <TableTd>
+                  <Checkbox
+                    aria-label={`Enable ${group.name}`}
+                    checked={group.enabled}
+                    onChange={() => toggleGroupEnabled(group.channel_group)}
+                  />
+                </TableTd>
+                <TableTd>
+                  <Checkbox
+                    aria-label={`Auto sync ${group.name}`}
+                    checked={group.auto_channel_sync && group.enabled}
+                    disabled={!group.enabled}
+                    onChange={() => toggleAutoSync(group.channel_group)}
+                  />
+                </TableTd>
+                <TableTd>
+                  <SegmentedControl
+                    value={
+                      group.custom_properties?.channel_numbering_mode || 'fixed'
+                    }
+                    disabled={!group.enabled || !group.auto_channel_sync}
+                    onChange={(value) =>
+                      setGroupStates((current) =>
+                        current.map((item) =>
+                          item.channel_group === group.channel_group
+                            ? {
+                                ...item,
+                                custom_properties: {
+                                  ...item.custom_properties,
+                                  channel_numbering_mode: value || 'fixed',
+                                },
+                              }
+                            : item
+                        )
+                      )
+                    }
+                    data={[
+                      { value: 'fixed', label: 'Fixed' },
+                      { value: 'provider', label: 'Provider' },
+                      { value: 'next_available', label: 'Next' },
+                    ]}
+                    size="xs"
+                    fullWidth
+                  />
+                </TableTd>
+                <TableTd>
+                  {group.auto_channel_sync && group.enabled ? (
+                    <AutoSyncBasic
+                      group={group}
+                      groupStates={groupStates}
+                      groupConflicts={groupConflicts}
+                      onApplyGroupChange={applyGroupChange}
                     />
-                    {group.auto_channel_sync && group.enabled && (
-                      <Tooltip
-                        label="Configure advanced options for this group"
-                        withArrow
-                      >
-                        <ActionIcon
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => {
-                            // Snapshot at open time so Cancel can restore
-                            // pre-edit state. custom_properties needs a
-                            // one-level clone since the rest of group
-                            // state is flat.
-                            configureSnapshotRef.current = {
-                              ...group,
-                              custom_properties: {
-                                ...(group.custom_properties || {}),
-                              },
-                            };
-                            setConfiguringGroupId(group.channel_group);
-                          }}
-                          aria-label="Configure group"
-                        >
-                          <Cog size={14} />
-                        </ActionIcon>
-                      </Tooltip>
-                    )}
-                  </Flex>
-
-                  {group.auto_channel_sync && group.enabled && (
-                    <>
-                      <Tooltip
-                        label={
-                          <div>
-                            <div>
-                              <strong>Fixed:</strong> Start at a specific number
-                              and increment
-                            </div>
-                            <div>
-                              <strong>Provider:</strong> Use channel numbers
-                              from the M3U source
-                            </div>
-                            <div>
-                              <strong>Next Available:</strong> Auto-assign
-                              starting from 1, skipping used numbers
-                            </div>
-                          </div>
-                        }
-                        withArrow
-                        multiline
-                        w={280}
-                        openDelay={500}
-                      >
-                        <Box>
-                          <Text size="xs" mb={6}>
-                            Channel Numbering Mode
-                          </Text>
-                          <SegmentedControl
-                            value={
-                              group.custom_properties?.channel_numbering_mode ||
-                              'fixed'
-                            }
-                            onChange={(value) => {
-                              setGroupStates((prev) =>
-                                prev.map((state) => {
-                                  if (
-                                    state.channel_group === group.channel_group
-                                  ) {
-                                    return {
-                                      ...state,
-                                      custom_properties: {
-                                        ...state.custom_properties,
-                                        channel_numbering_mode:
-                                          value || 'fixed',
-                                      },
-                                    };
-                                  }
-                                  return state;
-                                })
-                              );
-                            }}
-                            data={[
-                              { value: 'fixed', label: 'Fixed' },
-                              { value: 'provider', label: 'Provider' },
-                              { value: 'next_available', label: 'Next Avail' },
-                            ]}
-                            size="xs"
-                            fullWidth
-                          />
-                        </Box>
-                      </Tooltip>
-
-                      {(() => {
-                        const m =
-                          group.custom_properties?.channel_numbering_mode ||
-                          'fixed';
-                        if (m === 'next_available') return null;
-                        return (
-                          <Text size="xs" c="dimmed" mt={-2}>
-                            {m === 'provider'
-                              ? 'Provider numbers; falls back to Start - End.'
-                              : 'Channels number sequentially from Start - End.'}
-                          </Text>
-                        );
-                      })()}
-
-                      <AutoSyncBasic
-                        group={group}
-                        groupStates={groupStates}
-                        groupConflicts={groupConflicts}
-                        onApplyGroupChange={applyGroupChange}
-                      />
-                    </>
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      Auto sync disabled
+                    </Text>
                   )}
-                </Stack>
-              </Group>
+                </TableTd>
+                <TableTd>
+                  <Tooltip label="Configure advanced options" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      disabled={!group.auto_channel_sync || !group.enabled}
+                      onClick={() => {
+                        configureSnapshotRef.current = {
+                          ...group,
+                          custom_properties: {
+                            ...(group.custom_properties || {}),
+                          },
+                        };
+                        setConfiguringGroupId(group.channel_group);
+                      }}
+                      aria-label={`Configure ${group.name}`}
+                    >
+                      <Cog size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                </TableTd>
+              </TableTr>
             ))}
-        </SimpleGrid>
-      </Box>
+          </TableTbody>
+        </Table>
+      </div>
 
       {/* Per-group Configure modal. Holds the Advanced Options MultiSelect
           and all its conditional fields so the inline row only renders the

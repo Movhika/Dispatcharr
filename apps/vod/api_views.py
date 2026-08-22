@@ -83,10 +83,79 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "metadata must be an object and locked_fields a list"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        asset.manual_metadata = metadata
+        from .metadata import normalize_source_metadata
+
+        asset.manual_metadata = normalize_source_metadata(metadata)
         asset.locked_fields = sorted({str(field) for field in locked_fields})
         asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
         return Response(self.get_serializer(asset).data)
+
+    @action(detail=False, methods=["patch"], url_path="bulk-manual-metadata")
+    def bulk_manual_metadata(self, request):
+        """Set locked metadata on every source behind selected movies/series."""
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        selections = request.data.get("selections", [])
+        metadata = request.data.get("metadata", {})
+        if not isinstance(selections, list) or not isinstance(metadata, dict):
+            return Response(
+                {"detail": "selections must be a list and metadata an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if any(not isinstance(item, dict) for item in selections):
+            return Response(
+                {"detail": "Every selection must be an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from .metadata import ensure_source_assets, normalize_source_metadata
+
+        metadata = normalize_source_metadata(metadata)
+        movie_ids = {
+            int(item["id"])
+            for item in selections
+            if item.get("content_type") == "movie" and str(item.get("id", "")).isdigit()
+        }
+        series_ids = {
+            int(item["id"])
+            for item in selections
+            if item.get("content_type") == "series" and str(item.get("id", "")).isdigit()
+        }
+        relations = list(
+            M3UMovieRelation.objects.filter(movie_id__in=movie_ids).select_related(
+                "m3u_account__server_group"
+            )
+        )
+        relations.extend(
+            M3USeriesRelation.objects.filter(series_id__in=series_ids).select_related(
+                "m3u_account__server_group"
+            )
+        )
+        relations.extend(
+            M3UEpisodeRelation.objects.filter(
+                episode__series_id__in=series_ids
+            ).select_related("m3u_account__server_group")
+        )
+        asset_ids = ensure_source_assets(relations)
+        assets = list(VODSourceAsset.objects.filter(id__in=asset_ids))
+        updated_at = timezone.now()
+        for asset in assets:
+            asset.manual_metadata = {
+                **(asset.manual_metadata or {}),
+                **metadata,
+            }
+            asset.locked_fields = sorted(
+                set(asset.locked_fields or []) | set(metadata)
+            )
+            asset.updated_at = updated_at
+        VODSourceAsset.objects.bulk_update(
+            assets,
+            ["manual_metadata", "locked_fields", "updated_at"],
+            batch_size=1000,
+        )
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation()
+        return Response({"updated_sources": len(assets)})
 
     @action(detail=True, methods=["post"], url_path="link-relations")
     def link_relations(self, request, pk=None):
@@ -168,14 +237,57 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         if not _is_admin(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
         relation = self.get_object()
+        from .metadata import normalize_source_metadata
+
         serializer = self.get_serializer(
             relation,
-            data={"metadata_defaults": request.data.get("metadata_defaults", {})},
+            data={
+                "metadata_defaults": normalize_source_metadata(
+                    request.data.get("metadata_defaults", {})
+                )
+            },
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+    @action(detail=False, methods=["patch"], url_path="bulk-metadata-defaults")
+    def bulk_metadata_defaults(self, request):
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        relation_ids = request.data.get("relation_ids", [])
+        metadata = request.data.get("metadata_defaults", {})
+        if not isinstance(relation_ids, list) or not isinstance(metadata, dict):
+            return Response(
+                {"detail": "relation_ids must be a list and metadata_defaults an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            relation_ids = [int(relation_id) for relation_id in relation_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "relation_ids must contain integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from .metadata import normalize_source_metadata
+
+        normalized = normalize_source_metadata(metadata)
+        relations = list(self.get_queryset().filter(pk__in=relation_ids))
+        updated_at = timezone.now()
+        for relation in relations:
+            relation.metadata_defaults = {
+                **(relation.metadata_defaults or {}),
+                **normalized,
+            }
+            relation.updated_at = updated_at
+        M3UVODCategoryRelation.objects.bulk_update(
+            relations, ["metadata_defaults", "updated_at"], batch_size=1000
+        )
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation()
+        return Response({"updated_categories": len(relations)})
 
 
 class VODAccessPolicyViewSet(viewsets.ModelViewSet):

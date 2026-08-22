@@ -184,6 +184,7 @@ const User = ({ user = null, isOpen, onClose }) => {
             )}
             <TabsTab value="epg">EPG Defaults</TabsTab>
             <TabsTab value="api">API &amp; XC</TabsTab>
+            <TabsTab value="vod">VOD Preferences</TabsTab>
           </TabsList>
 
           <TabsPanel value="account">
@@ -417,6 +418,75 @@ const User = ({ user = null, isOpen, onClose }) => {
                   </Group>
                 </Stack>
               )}
+            </Stack>
+          </TabsPanel>
+
+          <TabsPanel value="vod">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                These preferences control both the XC catalog output and VOD
+                failover. Sources are ranked only by audio language, subtitle
+                language, and resolution. Category and M3U priorities are not
+                used.
+              </Text>
+              <Select
+                label="XC VOD output"
+                description="Compact exports one preferred edition per title. Variants exports every source edition."
+                data={[
+                  { value: 'compact', label: 'Compact — one preferred source' },
+                  {
+                    value: 'variants',
+                    label: 'Variants — all source editions',
+                  },
+                ]}
+                {...form.getInputProps('vod_export_mode')}
+                key={form.key('vod_export_mode')}
+              />
+              <TagsInput
+                label="Preferred and allowed audio languages"
+                description="Ordered ISO 639-2/B codes. Earlier values are preferred; for example ger, eng."
+                placeholder="ger, eng"
+                {...form.getInputProps('vod_audio_languages')}
+                key={form.key('vod_audio_languages')}
+              />
+              <TagsInput
+                label="Preferred and allowed subtitle languages"
+                description="Ordered ISO 639-2/B codes. Leave empty if subtitles are not required."
+                placeholder="ger, eng"
+                {...form.getInputProps('vod_subtitle_languages')}
+                key={form.key('vod_subtitle_languages')}
+              />
+              <TagsInput
+                label="Preferred resolutions"
+                description="Ordered from most to least preferred, for example 1080p, 720p."
+                placeholder="1080p, 720p"
+                {...form.getInputProps('vod_preferred_resolutions')}
+                key={form.key('vod_preferred_resolutions')}
+              />
+              <Group grow align="flex-start">
+                <NumberInput
+                  label="Minimum height"
+                  min={0}
+                  step={120}
+                  {...form.getInputProps('vod_min_height')}
+                  key={form.key('vod_min_height')}
+                />
+                <NumberInput
+                  label="Maximum height"
+                  min={0}
+                  step={120}
+                  {...form.getInputProps('vod_max_height')}
+                  key={form.key('vod_max_height')}
+                />
+              </Group>
+              <Switch
+                label="Allow sources with unknown technical metadata"
+                description="Disable only after the relevant sources have been identified manually or through playback."
+                {...form.getInputProps('vod_allow_unknown', {
+                  type: 'checkbox',
+                })}
+                key={form.key('vod_allow_unknown')}
+              />
             </Stack>
           </TabsPanel>
         </Tabs>
