@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     Series, VODCategory, Movie, Episode,
-    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation
+    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation,
+    VODSourceAsset, VODAccessPolicy, VODPlaybackSession,
 )
 
 
@@ -65,3 +66,23 @@ class M3UEpisodeRelationAdmin(admin.ModelAdmin):
     search_fields = ['episode__name', 'episode__series__name', 'm3u_account__name', 'stream_id']
     readonly_fields = ['created_at', 'updated_at']
 
+
+@admin.register(VODSourceAsset)
+class VODSourceAssetAdmin(admin.ModelAdmin):
+    list_display = ['uuid', 'asset_type', 'provider_origin_key', 'provider_asset_id', 'updated_at']
+    list_filter = ['asset_type']
+    search_fields = ['uuid', 'provider_origin_key', 'provider_asset_id']
+
+
+@admin.register(VODAccessPolicy)
+class VODAccessPolicyAdmin(admin.ModelAdmin):
+    list_display = ['name', 'export_mode', 'is_default', 'is_active', 'updated_at']
+    list_filter = ['export_mode', 'is_default', 'is_active']
+    filter_horizontal = ['users']
+
+
+@admin.register(VODPlaybackSession)
+class VODPlaybackSessionAdmin(admin.ModelAdmin):
+    list_display = ['session_id', 'content_name', 'user', 'mode', 'status', 'started_at']
+    list_filter = ['mode', 'status', 'content_type']
+    search_fields = ['session_id', 'content_name', 'provider_asset_id', 'user__username']

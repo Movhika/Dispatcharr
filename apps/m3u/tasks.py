@@ -737,15 +737,52 @@ def process_groups(account, groups, scan_start_time=None):
     if scan_start_time is None:
         scan_start_time = timezone.now()
 
+    account_custom_props = ensure_custom_properties_dict(account.custom_properties)
+    auto_enable_new_groups_live = account_custom_props.get(
+        "auto_enable_new_groups_live", True
+    )
+    from apps.m3u.group_rules import account_group_rules, evaluate_group_rules
+
+    discovery_rules = account_group_rules(account, "live")
+    existing_relationships = _db_query_with_retry(
+        lambda: {
+            rel.channel_group.name: rel
+            for rel in ChannelGroupM3UAccount.objects.filter(
+                m3u_account=account,
+                channel_group__name__in=groups.keys(),
+            ).select_related("channel_group")
+        },
+        label=f"process_groups relationships for account {account.id}",
+    )
+    discovery_decisions = {}
+    kept_groups = {}
+    for group_name, custom_props in groups.items():
+        if group_name in existing_relationships:
+            kept_groups[group_name] = custom_props
+            continue
+        decision = evaluate_group_rules(
+            discovery_rules,
+            group_name=group_name,
+            item_names=custom_props.get("_item_names", []),
+            default_enabled=auto_enable_new_groups_live,
+        )
+        discovery_decisions[group_name] = decision
+        if decision.ignored:
+            logger.info(
+                "Ignoring new live group '%s' for account %s by discovery rule %s",
+                group_name,
+                account.id,
+                decision.matched_rule_id,
+            )
+            continue
+        kept_groups[group_name] = custom_props
+    groups = kept_groups
+
     existing_groups = {
         group.name: group
         for group in ChannelGroup.objects.filter(name__in=groups.keys())
     }
     logger.info(f"Currently {len(existing_groups)} existing groups")
-
-    # Check if we should auto-enable new groups based on account settings
-    account_custom_props = ensure_custom_properties_dict(account.custom_properties)
-    auto_enable_new_groups_live = account_custom_props.get("auto_enable_new_groups_live", True)
 
     # Separate existing groups from groups that need to be created
     existing_group_objs = []
@@ -766,18 +803,6 @@ def process_groups(account, groups, scan_start_time=None):
 
     # Combine all groups
     all_group_objs = existing_group_objs + newly_created_group_objs
-
-    # Get existing relationships for this account
-    existing_relationships = _db_query_with_retry(
-        lambda: {
-            rel.channel_group.name: rel
-            for rel in ChannelGroupM3UAccount.objects.filter(
-                m3u_account=account,
-                channel_group__name__in=groups.keys(),
-            ).select_related("channel_group")
-        },
-        label=f"process_groups relationships for account {account.id}",
-    )
 
     relations_to_create = []
     relations_to_update = []
@@ -823,16 +848,24 @@ def process_groups(account, groups, scan_start_time=None):
                 logger.debug(f"xc_id unchanged for group '{group.name}' - account {account.id}")
         else:
             # Create new relationship - this group is new to this M3U account
-            # Use the auto_enable setting to determine if it should start enabled
-            if not auto_enable_new_groups_live:
+            decision = discovery_decisions[group.name]
+            if not decision.enabled:
                 logger.info(f"Group '{group.name}' is new to account {account.id} - creating relationship but DISABLED (auto_enable_new_groups_live=False)")
+
+            stored_props = {
+                key: value
+                for key, value in custom_props.items()
+                if key != "_item_names"
+            }
+            if decision.matched_rule_id:
+                stored_props["discovery_rule_id"] = decision.matched_rule_id
 
             relations_to_create.append(
                 ChannelGroupM3UAccount(
                     channel_group=group,
                     m3u_account=account,
-                    custom_properties=custom_props,
-                    enabled=auto_enable_new_groups_live,
+                    custom_properties=stored_props,
+                    enabled=decision.enabled,
                     last_seen=scan_start_time,
                     is_stale=False,
                 )
@@ -1558,6 +1591,12 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
     extinf_data = []
     groups = {"Default Group": {}}
 
+    uses_live_item_names = account.group_rules.filter(
+        scope="live",
+        match_field="item_name",
+        enabled=True,
+    ).exists()
+
     if account.account_type == M3UAccount.Types.XC:
         # Log detailed information about the account
         logger.info(
@@ -1673,7 +1712,23 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
                             logger.info(f"Adding category: {cat_name} (ID: {cat_id})")
                             groups[cat_name] = {
                                 "xc_id": cat_id,
+                                "_item_names": [],
                             }
+
+                        # Content-aware discovery rules are opt-in. Only when
+                        # configured do we pay for the full provider stream
+                        # catalog during group discovery.
+                        if uses_live_item_names:
+                            item_names_by_category = {}
+                            for stream in xc_client.get_all_live_streams():
+                                category_id = str(stream.get("category_id") or "")
+                                item_names_by_category.setdefault(category_id, []).append(
+                                    str(stream.get("name") or "")
+                                )
+                            for props in groups.values():
+                                props["_item_names"] = item_names_by_category.get(
+                                    str(props.get("xc_id") or ""), []
+                                )
                     except Exception as e:
                         # Determine if this is an authentication error or category retrieval error
                         error_str = str(e).lower()
@@ -1750,7 +1805,13 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
                     group_title_attr = get_case_insensitive_attr(entry["attributes"], "group-title", "")
                     if group_title_attr and group_title_attr not in groups:
                         logger.debug(f"Found new group for M3U account {account_id}: '{group_title_attr}'")
-                        groups[group_title_attr] = {}
+                        groups[group_title_attr] = (
+                            {"_item_names": []} if uses_live_item_names else {}
+                        )
+                    if group_title_attr and uses_live_item_names:
+                        groups[group_title_attr].setdefault("_item_names", []).append(
+                            entry.get("name") or ""
+                        )
                     extinf_data.append(entry)
 
                     if valid_stream_count % 1000 == 0:
@@ -1765,7 +1826,13 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
                     group_title_attr = get_case_insensitive_attr(entry["attributes"], "group-title", "")
                     if group_title_attr and group_title_attr not in groups:
                         logger.debug(f"Found new group for M3U account {account_id}: '{group_title_attr}'")
-                        groups[group_title_attr] = {}
+                        groups[group_title_attr] = (
+                            {"_item_names": []} if uses_live_item_names else {}
+                        )
+                    if group_title_attr and uses_live_item_names:
+                        groups[group_title_attr].setdefault("_item_names", []).append(
+                            entry.get("name") or ""
+                        )
                     extinf_data.append(entry)
 
                     if valid_stream_count % 1000 == 0:

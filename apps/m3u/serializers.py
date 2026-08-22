@@ -1,7 +1,13 @@
 from core.utils import validate_flexible_url, ensure_custom_properties_dict
 from rest_framework import serializers, status
 from rest_framework.response import Response
-from .models import M3UAccount, M3UFilter, ServerGroup, M3UAccountProfile
+from .models import (
+    M3UAccount,
+    M3UFilter,
+    M3UGroupRule,
+    ServerGroup,
+    M3UAccountProfile,
+)
 from core.models import UserAgent
 from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
 from apps.channels.serializers import (
@@ -27,6 +33,34 @@ class M3UFilterSerializer(serializers.ModelSerializer):
             "order",
             "custom_properties",
         ]
+
+
+class M3UGroupRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = M3UGroupRule
+        fields = [
+            "id",
+            "scope",
+            "match_field",
+            "match_mode",
+            "regex_pattern",
+            "action",
+            "case_sensitive",
+            "enabled",
+            "order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_regex_pattern(self, value):
+        import re
+
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        return value
 
 
 class M3UAccountProfileSerializer(serializers.ModelSerializer):

@@ -5,7 +5,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
+from django.db.models import Count, Q
 import django_filters
 import logging
 from types import SimpleNamespace
@@ -15,7 +15,8 @@ from apps.accounts.permissions import (
 )
 from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
-    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
+    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
+    VODSourceAsset, VODAccessPolicy, VODPlaybackSession,
 )
 from .serializers import (
     MovieSerializer,
@@ -25,7 +26,11 @@ from .serializers import (
     VODLogoSerializer,
     M3UMovieRelationSerializer,
     M3USeriesRelationSerializer,
-    M3UEpisodeRelationSerializer
+    M3UEpisodeRelationSerializer,
+    VODSourceAssetSerializer,
+    VODAccessPolicySerializer,
+    VODPlaybackSessionSerializer,
+    M3UVODCategoryRelationSerializer,
 )
 from .image_proxy import (
     is_proxyable_image_url,
@@ -43,6 +48,257 @@ from django.utils import timezone
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _is_admin(user):
+    return bool(user and getattr(user, "user_level", 0) >= 10)
+
+
+class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = VODSourceAsset.objects.annotate(
+        movie_relation_count=Count("movie_relations", distinct=True),
+        series_relation_count=Count("series_relations", distinct=True),
+        episode_relation_count=Count("episode_relations", distinct=True),
+    ).order_by("-updated_at")
+    serializer_class = VODSourceAssetSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        return [Authenticated()]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset.none()
+        return self.queryset if _is_admin(self.request.user) else self.queryset.none()
+
+    @action(detail=True, methods=["patch"], url_path="manual-metadata")
+    def manual_metadata(self, request, pk=None):
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        asset = self.get_object()
+        metadata = request.data.get("metadata", {})
+        locked_fields = request.data.get("locked_fields", list(metadata))
+        if not isinstance(metadata, dict) or not isinstance(locked_fields, list):
+            return Response(
+                {"detail": "metadata must be an object and locked_fields a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        asset.manual_metadata = metadata
+        asset.locked_fields = sorted({str(field) for field in locked_fields})
+        asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
+        return Response(self.get_serializer(asset).data)
+
+    @action(detail=True, methods=["post"], url_path="link-relations")
+    def link_relations(self, request, pk=None):
+        """Explicitly mark account-scoped relations as the same media edition."""
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        asset = self.get_object()
+        relation_type = request.data.get("relation_type")
+        relation_ids = request.data.get("relation_ids", [])
+        model_map = {
+            "movie": M3UMovieRelation,
+            "series": M3USeriesRelation,
+            "episode": M3UEpisodeRelation,
+        }
+        model = model_map.get(relation_type)
+        if model is None or relation_type != asset.asset_type:
+            return Response(
+                {"detail": "relation_type must match the target asset"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        relations = list(model.objects.filter(id__in=relation_ids))
+        if len(relations) != len(set(relation_ids)):
+            return Response(
+                {"detail": "One or more relations do not exist"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        canonical_ids = {
+            getattr(relation, f"{relation_type}_id", None)
+            if relation_type != "episode"
+            else relation.episode_id
+            for relation in relations
+        }
+        if len(canonical_ids) > 1:
+            return Response(
+                {"detail": "Only relations for the same canonical content may be linked"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        existing_canonical_ids = set()
+        for related_name, canonical_field in (
+            ("movie_relations", "movie_id"),
+            ("series_relations", "series_id"),
+            ("episode_relations", "episode_id"),
+        ):
+            if related_name.startswith(relation_type):
+                existing_canonical_ids.update(
+                    getattr(asset, related_name).values_list(canonical_field, flat=True)
+                )
+        if existing_canonical_ids and canonical_ids and (
+            canonical_ids != existing_canonical_ids
+        ):
+            return Response(
+                {"detail": "Only relations for the same canonical content may be linked"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        model.objects.filter(id__in=relation_ids).update(source_asset=asset)
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation()
+        return Response(self.get_serializer(asset).data)
+
+
+class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = M3UVODCategoryRelation.objects.select_related(
+        "m3u_account", "category"
+    )
+    serializer_class = M3UVODCategoryRelationSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        return [Authenticated()]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset.none()
+        return self.queryset if _is_admin(self.request.user) else self.queryset.none()
+
+    @action(detail=True, methods=["patch"], url_path="metadata-defaults")
+    def metadata_defaults(self, request, pk=None):
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        relation = self.get_object()
+        serializer = self.get_serializer(
+            relation,
+            data={"metadata_defaults": request.data.get("metadata_defaults", {})},
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class VODAccessPolicyViewSet(viewsets.ModelViewSet):
+    queryset = VODAccessPolicy.objects.prefetch_related(
+        "users",
+        "vodpolicycategory_set__category_relation__category",
+        "vodpolicycategory_set__category_relation__m3u_account",
+    )
+    serializer_class = VODAccessPolicySerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        return [Authenticated()]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset.none()
+        if _is_admin(self.request.user):
+            return self.queryset
+        return self.queryset.filter(
+            Q(users=self.request.user) | Q(is_default=True)
+        ).distinct()
+
+    def _admin_only(self, request):
+        return None if _is_admin(request.user) else Response(status=status.HTTP_403_FORBIDDEN)
+
+    def create(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().destroy(request, *args, **kwargs)
+
+
+class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = VODPlaybackSession.objects.select_related(
+        "user", "source_asset", "m3u_account", "category"
+    )
+    serializer_class = VODPlaybackSessionSerializer
+
+    class Pagination(PageNumberPagination):
+        page_size = 50
+        page_size_query_param = "page_size"
+        max_page_size = 200
+
+    pagination_class = Pagination
+
+    def get_permissions(self):
+        return [Authenticated()]
+
+    def get_queryset(self):
+        queryset = self.queryset
+        if getattr(self, "swagger_fake_view", False):
+            return queryset.none()
+        if not _is_admin(self.request.user):
+            queryset = queryset.filter(user=self.request.user)
+        return queryset
+
+    @action(detail=True, methods=["post"], url_path="telemetry")
+    def telemetry(self, request, pk=None):
+        playback = self.get_object()
+        event = request.data.get("event")
+        metadata = request.data.get("metadata", {})
+        if metadata and not isinstance(metadata, dict):
+            return Response(
+                {"detail": "metadata must be an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        status_by_event = {
+            "started": VODPlaybackSession.Status.PROXYING,
+            "progress": playback.status,
+            "stopped": VODPlaybackSession.Status.STOPPED,
+            "completed": VODPlaybackSession.Status.COMPLETED,
+            "failed": VODPlaybackSession.Status.FAILED,
+        }
+        if event not in status_by_event:
+            return Response(
+                {"detail": "Unsupported telemetry event"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        playback.mode = VODPlaybackSession.Mode.PLAYER
+        playback.status = status_by_event[event]
+        try:
+            bytes_sent = int(request.data.get("bytes_sent") or 0)
+            watched_seconds = int(request.data.get("watched_seconds") or 0)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "bytes_sent and watched_seconds must be integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        playback.bytes_sent = max(playback.bytes_sent, bytes_sent)
+        playback.watched_seconds = max(
+            playback.watched_seconds, watched_seconds
+        )
+        playback.observed_metadata = {
+            **(playback.observed_metadata or {}),
+            **metadata,
+        }
+        if event in {"stopped", "completed", "failed"}:
+            playback.ended_at = timezone.now()
+        if event == "failed":
+            playback.error = str(request.data.get("error") or "")[:2000]
+        playback.save()
+        if metadata and playback.source_asset_id:
+            playback.source_asset.apply_observation(metadata)
+        return Response(self.get_serializer(playback).data)
 
 
 class VODPagination(PageNumberPagination):

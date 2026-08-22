@@ -1,8 +1,10 @@
 from rest_framework import serializers
+from django.db import transaction
 from .image_proxy import vodlogo_cache_url
 from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
-    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
+    M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
+    VODSourceAsset, VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
 )
 from apps.m3u.serializers import M3UAccountSerializer
 
@@ -70,12 +72,38 @@ class VODLogoSerializer(serializers.ModelSerializer):
 
 
 class M3UVODCategoryRelationSerializer(serializers.ModelSerializer):
-    category = serializers.IntegerField(source="category.id")
-    m3u_account = serializers.IntegerField(source="m3u_account.id")
+    category = serializers.PrimaryKeyRelatedField(read_only=True)
+    m3u_account = serializers.PrimaryKeyRelatedField(read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_type = serializers.CharField(
+        source="category.category_type", read_only=True
+    )
+    account_name = serializers.CharField(source="m3u_account.name", read_only=True)
 
     class Meta:
         model = M3UVODCategoryRelation
-        fields = ["category", "m3u_account", "enabled"]
+        fields = [
+            "id", "category", "category_name", "category_type",
+            "m3u_account", "account_name", "enabled", "metadata_defaults",
+        ]
+
+    def validate_metadata_defaults(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be an object")
+        allowed = {
+            "audio_languages",
+            "subtitle_languages",
+            "resolution",
+            "height",
+            "quality",
+            "preferred",
+        }
+        unknown = set(value) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f"Unsupported fields: {', '.join(sorted(unknown))}"
+            )
+        return value
 
 
 class VODCategorySerializer(serializers.ModelSerializer):
@@ -283,6 +311,191 @@ class M3UEpisodeRelationSerializer(serializers.ModelSerializer):
 
         # 5. Fallback - no quality info available
         return None
+
+
+class VODSourceAssetSerializer(serializers.ModelSerializer):
+    effective_metadata = serializers.SerializerMethodField()
+    relation_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VODSourceAsset
+        fields = [
+            "id", "uuid", "asset_type", "provider_origin_key",
+            "provider_asset_id", "declared_metadata", "observed_metadata",
+            "manual_metadata", "locked_fields", "last_observed_at",
+            "created_at", "updated_at", "effective_metadata", "relation_count",
+        ]
+        read_only_fields = [
+            "id", "uuid", "asset_type", "provider_origin_key",
+            "provider_asset_id", "declared_metadata", "observed_metadata",
+            "last_observed_at", "created_at", "updated_at",
+        ]
+
+    def get_effective_metadata(self, obj) -> dict:
+        return obj.effective_metadata()
+
+    def get_relation_count(self, obj) -> int:
+        if hasattr(obj, "movie_relation_count"):
+            return (
+                obj.movie_relation_count
+                + obj.series_relation_count
+                + obj.episode_relation_count
+            )
+        return (
+            obj.movie_relations.count()
+            + obj.series_relations.count()
+            + obj.episode_relations.count()
+        )
+
+
+class VODPolicyCategorySerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(
+        source="category_relation.category.name", read_only=True
+    )
+    account_name = serializers.CharField(
+        source="category_relation.m3u_account.name", read_only=True
+    )
+
+    class Meta:
+        model = VODPolicyCategory
+        fields = [
+            "category_relation", "category_name", "account_name",
+            "enabled", "priority",
+        ]
+
+
+class VODAccessPolicySerializer(serializers.ModelSerializer):
+    category_rules = VODPolicyCategorySerializer(
+        source="vodpolicycategory_set", many=True, required=False
+    )
+
+    class Meta:
+        model = VODAccessPolicy
+        fields = [
+            "id", "name", "export_mode", "is_default", "is_active",
+            "hard_constraints", "ranking", "users", "category_rules",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def _replace_category_rules(self, policy, rules):
+        if rules is None:
+            return
+        policy.vodpolicycategory_set.all().delete()
+        VODPolicyCategory.objects.bulk_create([
+            VODPolicyCategory(policy=policy, **rule) for rule in rules
+        ])
+
+    def validate_ranking(self, value):
+        allowed = {"category_priority", "resolution", "account_priority"}
+        if not isinstance(value, list) or set(value) - allowed:
+            raise serializers.ValidationError(
+                "Use only category_priority, resolution, and account_priority"
+            )
+        return list(dict.fromkeys(value))
+
+    def validate_hard_constraints(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be an object")
+        allowed = {
+            "required_audio_languages", "required_subtitle_languages",
+            "min_height", "max_height", "allow_unknown_metadata",
+            "cross_category_failover",
+        }
+        if set(value) - allowed:
+            raise serializers.ValidationError("Contains unsupported fields")
+        normalized = dict(value)
+        for field in ("required_audio_languages", "required_subtitle_languages"):
+            languages = normalized.get(field, [])
+            if not isinstance(languages, list):
+                raise serializers.ValidationError(
+                    {field: "Must be a list of language codes"}
+                )
+            normalized[field] = [
+                str(language).strip()
+                for language in languages
+                if str(language).strip()
+            ]
+        for field in ("min_height", "max_height"):
+            try:
+                normalized[field] = max(0, int(normalized.get(field) or 0))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {field: "Must be a non-negative integer"}
+                )
+        if (
+            normalized["min_height"]
+            and normalized["max_height"]
+            and normalized["min_height"] > normalized["max_height"]
+        ):
+            raise serializers.ValidationError(
+                "min_height cannot be greater than max_height"
+            )
+        for field in ("allow_unknown_metadata", "cross_category_failover"):
+            if field in normalized and not isinstance(normalized[field], bool):
+                raise serializers.ValidationError({field: "Must be a boolean"})
+        return normalized
+
+    def _assign_users(self, policy, users):
+        if users is None:
+            return
+        for other in VODAccessPolicy.objects.exclude(pk=policy.pk).filter(
+            users__in=users
+        ).distinct():
+            other.users.remove(*users)
+        policy.users.set(users)
+
+    def _normalize_default(self, policy):
+        if policy.is_default:
+            VODAccessPolicy.objects.exclude(pk=policy.pk).filter(
+                is_default=True
+            ).update(is_default=False)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        rules = validated_data.pop("vodpolicycategory_set", [])
+        users = validated_data.pop("users", [])
+        policy = VODAccessPolicy.objects.create(**validated_data)
+        self._assign_users(policy, users)
+        self._normalize_default(policy)
+        self._replace_category_rules(policy, rules)
+        return policy
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        rules = validated_data.pop("vodpolicycategory_set", None)
+        users = validated_data.pop("users", None)
+        instance = super().update(instance, validated_data)
+        self._assign_users(instance, users)
+        self._normalize_default(instance)
+        self._replace_category_rules(instance, rules)
+        return instance
+
+
+class VODPlaybackSessionSerializer(serializers.ModelSerializer):
+    source_effective_metadata = serializers.SerializerMethodField()
+    account_name = serializers.CharField(source="m3u_account.name", read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = VODPlaybackSession
+        fields = "__all__"
+        read_only_fields = [
+            "id", "session_id", "user", "source_asset", "m3u_account",
+            "category", "content_type", "canonical_id", "relation_id",
+            "provider_asset_id", "content_name", "mode", "status",
+            "client_ip", "user_agent", "started_at", "ended_at",
+            "bytes_sent", "watched_seconds", "observed_metadata",
+            "failover_chain", "error", "custom_properties",
+        ]
+
+    def get_source_effective_metadata(self, obj) -> dict:
+        return (
+            obj.source_asset.effective_metadata()
+            if obj.source_asset_id
+            else {"values": {}, "provenance": {}}
+        )
 
 
 class EnhancedSeriesSerializer(serializers.ModelSerializer):

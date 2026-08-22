@@ -21,7 +21,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .models import M3UAccount, M3UFilter, ServerGroup, M3UAccountProfile
+from .models import (
+    M3UAccount,
+    M3UFilter,
+    M3UGroupRule,
+    ServerGroup,
+    M3UAccountProfile,
+)
 from core.models import UserAgent
 from core.utils import safe_upload_path, ensure_custom_properties_dict
 from apps.channels.utils import coerce_channel_profile_ids
@@ -32,6 +38,7 @@ from apps.vod.models import M3UVODCategoryRelation
 from .serializers import (
     M3UAccountSerializer,
     M3UFilterSerializer,
+    M3UGroupRuleSerializer,
     ServerGroupSerializer,
     M3UAccountProfileSerializer,
 )
@@ -602,6 +609,28 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
 
         # Perform the actual save
         serializer.save(m3u_account_id=account_id)
+
+
+class M3UGroupRuleViewSet(viewsets.ModelViewSet):
+    queryset = M3UGroupRule.objects.all()
+    serializer_class = M3UGroupRuleSerializer
+
+    def get_permissions(self):
+        try:
+            return [perm() for perm in permission_classes_by_action[self.action]]
+        except KeyError:
+            return [Authenticated()]
+
+    def get_queryset(self):
+        account_id = self.kwargs.get("account_id")
+        if account_id is None:
+            return self.queryset.none()
+        queryset = self.queryset.filter(m3u_account_id=account_id)
+        scope = self.request.query_params.get("scope")
+        return queryset.filter(scope=scope) if scope else queryset
+
+    def perform_create(self, serializer):
+        serializer.save(m3u_account_id=self.kwargs["account_id"])
 
 
 class ServerGroupViewSet(viewsets.ModelViewSet):

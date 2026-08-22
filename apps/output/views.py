@@ -465,11 +465,11 @@ def xc_player_api(request, full=False):
     elif action == "get_simple_data_table":
         return JsonResponse(xc_get_epg(request, user, short=False), safe=False)
     elif action == "get_vod_categories":
-        return JsonResponse(xc_get_vod_categories(user), safe=False)
+        return JsonResponse(xc_get_vod_categories(user, request=request), safe=False)
     elif action == "get_vod_streams":
         return JsonResponse(xc_get_vod_streams(request, user, request.GET.get("category_id")), safe=False)
     elif action == "get_series_categories":
-        return JsonResponse(xc_get_series_categories(user), safe=False)
+        return JsonResponse(xc_get_series_categories(user, request=request), safe=False)
     elif action == "get_series":
         return JsonResponse(xc_get_series(request, user, request.GET.get("category_id")), safe=False)
     elif action == "get_series_info":
@@ -1129,6 +1129,8 @@ def _xc_fetch_priority_distinct_relations(
     distinct_field,
     value_fields,
     order_by_name_field,
+    policy=None,
+    canonical_field=None,
 ):
     """
     Return one row dict per distinct content key (highest account priority wins).
@@ -1148,11 +1150,41 @@ def _xc_fetch_priority_distinct_relations(
     )
 
     def _fetch_by_ids(ids):
-        return list(
-            _xc_annotate_relation_artwork(manager.filter(pk__in=ids))
-            .values(*value_fields)
-            .order_by(Lower(order_by_name_field))
+        # Avoid database parameter limits and oversized SQL statements on very
+        # large libraries. Sorting is done once after all narrow chunks arrive.
+        rows = []
+        chunk_size = 2000
+        for offset in range(0, len(ids), chunk_size):
+            chunk = ids[offset:offset + chunk_size]
+            rows.extend(
+                _xc_annotate_relation_artwork(manager.filter(pk__in=chunk))
+                .values(*value_fields)
+            )
+        rows.sort(key=lambda row: (row[order_by_name_field] or '').lower())
+        return rows
+
+    if policy is not None:
+        from apps.vod.policies import (
+            allowed_category_query,
+            select_relation_ids_for_policy,
         )
+
+        narrow_qs = narrow_qs.filter(allowed_category_query(policy))
+
+        candidate_iterator = (
+            narrow_qs.select_related(
+                "m3u_account",
+                "source_asset",
+            )
+            .order_by("pk")
+            .iterator(chunk_size=2000)
+        )
+        selected_ids = select_relation_ids_for_policy(
+            candidate_iterator,
+            policy,
+            canonical_field=canonical_field,
+        )
+        return _fetch_by_ids(selected_ids)
 
     if connection.vendor == 'postgresql':
         winning_ids_qs = (
@@ -1187,17 +1219,45 @@ def _xc_fetch_priority_distinct_relations(
     return rows
 
 
-def xc_get_vod_categories(user):
+def _xc_policy_for_user(user):
+    from apps.vod.policies import policy_for_user
+
+    if not hasattr(user, "_vod_access_policy"):
+        user._vod_access_policy = policy_for_user(user)
+    return user._vod_access_policy
+
+
+def xc_get_vod_categories(user, request=None):
     """Get VOD categories for XtreamCodes API"""
     from apps.vod.models import VODCategory, M3UMovieRelation
+
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "movie-categories")
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     response = []
 
     # All authenticated users get access to VOD from all active M3U accounts
-    categories = VODCategory.objects.filter(
-        category_type='movie',
-        m3umovierelation__m3u_account__is_active=True
-    ).distinct().order_by(Lower("name"))
+    if policy:
+        category_ids = policy.vodpolicycategory_set.filter(
+            enabled=True,
+            category_relation__enabled=True,
+            category_relation__m3u_account__is_active=True,
+            category_relation__category__category_type="movie",
+        ).values_list("category_relation__category_id", flat=True)
+        categories = VODCategory.objects.filter(id__in=category_ids)
+    else:
+        categories = VODCategory.objects.filter(
+            category_type='movie',
+            m3umovierelation__m3u_account__is_active=True
+        )
+    categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:
         response.append({
@@ -1206,6 +1266,7 @@ def xc_get_vod_categories(user):
             "parent_id": 0,
         })
 
+    safe_cache_set(cache_key, response, timeout=3600)
     return response
 
 
@@ -1213,8 +1274,19 @@ def xc_get_vod_streams(request, user, category_id=None):
     """Get VOD streams (movies) for XtreamCodes API"""
     from apps.vod.models import M3UMovieRelation
 
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "movies", category_id)
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     rel_filters = {"m3u_account__is_active": True}
-    if category_id:
+    compact_policy = bool(policy and policy.export_mode == "compact")
+    if category_id and not compact_policy:
         rel_filters["category_id"] = category_id
     # Non-admins with Hide Mature Content skip adult VODs.
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
@@ -1226,7 +1298,15 @@ def xc_get_vod_streams(request, user, category_id=None):
         distinct_field=('movie_id', 'category_id'),
         value_fields=XC_MOVIE_VALUE_FIELDS,
         order_by_name_field='movie__name',
+        policy=policy,
+        canonical_field="movie_id",
     )
+    if category_id and compact_policy:
+        relations = [
+            row
+            for row in relations
+            if str(row["category_id"] or "0") == str(category_id)
+        ]
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for the fallback-icon proxy rewrites below.
@@ -1276,20 +1356,41 @@ def xc_get_vod_streams(request, user, category_id=None):
             "direct_source": "",
         })
 
+    safe_cache_set(cache_key, streams, timeout=3600)
     return streams
 
 
-def xc_get_series_categories(user):
+def xc_get_series_categories(user, request=None):
     """Get series categories for XtreamCodes API"""
     from apps.vod.models import VODCategory, M3USeriesRelation
+
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "series-categories")
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     response = []
 
     # All authenticated users get access to series from all active M3U accounts
-    categories = VODCategory.objects.filter(
-        category_type='series',
-        m3useriesrelation__m3u_account__is_active=True
-    ).distinct().order_by(Lower("name"))
+    if policy:
+        category_ids = policy.vodpolicycategory_set.filter(
+            enabled=True,
+            category_relation__enabled=True,
+            category_relation__m3u_account__is_active=True,
+            category_relation__category__category_type="series",
+        ).values_list("category_relation__category_id", flat=True)
+        categories = VODCategory.objects.filter(id__in=category_ids)
+    else:
+        categories = VODCategory.objects.filter(
+            category_type='series',
+            m3useriesrelation__m3u_account__is_active=True
+        )
+    categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:
         response.append({
@@ -1298,6 +1399,7 @@ def xc_get_series_categories(user):
             "parent_id": 0,
         })
 
+    safe_cache_set(cache_key, response, timeout=3600)
     return response
 
 
@@ -1305,8 +1407,19 @@ def xc_get_series(request, user, category_id=None):
     """Get series list for XtreamCodes API"""
     from apps.vod.models import M3USeriesRelation
 
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "series", category_id)
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     rel_filters = {"m3u_account__is_active": True}
-    if category_id:
+    compact_policy = bool(policy and policy.export_mode == "compact")
+    if category_id and not compact_policy:
         rel_filters["category_id"] = category_id
 
     relations = _xc_fetch_priority_distinct_relations(
@@ -1315,7 +1428,15 @@ def xc_get_series(request, user, category_id=None):
         distinct_field=('series_id', 'category_id'),
         value_fields=XC_SERIES_VALUE_FIELDS,
         order_by_name_field='series__name',
+        policy=policy,
+        canonical_field="series_id",
     )
+    if category_id and compact_policy:
+        relations = [
+            row
+            for row in relations
+            if str(row["category_id"] or "0") == str(category_id)
+        ]
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for all series backdrop rewrites.
@@ -1368,6 +1489,7 @@ def xc_get_series(request, user, category_id=None):
             "imdb_id": row['series__imdb_id'] or "",
         })
 
+    safe_cache_set(cache_key, series_list, timeout=3600)
     return series_list
 
 
@@ -1378,13 +1500,28 @@ def xc_get_series_info(request, user, series_id):
     if not series_id:
         raise Http404()
 
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+    from apps.vod.policies import relation_allowed
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "series-info", series_id)
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     # All authenticated users get access to series from all active M3U accounts
     filters = {"id": series_id, "m3u_account__is_active": True}
 
     try:
-        series_relation = M3USeriesRelation.objects.select_related('series', 'series__logo').get(**filters)
+        series_relation = M3USeriesRelation.objects.select_related(
+            'series', 'series__logo', 'm3u_account', 'category', 'source_asset'
+        ).get(**filters)
         series = series_relation.series
     except M3USeriesRelation.DoesNotExist:
+        raise Http404()
+    if policy and not relation_allowed(series_relation, policy):
         raise Http404()
 
     # Check if we need to refresh detailed info (similar to vod api_views pattern)
@@ -1667,6 +1804,7 @@ def xc_get_series_info(request, user, series_id):
         },
         "episodes": dict(seasons)
     }
+    safe_cache_set(cache_key, info, timeout=3600)
     return info
 
 
@@ -1679,6 +1817,17 @@ def xc_get_vod_info(request, user, vod_id):
     if not vod_id:
         raise Http404()
 
+    from apps.vod.catalog_cache import (
+        catalog_cache_key, safe_cache_get, safe_cache_set,
+    )
+    from apps.vod.policies import relation_allowed
+
+    policy = _xc_policy_for_user(user)
+    cache_key = catalog_cache_key(request, user, "movie-info", vod_id)
+    cached = safe_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     # All authenticated users get access to VOD from all active M3U accounts
     filters = {"id": vod_id, "m3u_account__is_active": True}
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
@@ -1686,12 +1835,14 @@ def xc_get_vod_info(request, user, vod_id):
 
     try:
         movie_relation = M3UMovieRelation.objects.select_related(
-            'movie', 'movie__logo'
+            'movie', 'movie__logo', 'm3u_account', 'category', 'source_asset'
         ).filter(**filters).first()
         if not movie_relation:
             raise Http404()
         movie = movie_relation.movie
     except (M3UMovieRelation.DoesNotExist, M3UMovieRelation.MultipleObjectsReturned):
+        raise Http404()
+    if policy and not relation_allowed(movie_relation, policy):
         raise Http404()
 
     # Initialize basic movie data first
@@ -1838,6 +1989,7 @@ def xc_get_vod_info(request, user, vod_id):
         }
     }
 
+    safe_cache_set(cache_key, info, timeout=3600)
     return info
 
 

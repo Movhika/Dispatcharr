@@ -213,6 +213,83 @@ class M3UFilter(models.Model):
         return f"[{self.m3u_account.name}] {filter_type_display}: {self.regex_pattern} ({exclude_status})"
 
 
+class M3UGroupRule(models.Model):
+    """Ordered discovery policy for newly discovered Live/VOD groups.
+
+    Stream filters and discovery rules intentionally remain separate: an
+    ``M3UFilter`` decides whether an individual live stream is imported, while
+    this model decides what to do with a previously unseen group/category.
+    """
+
+    class Scope(models.TextChoices):
+        LIVE = "live", "Live TV"
+        MOVIE = "movie", "VOD Movies"
+        SERIES = "series", "VOD Series"
+
+    class MatchField(models.TextChoices):
+        GROUP_NAME = "group_name", "Group name"
+        ITEM_NAME = "item_name", "Contained item name"
+
+    class MatchMode(models.TextChoices):
+        ANY = "any", "Any item"
+        ALL = "all", "All items"
+
+    class Action(models.TextChoices):
+        ENABLE = "enable", "Enable"
+        DISABLE = "disable", "Import disabled"
+        IGNORE = "ignore", "Ignore"
+
+    m3u_account = models.ForeignKey(
+        M3UAccount,
+        on_delete=models.CASCADE,
+        related_name="group_rules",
+    )
+    scope = models.CharField(max_length=10, choices=Scope.choices)
+    match_field = models.CharField(
+        max_length=20,
+        choices=MatchField.choices,
+        default=MatchField.GROUP_NAME,
+    )
+    match_mode = models.CharField(
+        max_length=10,
+        choices=MatchMode.choices,
+        default=MatchMode.ANY,
+        help_text="Used only when matching contained item names.",
+    )
+    regex_pattern = models.CharField(max_length=500)
+    action = models.CharField(
+        max_length=10,
+        choices=Action.choices,
+        default=Action.DISABLE,
+    )
+    case_sensitive = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("scope", "order", "id")
+        indexes = [
+            models.Index(
+                fields=("m3u_account", "scope", "enabled", "order"),
+                name="m3u_group_rule_lookup_idx",
+            )
+        ]
+
+    def clean(self):
+        try:
+            re.compile(self.regex_pattern)
+        except re.error as exc:
+            raise ValidationError({"regex_pattern": f"Invalid regex: {exc}"})
+
+    def __str__(self):
+        return (
+            f"[{self.m3u_account}] {self.scope}:{self.match_field} "
+            f"/{self.regex_pattern}/ -> {self.action}"
+        )
+
+
 class ServerGroup(models.Model):
     """
     Groups M3U accounts that share provider credentials.

@@ -127,6 +127,13 @@ def refresh_vod_content(account_id):
         cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
         logger.info(f"VOD cleanup completed: {cleanup_result}")
 
+        # Most import writes use bulk_create/bulk_update and intentionally skip
+        # model signals. Invalidate the versioned XC cache once per completed
+        # scan instead of once per relation.
+        from apps.vod.catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation()
+
         # Send completion notification
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
                        message=f"VOD refresh completed in {duration:.2f} seconds")
@@ -165,7 +172,15 @@ def refresh_categories(account_id, client=None):
             f"({account.name}); aborting VOD refresh to preserve existing category selections"
         )
         return None
-    category_map = batch_create_categories(categories_data, 'movie', account)
+    movie_item_names = _discovery_item_names(
+        client, account, "movie", categories_data
+    )
+    category_map = batch_create_categories(
+        categories_data,
+        'movie',
+        account,
+        item_names_by_provider_id=movie_item_names,
+    )
 
     # Create a mapping from provider category IDs to our category objects
     movies_category_id_map = {}
@@ -185,7 +200,15 @@ def refresh_categories(account_id, client=None):
             f"({account.name}); aborting VOD refresh to preserve existing category selections"
         )
         return None
-    category_map = batch_create_categories(categories_data, 'series', account)
+    series_item_names = _discovery_item_names(
+        client, account, "series", categories_data
+    )
+    category_map = batch_create_categories(
+        categories_data,
+        'series',
+        account,
+        item_names_by_provider_id=series_item_names,
+    )
 
     # Create a mapping from provider category IDs to our category objects
     series_category_id_map = {}
@@ -308,9 +331,38 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
     logger.info(f"Completed processing all {total_series} series in {total_chunks} chunks")
 
 
-def batch_create_categories(categories_data, category_type, account):
+def _discovery_item_names(client, account, scope, categories_data):
+    """Fetch contained names only when a content-aware rule needs them."""
+    if not account.group_rules.filter(
+        scope=scope,
+        match_field="item_name",
+        enabled=True,
+    ).exists():
+        return {}
+
+    provider_rows = (
+        client.get_vod_streams() if scope == "movie" else client.get_series()
+    )
+    names = {}
+    for row in provider_rows:
+        provider_category_id = str(row.get("category_id") or "")
+        names.setdefault(provider_category_id, []).append(str(row.get("name") or ""))
+    return names
+
+
+def batch_create_categories(
+    categories_data,
+    category_type,
+    account,
+    *,
+    item_names_by_provider_id=None,
+):
     """Create categories in batch and return a mapping"""
     category_names = [cat.get('category_name', 'Unknown') for cat in categories_data]
+    provider_id_by_name = {
+        cat.get('category_name', 'Unknown'): str(cat.get('category_id') or '')
+        for cat in categories_data
+    }
 
     relations_to_create = []
 
@@ -332,6 +384,48 @@ def batch_create_categories(categories_data, category_type, account):
     else:  # series
         auto_enable_new = account_custom_props.get("auto_enable_new_groups_series", True)
 
+    from apps.m3u.group_rules import account_group_rules, evaluate_group_rules
+
+    discovery_rules = account_group_rules(account, category_type)
+    item_names_by_provider_id = item_names_by_provider_id or {}
+    existing_relation_names = set(
+        M3UVODCategoryRelation.objects.filter(
+            m3u_account=account,
+            category__category_type=category_type,
+            category__name__in=category_names,
+        ).values_list("category__name", flat=True)
+    )
+    decisions = {}
+    kept_names = []
+    for name in category_names:
+        if name in existing_relation_names:
+            kept_names.append(name)
+            continue
+        provider_id = provider_id_by_name.get(name, "")
+        decision = evaluate_group_rules(
+            discovery_rules,
+            group_name=name,
+            item_names=item_names_by_provider_id.get(provider_id, []),
+            default_enabled=auto_enable_new,
+        )
+        decisions[name] = decision
+        if not decision.ignored:
+            kept_names.append(name)
+        else:
+            logger.info(
+                "Ignoring new %s category '%s' for account %s by discovery rule %s",
+                category_type,
+                name,
+                account.id,
+                decision.matched_rule_id,
+            )
+    category_names = kept_names
+    existing_categories = {
+        name: category
+        for name, category in existing_categories.items()
+        if name in category_names
+    }
+
     # Create missing categories in batch
     new_categories = []
 
@@ -339,14 +433,16 @@ def batch_create_categories(categories_data, category_type, account):
         if name not in existing_categories:
             # Always create new categories
             new_categories.append(VODCategory(name=name, category_type=category_type))
-        else:
+        elif name not in existing_relation_names:
             # Existing category - create relationship with enabled based on auto_enable setting
             # (category exists globally but is new to this account)
             relations_to_create.append(M3UVODCategoryRelation(
                 category=existing_categories[name],
                 m3u_account=account,
-                custom_properties={},
-                enabled=auto_enable_new,
+                custom_properties={
+                    "discovery_rule_id": decisions[name].matched_rule_id
+                } if decisions.get(name) and decisions[name].matched_rule_id else {},
+                enabled=decisions.get(name).enabled if decisions.get(name) else auto_enable_new,
             ))
 
     logger.debug(f"{len(new_categories)} new categories found")
@@ -358,15 +454,19 @@ def batch_create_categories(categories_data, category_type, account):
 
         # Create relations for newly created categories with enabled based on auto_enable setting
         for cat in created_categories:
-            if not auto_enable_new:
+            decision = decisions.get(cat.name)
+            enabled = decision.enabled if decision else auto_enable_new
+            if not enabled:
                 logger.info(f"New {category_type} category '{cat.name}' created but DISABLED - auto_enable_new_groups is disabled for account {account.id}")
 
             relations_to_create.append(
                 M3UVODCategoryRelation(
                     category=cat,
                     m3u_account=account,
-                    custom_properties={},
-                    enabled=auto_enable_new,
+                    custom_properties={
+                        "discovery_rule_id": decision.matched_rule_id
+                    } if decision and decision.matched_rule_id else {},
+                    enabled=enabled,
                 )
             )
 

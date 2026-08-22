@@ -4,6 +4,7 @@ from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from apps.m3u.models import M3UAccount
+from django.conf import settings
 import uuid
 
 
@@ -193,6 +194,112 @@ class Episode(models.Model):
         return f"{self.series.name} - {season_ep} - {self.name}"
 
 
+class VODSourceAsset(models.Model):
+    """A concrete media edition shared by one or more account relations.
+
+    Relations are never merged merely because provider XC IDs collide. An
+    asset is shared only after an explicit alias operation or a future trusted
+    fingerprint match.
+    """
+
+    class AssetType(models.TextChoices):
+        MOVIE = "movie", "Movie"
+        SERIES = "series", "Series"
+        EPISODE = "episode", "Episode"
+
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    asset_type = models.CharField(max_length=10, choices=AssetType.choices)
+    provider_origin_key = models.CharField(max_length=255, blank=True, db_index=True)
+    provider_asset_id = models.CharField(max_length=255, blank=True, db_index=True)
+    declared_metadata = models.JSONField(default=dict, blank=True)
+    observed_metadata = models.JSONField(default=dict, blank=True)
+    manual_metadata = models.JSONField(default=dict, blank=True)
+    locked_fields = models.JSONField(default=list, blank=True)
+    last_observed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("asset_type", "provider_origin_key", "provider_asset_id"),
+                name="vod_asset_provider_idx",
+            )
+        ]
+
+    def effective_metadata(self, category_defaults=None, relation_declared=None):
+        """Resolve metadata and per-field provenance in priority order."""
+        values = {}
+        provenance = {}
+        for source, payload in (
+            ("category", category_defaults or {}),
+            ("provider", self.declared_metadata or {}),
+            ("relation", relation_declared or {}),
+            ("observed", self.observed_metadata or {}),
+            ("manual", self.manual_metadata or {}),
+        ):
+            for key, value in payload.items():
+                if value not in (None, "", [], {}):
+                    values[key] = value
+                    provenance[key] = source
+        return {"values": values, "provenance": provenance}
+
+    def apply_observation(self, metadata):
+        """Apply playback telemetry without overwriting manual fields."""
+        manual = self.manual_metadata or {}
+        locked = set(self.locked_fields or []) | set(manual)
+        observed = dict(self.observed_metadata or {})
+        changed = False
+        for key, value in (metadata or {}).items():
+            if key in locked or value in (None, "", [], {}):
+                continue
+            if observed.get(key) != value:
+                observed[key] = value
+                changed = True
+        if changed:
+            self.observed_metadata = observed
+            self.last_observed_at = timezone.now()
+            self.save(update_fields=["observed_metadata", "last_observed_at", "updated_at"])
+        return changed
+
+
+class VODAccessPolicy(models.Model):
+    """Per-user XC visibility, compact selection and failover policy."""
+
+    class ExportMode(models.TextChoices):
+        COMPACT = "compact", "Compact"
+        VARIANTS = "variants", "Source variants"
+
+    name = models.CharField(max_length=255, unique=True)
+    export_mode = models.CharField(
+        max_length=10,
+        choices=ExportMode.choices,
+        default=ExportMode.COMPACT,
+    )
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    hard_constraints = models.JSONField(default=dict, blank=True)
+    ranking = models.JSONField(default=list, blank=True)
+    users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="vod_access_policies",
+    )
+    category_relations = models.ManyToManyField(
+        "M3UVODCategoryRelation",
+        through="VODPolicyCategory",
+        related_name="access_policies",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    def __str__(self):
+        return self.name
+
+
 # New relation models to link M3U accounts with VOD content
 
 class M3USeriesRelation(models.Model):
@@ -200,6 +307,13 @@ class M3USeriesRelation(models.Model):
     m3u_account = models.ForeignKey(M3UAccount, on_delete=models.CASCADE, related_name='series_relations')
     series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name='m3u_relations')
     category = models.ForeignKey(VODCategory, on_delete=models.SET_NULL, null=True, blank=True)
+    source_asset = models.ForeignKey(
+        VODSourceAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="series_relations",
+    )
 
     # Provider-specific fields - renamed to avoid clash with series ForeignKey
     external_series_id = models.CharField(max_length=255, help_text="External series ID from M3U provider")
@@ -231,6 +345,13 @@ class M3UMovieRelation(models.Model):
     m3u_account = models.ForeignKey(M3UAccount, on_delete=models.CASCADE, related_name='movie_relations')
     movie = models.ForeignKey(Movie, on_delete=models.CASCADE, related_name='m3u_relations')
     category = models.ForeignKey(VODCategory, on_delete=models.SET_NULL, null=True, blank=True)
+    source_asset = models.ForeignKey(
+        VODSourceAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="movie_relations",
+    )
 
     # Streaming information (provider-specific)
     stream_id = models.CharField(max_length=255, help_text="External stream ID from M3U provider")
@@ -287,6 +408,13 @@ class M3UEpisodeRelation(models.Model):
         blank=True,
         help_text="The series relation this episode relation belongs to. CASCADE ensures cleanup when the series relation is removed."
     )
+    source_asset = models.ForeignKey(
+        VODSourceAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="episode_relations",
+    )
 
     # Streaming information (provider-specific)
     stream_id = models.CharField(max_length=255, help_text="External stream ID from M3U provider")
@@ -334,6 +462,11 @@ class M3UVODCategoryRelation(models.Model):
     )
 
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data like quality, language, etc.")
+    metadata_defaults = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Expected languages, subtitles and quality for newly discovered sources.",
+    )
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -346,3 +479,91 @@ class M3UVODCategoryRelation(models.Model):
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.category.name}"
+
+
+class VODPolicyCategory(models.Model):
+    policy = models.ForeignKey(VODAccessPolicy, on_delete=models.CASCADE)
+    category_relation = models.ForeignKey(
+        M3UVODCategoryRelation,
+        on_delete=models.CASCADE,
+    )
+    enabled = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ("-priority", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy", "category_relation"),
+                name="unique_vod_policy_category",
+            )
+        ]
+
+
+class VODPlaybackSession(models.Model):
+    """Auditable playback selection and optional player/proxy telemetry."""
+
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        REDIRECTED = "redirected", "Redirected (unconfirmed)"
+        PROXYING = "proxying", "Proxying"
+        COMPLETED = "completed", "Completed"
+        STOPPED = "stopped", "Stopped"
+        FAILED = "failed", "Failed"
+
+    class Mode(models.TextChoices):
+        REDIRECT = "redirect", "Redirect"
+        PROXY = "proxy", "Proxy"
+        PLAYER = "player", "Player telemetry"
+
+    session_id = models.CharField(max_length=255, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="vod_playback_sessions",
+    )
+    source_asset = models.ForeignKey(
+        VODSourceAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="playback_sessions",
+    )
+    m3u_account = models.ForeignKey(
+        M3UAccount,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    category = models.ForeignKey(
+        VODCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    content_type = models.CharField(max_length=10, choices=VODSourceAsset.AssetType.choices)
+    canonical_id = models.PositiveBigIntegerField(null=True, blank=True)
+    relation_id = models.PositiveBigIntegerField(null=True, blank=True)
+    provider_asset_id = models.CharField(max_length=255, blank=True)
+    content_name = models.CharField(max_length=500, blank=True)
+    mode = models.CharField(max_length=10, choices=Mode.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.REQUESTED)
+    client_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    bytes_sent = models.PositiveBigIntegerField(default=0)
+    watched_seconds = models.PositiveIntegerField(default=0)
+    observed_metadata = models.JSONField(default=dict, blank=True)
+    failover_chain = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True)
+    custom_properties = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-started_at",)
+        indexes = [
+            models.Index(fields=("user", "-started_at"), name="vod_playback_user_idx"),
+            models.Index(fields=("source_asset", "-started_at"), name="vod_playback_asset_idx"),
+        ]

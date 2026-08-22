@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .api_views import (
     M3UAccountViewSet,
     M3UFilterViewSet,
+    M3UGroupRuleViewSet,
     ServerGroupViewSet,
     RefreshM3UAPIView,
     RefreshSingleM3UAPIView,
@@ -19,6 +20,11 @@ router.register(
     r"accounts/(?P<account_id>\d+)/profiles",
     M3UAccountProfileViewSet,
     basename="m3u-account-profiles",
+)
+router.register(
+    r"accounts/(?P<account_id>\d+)/group-rules",
+    M3UGroupRuleViewSet,
+    basename="m3u-group-rules",
 )
 router.register(
     r"accounts/(?P<account_id>\d+)/filters",

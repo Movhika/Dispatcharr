@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 _request_times = {}
 
 
+def _record_playback_best_effort(**kwargs):
+    """Persist playback history without ever turning playback into an error."""
+    try:
+        from apps.vod.playback import record_playback_selection
+
+        record_playback_selection(**kwargs)
+    except Exception as exc:
+        logger.warning("[VOD-HISTORY] Could not persist playback history: %s", exc)
+
+
 def _parse_preferred_vod_params(request):
     """Parse optional m3u_account_id / stream_id query params for provider selection."""
     preferred_m3u_account_id = request.GET.get("m3u_account_id")
@@ -70,6 +80,7 @@ def _find_idle_vod_session(
     utc_start=None,
     utc_end=None,
     offset=None,
+    user=None,
 ):
     """
     Return an idle Redis session_id matching this viewer/content, or None.
@@ -78,11 +89,27 @@ def _find_idle_vod_session(
     omitted session_id can resume an existing proxy pool instead of starting
     a new provider hop.
     """
+    from apps.vod.policies import ordered_candidates, policy_for_user
+
+    policy = policy_for_user(user)
+    scope_preferred_category = not bool(
+        policy
+        and (policy.hard_constraints or {}).get("cross_category_failover", False)
+    )
     content_obj, relation, _candidates = _get_content_and_relation(
-        content_type, content_id, preferred_m3u_account_id, preferred_stream_id
+        content_type,
+        content_id,
+        preferred_m3u_account_id,
+        preferred_stream_id,
+        scope_preferred_category=scope_preferred_category,
     )
     if not content_obj or not relation:
         return None
+
+    allowed = ordered_candidates(_candidates, policy, relation)
+    if not allowed:
+        return None
+    relation = allowed[0]
 
     try:
         manager = MultiWorkerVODConnectionManager.get_instance()
@@ -151,6 +178,7 @@ def _select_vod_stream(
     preferred_stream_id=None,
     profile_id=None,
     session_id=None,
+    user=None,
 ):
     """
     Resolve content to a provider URL and M3U profile.
@@ -162,17 +190,30 @@ def _select_vod_stream(
     Returns the selected content, profile, URL, and compact source metadata;
     or None when nothing usable is found.
     """
+    from apps.vod.policies import ordered_candidates, policy_for_user
+
+    policy = policy_for_user(user)
+    scope_preferred_category = not bool(
+        policy
+        and (policy.hard_constraints or {}).get("cross_category_failover", False)
+    )
     content_obj, relation, candidates = _get_content_and_relation(
-        content_type, content_id, preferred_m3u_account_id, preferred_stream_id
+        content_type,
+        content_id,
+        preferred_m3u_account_id,
+        preferred_stream_id,
+        scope_preferred_category=scope_preferred_category,
     )
     if not content_obj or not relation:
         return None
 
-    ordered = _order_candidates(candidates, relation)
+    ordered = ordered_candidates(candidates, policy, relation)
+    failover_chain = []
     for cand in ordered:
         cand_account = cand.m3u_account
         cand_url = _get_stream_url_from_relation(cand)
         if not cand_url:
+            failover_chain.append({"relation_id": cand.id, "result": "no_url"})
             logger.warning(
                 "[VOD-FAILOVER] No URL for relation on account %s, skipping",
                 cand_account.name,
@@ -185,6 +226,7 @@ def _select_vod_stream(
             session_id,
         )
         if not profile_result or not profile_result[0]:
+            failover_chain.append({"relation_id": cand.id, "result": "at_capacity"})
             logger.warning(
                 "[VOD-FAILOVER] Account %s at capacity or has no profile, trying next",
                 cand_account.name,
@@ -196,6 +238,7 @@ def _select_vod_stream(
         if not final_stream_url or not final_stream_url.startswith(
             ("http://", "https://")
         ):
+            failover_chain.append({"relation_id": cand.id, "result": "invalid_url"})
             logger.warning(
                 "[VOD-FAILOVER] Invalid stream URL from account %s: %s",
                 cand_account.name,
@@ -208,12 +251,15 @@ def _select_vod_stream(
             cand_account.name,
             cand_account.priority,
         )
+        failover_chain.append({"relation_id": cand.id, "result": "selected"})
         return {
             "content_obj": content_obj,
             "m3u_account": cand_account,
             "m3u_profile": m3u_profile,
             "current_connections": current_connections,
             "final_stream_url": final_stream_url,
+            "relation": cand,
+            "failover_chain": failover_chain,
             "source_metadata": _build_vod_source_metadata(
                 content_type,
                 content_obj,
@@ -224,7 +270,13 @@ def _select_vod_stream(
     return None
 
 
-def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id=None, preferred_stream_id=None):
+def _get_content_and_relation(
+    content_type,
+    content_id,
+    preferred_m3u_account_id=None,
+    preferred_stream_id=None,
+    scope_preferred_category=True,
+):
     """Get the content object and its M3U relation"""
     try:
         logger.info(f"[CONTENT-LOOKUP] Looking up {content_type} with UUID {content_id}")
@@ -252,7 +304,8 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                                 m3u_account_id=preferred_m3u_account_id,
                                 m3u_account__is_active=True)
                         .select_related(
-                            'movie', 'm3u_account__user_agent', 'category'
+                            'movie', 'm3u_account__user_agent', 'category',
+                            'source_asset',
                         )
                         .first()
                     )
@@ -262,7 +315,8 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                         .filter(stream_id=preferred_stream_id,
                                 m3u_account__is_active=True)
                         .select_related(
-                            'movie', 'm3u_account__user_agent', 'category'
+                            'movie', 'm3u_account__user_agent', 'category',
+                            'source_asset',
                         )
                         .order_by('-m3u_account__priority', 'id')
                         .first()
@@ -289,7 +343,9 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
             candidates = list(
                 content_obj.m3u_relations
                 .filter(m3u_account__is_active=True)
-                .select_related('m3u_account__user_agent', 'category')
+                .select_related(
+                    'm3u_account__user_agent', 'category', 'source_asset'
+                )
                 .order_by('-m3u_account__priority', 'id')
             )
 
@@ -306,11 +362,12 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                     None,
                 )
                 if specific_relation:
-                    candidates = _category_scoped_candidates(
-                        content_type,
-                        candidates,
-                        specific_relation,
-                    )
+                    if scope_preferred_category:
+                        candidates = _category_scoped_candidates(
+                            content_type,
+                            candidates,
+                            specific_relation,
+                        )
                     logger.info(f"[STREAM-SELECTED] Using specific stream: {specific_relation.stream_id} from provider: {specific_relation.m3u_account.name}")
                     return content_obj, specific_relation, candidates
                 else:
@@ -348,6 +405,7 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                             'episode__series',
                             'm3u_account__user_agent',
                             'series_relation__category',
+                            'source_asset',
                         )
                         .first()
                     )
@@ -360,6 +418,7 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                             'episode__series',
                             'm3u_account__user_agent',
                             'series_relation__category',
+                            'source_asset',
                         )
                         .order_by('-m3u_account__priority', 'id')
                         .first()
@@ -390,6 +449,7 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                     'episode__series',
                     'm3u_account__user_agent',
                     'series_relation__category',
+                    'source_asset',
                 )
                 .order_by('-m3u_account__priority', 'id')
             )
@@ -407,11 +467,12 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                     None,
                 )
                 if specific_relation:
-                    candidates = _category_scoped_candidates(
-                        content_type,
-                        candidates,
-                        specific_relation,
-                    )
+                    if scope_preferred_category:
+                        candidates = _category_scoped_candidates(
+                            content_type,
+                            candidates,
+                            specific_relation,
+                        )
                     logger.info(f"[STREAM-SELECTED] Using specific stream: {specific_relation.stream_id} from provider: {specific_relation.m3u_account.name}")
                     return content_obj, specific_relation, candidates
                 else:
@@ -451,6 +512,7 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                     'episode__series',
                     'm3u_account__user_agent',
                     'series_relation__category',
+                    'source_asset',
                 )
                 .order_by('-m3u_account__priority', 'id')
             )
@@ -468,11 +530,12 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
                     None,
                 )
                 if specific_relation:
-                    candidates = _category_scoped_candidates(
-                        content_type,
-                        candidates,
-                        specific_relation,
-                    )
+                    if scope_preferred_category:
+                        candidates = _category_scoped_candidates(
+                            content_type,
+                            candidates,
+                            specific_relation,
+                        )
                     logger.info(f"[STREAM-SELECTED] Using specific stream: {specific_relation.stream_id} from provider: {specific_relation.m3u_account.name}")
                     return episode, specific_relation, candidates
                 else:
@@ -888,6 +951,7 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                     utc_start=utc_start,
                     utc_end=utc_end,
                     offset=offset,
+                    user=user,
                 )
                 if matched_session_id:
                     logger.info(
@@ -906,6 +970,7 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                     preferred_m3u_account_id,
                     preferred_stream_id,
                     profile_id,
+                    user=user,
                 )
                 if not selected:
                     logger.error(
@@ -918,6 +983,24 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                     "[VOD-REDIRECT] Redirecting to provider URL: %s",
                     selected["final_stream_url"],
                 )
+                selected_relation = selected.get("relation")
+                if selected_relation is not None:
+                    from apps.vod.models import VODPlaybackSession
+
+                    redirect_session_id = (
+                        f"redirect_{int(time.time() * 1000)}_"
+                        f"{random.randint(1000, 9999)}"
+                    )
+                    _record_playback_best_effort(
+                        session_id=redirect_session_id,
+                        user=user,
+                        relation=selected_relation,
+                        mode=VODPlaybackSession.Mode.REDIRECT,
+                        status=VODPlaybackSession.Status.REDIRECTED,
+                        client_ip=client_ip,
+                        user_agent=client_user_agent,
+                        failover_chain=selected.get("failover_chain"),
+                    )
                 close_old_connections()
                 return HttpResponseRedirect(selected["final_stream_url"])
 
@@ -955,6 +1038,7 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             preferred_stream_id,
             profile_id,
             session_id,
+            user=user,
         )
         if not selected:
             logger.error(
@@ -1003,6 +1087,21 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             source_metadata=source_metadata,
         )
 
+        selected_relation = selected.get("relation")
+        if selected_relation is not None:
+            from apps.vod.models import VODPlaybackSession
+
+            _record_playback_best_effort(
+                session_id=session_id,
+                user=user,
+                relation=selected_relation,
+                mode=VODPlaybackSession.Mode.PROXY,
+                status=VODPlaybackSession.Status.PROXYING,
+                client_ip=client_ip,
+                user_agent=client_user_agent,
+                failover_chain=selected.get("failover_chain"),
+            )
+
         logger.info(f"[VOD-SUCCESS] Stream response created successfully, type: {type(response)}")
         return response
 
@@ -1025,6 +1124,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
     logger.info(f"[VOD-HEAD] HEAD request: {content_type}/{content_id}, session: {session_id}, profile: {profile_id}")
 
     try:
+        user = request.user if request.user.is_authenticated else None
         # Get client info for M3U profile selection
         client_ip, client_user_agent = get_client_info(request)
         logger.info(f"[VOD-HEAD] Client info - IP: {client_ip}, User-Agent: {client_user_agent[:50] if client_user_agent else 'None'}...")
@@ -1049,6 +1149,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
                     preferred_stream_id,
                     client_ip,
                     client_user_agent,
+                    user=user,
                 )
                 if not matched_session_id:
                     selected = _select_vod_stream(
@@ -1057,6 +1158,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
                         preferred_m3u_account_id,
                         preferred_stream_id,
                         profile_id,
+                        user=user,
                     )
                     if not selected:
                         logger.error(
@@ -1098,6 +1200,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
             preferred_stream_id,
             profile_id,
             session_id,
+            user=user,
         )
         if not selected:
             logger.error(
@@ -1602,12 +1705,16 @@ def stream_xc_movie(request, username, password, stream_id, extension):
         return Response({"error": "Invalid credentials"}, status=401)
 
     movie_relation = M3UMovieRelation.objects.select_related(
-        'movie', 'm3u_account'
+        'movie', 'm3u_account', 'category', 'source_asset'
     ).filter(
         id=stream_id,
         m3u_account__is_active=True,
     ).first()
     if not movie_relation:
+        return JsonResponse({"error": "Movie not found"}, status=404)
+    from apps.vod.policies import policy_for_user, relation_allowed
+    policy = policy_for_user(user)
+    if policy and not relation_allowed(movie_relation, policy):
         return JsonResponse({"error": "Movie not found"}, status=404)
 
     raw_request = request._request
@@ -1648,12 +1755,16 @@ def stream_xc_episode(request, username, password, stream_id, extension):
         return Response({"error": "Invalid credentials"}, status=401)
 
     episode_relation = M3UEpisodeRelation.objects.select_related(
-        'episode', 'm3u_account'
+        'episode', 'm3u_account', 'series_relation__category', 'source_asset'
     ).filter(
         id=stream_id,
         m3u_account__is_active=True,
     ).first()
     if not episode_relation:
+        return JsonResponse({"error": "Episode not found"}, status=404)
+    from apps.vod.policies import policy_for_user, relation_allowed
+    policy = policy_for_user(user)
+    if policy and not relation_allowed(episode_relation, policy):
         return JsonResponse({"error": "Episode not found"}, status=404)
 
     raw_request = request._request

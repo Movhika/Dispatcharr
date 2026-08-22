@@ -93,6 +93,39 @@ def get_vod_client_stop_key(client_id):
     return f"vod_proxy:client:{client_id}:stop"
 
 
+def _update_playback_history(session_id, status, bytes_sent=0, error=""):
+    """Persist proxy lifecycle data without interpreting media metadata."""
+    try:
+        from django.db import close_old_connections
+        from django.utils import timezone
+        from apps.vod.models import VODPlaybackSession
+
+        close_old_connections()
+        playback = VODPlaybackSession.objects.filter(session_id=session_id).first()
+        if not playback:
+            return
+        playback.status = status
+        playback.bytes_sent = max(playback.bytes_sent, int(bytes_sent or 0))
+        if status in {
+            VODPlaybackSession.Status.COMPLETED,
+            VODPlaybackSession.Status.STOPPED,
+            VODPlaybackSession.Status.FAILED,
+        }:
+            playback.ended_at = timezone.now()
+        if error:
+            playback.error = str(error)[:2000]
+        playback.save(
+            update_fields=["status", "bytes_sent", "ended_at", "error"]
+        )
+    except Exception as exc:
+        logger.warning("[%s] Could not update playback history: %s", session_id, exc)
+    finally:
+        try:
+            close_old_connections()
+        except Exception:
+            pass
+
+
 def infer_content_type_from_url(url: str) -> Optional[str]:
     """
     Infer MIME type from file extension in URL
@@ -1211,6 +1244,7 @@ class MultiWorkerVODConnectionManager:
                 stream_decremented = False
                 profile_decremented = False
                 stop_signal_detected = False
+                bytes_sent = 0
                 try:
                     logger.info(f"[{client_id}] Worker {self.worker_id} - Starting Redis-backed stream")
 
@@ -1233,7 +1267,6 @@ class MultiWorkerVODConnectionManager:
                     else:
                         logger.debug(f"[{client_id}] Active streams already incremented in connection reuse path")
 
-                    bytes_sent = 0
                     chunk_count = 0
 
                     # Get the stop signal key for this client
@@ -1272,6 +1305,14 @@ class MultiWorkerVODConnectionManager:
                         logger.info(f"[{client_id}] Worker {self.worker_id} - Stream stopped by signal: {bytes_sent} bytes sent")
                     else:
                         logger.info(f"[{client_id}] Worker {self.worker_id} - Redis-backed stream completed: {bytes_sent} bytes sent")
+                    from apps.vod.models import VODPlaybackSession
+                    _update_playback_history(
+                        client_id,
+                        VODPlaybackSession.Status.STOPPED
+                        if stop_signal_detected
+                        else VODPlaybackSession.Status.COMPLETED,
+                        bytes_sent,
+                    )
                     stream_decremented, has_remaining = redis_connection.decrement_active_streams_and_check()
 
                     # Schedule smart cleanup if no active streams after normal completion
@@ -1306,6 +1347,12 @@ class MultiWorkerVODConnectionManager:
 
                 except GeneratorExit:
                     logger.info(f"[{client_id}] Worker {self.worker_id} - Client disconnected from Redis-backed stream")
+                    from apps.vod.models import VODPlaybackSession
+                    _update_playback_history(
+                        client_id,
+                        VODPlaybackSession.Status.STOPPED,
+                        bytes_sent,
+                    )
                     if not stream_decremented:
                         stream_decremented, has_remaining = redis_connection.decrement_active_streams_and_check()
                     else:
@@ -1343,6 +1390,13 @@ class MultiWorkerVODConnectionManager:
 
                 except Exception as e:
                     logger.error(f"[{client_id}] Worker {self.worker_id} - Error in Redis-backed stream: {e}")
+                    from apps.vod.models import VODPlaybackSession
+                    _update_playback_history(
+                        client_id,
+                        VODPlaybackSession.Status.FAILED,
+                        bytes_sent,
+                        str(e),
+                    )
                     if not stream_decremented:
                         stream_decremented, has_remaining = redis_connection.decrement_active_streams_and_check()
                     else:

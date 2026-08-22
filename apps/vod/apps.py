@@ -9,4 +9,4 @@ class VODConfig(AppConfig):
     def ready(self):
         """Initialize VOD app when Django is ready"""
         # Import models to ensure they're registered
-        from . import models
+        from . import models, signals  # noqa: F401

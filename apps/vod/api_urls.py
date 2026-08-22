@@ -7,6 +7,10 @@ from .api_views import (
     VODCategoryViewSet,
     UnifiedContentViewSet,
     VODLogoViewSet,
+    VODSourceAssetViewSet,
+    VODAccessPolicyViewSet,
+    VODPlaybackSessionViewSet,
+    M3UVODCategoryRelationViewSet,
 )
 
 app_name = 'vod'
@@ -18,5 +22,9 @@ router.register(r'series', SeriesViewSet, basename='series')
 router.register(r'categories', VODCategoryViewSet, basename='vodcategory')
 router.register(r'all', UnifiedContentViewSet, basename='unified-content')
 router.register(r'vodlogos', VODLogoViewSet, basename='vodlogo')
+router.register(r'source-assets', VODSourceAssetViewSet, basename='vod-source-asset')
+router.register(r'access-policies', VODAccessPolicyViewSet, basename='vod-access-policy')
+router.register(r'playback-sessions', VODPlaybackSessionViewSet, basename='vod-playback-session')
+router.register(r'category-relations', M3UVODCategoryRelationViewSet, basename='vod-category-relation')
 
 urlpatterns = router.urls
