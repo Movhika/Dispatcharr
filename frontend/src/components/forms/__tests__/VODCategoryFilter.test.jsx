@@ -3,6 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
+vi.mock('../../../api', () => ({
+  default: {
+    updateVODCategoryMetadata: vi.fn().mockResolvedValue({}),
+  },
+}));
 
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
@@ -64,6 +69,35 @@ vi.mock('@mantine/core', () => ({
       ))}
     </div>
   ),
+  Select: ({ label, value, onChange, data = [] }) => (
+    <label>
+      {label}
+      <select value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="" />
+        {data.map((item) => {
+          const option = typeof item === 'string' ? item : item.value;
+          return (
+            <option key={option} value={option}>
+              {typeof item === 'string' ? item : item.label}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  ),
+  TagsInput: ({ label, value = [], onChange }) => (
+    <input
+      aria-label={label}
+      value={value.join(',')}
+      onChange={(event) =>
+        onChange(event.target.value.split(',').filter(Boolean))
+      }
+    />
+  ),
+  Popover: Object.assign(({ children }) => <div>{children}</div>, {
+    Target: ({ children }) => <>{children}</>,
+    Dropdown: ({ children }) => <div>{children}</div>,
+  }),
 }));
 
 // ── Imports after mocks ────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ vi.mock('@mantine/core', async () => {
 
   return {
     ...actual,
-    Modal: ({ opened, onClose, title, children, size, ...props }) => {
+    Modal: ({ opened, onClose, title, children, size }) => {
       if (!opened) return null;
       return (
         <div data-testid="modal" data-title={title} data-size={size}>
@@ -234,7 +234,8 @@ describe('SeriesModal', () => {
       id: 1,
       stream_id: 100,
       account_id: 5,
-      m3u_account: { name: 'Provider 1' },
+      m3u_account: { id: 5, name: 'Provider 1' },
+      category: { id: 10, name: 'NETFLIX ANIME' },
       stream_name: 'Test Series 1080p',
       quality_info: { quality: '1080p' },
     },
@@ -242,7 +243,8 @@ describe('SeriesModal', () => {
       id: 2,
       stream_id: 101,
       account_id: 5,
-      m3u_account: { name: 'Provider 2' },
+      m3u_account: { id: 5, name: 'Provider 1' },
+      category: { id: 11, name: 'GERMANY KINDER' },
       stream_name: 'Test Series 720p',
       quality_info: null,
     },
@@ -345,7 +347,7 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1);
+        expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1, 1);
       });
     });
 
@@ -444,24 +446,26 @@ describe('SeriesModal', () => {
   });
 
   describe('Provider Selection', () => {
-    it('should display provider select with fetched providers', async () => {
+    it('should display separate account and category controls', async () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
 
       await waitFor(() => {
-        const select = screen.getByTestId('select');
-        expect(select).toBeInTheDocument();
+        expect(screen.getByText('M3U account')).toBeInTheDocument();
+        expect(screen.getByText('Provider 1')).toBeInTheDocument();
+        expect(screen.getByLabelText('Category')).toBeInTheDocument();
       });
     });
 
-    it('should format provider label correctly with quality info', async () => {
+    it('should show category names separately from the account', async () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
+        expect(screen.getByText('NETFLIX ANIME')).toBeInTheDocument();
+        expect(screen.getByText('GERMANY KINDER')).toBeInTheDocument();
       });
     });
 
@@ -471,18 +475,18 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1);
+        expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1, 1);
       });
       const openFetchCount = mockVODStore.fetchSeriesInfo.mock.calls.length;
 
       let select;
       await waitFor(() => {
-        select = screen.getByTestId('select').querySelector('select');
-        fireEvent.change(select, { target: { value: '2' } });
+        select = screen.getByLabelText('Category');
+        fireEvent.change(select, { target: { value: '11' } });
       });
 
       await waitFor(() => {
-        expect(select.value).toBe('2');
+        expect(select.value).toBe('11');
         expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1, 2);
         // Open effect must not re-fire when selectedProvider changes.
         expect(mockVODStore.fetchSeriesInfo.mock.calls.length).toBe(
@@ -600,8 +604,8 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        const select = screen.getByTestId('select').querySelector('select');
-        fireEvent.change(select, { target: { value: '1' } });
+        const select = screen.getByLabelText('Category');
+        fireEvent.change(select, { target: { value: '10' } });
       });
 
       await waitFor(() => {
@@ -757,106 +761,28 @@ describe('SeriesModal', () => {
     });
   });
 
-  describe('Quality Info Extraction', () => {
-    it('should extract quality from quality_info field', async () => {
-      render(
-        <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
-      });
-    });
-
-    it('should extract quality from custom_properties.detailed_info.video', async () => {
-      const customProviders = [
+  describe('Duplicate source differentiation', () => {
+    it('shows a source selector when account and category are identical', async () => {
+      mockVODStore.fetchSeriesProviders.mockResolvedValue([
+        mockProviders[0],
         {
-          ...mockProviders[0],
-          quality_info: null,
-          custom_properties: {
-            detailed_info: {
-              video: { width: 1920, height: 1080 },
-            },
-          },
+          ...mockProviders[1],
+          category: mockProviders[0].category,
         },
-        mockProviders[1],
-      ];
-      mockVODStore.fetchSeriesProviders.mockResolvedValue(customProviders);
+      ]);
 
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 1080p/)).toBeInTheDocument();
-      });
-    });
-
-    it('should extract quality from stream_name as fallback', async () => {
-      const customProviders = [
-        {
-          ...mockProviders[0],
-          quality_info: null,
-          stream_name: 'Test Series 720p',
-        },
-        mockProviders[1],
-      ];
-      mockVODStore.fetchSeriesProviders.mockResolvedValue(customProviders);
-
-      render(
-        <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 720p/)).toBeInTheDocument();
-      });
-    });
-
-    it('should detect 4K quality', async () => {
-      const customProviders = [
-        {
-          ...mockProviders[0],
-          quality_info: null,
-          custom_properties: {
-            detailed_info: {
-              video: { width: 3840, height: 2160 },
-            },
-          },
-        },
-        mockProviders[1],
-      ];
-      mockVODStore.fetchSeriesProviders.mockResolvedValue(customProviders);
-
-      render(
-        <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText(/Provider 1 - 4K/)).toBeInTheDocument();
-      });
-    });
-
-    it('should show resolution when standard quality not detected', async () => {
-      const customProviders = [
-        {
-          ...mockProviders[0],
-          quality_info: null,
-          custom_properties: {
-            detailed_info: {
-              video: { width: 720, height: 480 },
-            },
-          },
-        },
-        mockProviders[1],
-      ];
-      mockVODStore.fetchSeriesProviders.mockResolvedValue(customProviders);
-
-      render(
-        <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText(/720x480/)).toBeInTheDocument();
+        expect(screen.getByLabelText('Source')).toBeInTheDocument();
+        expect(
+          screen.getByText('Test Series 1080p (Stream 100)')
+        ).toBeInTheDocument();
+        expect(
+          screen.getByText('Test Series 720p (Stream 101)')
+        ).toBeInTheDocument();
       });
     });
   });

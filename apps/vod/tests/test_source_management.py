@@ -1,0 +1,257 @@
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory, TestCase
+
+from apps.m3u.models import M3UAccount
+from apps.output.views import xc_get_vod_streams
+from apps.vod.metadata import ensure_source_asset
+from apps.vod.playback import record_playback_selection
+from apps.vod.models import (
+    M3UMovieRelation,
+    M3UVODCategoryRelation,
+    Movie,
+    VODAccessPolicy,
+    VODPlaybackSession,
+    VODPolicyCategory,
+    VODSourceAsset,
+    VODCategory,
+)
+from apps.vod.policies import (
+    ordered_failover_candidates,
+    select_relation_ids_for_policy,
+    select_relations_for_policy,
+)
+
+
+class VODSourceManagementTests(TestCase):
+    def setUp(self):
+        self.movie = Movie.objects.create(name="Avatar", year=2005)
+        self.german = VODCategory.objects.create(
+            name="GERMANY KINDER", category_type="movie"
+        )
+        self.english = VODCategory.objects.create(
+            name="NETFLIX ANIME", category_type="movie"
+        )
+        self.account_a = M3UAccount.objects.create(
+            name="provider-a",
+            account_type=M3UAccount.Types.XC,
+            server_url="https://provider.example",
+            username="a",
+            password="secret",
+            priority=1,
+        )
+        self.account_b = M3UAccount.objects.create(
+            name="provider-b",
+            account_type=M3UAccount.Types.XC,
+            server_url="https://provider.example",
+            username="b",
+            password="secret",
+            priority=10,
+        )
+        self.german_category = M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=self.german,
+            enabled=True,
+            metadata_defaults={
+                "audio_languages": ["deu"],
+                "resolution": "1080p",
+            },
+        )
+        self.english_category = M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_b,
+            category=self.english,
+            enabled=True,
+            metadata_defaults={
+                "audio_languages": ["eng"],
+                "resolution": "2160p",
+            },
+        )
+        self.german_relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account_a,
+            movie=self.movie,
+            category=self.german,
+            stream_id="42",
+        )
+        self.english_relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account_b,
+            movie=self.movie,
+            category=self.english,
+            stream_id="42",
+        )
+        self.policy = VODAccessPolicy.objects.create(
+            name="German only",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            hard_constraints={
+                "required_audio_languages": ["deu"],
+                "allow_unknown_metadata": False,
+            },
+            ranking=["resolution", "category_priority", "account_priority"],
+        )
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.german_category,
+            enabled=True,
+            priority=5,
+        )
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.english_category,
+            enabled=True,
+            priority=100,
+        )
+
+    def test_failover_never_uses_disallowed_language(self):
+        ordered = ordered_failover_candidates(
+            [self.english_relation, self.german_relation],
+            self.policy,
+        )
+        self.assertEqual([relation.id for relation in ordered], [self.german_relation.id])
+
+    def test_compact_and_variants_share_explicit_asset_identity(self):
+        compact = select_relations_for_policy(
+            [self.german_relation, self.english_relation],
+            self.policy,
+            "movie_id",
+        )
+        self.assertEqual([relation.id for relation in compact], [self.german_relation.id])
+
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.save()
+        variants = select_relations_for_policy(
+            [self.german_relation, self.english_relation],
+            self.policy,
+            "movie_id",
+        )
+        self.assertEqual(len(variants), 2)
+
+        asset = ensure_source_asset(self.german_relation)
+        self.english_relation.source_asset = asset
+        self.english_relation.save(update_fields=["source_asset"])
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+        linked = select_relations_for_policy(
+            [self.german_relation, self.english_relation],
+            self.policy,
+            "movie_id",
+        )
+        self.assertEqual(len(linked), 1)
+
+    def test_streaming_compact_selection_returns_only_winner_ids(self):
+        ids = select_relation_ids_for_policy(
+            iter([self.english_relation, self.german_relation]),
+            self.policy,
+            "movie_id",
+        )
+
+        self.assertEqual(ids, [self.german_relation.id])
+
+    def test_compact_xc_category_requests_do_not_duplicate_the_title(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+        user = get_user_model().objects.create_user(
+            username="compact-user",
+            password="test-password",
+        )
+        self.policy.users.add(user)
+        request = RequestFactory().get("/player_api.php")
+
+        all_rows = xc_get_vod_streams(request, user)
+        german_rows = xc_get_vod_streams(
+            request,
+            user,
+            category_id=self.german.id,
+        )
+        english_rows = xc_get_vod_streams(
+            request,
+            user,
+            category_id=self.english.id,
+        )
+
+        self.assertEqual(
+            [row["stream_id"] for row in all_rows],
+            [self.english_relation.id],
+        )
+        self.assertEqual(german_rows, [])
+        self.assertEqual(
+            [row["stream_id"] for row in english_rows],
+            [self.english_relation.id],
+        )
+
+    def test_same_provider_id_is_not_automatically_linked_across_accounts(self):
+        first = ensure_source_asset(self.german_relation)
+        second = ensure_source_asset(self.english_relation)
+
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(first.provider_asset_id, second.provider_asset_id)
+        self.assertEqual(first.provider_origin_key, second.provider_origin_key)
+
+    def test_manual_metadata_wins_and_is_not_overwritten(self):
+        asset = VODSourceAsset.objects.create(
+            asset_type=VODSourceAsset.AssetType.MOVIE,
+            observed_metadata={"audio_languages": ["eng"], "resolution": "720p"},
+            manual_metadata={"audio_languages": ["deu"]},
+            locked_fields=["audio_languages"],
+        )
+
+        asset.apply_observation({
+            "audio_languages": ["fra"],
+            "resolution": "1080p",
+        })
+        asset.refresh_from_db()
+
+        self.assertEqual(asset.observed_metadata["audio_languages"], ["eng"])
+        self.assertEqual(asset.observed_metadata["resolution"], "1080p")
+        self.assertEqual(
+            asset.effective_metadata()["values"]["audio_languages"],
+            ["deu"],
+        )
+
+    def test_playback_history_keeps_the_exact_account_and_category(self):
+        playback = record_playback_selection(
+            session_id="redirect-test-1",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.REDIRECT,
+            status=VODPlaybackSession.Status.REDIRECTED,
+            failover_chain=[
+                {"relation_id": self.german_relation.id, "result": "selected"}
+            ],
+        )
+
+        self.german_relation.refresh_from_db()
+        self.assertEqual(playback.m3u_account_id, self.account_a.id)
+        self.assertEqual(playback.category_id, self.german.id)
+        self.assertEqual(playback.relation_id, self.german_relation.id)
+        self.assertEqual(playback.status, VODPlaybackSession.Status.REDIRECTED)
+        self.assertEqual(playback.bytes_sent, 0)
+        self.assertIsNotNone(self.german_relation.source_asset_id)
+
+    def test_metadata_precedence_is_category_provider_observed_manual(self):
+        asset = VODSourceAsset.objects.create(
+            asset_type=VODSourceAsset.AssetType.MOVIE,
+            declared_metadata={
+                "audio_languages": ["eng"],
+                "resolution": "720p",
+            },
+            observed_metadata={"resolution": "1080p"},
+            manual_metadata={"audio_languages": ["deu"]},
+            locked_fields=["audio_languages"],
+        )
+
+        effective = asset.effective_metadata(
+            category_defaults={
+                "audio_languages": ["fra"],
+                "subtitle_languages": ["deu"],
+                "resolution": "576p",
+            },
+            relation_declared={"resolution": "2160p"},
+        )
+
+        self.assertEqual(effective["values"]["audio_languages"], ["deu"])
+        self.assertEqual(effective["provenance"]["audio_languages"], "manual")
+        self.assertEqual(effective["values"]["resolution"], "1080p")
+        self.assertEqual(effective["provenance"]["resolution"], "observed")
+        self.assertEqual(effective["values"]["subtitle_languages"], ["deu"])
+        self.assertEqual(
+            effective["provenance"]["subtitle_languages"], "category"
+        )

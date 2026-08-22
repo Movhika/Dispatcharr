@@ -200,5 +200,6 @@ class XCGetSeriesInfoTests(TestCase):
             if 'from "vod_m3uepisoderelation"' in q['sql'].lower()
             or "from vod_m3uepisoderelation" in q['sql'].lower()
         ]
-        # One bulk relation fetch (episode list may JOIN the table separately).
-        self.assertEqual(len(relation_queries), 1)
+        # At most one bulk fetch. A warm XC catalog cache legitimately needs no
+        # relation query at all.
+        self.assertLessEqual(len(relation_queries), 1)

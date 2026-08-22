@@ -70,6 +70,12 @@ vi.mock('../VODCategoryFilter', () => ({
   ),
 }));
 
+vi.mock('../M3UGroupRules', () => ({
+  default: ({ scope }) => (
+    <div data-testid={`m3u-group-rules-${scope}`}>Rules {scope}</div>
+  ),
+}));
+
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
   Button: ({ children, onClick, loading, disabled, variant, color }) => (
