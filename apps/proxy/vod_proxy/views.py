@@ -635,6 +635,7 @@ def _get_m3u_profile(m3u_account, profile_id, session_id=None):
         from apps.m3u.connection_pool import (
             get_profile_connection_count,
             pool_has_capacity_for_profile,
+            reconcile_profile_connection_count,
         )
         redis_client = RedisClient.get_client()
 
@@ -646,6 +647,20 @@ def _get_m3u_profile(m3u_account, profile_id, session_id=None):
                 is_default=True
             ).select_related('m3u_account__user_agent').first()
             return (default_profile, 0) if default_profile else None
+
+        def capacity(profile):
+            current = get_profile_connection_count(profile, redis_client)
+            available = pool_has_capacity_for_profile(profile, redis_client)
+            if (
+                not available
+                and profile.max_streams > 0
+                and current >= profile.max_streams
+            ):
+                current = reconcile_profile_connection_count(
+                    profile.id, redis_client
+                )
+                available = pool_has_capacity_for_profile(profile, redis_client)
+            return available, current
 
         # Check if this session already has an active connection
         if session_id:
@@ -688,9 +703,9 @@ def _get_m3u_profile(m3u_account, profile_id, session_id=None):
                     m3u_account=m3u_account,
                     is_active=True
                 )
-                current_connections = get_profile_connection_count(profile, redis_client)
+                available, current_connections = capacity(profile)
 
-                if pool_has_capacity_for_profile(profile, redis_client):
+                if available:
                     logger.info(f"[PROFILE-SELECTION] Using requested profile {profile.id}: {current_connections}/{profile.max_streams} connections")
                     return (profile, current_connections)
                 logger.warning(f"[PROFILE-SELECTION] Requested profile {profile.id} is at capacity: {current_connections}/{profile.max_streams}")
@@ -712,9 +727,9 @@ def _get_m3u_profile(m3u_account, profile_id, session_id=None):
         profiles = [default_profile] + list(m3u_profiles.filter(is_default=False))
 
         for profile in profiles:
-            current_connections = get_profile_connection_count(profile, redis_client)
+            available, current_connections = capacity(profile)
 
-            if pool_has_capacity_for_profile(profile, redis_client):
+            if available:
                 logger.info(f"[PROFILE-SELECTION] Selected profile {profile.id} ({profile.name}): {current_connections}/{profile.max_streams} connections")
                 return (profile, current_connections)
             else:

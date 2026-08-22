@@ -161,6 +161,73 @@ class VODBatchSourceVariantTests(TestCase):
             ],
             ["NF - Shared Series", "NICK - Shared Series"],
         )
+
+    def test_movie_batch_skips_blank_provider_rows_without_losing_valid_rows(self):
+        categories, relations = self._categories("movie")
+
+        process_movie_batch(
+            self.account,
+            [
+                {"stream_id": 3001, "name": None, "category_id": "10"},
+                {"stream_id": None, "name": "Missing ID", "category_id": "10"},
+                {"stream_id": 3002, "name": "  Valid Movie  ", "category_id": "20"},
+            ],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        self.assertEqual(Movie.objects.count(), 1)
+        self.assertEqual(Movie.objects.get().name, "Valid Movie")
+        self.assertEqual(
+            list(M3UMovieRelation.objects.values_list("stream_id", flat=True)),
+            ["3002"],
+        )
+
+    def test_series_batch_skips_blank_provider_rows_without_losing_valid_rows(self):
+        categories, relations = self._categories("series")
+
+        process_series_batch(
+            self.account,
+            [
+                {"series_id": 4001, "name": "   ", "category_id": "10"},
+                {"series_id": "", "name": "Missing ID", "category_id": "10"},
+                {"series_id": 4002, "name": "  Valid Series  ", "category_id": "20"},
+            ],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        self.assertEqual(Series.objects.count(), 1)
+        self.assertEqual(Series.objects.get().name, "Valid Series")
+        self.assertEqual(
+            list(
+                M3USeriesRelation.objects.values_list(
+                    "external_series_id", flat=True
+                )
+            ),
+            ["4002"],
+        )
+
+    def test_movie_batch_database_failure_is_not_reported_as_success(self):
+        categories, relations = self._categories("movie")
+
+        with patch.object(
+            Movie.objects,
+            "bulk_create",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                process_movie_batch(
+                    self.account,
+                    [{"stream_id": 5001, "name": "Valid", "category_id": "10"}],
+                    categories,
+                    relations,
+                    scan_start_time=timezone.now(),
+                )
+
+
 class VODSyncPreserveDetailsTests(TestCase):
     def setUp(self):
         self.account = M3UAccount.objects.create(

@@ -17,6 +17,24 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def _provider_vod_identity(item, id_field):
+    """Return a usable provider ID/name pair, or ``None`` for a bad row.
+
+    Xtream providers may explicitly return ``null`` or whitespace for fields
+    that are required by our models.  Reject those rows before building any
+    model instances so one malformed item cannot roll back the whole batch.
+    """
+    if not isinstance(item, dict):
+        return None
+    raw_id = item.get(id_field)
+    raw_name = item.get('name')
+    provider_id = str(raw_id).strip() if raw_id is not None else ''
+    name = str(raw_name).strip() if raw_name is not None else ''
+    if not provider_id or not name:
+        return None
+    return provider_id, name
+
+
 def _empty_categories_should_abort(categories_data, account, category_type):
     """True when an empty provider response would wipe existing group selections."""
     if categories_data:
@@ -428,12 +446,19 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
     relations_to_create = []
     relations_to_update = []
     movie_keys = {}  # For deduplication like M3U stream_hashes
+    skipped_invalid = []
 
     # Process each movie in the batch
     for movie_data in batch:
+        identity = _provider_vod_identity(movie_data, 'stream_id')
+        if identity is None:
+            skipped_invalid.append(
+                movie_data.get('stream_id') if isinstance(movie_data, dict) else None
+            )
+            continue
+
         try:
-            stream_id = str(movie_data.get('stream_id'))
-            name = movie_data.get('name', 'Unknown')
+            stream_id, name = identity
 
             # Get category with proper error handling
             category = None
@@ -551,6 +576,14 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
 
         except Exception as e:
             logger.error(f"Error preparing movie {movie_data.get('name', 'Unknown')}: {str(e)}")
+
+    if skipped_invalid:
+        logger.warning(
+            "Skipped %d movie rows with a blank provider ID or name "
+            "(sample IDs: %s)",
+            len(skipped_invalid),
+            skipped_invalid[:10],
+        )
 
     # Collect all logo URLs and create logos in batch
     logo_urls = set()
@@ -797,9 +830,9 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
         logger.info("Movie batch processing completed successfully!")
         return f"Movie batch processed: {len(movies_to_create)} created, {len(movies_to_update)} updated"
 
-    except Exception as e:
-        logger.error(f"Movie batch processing failed: {str(e)}")
-        return f"Movie batch processing failed: {str(e)}"
+    except Exception:
+        logger.exception("Movie batch processing failed")
+        raise
 
 
 @shared_task
@@ -812,12 +845,19 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
     relations_to_create = []
     relations_to_update = []
     series_keys = {}  # For deduplication like M3U stream_hashes
+    skipped_invalid = []
 
     # Process each series in the batch
     for series_data in batch:
+        identity = _provider_vod_identity(series_data, 'series_id')
+        if identity is None:
+            skipped_invalid.append(
+                series_data.get('series_id') if isinstance(series_data, dict) else None
+            )
+            continue
+
         try:
-            series_id = str(series_data.get('series_id'))
-            name = series_data.get('name', 'Unknown')
+            series_id, name = identity
 
             # Get category with proper error handling
             category = None
@@ -934,6 +974,14 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
 
         except Exception as e:
             logger.error(f"Error preparing series {series_data.get('name', 'Unknown')}: {str(e)}")
+
+    if skipped_invalid:
+        logger.warning(
+            "Skipped %d series rows with a blank provider ID or name "
+            "(sample IDs: %s)",
+            len(skipped_invalid),
+            skipped_invalid[:10],
+        )
 
     # Collect all logo URLs and create logos in batch
     logo_urls = set()
@@ -1172,9 +1220,9 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
         logger.info("Series batch processing completed successfully!")
         return f"Series batch processed: {len(series_to_create)} created, {len(series_to_update)} updated"
 
-    except Exception as e:
-        logger.error(f"Series batch processing failed: {str(e)}")
-        return f"Series batch processing failed: {str(e)}"
+    except Exception:
+        logger.exception("Series batch processing failed")
+        raise
 
 
 # Helper functions for year and date extraction
