@@ -1401,6 +1401,88 @@ export default class API {
     }
   }
 
+  static async getM3UGroupRules(accountId, scope = null) {
+    const params = new URLSearchParams();
+    if (scope) params.set('scope', scope);
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/${suffix}`
+    );
+  }
+
+  static async createM3UGroupRule(accountId, values) {
+    return await request(`${host}/api/m3u/accounts/${accountId}/group-rules/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async updateM3UGroupRule(accountId, id, values) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/${id}/`,
+      { method: 'PATCH', body: values }
+    );
+  }
+
+  static async deleteM3UGroupRule(accountId, id) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/${id}/`,
+      { method: 'DELETE' }
+    );
+  }
+
+  static async updateVODCategoryMetadata(relationId, metadataDefaults) {
+    return await request(
+      `${host}/api/vod/category-relations/${relationId}/metadata-defaults/`,
+      {
+        method: 'PATCH',
+        body: { metadata_defaults: metadataDefaults },
+      }
+    );
+  }
+
+  static async getVODCategoryRelations() {
+    return await request(`${host}/api/vod/category-relations/`);
+  }
+
+  static async getVODAccessPolicies() {
+    return await request(`${host}/api/vod/access-policies/`);
+  }
+
+  static async createVODAccessPolicy(values) {
+    return await request(`${host}/api/vod/access-policies/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async updateVODAccessPolicy(id, values) {
+    return await request(`${host}/api/vod/access-policies/${id}/`, {
+      method: 'PATCH',
+      body: values,
+    });
+  }
+
+  static async deleteVODAccessPolicy(id) {
+    return await request(`${host}/api/vod/access-policies/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async getVODPlaybackSessions() {
+    return await request(`${host}/api/vod/playback-sessions/`);
+  }
+
+  static async updateVODSourceManualMetadata(id, metadata, lockedFields) {
+    return await request(
+      `${host}/api/vod/source-assets/${id}/manual-metadata/`,
+      {
+        method: 'PATCH',
+        body: { metadata, locked_fields: lockedFields },
+      }
+    );
+  }
+
   static async addPlaylist(values) {
     try {
       let body = null;

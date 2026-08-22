@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -7,7 +7,6 @@ import {
   Image,
   Text,
   Title,
-  Select,
   Badge,
   Loader,
   Stack,
@@ -20,12 +19,12 @@ import useVideoStore from '../store/useVideoStore';
 import useSettingsStore from '../store/settings';
 import {
   formatDuration,
-  formatStreamLabel,
   getYouTubeEmbedUrl,
   imdbUrl,
   tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
+import VODSourceSelectors from './VODSourceSelectors.jsx';
 import {
   formatAudioDetails,
   formatVideoDetails,
@@ -247,59 +246,49 @@ const VODModal = ({ vod, opened, onClose }) => {
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const detailsRequestIdRef = useRef(0);
 
   const { fetchMovieDetailsFromProvider, fetchMovieProviders } = useVODStore();
 
   useEffect(() => {
     if (opened && vod) {
-      // Fetch detailed VOD info if not already loaded
-      if (!detailedVOD) {
-        setLoadingDetails(true);
-        fetchMovieDetailsFromProvider(vod.id)
-          .then((details) => {
-            setDetailedVOD(details);
-          })
-          .catch((error) => {
-            console.warn(
-              'Failed to fetch provider details, using basic info:',
-              error
-            );
-            setDetailedVOD(vod); // Fallback to basic data
-          })
-          .finally(() => {
-            setLoadingDetails(false);
-          });
-      }
-
-      // Fetch available providers
+      const requestId = ++detailsRequestIdRef.current;
       setLoadingProviders(true);
+      setLoadingDetails(true);
       fetchMovieProviders(vod.id)
         .then((providersData) => {
+          if (detailsRequestIdRef.current !== requestId) return null;
           setProviders(providersData);
-          // Set the first provider as default if none selected
-          if (providersData.length > 0 && !selectedProvider) {
-            setSelectedProvider(providersData[0]);
-          }
+          const provider = providersData[0] || null;
+          setSelectedProvider(provider);
+          return provider
+            ? fetchMovieDetailsFromProvider(vod.id, provider.id)
+            : fetchMovieDetailsFromProvider(vod.id);
+        })
+        .then((details) => {
+          if (!details || detailsRequestIdRef.current !== requestId) return;
+          setDetailedVOD(details);
         })
         .catch((error) => {
-          console.error('Failed to fetch providers:', error);
-          setProviders([]);
+          if (detailsRequestIdRef.current !== requestId) return;
+          console.warn(
+            'Failed to fetch providers or details, using basic info:',
+            error
+          );
+          setDetailedVOD(vod);
         })
         .finally(() => {
-          setLoadingProviders(false);
+          if (detailsRequestIdRef.current === requestId) {
+            setLoadingProviders(false);
+            setLoadingDetails(false);
+          }
         });
     }
-  }, [
-    opened,
-    vod,
-    detailedVOD,
-    fetchMovieDetailsFromProvider,
-    fetchMovieProviders,
-    selectedProvider,
-  ]);
+  }, [opened, vod, fetchMovieDetailsFromProvider, fetchMovieProviders]);
 
   useEffect(() => {
     if (!opened) {
+      detailsRequestIdRef.current += 1;
       setDetailedVOD(null);
       setLoadingDetails(false);
       setTrailerModalOpened(false);
@@ -315,15 +304,23 @@ const VODModal = ({ vod, opened, onClose }) => {
     setTrailerModalOpened(true);
   };
 
-  const onChangeSelectedProvider = (value) => {
-    const provider = providers.find((p) => p.id.toString() === value);
+  const onChangeSelectedProvider = (provider) => {
     setSelectedProvider(provider);
     if (provider) {
+      const requestId = ++detailsRequestIdRef.current;
       setLoadingDetails(true);
       fetchMovieDetailsFromProvider(vod.id, provider.id)
-        .then((details) => setDetailedVOD(details))
+        .then((details) => {
+          if (detailsRequestIdRef.current === requestId) {
+            setDetailedVOD(details);
+          }
+        })
         .catch(() => {})
-        .finally(() => setLoadingDetails(false));
+        .finally(() => {
+          if (detailsRequestIdRef.current === requestId) {
+            setLoadingDetails(false);
+          }
+        });
     }
   };
 
@@ -446,25 +443,12 @@ const VODModal = ({ vod, opened, onClose }) => {
                         <Loader size="xs" style={{ marginLeft: 8 }} />
                       )}
                     </Text>
-                    {providers.length === 1 ? (
-                      <Group spacing="md">
-                        <Badge color="blue" variant="light">
-                          {formatStreamLabel(providers[0])}
-                        </Badge>
-                      </Group>
-                    ) : (
-                      <Select
-                        data={providers.map((provider) => ({
-                          value: provider.id.toString(),
-                          label: formatStreamLabel(provider),
-                        }))}
-                        value={selectedProvider?.id?.toString() || ''}
-                        onChange={(value) => onChangeSelectedProvider(value)}
-                        placeholder="Select stream..."
-                        style={{ minWidth: 250 }}
-                        disabled={loadingProviders}
-                      />
-                    )}
+                    <VODSourceSelectors
+                      providers={providers}
+                      selectedProvider={selectedProvider}
+                      onSelect={onChangeSelectedProvider}
+                      disabled={loadingProviders}
+                    />
                   </Box>
                 )}
 

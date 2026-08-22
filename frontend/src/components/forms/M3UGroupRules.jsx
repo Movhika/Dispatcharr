@@ -1,0 +1,245 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Checkbox,
+  Group,
+  NumberInput,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  TableTbody,
+  TableTd,
+  TableTh,
+  TableThead,
+  TableTr,
+  Text,
+  TextInput,
+} from '@mantine/core';
+import { Plus, Save, Trash2 } from 'lucide-react';
+import API from '../../api';
+import { showNotification } from '../../utils/notificationUtils';
+
+const M3UGroupRules = ({ accountId, scope }) => {
+  const [rules, setRules] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!accountId) return;
+    setLoading(true);
+    try {
+      setRules((await API.getM3UGroupRules(accountId, scope)) || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, scope]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const updateLocal = (id, values) => {
+    setRules((current) =>
+      current.map((rule) => (rule.id === id ? { ...rule, ...values } : rule))
+    );
+  };
+
+  const addRule = async () => {
+    const created = await API.createM3UGroupRule(accountId, {
+      scope,
+      match_field: 'group_name',
+      match_mode: 'any',
+      regex_pattern: '.*',
+      action: 'disable',
+      case_sensitive: false,
+      enabled: true,
+      order: rules.length * 10,
+    });
+    setRules((current) => [...current, created]);
+  };
+
+  const saveRule = async (rule) => {
+    const saved = await API.updateM3UGroupRule(accountId, rule.id, {
+      scope,
+      match_field: rule.match_field,
+      match_mode: rule.match_mode,
+      regex_pattern: rule.regex_pattern,
+      action: rule.action,
+      case_sensitive: rule.case_sensitive,
+      enabled: rule.enabled,
+      order: rule.order,
+    });
+    updateLocal(rule.id, saved);
+    showNotification({
+      title: 'Discovery rule saved',
+      message: 'The rule applies to groups discovered by future scans.',
+      color: 'green',
+    });
+  };
+
+  const deleteRule = async (id) => {
+    await API.deleteM3UGroupRule(accountId, id);
+    setRules((current) => current.filter((rule) => rule.id !== id));
+  };
+
+  return (
+    <Stack gap="xs" mt="md">
+      <Group justify="space-between">
+        <div>
+          <Text fw={600} size="sm">
+            Rules for newly discovered groups
+          </Text>
+          <Text c="dimmed" size="xs">
+            First matching rule wins. Existing group choices are not changed.
+          </Text>
+        </div>
+        <Button
+          size="xs"
+          variant="default"
+          leftSection={<Plus size={14} />}
+          onClick={addRule}
+          loading={loading}
+        >
+          Add rule
+        </Button>
+      </Group>
+
+      {rules.length === 0 ? (
+        <Alert color="gray" variant="light">
+          No rule configured. The “Automatically enable” setting above is used.
+        </Alert>
+      ) : (
+        <ScrollArea type="auto">
+          <Table striped withTableBorder miw={900} verticalSpacing="xs">
+            <TableThead>
+              <TableTr>
+                <TableTh w={70}>Order</TableTh>
+                <TableTh w={145}>Match</TableTh>
+                <TableTh>Regular expression</TableTh>
+                <TableTh w={120}>Item mode</TableTh>
+                <TableTh w={145}>Result</TableTh>
+                <TableTh w={75}>Case</TableTh>
+                <TableTh w={75}>Active</TableTh>
+                <TableTh w={80}>Actions</TableTh>
+              </TableTr>
+            </TableThead>
+            <TableTbody>
+              {rules.map((rule) => (
+                <TableTr key={rule.id}>
+                  <TableTd>
+                    <NumberInput
+                      size="xs"
+                      min={0}
+                      value={rule.order}
+                      onChange={(value) =>
+                        updateLocal(rule.id, { order: value })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Select
+                      size="xs"
+                      value={rule.match_field}
+                      data={[
+                        { value: 'group_name', label: 'Group name' },
+                        { value: 'item_name', label: 'Contained item' },
+                      ]}
+                      onChange={(value) =>
+                        updateLocal(rule.id, { match_field: value })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <TextInput
+                      size="xs"
+                      value={rule.regex_pattern}
+                      onChange={(event) =>
+                        updateLocal(rule.id, {
+                          regex_pattern: event.currentTarget.value,
+                        })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Select
+                      size="xs"
+                      disabled={rule.match_field !== 'item_name'}
+                      value={rule.match_mode}
+                      data={[
+                        { value: 'any', label: 'Any item' },
+                        { value: 'all', label: 'All items' },
+                      ]}
+                      onChange={(value) =>
+                        updateLocal(rule.id, { match_mode: value })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Select
+                      size="xs"
+                      value={rule.action}
+                      data={[
+                        { value: 'enable', label: 'Import enabled' },
+                        { value: 'disable', label: 'Import disabled' },
+                        { value: 'ignore', label: 'Ignore group' },
+                      ]}
+                      onChange={(value) =>
+                        updateLocal(rule.id, { action: value })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Checkbox
+                      aria-label="Case sensitive"
+                      checked={rule.case_sensitive}
+                      onChange={(event) =>
+                        updateLocal(rule.id, {
+                          case_sensitive: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Checkbox
+                      aria-label="Rule active"
+                      checked={rule.enabled}
+                      onChange={(event) =>
+                        updateLocal(rule.id, {
+                          enabled: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Group gap={4} wrap="nowrap">
+                      <ActionIcon
+                        aria-label="Save rule"
+                        color="blue"
+                        variant="subtle"
+                        onClick={() => saveRule(rule)}
+                      >
+                        <Save size={15} />
+                      </ActionIcon>
+                      <ActionIcon
+                        aria-label="Delete rule"
+                        color="red"
+                        variant="subtle"
+                        onClick={() => deleteRule(rule.id)}
+                      >
+                        <Trash2 size={15} />
+                      </ActionIcon>
+                    </Group>
+                  </TableTd>
+                </TableTr>
+              ))}
+            </TableTbody>
+          </Table>
+        </ScrollArea>
+      )}
+    </Stack>
+  );
+};
+
+export default M3UGroupRules;

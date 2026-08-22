@@ -11,9 +11,14 @@ import {
   Box,
   Checkbox,
   SegmentedControl,
+  Popover,
+  Select,
+  TagsInput,
 } from '@mantine/core';
 import { CircleCheck, CircleX } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
+import API from '../../api';
+import { showNotification } from '../../utils/notificationUtils';
 
 const VODCategoryFilter = ({
   playlist = null,
@@ -48,6 +53,8 @@ const VODCategoryFilter = ({
           if (match) {
             return {
               ...cat,
+              relation_id: match.id,
+              metadata_defaults: match.metadata_defaults || {},
               enabled: match.enabled || false, // Keep user's previous choice, default to false for new categories
               original_enabled: match.enabled,
             };
@@ -63,6 +70,36 @@ const VODCategoryFilter = ({
         enabled: state.id == id ? !state.enabled : state.enabled,
       }))
     );
+  };
+
+  const updateMetadata = (id, values) => {
+    setCategoryStates(
+      categoryStates.map((state) =>
+        state.id === id
+          ? {
+              ...state,
+              metadata_defaults: {
+                ...(state.metadata_defaults || {}),
+                ...values,
+              },
+            }
+          : state
+      )
+    );
+  };
+
+  const saveMetadata = async (category) => {
+    const metadata = Object.fromEntries(
+      Object.entries(category.metadata_defaults || {}).filter(
+        ([, value]) => value !== '' && value !== null && value !== undefined
+      )
+    );
+    await API.updateVODCategoryMetadata(category.relation_id, metadata);
+    showNotification({
+      title: 'Category metadata saved',
+      message: `${category.name} will use these values until playback or manual metadata provides a more reliable value.`,
+      color: 'green',
+    });
   };
 
   const isVisible = (category) => {
@@ -174,6 +211,70 @@ const VODCategoryFilter = ({
                     {category.name}
                   </Text>
                 </Button>
+                <Popover width={320} position="bottom" withArrow shadow="md">
+                  <Popover.Target>
+                    <Button size="compact-xs" variant="subtle" fullWidth>
+                      Expected language & quality
+                    </Button>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack gap="xs">
+                      <Text size="xs" c="dimmed">
+                        Category defaults have the lowest confidence. Observed
+                        playback data can replace them; manual source values
+                        cannot.
+                      </Text>
+                      <TagsInput
+                        size="xs"
+                        label="Audio languages"
+                        placeholder="deu, eng"
+                        value={
+                          category.metadata_defaults?.audio_languages || []
+                        }
+                        onChange={(value) =>
+                          updateMetadata(category.id, {
+                            audio_languages: value,
+                          })
+                        }
+                      />
+                      <TagsInput
+                        size="xs"
+                        label="Subtitle languages"
+                        placeholder="deu, eng"
+                        value={
+                          category.metadata_defaults?.subtitle_languages || []
+                        }
+                        onChange={(value) =>
+                          updateMetadata(category.id, {
+                            subtitle_languages: value,
+                          })
+                        }
+                      />
+                      <Select
+                        size="xs"
+                        clearable
+                        label="Expected maximum resolution"
+                        value={category.metadata_defaults?.resolution || null}
+                        data={[
+                          '480p',
+                          '576p',
+                          '720p',
+                          '1080p',
+                          '1440p',
+                          '2160p',
+                        ]}
+                        onChange={(value) =>
+                          updateMetadata(category.id, {
+                            resolution: value || '',
+                          })
+                        }
+                      />
+                      <Button size="xs" onClick={() => saveMetadata(category)}>
+                        Save metadata
+                      </Button>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
               </Group>
             ))}
         </SimpleGrid>

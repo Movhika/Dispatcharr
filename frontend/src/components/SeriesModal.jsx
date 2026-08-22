@@ -7,7 +7,6 @@ import {
   Image,
   Text,
   Title,
-  Select,
   Badge,
   Loader,
   Stack,
@@ -32,7 +31,6 @@ import useVideoStore from '../store/useVideoStore';
 import useSettingsStore from '../store/settings';
 import {
   formatDuration,
-  formatStreamLabel,
   getEpisodeAirdate,
   getEpisodeStreamUrl,
   getTmdbUrlLink,
@@ -44,6 +42,7 @@ import {
   tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
+import VODSourceSelectors from './VODSourceSelectors.jsx';
 
 const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
@@ -360,42 +359,32 @@ const SeriesModal = ({ series, opened, onClose }) => {
   useEffect(() => {
     if (opened && series) {
       const requestId = ++detailsRequestIdRef.current;
-      // Fetch detailed series info which now includes episodes
       setLoadingDetails(true);
-      fetchSeriesInfo(series.id)
+      setLoadingProviders(true);
+      fetchSeriesProviders(series.id)
+        .then((providersData) => {
+          if (detailsRequestIdRef.current !== requestId) return null;
+          setProviders(providersData);
+          const provider = providersData[0] || null;
+          setSelectedProvider(provider);
+          return provider
+            ? fetchSeriesInfo(series.id, provider.id)
+            : fetchSeriesInfo(series.id);
+        })
         .then((details) => {
-          if (detailsRequestIdRef.current !== requestId) return;
+          if (!details || detailsRequestIdRef.current !== requestId) return;
           setDetailedSeries(details);
         })
         .catch((error) => {
           if (detailsRequestIdRef.current !== requestId) return;
-          console.warn(
-            'Failed to fetch series details, using basic info:',
-            error
-          );
-          setDetailedSeries(series); // Fallback to basic data
+          console.error('Failed to fetch series providers:', error);
+          setDetailedSeries(series);
         })
         .finally(() => {
           if (detailsRequestIdRef.current === requestId) {
+            setLoadingProviders(false);
             setLoadingDetails(false);
           }
-        });
-
-      // Fetch available providers (does not re-trigger series info fetch)
-      setLoadingProviders(true);
-      fetchSeriesProviders(series.id)
-        .then((providersData) => {
-          setProviders(providersData);
-          if (providersData.length > 0) {
-            setSelectedProvider(providersData[0]);
-          }
-        })
-        .catch((error) => {
-          console.error('Failed to fetch series providers:', error);
-          setProviders([]);
-        })
-        .finally(() => {
-          setLoadingProviders(false);
         });
     }
   }, [opened, series, fetchSeriesInfo, fetchSeriesProviders]);
@@ -475,8 +464,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
     setTrailerModalOpened(true);
   };
 
-  const onChangeSelectedProvider = (value) => {
-    const provider = providers.find((p) => p.id.toString() === value);
+  const onChangeSelectedProvider = (provider) => {
     setSelectedProvider(provider);
     if (provider) {
       const requestId = ++detailsRequestIdRef.current;
@@ -585,27 +573,11 @@ const SeriesModal = ({ series, opened, onClose }) => {
                       {displaySeries.m3u_account.name}
                     </Badge>
                   </Group>
-                ) : providers.length === 1 ? (
-                  <Group spacing="md">
-                    <Badge color="blue" variant="light">
-                      {formatStreamLabel(providers[0])}
-                    </Badge>
-                    {providers[0].stream_id && (
-                      <Badge color="orange" variant="outline" size="xs">
-                        Stream {providers[0].stream_id}
-                      </Badge>
-                    )}
-                  </Group>
-                ) : providers.length > 1 ? (
-                  <Select
-                    data={providers.map((provider) => ({
-                      value: provider.id.toString(),
-                      label: formatStreamLabel(provider),
-                    }))}
-                    value={selectedProvider?.id?.toString() || ''}
-                    onChange={(value) => onChangeSelectedProvider(value)}
-                    placeholder="Select stream..."
-                    style={{ maxWidth: 350 }}
+                ) : providers.length > 0 ? (
+                  <VODSourceSelectors
+                    providers={providers}
+                    selectedProvider={selectedProvider}
+                    onSelect={onChangeSelectedProvider}
                     disabled={loadingProviders}
                   />
                 ) : null}
@@ -639,7 +611,9 @@ const SeriesModal = ({ series, opened, onClose }) => {
                           <TableTr>
                             <TableTh style={{ width: '60px' }}>Ep</TableTh>
                             <TableTh>Title</TableTh>
-                            <TableTh style={{ width: '80px' }}>Duration</TableTh>
+                            <TableTh style={{ width: '80px' }}>
+                              Duration
+                            </TableTh>
                             <TableTh style={{ width: '60px' }}>Date</TableTh>
                             <TableTh style={{ width: '80px' }}>Action</TableTh>
                           </TableTr>

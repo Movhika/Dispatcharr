@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import {
   Box,
+  Button,
   Flex,
   Grid,
   GridCol,
@@ -14,9 +15,10 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { Search } from 'lucide-react';
+import { Search, SlidersHorizontal } from 'lucide-react';
 import { useDisclosure } from '@mantine/hooks';
 import useVODStore from '../store/useVODStore';
+import useAuthStore from '../store/auth';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
 import {
   filterCategoriesToEnabled,
@@ -26,6 +28,9 @@ const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
 const VODModal = React.lazy(() => import('../components/VODModal'));
 const VODCard = React.lazy(() => import('../components/cards/VODCard'));
 const SeriesCard = React.lazy(() => import('../components/cards/SeriesCard'));
+const VODSourceManagerModal = React.lazy(
+  () => import('../components/VODSourceManagerModal')
+);
 
 const MIN_CARD_WIDTH = 260;
 const MAX_CARD_WIDTH = 320;
@@ -89,6 +94,8 @@ const VODsPage = () => {
   const [initialLoad, setInitialLoad] = useState(true);
   const columns = useCardColumns();
   const [categories, setCategories] = useState({});
+  const user = useAuthStore((state) => state.user);
+  const [sourceManagerOpened, sourceManagerHandlers] = useDisclosure(false);
 
   // Helper function to get display data based on current filters
   const getDisplayData = () => {
@@ -138,8 +145,17 @@ const VODsPage = () => {
   return (
     <Box p="md" id="vods-container">
       <Stack spacing="md">
-        <Group position="apart">
+        <Group justify="space-between">
           <Title order={2}>Video on Demand</Title>
+          {user?.user_level >= 10 && (
+            <Button
+              variant="default"
+              leftSection={<SlidersHorizontal size={16} />}
+              onClick={sourceManagerHandlers.open}
+            >
+              Source management
+            </Button>
+          )}
         </Group>
 
         {/* Filters */}
@@ -233,6 +249,15 @@ const VODsPage = () => {
             series={selectedSeries}
             opened={seriesModalOpened}
             onClose={closeSeriesModal}
+          />
+        </Suspense>
+      </ErrorBoundary>
+
+      <ErrorBoundary>
+        <Suspense fallback={<LoadingOverlay />}>
+          <VODSourceManagerModal
+            opened={sourceManagerOpened}
+            onClose={sourceManagerHandlers.close}
           />
         </Suspense>
       </ErrorBoundary>
