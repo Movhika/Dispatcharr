@@ -20,6 +20,7 @@ from apps.vod.tasks import (
     process_movie_batch,
     process_series_batch,
     refresh_movie_advanced_data,
+    refresh_series_episodes,
     should_apply_provider_list_field,
 )
 
@@ -43,6 +44,123 @@ class VODListFieldHelperTests(SimpleTestCase):
         self.assertTrue(should_apply_provider_list_field(None, "Comedy"))
 
 
+class VODBatchSourceVariantTests(TestCase):
+    def setUp(self):
+        self.account = M3UAccount.objects.create(
+            name="Variant Provider",
+            server_url="http://example.com",
+            username="user",
+            password="pass",
+            account_type=M3UAccount.Types.XC,
+            is_active=True,
+            custom_properties={"enable_vod": True},
+        )
+
+    def _categories(self, category_type):
+        first = VODCategory.objects.create(
+            name=f"First {category_type}",
+            category_type=category_type,
+        )
+        second = VODCategory.objects.create(
+            name=f"Second {category_type}",
+            category_type=category_type,
+        )
+        first_relation = M3UVODCategoryRelation.objects.create(
+            category=first,
+            m3u_account=self.account,
+            enabled=True,
+        )
+        second_relation = M3UVODCategoryRelation.objects.create(
+            category=second,
+            m3u_account=self.account,
+            enabled=True,
+        )
+        return (
+            {"10": first, "20": second},
+            {first.id: first_relation, second.id: second_relation},
+        )
+
+    def test_movie_batch_keeps_all_sources_for_same_tmdb_id(self):
+        categories, relations = self._categories("movie")
+        process_movie_batch(
+            self.account,
+            [
+                {
+                    "stream_id": 1001,
+                    "name": "NF - Shared Movie",
+                    "tmdb_id": "500",
+                    "category_id": "10",
+                },
+                {
+                    "stream_id": 1002,
+                    "name": "DE - Shared Movie",
+                    "tmdb_id": "500",
+                    "category_id": "20",
+                },
+            ],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        self.assertEqual(Movie.objects.filter(tmdb_id="500").count(), 1)
+        source_relations = M3UMovieRelation.objects.filter(
+            m3u_account=self.account,
+            movie__tmdb_id="500",
+        ).order_by("stream_id")
+        self.assertEqual(source_relations.count(), 2)
+        self.assertEqual(
+            [relation.category_id for relation in source_relations],
+            [categories["10"].id, categories["20"].id],
+        )
+        self.assertEqual(
+            [
+                relation.custom_properties["basic_data"]["name"]
+                for relation in source_relations
+            ],
+            ["NF - Shared Movie", "DE - Shared Movie"],
+        )
+
+    def test_series_batch_keeps_all_sources_for_same_tmdb_id(self):
+        categories, relations = self._categories("series")
+        process_series_batch(
+            self.account,
+            [
+                {
+                    "series_id": 2001,
+                    "name": "NF - Shared Series",
+                    "tmdb": "246",
+                    "category_id": "10",
+                },
+                {
+                    "series_id": 2002,
+                    "name": "NICK - Shared Series",
+                    "tmdb": "246",
+                    "category_id": "20",
+                },
+            ],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        self.assertEqual(Series.objects.filter(tmdb_id="246").count(), 1)
+        source_relations = M3USeriesRelation.objects.filter(
+            m3u_account=self.account,
+            series__tmdb_id="246",
+        ).order_by("external_series_id")
+        self.assertEqual(source_relations.count(), 2)
+        self.assertEqual(
+            [relation.category_id for relation in source_relations],
+            [categories["10"].id, categories["20"].id],
+        )
+        self.assertEqual(
+            [
+                relation.custom_properties["basic_data"]["name"]
+                for relation in source_relations
+            ],
+            ["NF - Shared Series", "NICK - Shared Series"],
+        )
 class VODSyncPreserveDetailsTests(TestCase):
     def setUp(self):
         self.account = M3UAccount.objects.create(
@@ -271,6 +389,36 @@ class VODSeriesSyncPreserveDetailsTests(TestCase):
         self.assertEqual(
             props.get("detailed_info", {}).get("plot"),
             "Dummy series plot for advanced detail.",
+        )
+
+    @patch("apps.vod.tasks.XtreamCodesClient")
+    def test_episode_refresh_stores_relation_specific_series_details(
+        self, mock_client_cls
+    ):
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get_series_info.return_value = {
+            "info": {
+                "name": "Clean Provider Series Title",
+                "plot": "Provider-specific plot",
+                "backdrop_path": ["https://cdn.example.com/provider-series.jpg"],
+            },
+            "episodes": {},
+        }
+
+        refresh_series_episodes(
+            self.account,
+            self.series,
+            self.relation.external_series_id,
+        )
+
+        self.relation.refresh_from_db()
+        details = (self.relation.custom_properties or {}).get("detailed_info", {})
+        self.assertEqual(details.get("name"), "Clean Provider Series Title")
+        self.assertEqual(details.get("plot"), "Provider-specific plot")
+        self.assertEqual(
+            details.get("backdrop_path"),
+            ["https://cdn.example.com/provider-series.jpg"],
         )
 
 

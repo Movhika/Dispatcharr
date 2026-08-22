@@ -38,6 +38,7 @@ from .image_proxy import (
     vodlogo_cache_url,
 )
 from .tasks import refresh_series_episodes, refresh_movie_advanced_data
+from .utils import get_series_display_name
 from django.utils import timezone
 from datetime import timedelta
 
@@ -366,7 +367,9 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         relations = M3USeriesRelation.objects.filter(
             series=series,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category')
+        ).select_related('m3u_account', 'category').order_by(
+            '-m3u_account__priority', 'id'
+        )
 
         serializer = M3USeriesRelationSerializer(relations, many=True)
         return Response(serializer.data)
@@ -499,7 +502,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             response_data = {
                 'id': series.id,
                 'series_id': relation.external_series_id,
-                'name': series.name,
+                'name': get_series_display_name(series, relation),
                 'description': series.description,
                 'year': series.year,
                 'genre': series.genre,
@@ -531,50 +534,65 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             include_episodes = request.query_params.get('include_episodes', 'true').lower() == 'true'
             if include_episodes and custom_props.get('episodes_fetched', False):
                 logger.debug(f"Including episodes for series {series.id}")
-                # Only episodes this provider actually has streams for. Shared Series
-                # rows can include specials/seasons from another account.
-                relations_by_episode_id = {
-                    rel.episode_id: rel
-                    for rel in M3UEpisodeRelation.objects.filter(
-                        m3u_account_id=relation.m3u_account_id,
-                        episode__series_id=series.id,
-                    ).only('episode_id', 'container_extension', 'custom_properties')
-                }
-                episodes = list(
-                    Episode.objects.filter(
-                        id__in=relations_by_episode_id.keys()
-                    ).order_by('season_number', 'episode_number')
-                )
-
                 episodes_by_season = {}
                 episode_image_parts = vod_image_url_parts(request, 'episode')
-                for episode in episodes:
+                episode_relations = M3UEpisodeRelation.objects.filter(
+                    series_relation=relation,
+                    m3u_account__is_active=True,
+                ).select_related('episode').order_by(
+                    'episode__season_number', 'episode__episode_number', 'id'
+                )
+
+                for episode_relation in episode_relations:
+                    episode = episode_relation.episode
                     season_key = str(
                         episode.season_number if episode.season_number is not None else 0
                     )
                     if season_key not in episodes_by_season:
                         episodes_by_season[season_key] = []
 
-                    episode_relation = relations_by_episode_id.get(episode.id)
+                    relation_props = episode_relation.custom_properties or {}
+                    provider_episode = relation_props.get('info') or {}
+                    if not isinstance(provider_episode, dict):
+                        provider_episode = {}
+                    provider_info = provider_episode.get('info') or {}
+                    if not isinstance(provider_info, dict):
+                        provider_info = {}
+                    episode_title = (
+                        provider_episode.get('title')
+                        or provider_info.get('name')
+                        or episode.name
+                    )
+                    episode_description = (
+                        provider_info.get('plot')
+                        or provider_info.get('overview')
+                        or episode.description
+                    )
                     episode_artwork = prefer_relation_artwork(
-                        episode_relation.custom_properties if episode_relation else None,
+                        relation_props,
                         episode.custom_properties,
                     )
                     raw_episode_image = episode_artwork['movie_image']
                     episode_data = {
                         'id': episode.id,
+                        'relation_id': episode_relation.id,
+                        'stream_id': episode_relation.stream_id,
                         'uuid': episode.uuid,
-                        'name': episode.name,
-                        'title': episode.name,
-                        'episode_number': episode.episode_number,
+                        'name': episode_title,
+                        'title': episode_title,
+                        'episode_number': provider_episode.get(
+                            'episode_num', episode.episode_number
+                        ),
                         'season_number': episode.season_number,
-                        'description': episode.description,
-                        'air_date': episode.air_date,
-                        'plot': episode.description,
-                        'duration_secs': episode.duration_secs,
-                        'rating': episode.rating,
-                        'tmdb_id': episode.tmdb_id,
-                        'imdb_id': episode.imdb_id,
+                        'description': episode_description,
+                        'air_date': provider_info.get('air_date') or episode.air_date,
+                        'plot': episode_description,
+                        'duration_secs': provider_info.get(
+                            'duration_secs', episode.duration_secs
+                        ),
+                        'rating': provider_info.get('rating') or episode.rating,
+                        'tmdb_id': provider_info.get('tmdb_id') or episode.tmdb_id,
+                        'imdb_id': provider_info.get('imdb_id') or episode.imdb_id,
                         'movie_image': rewrite_single_image_url(
                             request,
                             'episode',
@@ -584,10 +602,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                             url_parts=episode_image_parts,
                             m3u_account_id=account_id,
                         ),
-                        'container_extension': (
-                            episode_relation.container_extension
-                            if episode_relation else 'mp4'
-                        ),
+                        'container_extension': episode_relation.container_extension or 'mp4',
                         'type': 'episode',
                         'series': {
                             'id': series.id,

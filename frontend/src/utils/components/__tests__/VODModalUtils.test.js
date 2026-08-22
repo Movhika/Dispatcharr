@@ -166,7 +166,7 @@ describe('VODModalUtils', () => {
       const result = getMovieStreamUrl(vod, provider, 'production');
 
       expect(result).toBe(
-        'https://example.com/proxy/vod/movie/test-uuid-123?stream_id=stream-123'
+        'https://example.com/proxy/vod/movie/test-uuid-123?stream_id=stream-123&m3u_account_id=account-456'
       );
     });
 

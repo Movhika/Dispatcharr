@@ -171,3 +171,43 @@ class SeriesProviderInfoQueryTests(TestCase):
         other_seasons = other_response.data.get('episodes') or {}
         self.assertEqual(len(other_seasons.get('0') or []), 1)
         self.assertEqual(other_seasons['0'][0]['name'], 'Special')
+
+    def test_provider_info_separates_categories_on_same_account(self):
+        same_account_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account,
+            series=self.series,
+            external_series_id='8702',
+            last_episode_refresh=timezone.now(),
+            custom_properties={
+                'episodes_fetched': True,
+                'detailed_fetched': True,
+            },
+        )
+        category_episode = Episode.objects.create(
+            series=self.series,
+            name='Category-only episode',
+            season_number=3,
+            episode_number=1,
+        )
+        category_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account,
+            episode=category_episode,
+            series_relation=same_account_relation,
+            stream_id='same-account-other-category',
+            container_extension='mp4',
+        )
+
+        url = (
+            f'/api/vod/series/{self.series.id}/provider-info/'
+            f'?include_episodes=true&relation_id={same_account_relation.id}'
+        )
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        seasons = response.data.get('episodes') or {}
+        self.assertEqual(set(seasons), {'3'})
+        self.assertEqual(seasons['3'][0]['relation_id'], category_relation.id)
+        self.assertEqual(
+            seasons['3'][0]['stream_id'],
+            'same-account-other-category',
+        )

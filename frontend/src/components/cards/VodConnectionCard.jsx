@@ -204,6 +204,7 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
   const connection =
     vodContent.individual_connection ||
     (vodContent.connections && vodContent.connections[0]);
+  const source = connection?.source || {};
 
   // Get poster/logo URL
   const posterUrl = metadata.logo_url || logo;
@@ -331,23 +332,32 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
 
         {/* Display M3U profile information - matching channel card style */}
         {connection &&
-          connection.m3u_profile &&
-          (connection.m3u_profile.profile_name ||
-            connection.m3u_profile.account_name) && (
+          (source.label ||
+            connection.m3u_profile?.profile_name ||
+            connection.m3u_profile?.account_name) && (
             <Flex justify="flex-end" align="flex-start" mt={-8}>
               <Group gap={5} align="flex-start">
                 <HardDriveUpload size="18" mt={2} />
                 <Stack gap={0}>
-                  <Tooltip label="M3U Account">
+                  <Tooltip label="M3U account and VOD category">
                     <Text size="xs" fw={500}>
-                      {connection.m3u_profile.account_name || 'Unknown Account'}
+                      {source.label ||
+                        connection.m3u_profile?.account_name ||
+                        'Unknown Account'}
                     </Text>
                   </Tooltip>
-                  <Tooltip label="M3U Profile">
+                  {connection.m3u_profile?.profile_name && (
+                    <Tooltip label="M3U Profile">
+                      <Text size="xs" c="dimmed">
+                        {connection.m3u_profile.profile_name}
+                      </Text>
+                    </Tooltip>
+                  )}
+                  {source.stream_id && (
                     <Text size="xs" c="dimmed">
-                      {connection.m3u_profile.profile_name || 'Default Profile'}
+                      Stream ID: {source.stream_id}
                     </Text>
-                  </Tooltip>
+                  )}
                 </Stack>
               </Group>
             </Flex>

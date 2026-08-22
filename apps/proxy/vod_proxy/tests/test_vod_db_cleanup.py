@@ -84,6 +84,10 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
             "connected_at": "1000.0",
             "last_activity": "1001.0",
             "active_streams": "1",
+            "source_metadata": (
+                '{"label":"Account — Movies DE",'
+                '"display_name":"Clean Movie","stream_id":"123"}'
+            ),
         }
 
         movie_obj = MagicMock(
@@ -109,6 +113,10 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
             stats = build_vod_stats_data(redis_client)
 
         self.assertEqual(stats["total_connections"], 1)
+        connection = stats["vod_connections"][0]["connections"][0]
+        self.assertEqual(stats["vod_connections"][0]["content_name"], "Clean Movie")
+        self.assertEqual(connection["source"]["label"], "Account — Movies DE")
+        self.assertEqual(connection["source"]["stream_id"], "123")
         mock_close.assert_called_once()
 
     @patch("apps.proxy.vod_proxy.views.close_old_connections")

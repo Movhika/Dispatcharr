@@ -215,6 +215,12 @@ class M3USeriesRelation(models.Model):
         verbose_name = 'M3U Series Relation'
         verbose_name_plural = 'M3U Series Relations'
         unique_together = [('m3u_account', 'external_series_id')]
+        indexes = [
+            models.Index(
+                fields=['series', 'category'],
+                name='vod_series_category_idx',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.series.name}"
@@ -243,6 +249,12 @@ class M3UMovieRelation(models.Model):
         verbose_name = 'M3U Movie Relation'
         verbose_name_plural = 'M3U Movie Relations'
         unique_together = [('m3u_account', 'stream_id')]
+        indexes = [
+            models.Index(
+                fields=['movie', 'category'],
+                name='vod_movie_category_idx',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.movie.name}"

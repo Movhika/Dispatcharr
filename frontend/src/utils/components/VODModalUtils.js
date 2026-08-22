@@ -63,13 +63,10 @@ export const getMovieStreamUrl = (vod, selectedProvider, env_mode) => {
   let streamUrl = `/proxy/vod/movie/${vod.uuid}`;
 
   const params = new URLSearchParams();
-  if (selectedProvider) {
-    if (selectedProvider.stream_id) {
-      params.set('stream_id', selectedProvider.stream_id);
-    } else {
-      params.set('m3u_account_id', selectedProvider.m3u_account.id);
-    }
-  }
+  const streamId = selectedProvider?.stream_id;
+  const accountId = selectedProvider?.m3u_account?.id;
+  if (streamId) params.set('stream_id', streamId);
+  if (accountId) params.set('m3u_account_id', accountId);
   const token = useAuthStore.getState().accessToken;
   if (token) params.set('token', token);
   if (params.toString())

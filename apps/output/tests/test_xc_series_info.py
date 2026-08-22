@@ -95,17 +95,54 @@ class XCGetSeriesInfoTests(TestCase):
         request = self.factory.get('/player_api.php')
         return xc_get_series_info(request, self.user, str(relation_id))
 
-    def test_returns_all_active_provider_episodes(self):
-        # XC clients get a unified catalog, even when asked via one series_relation id.
+    def test_returns_only_selected_relation_episodes(self):
         info = self._info(self.relation_a.id)
-        self.assertIn(0, info['episodes'])
+        self.assertNotIn(0, info['episodes'])
         self.assertIn(1, info['episodes'])
-        self.assertEqual(info['episodes'][0][0]['title'], 'Special')
-        self.assertEqual(info['episodes'][0][0]['season'], 0)
+        self.assertEqual(info['episodes'][1][0]['title'], 'S1E1')
 
-    def test_prefers_higher_priority_account_stream_metadata(self):
+    def test_uses_selected_relation_stream_metadata(self):
         info = self._info(self.relation_a.id)
-        self.assertEqual(info['episodes'][1][0]['container_extension'], 'mp4')
+        self.assertEqual(info['episodes'][1][0]['container_extension'], 'mkv')
+
+    def test_uses_selected_relation_episode_metadata(self):
+        relation = M3UEpisodeRelation.objects.get(
+            series_relation=self.relation_a,
+            episode=self.s1e1,
+        )
+        relation.custom_properties = {
+            'info': {
+                'title': 'Provider A Episode',
+                'episode_num': 1,
+                'info': {
+                    'plot': 'Provider A plot',
+                    'duration_secs': '1500',
+                    'rating': '8.4',
+                    'air_date': '1989-02-03',
+                    'tmdb_id': 'a-tmdb',
+                    'imdb_id': 'a-imdb',
+                    'director': 'Provider A Director',
+                },
+            }
+        }
+        relation.save(update_fields=['custom_properties'])
+
+        info = self._info(self.relation_a.id)
+        episode = info['episodes'][1][0]
+
+        self.assertEqual(episode['id'], relation.id)
+        self.assertEqual(episode['title'], 'Provider A Episode')
+        self.assertEqual(episode['info']['overview'], 'Provider A plot')
+        self.assertEqual(episode['info']['duration_secs'], 1500)
+        self.assertEqual(episode['info']['duration'], '00:25:00')
+        self.assertEqual(episode['info']['rating'], 8.4)
+        self.assertEqual(episode['info']['air_date'], '1989-02-03')
+        self.assertEqual(episode['info']['tmdb_id'], 'a-tmdb')
+        self.assertEqual(episode['info']['imdb_id'], 'a-imdb')
+        self.assertEqual(
+            episode['info']['directed_by'],
+            'Provider A Director',
+        )
 
     def test_episode_artwork_prefers_higher_priority_relation(self):
         self.s1e1.custom_properties = {
@@ -131,9 +168,9 @@ class XCGetSeriesInfoTests(TestCase):
         movie_image = info['episodes'][1][0]['info']['movie_image']
         self.assertIn('/api/vod/episodes/', movie_image)
         self.assertIn('kind=movie_image', movie_image)
-        # Proxied URL embeds a hash of the preferred (high-priority) source URL.
+        # Proxied URL embeds a hash of the selected relation's source URL.
         from hashlib import md5
-        expected_v = md5(b'https://cdn.example.com/high.jpg').hexdigest()[:8]
+        expected_v = md5(b'https://cdn.example.com/low.jpg').hexdigest()[:8]
         self.assertIn(f'v={expected_v}', movie_image)
 
     def test_does_not_n_plus_one_episode_relations(self):

@@ -271,7 +271,9 @@ describe('VODModal', () => {
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Test Provider')).toBeInTheDocument();
+      expect(
+        screen.getByText('Test Provider - Stream stream-123')
+      ).toBeInTheDocument();
     });
   });
 

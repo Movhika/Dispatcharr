@@ -588,7 +588,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
                 ) : providers.length === 1 ? (
                   <Group spacing="md">
                     <Badge color="blue" variant="light">
-                      {providers[0].m3u_account.name}
+                      {formatStreamLabel(providers[0])}
                     </Badge>
                     {providers[0].stream_id && (
                       <Badge color="orange" variant="outline" size="xs">

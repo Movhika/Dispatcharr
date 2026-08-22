@@ -17,10 +17,32 @@ de-duplication, empty-input fallbacks, and the guarantee that it performs no
 database access.
 """
 
-from unittest.mock import MagicMock
-from django.test import TestCase
+from unittest.mock import MagicMock, patch
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, TestCase
+from django.http import HttpResponse
+from rest_framework.test import APIRequestFactory
 
-from apps.proxy.vod_proxy.views import _order_candidates
+from apps.m3u.models import M3UAccount
+from apps.vod.models import (
+    Episode,
+    M3UEpisodeRelation,
+    M3UMovieRelation,
+    M3USeriesRelation,
+    Movie,
+    Series,
+)
+
+from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+    MultiWorkerVODConnectionManager,
+)
+
+from apps.proxy.vod_proxy.views import (
+    _category_scoped_candidates,
+    _order_candidates,
+    stream_xc_episode,
+    stream_xc_movie,
+)
 
 
 def _rel(rel_id, priority):
@@ -88,3 +110,165 @@ class TestOrderCandidates(TestCase):
         result = _order_candidates(candidates, preferred_relation=None)
 
         self.assertEqual([r.id for r in result], [1, 2])
+
+
+class TestCategoryScopedCandidates(TestCase):
+    def test_movie_failover_cannot_leave_selected_category(self):
+        selected = _rel(rel_id=1, priority=1)
+        selected.category_id = 10
+        same_category = _rel(rel_id=2, priority=5)
+        same_category.category_id = 10
+        other_category = _rel(rel_id=3, priority=10)
+        other_category.category_id = 20
+
+        result = _category_scoped_candidates(
+            'movie',
+            [other_category, same_category, selected],
+            selected,
+        )
+
+        self.assertEqual([relation.id for relation in result], [2, 1])
+
+    def test_episode_failover_uses_parent_series_category(self):
+        selected = _rel(rel_id=1, priority=1)
+        selected.series_relation.category_id = 10
+        same_category = _rel(rel_id=2, priority=5)
+        same_category.series_relation.category_id = 10
+        other_category = _rel(rel_id=3, priority=10)
+        other_category.series_relation.category_id = 20
+
+        result = _category_scoped_candidates(
+            'episode',
+            [other_category, same_category, selected],
+            selected,
+        )
+
+        self.assertEqual([relation.id for relation in result], [2, 1])
+
+
+class TestSourceScopedIdleSessions(SimpleTestCase):
+    def setUp(self):
+        self.redis = MagicMock()
+        self.redis.scan.return_value = (
+            0,
+            ['vod_persistent_connection:existing'],
+        )
+        self.redis.hgetall.return_value = {
+            'content_obj_type': 'movie',
+            'content_uuid': 'shared-movie',
+            'source_key': 'movie:1:netflix-stream',
+            'client_ip': '127.0.0.1',
+            'client_user_agent': 'UHF',
+            'last_activity': '100',
+        }
+        self.redis.hget.return_value = '0'
+        self.manager = MultiWorkerVODConnectionManager.__new__(
+            MultiWorkerVODConnectionManager
+        )
+        self.manager.redis_client = self.redis
+
+    def _find(self, source_key):
+        return self.manager.find_matching_idle_session(
+            content_type='movie',
+            content_uuid='shared-movie',
+            client_ip='127.0.0.1',
+            client_user_agent='UHF',
+            source_key=source_key,
+        )
+
+    def test_reuses_same_source(self):
+        self.assertEqual(
+            self._find('movie:1:netflix-stream'),
+            'existing',
+        )
+
+    def test_rejects_other_category_source(self):
+        self.assertIsNone(self._find('movie:1:nickelodeon-stream'))
+
+
+class TestXCRelationPlayback(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.user = get_user_model().objects.create_user(
+            username='xc-variant-user',
+            custom_properties={'xc_password': 'secret'},
+        )
+        self.account = M3UAccount.objects.create(
+            name='Variant Provider',
+            server_url='http://example.com',
+            username='provider-user',
+            password='provider-pass',
+            account_type=M3UAccount.Types.XC,
+            is_active=True,
+            custom_properties={'enable_vod': True},
+        )
+
+    @patch('apps.proxy.vod_proxy.views.stream_vod')
+    @patch('apps.proxy.vod_proxy.views.network_access_allowed', return_value=True)
+    def test_movie_relation_id_resolves_exact_upstream_source(
+        self, _mock_access, mock_stream_vod
+    ):
+        movie = Movie.objects.create(name='Shared Movie')
+        relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account,
+            movie=movie,
+            stream_id='upstream-movie-42',
+            container_extension='mkv',
+        )
+        mock_stream_vod.return_value = HttpResponse(status=204)
+
+        response = stream_xc_movie(
+            self.factory.get('/movie/xc-variant-user/secret/1.mkv'),
+            username=self.user.username,
+            password='secret',
+            stream_id=str(relation.id),
+            extension='mkv',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        request, content_type, content_uuid = mock_stream_vod.call_args.args[:3]
+        self.assertEqual(content_type, 'movie')
+        self.assertEqual(content_uuid, movie.uuid)
+        self.assertEqual(request.GET['m3u_account_id'], str(self.account.id))
+        self.assertEqual(request.GET['stream_id'], 'upstream-movie-42')
+
+    @patch('apps.proxy.vod_proxy.views.stream_vod')
+    @patch('apps.proxy.vod_proxy.views.network_access_allowed', return_value=True)
+    def test_episode_relation_id_resolves_exact_upstream_source(
+        self, _mock_access, mock_stream_vod
+    ):
+        series = Series.objects.create(name='Shared Series')
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account,
+            series=series,
+            external_series_id='upstream-series-9',
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name='Episode 1',
+            season_number=1,
+            episode_number=1,
+        )
+        relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id='upstream-episode-99',
+            container_extension='mkv',
+        )
+        mock_stream_vod.return_value = HttpResponse(status=204)
+
+        response = stream_xc_episode(
+            self.factory.get('/series/xc-variant-user/secret/1.mkv'),
+            username=self.user.username,
+            password='secret',
+            stream_id=str(relation.id),
+            extension='mkv',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        request, content_type, content_uuid = mock_stream_vod.call_args.args[:3]
+        self.assertEqual(content_type, 'episode')
+        self.assertEqual(content_uuid, episode.uuid)
+        self.assertEqual(request.GET['m3u_account_id'], str(self.account.id))
+        self.assertEqual(request.GET['stream_id'], 'upstream-episode-99')

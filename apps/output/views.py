@@ -1001,7 +1001,7 @@ XC_MOVIE_VALUE_FIELDS = (
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
-    'rel_movie_image', 'rel_backdrop',
+    'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
 
 XC_SERIES_VALUE_FIELDS = (
@@ -1010,7 +1010,7 @@ XC_SERIES_VALUE_FIELDS = (
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
-    'rel_movie_image', 'rel_backdrop',
+    'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
 
 
@@ -1034,6 +1034,7 @@ def _xc_annotate_relation_artwork(qs):
 
     basic = KeyTransform('basic_data', 'custom_properties')
     detailed = KeyTransform('detailed_info', 'custom_properties')
+    movie_data = KeyTransform('movie_data', 'custom_properties')
 
     def image_candidates(container):
         return [
@@ -1062,6 +1063,19 @@ def _xc_annotate_relation_artwork(qs):
         rel_backdrop=Coalesce(
             *backdrop_candidates(detailed),
             *backdrop_candidates(basic),
+        ),
+        # Extract only the source title instead of selecting the often-large
+        # relation JSON payload for every XC list row.
+        rel_source_name=Coalesce(
+            NullIf(Trim(KeyTextTransform('name', basic)), Value('')),
+            NullIf(Trim(KeyTextTransform('name', movie_data)), Value('')),
+            NullIf(Trim(KeyTextTransform('name', detailed)), Value('')),
+            NullIf(Trim(KeyTextTransform('original_name', detailed)), Value('')),
+            NullIf(Trim(KeyTextTransform('o_name', detailed)), Value('')),
+            NullIf(Trim(KeyTextTransform('original_name', basic)), Value('')),
+            NullIf(Trim(KeyTextTransform('o_name', basic)), Value('')),
+            Value(''),
+            output_field=CharField(),
         ),
     )
 
@@ -1117,7 +1131,7 @@ def _xc_fetch_priority_distinct_relations(
     order_by_name_field,
 ):
     """
-    Return one row dict per distinct content ID (highest account priority wins).
+    Return one row dict per distinct content key (highest account priority wins).
 
     On PostgreSQL, dedupe on narrow relation rows first, then fetch display
     columns via values() (no ORM model instantiation). That avoids sorting
@@ -1127,6 +1141,11 @@ def _xc_fetch_priority_distinct_relations(
     from django.db import connection, transaction
 
     narrow_qs = manager.filter(**rel_filters)
+    distinct_fields = (
+        (distinct_field,)
+        if isinstance(distinct_field, str)
+        else tuple(distinct_field)
+    )
 
     def _fetch_by_ids(ids):
         return list(
@@ -1138,8 +1157,12 @@ def _xc_fetch_priority_distinct_relations(
     if connection.vendor == 'postgresql':
         winning_ids_qs = (
             narrow_qs
-            .order_by(distinct_field, '-m3u_account__priority', 'id')
-            .distinct(distinct_field)
+            .order_by(
+                *distinct_fields,
+                '-m3u_account__priority',
+                'id',
+            )
+            .distinct(*distinct_fields)
             .values('pk')
         )
         with transaction.atomic():
@@ -1156,7 +1179,7 @@ def _xc_fetch_priority_distinct_relations(
     for row in _xc_annotate_relation_artwork(narrow_qs).values(*value_fields).order_by(
         '-m3u_account__priority', 'id'
     ):
-        key = row[distinct_field]
+        key = tuple(row[field] for field in distinct_fields)
         if key not in seen:
             seen[key] = row
     rows = list(seen.values())
@@ -1200,7 +1223,7 @@ def xc_get_vod_streams(request, user, category_id=None):
     relations = _xc_fetch_priority_distinct_relations(
         manager=M3UMovieRelation.objects,
         rel_filters=rel_filters,
-        distinct_field='movie_id',
+        distinct_field=('movie_id', 'category_id'),
         value_fields=XC_MOVIE_VALUE_FIELDS,
         order_by_name_field='movie__name',
     )
@@ -1221,9 +1244,9 @@ def xc_get_vod_streams(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['movie__name'],
+            "name": row['rel_source_name'] or row['movie__name'],
             "stream_type": "movie",
-            "stream_id": row['movie__id'],
+            "stream_id": row['id'],
             "stream_icon": _xc_cover_or_logo(
                 request,
                 'movie',
@@ -1289,7 +1312,7 @@ def xc_get_series(request, user, category_id=None):
     relations = _xc_fetch_priority_distinct_relations(
         manager=M3USeriesRelation.objects,
         rel_filters=rel_filters,
-        distinct_field='series_id',
+        distinct_field=('series_id', 'category_id'),
         value_fields=XC_SERIES_VALUE_FIELDS,
         order_by_name_field='series__name',
     )
@@ -1310,7 +1333,7 @@ def xc_get_series(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['series__name'],
+            "name": row['rel_source_name'] or row['series__name'],
             "series_id": row['id'],
             "cover": _xc_cover_or_logo(
                 request,
@@ -1389,90 +1412,119 @@ def xc_get_series_info(request, user, series_id):
     except Exception as e:
         logger.error(f"Error refreshing series data for relation {series_relation.id}: {str(e)}")
 
-    # Include episodes from any active provider for this shared Series (XC clients
-    # see a unified catalog). Prefer the highest-priority account's stream metadata.
-    from apps.vod.models import Episode, M3UEpisodeRelation
-
-    episodes = list(
-        Episode.objects.filter(
-            series=series,
-            m3u_relations__m3u_account__is_active=True,
-        ).distinct().order_by('season_number', 'episode_number')
-    )
-
-    relations_by_episode_id = {}
-    for rel in M3UEpisodeRelation.objects.filter(
-        episode_id__in=[ep.id for ep in episodes],
+    # Keep the selected source relation through the episode list. This is one
+    # joined query and cannot merge another category's language or season set.
+    episode_relations = M3UEpisodeRelation.objects.filter(
+        series_relation=series_relation,
         m3u_account__is_active=True,
-    ).select_related('m3u_account').only(
-        'episode_id',
-        'container_extension',
-        'created_at',
-        'custom_properties',
-        'm3u_account__priority',
-    ).order_by('episode_id', '-m3u_account__priority', 'id'):
-        # First row per episode wins due to priority/id ordering.
-        if rel.episode_id not in relations_by_episode_id:
-            relations_by_episode_id[rel.episode_id] = rel
+    ).select_related('episode').order_by(
+        'episode__season_number', 'episode__episode_number', 'id'
+    )
 
     # Group episodes by season
     seasons = {}
     # One reverse for all episode image rewrites in this response.
     _episode_image_parts = vod_image_url_parts(request, "episode")
-    for episode in episodes:
+    for episode_relation in episode_relations:
+        episode = episode_relation.episode
         season_num = (
             episode.season_number if episode.season_number is not None else 1
         )
         if season_num not in seasons:
             seasons[season_num] = []
 
-        best_relation = relations_by_episode_id.get(episode.id)
+        relation_props = episode_relation.custom_properties or {}
+        provider_episode = relation_props.get('info') or {}
+        if not isinstance(provider_episode, dict):
+            provider_episode = {}
+        provider_info = provider_episode.get('info') or {}
+        if not isinstance(provider_info, dict):
+            provider_info = {}
 
-        video = audio = bitrate = None
-        container_extension = "mp4"
-        added_timestamp = str(int(episode.created_at.timestamp()))
+        episode_title = (
+            provider_episode.get('title')
+            or provider_info.get('name')
+            or episode.name
+        )
+        episode_description = (
+            provider_info.get('plot')
+            or provider_info.get('overview')
+            or episode.description
+            or ""
+        )
+        video = provider_info.get('video') or (
+            episode.custom_properties.get('video', {})
+            if episode.custom_properties else {}
+        )
+        audio = provider_info.get('audio') or (
+            episode.custom_properties.get('audio', {})
+            if episode.custom_properties else {}
+        )
+        bitrate = provider_info.get('bitrate') or (
+            episode.custom_properties.get('bitrate', 0)
+            if episode.custom_properties else 0
+        )
+        provider_duration = provider_info.get('duration_secs')
+        raw_duration_secs = (
+            provider_duration
+            if provider_duration not in (None, '')
+            else episode.duration_secs
+        )
+        try:
+            duration_secs = int(float(raw_duration_secs or 0))
+        except (TypeError, ValueError):
+            duration_secs = int(episode.duration_secs or 0)
+        provider_air_date = (
+            provider_info.get('air_date')
+            or provider_info.get('release_date')
+            or provider_info.get('releasedate')
+        )
+        air_date = provider_air_date or episode.air_date
+        rating = provider_info.get('rating')
+        if rating in (None, ''):
+            rating = episode.rating
+        try:
+            rating = float(rating or 0)
+        except (TypeError, ValueError):
+            try:
+                rating = float(episode.rating or 0)
+            except (TypeError, ValueError):
+                rating = 0.0
 
-        if best_relation:
-            container_extension = best_relation.container_extension or "mp4"
-            added_timestamp = str(int(best_relation.created_at.timestamp()))
-            if best_relation.custom_properties:
-                info = best_relation.custom_properties.get('info')
-                if info and isinstance(info, dict):
-                    info_info = info.get('info')
-                    if info_info and isinstance(info_info, dict):
-                        video = info_info.get('video', {})
-                        audio = info_info.get('audio', {})
-                        bitrate = info_info.get('bitrate', 0)
-
-        if video is None:
-            video = episode.custom_properties.get('video', {}) if episode.custom_properties else {}
-        if audio is None:
-            audio = episode.custom_properties.get('audio', {}) if episode.custom_properties else {}
-        if bitrate is None:
-            bitrate = episode.custom_properties.get('bitrate', 0) if episode.custom_properties else 0
+        episode_custom = episode.custom_properties or {}
+        crew = provider_info.get('crew') or episode_custom.get('crew', '')
+        director = (
+            provider_info.get('director')
+            or provider_info.get('directed_by')
+            or episode_custom.get('director', '')
+        )
+        imdb_id = provider_info.get('imdb_id') or episode.imdb_id or ""
 
         episode_artwork = prefer_relation_artwork(
-            best_relation.custom_properties if best_relation else None,
+            relation_props,
             episode.custom_properties,
         )
 
         seasons[season_num].append({
-            "id": episode.id,
+            "id": episode_relation.id,
             "season": season_num,
-            "episode_num": episode.episode_number or 0,
-            "title": episode.name,
-            "container_extension": container_extension,
-            "added": added_timestamp,
+            "episode_num": provider_episode.get(
+                'episode_num', episode.episode_number or 0
+            ),
+            "title": episode_title,
+            "container_extension": episode_relation.container_extension or "mp4",
+            "added": str(int(episode_relation.created_at.timestamp())),
             "custom_sid": None,
             "direct_source": "",
             "info": {
-                "id": int(episode.id),
-                "name": episode.name,
-                "overview": episode.description or "",
-                "crew": str(episode.custom_properties.get('crew', "") if episode.custom_properties else ""),
-                "directed_by": episode.custom_properties.get('director', '') if episode.custom_properties else "",
-                "imdb_id": episode.imdb_id or "",
-                "air_date": f"{episode.air_date}" if episode.air_date else "",
+                "id": int(episode_relation.id),
+                "name": episode_title,
+                "overview": episode_description,
+                "crew": str(crew),
+                "directed_by": director,
+                "imdb_id": imdb_id,
+                "tmdb_id": provider_info.get('tmdb_id') or episode.tmdb_id or "",
+                "air_date": f"{air_date}" if air_date else "",
                 "backdrop_path": rewrite_backdrop_paths(
                     request,
                     'episode',
@@ -1488,10 +1540,10 @@ def xc_get_series_info(request, user, series_id):
                     episode_artwork['movie_image'],
                     url_parts=_episode_image_parts,
                 ),
-                "rating": float(episode.rating or 0),
-                "release_date": f"{episode.air_date}" if episode.air_date else "",
-                "duration_secs": (episode.duration_secs or 0),
-                "duration": format_duration_hms(episode.duration_secs),
+                "rating": rating,
+                "release_date": f"{air_date}" if air_date else "",
+                "duration_secs": (duration_secs or 0),
+                "duration": format_duration_hms(duration_secs),
                 "video": video,
                 "audio": audio,
                 "bitrate": bitrate,
@@ -1576,10 +1628,19 @@ def xc_get_series_info(request, user, series_id):
     else:
         series_cover = None
 
+    from apps.vod.utils import get_series_display_name, get_vod_source_name
+
+    clean_series_name = get_series_display_name(series, series_relation)
+    source_series_name = get_vod_source_name(
+        series_relation,
+        clean_series_name,
+    )
+
     info = {
         'seasons': seasons_list,
         "info": {
-            "name": series_data['name'],
+            "name": source_series_name,
+            "o_name": clean_series_name,
             "cover": series_cover,
             "plot": series_data['description'],
             "cast": series_data['cast'],
@@ -1619,13 +1680,14 @@ def xc_get_vod_info(request, user, vod_id):
         raise Http404()
 
     # All authenticated users get access to VOD from all active M3U accounts
-    filters = {"movie_id": vod_id, "m3u_account__is_active": True}
+    filters = {"id": vod_id, "m3u_account__is_active": True}
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
         filters["movie__is_adult"] = False
 
     try:
-        # Order by account priority to get the best relation when multiple exist
-        movie_relation = M3UMovieRelation.objects.select_related('movie', 'movie__logo').filter(**filters).order_by('-m3u_account__priority', 'id').first()
+        movie_relation = M3UMovieRelation.objects.select_related(
+            'movie', 'movie__logo'
+        ).filter(**filters).first()
         if not movie_relation:
             raise Http404()
         movie = movie_relation.movie
@@ -1729,10 +1791,14 @@ def xc_get_vod_info(request, user, vod_id):
     else:
         movie_cover = None
 
+    from apps.vod.utils import get_vod_source_name
+
+    source_name = get_vod_source_name(movie_relation, movie_data['name'])
+
     # Transform API response to XtreamCodes format
     info = {
         "info": {
-            "name": movie_data.get('name', movie.name),
+            "name": source_name,
             "o_name": movie_data.get('name', movie.name),
             "cover_big": movie_cover,
             "movie_image": movie_cover,
@@ -1761,8 +1827,8 @@ def xc_get_vod_info(request, user, vod_id):
             'audio': movie_data.get('audio', {}),
         },
         "movie_data": {
-            "stream_id": movie.id,
-            "name": movie.name,
+            "stream_id": movie_relation.id,
+            "name": source_name,
             "added": str(int(movie_relation.created_at.timestamp())),
             "category_id": str(movie_relation.category.id) if movie_relation.category else "0",
             "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],

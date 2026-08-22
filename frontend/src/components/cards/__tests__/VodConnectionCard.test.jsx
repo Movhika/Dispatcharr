@@ -311,6 +311,25 @@ describe('VodConnectionCard', () => {
       expect(screen.getByText('192.168.1.100')).toBeInTheDocument();
     });
 
+    it('renders the exact M3U category source and stream ID', () => {
+      render(
+        <VodConnectionCard
+          vodContent={makeMovieContent({
+            individual_connection: makeConnection({
+              source: {
+                label: 'Provider — NICKELODEON',
+                stream_id: '513301',
+              },
+            }),
+          })}
+          stopVODClient={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Provider — NICKELODEON')).toBeInTheDocument();
+      expect(screen.getByText('Stream ID: 513301')).toBeInTheDocument();
+    });
+
     it('renders "Unknown IP" when client_ip is absent', () => {
       render(
         <VodConnectionCard

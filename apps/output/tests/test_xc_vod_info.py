@@ -39,7 +39,7 @@ class XCGetVodInfoArtworkTests(TestCase):
 
     def _info(self):
         request = self.factory.get('/player_api.php')
-        return xc_get_vod_info(request, self.user, str(self.movie.id))
+        return xc_get_vod_info(request, self.user, str(self.relation.id))
 
     def test_cover_big_and_movie_image_are_identical(self):
         """Real XC servers return the same URL for both fields; clients may read either."""
@@ -64,6 +64,9 @@ class XCGetVodInfoArtworkTests(TestCase):
         self.assertIsNone(info['movie_image'])
 
     def test_cover_prefers_relation_still_over_synced_logo(self):
+        # Keep the logo primary key distinct from the movie primary key used in
+        # the relation-art proxy URL so the assertion below is unambiguous.
+        VODLogo.objects.create(name='Unused', url='http://example.com/unused.png')
         logo = VODLogo.objects.create(name='Synced', url='http://example.com/synced.png')
         self.movie.logo = logo
         self.movie.save(update_fields=['logo'])

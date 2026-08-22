@@ -483,8 +483,17 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
             else:
                 movie_key = f"name_{name}_{year or 'None'}"
 
-            # Skip duplicates in this batch
+            source_data = {
+                'stream_id': stream_id,
+                'category': category,
+                'movie_data': movie_data,
+            }
+
+            # Canonical metadata is deduplicated, but every upstream stream
+            # remains a source relation. This avoids silently dropping another
+            # category carrying the same TMDB/IMDB title in the same batch.
             if movie_key in movie_keys:
+                movie_keys[movie_key]['sources'][stream_id] = source_data
                 continue
 
             # Prepare movie properties
@@ -536,10 +545,8 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
 
             movie_keys[movie_key] = {
                 'props': movie_props,
-                'stream_id': stream_id,
-                'category': category,
-                'movie_data': movie_data,
-                'logo_url': logo_url  # Keep logo URL for later processing
+                'logo_url': logo_url,  # Keep logo URL for later processing
+                'sources': {stream_id: source_data},
             }
 
         except Exception as e:
@@ -610,7 +617,11 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
             existing_movies[f"name_{key_tuple[0]}_{key_tuple[1] or 'None'}"] = movie
 
     # Get existing relations
-    stream_ids = [data['stream_id'] for data in movie_keys.values()]
+    stream_ids = [
+        stream_id
+        for data in movie_keys.values()
+        for stream_id in data['sources']
+    ]
     existing_relations = {
         rel.stream_id: rel for rel in M3UMovieRelation.objects.filter(
             m3u_account=account,
@@ -621,9 +632,6 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
     # Process each movie
     for movie_key, data in movie_keys.items():
         movie_props = data['props']
-        stream_id = data['stream_id']
-        category = data['category']
-        movie_data = data['movie_data']
         logo_url = data.get('logo_url')
 
         if movie_key in existing_movies:
@@ -680,37 +688,40 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
 
             movies_to_create.append(movie)
 
-        # Handle relation
-        if stream_id in existing_relations:
-            # Update existing relation
-            relation = existing_relations[stream_id]
-            relation.movie = movie
-            relation.category = category
-            relation.container_extension = movie_data.get('container_extension', 'mp4')
-            # Merge so list sync updates basic_data without dropping detail
-            # payloads or detailed_fetched / related flags.
-            existing_rel_cp = relation.custom_properties or {}
-            relation.custom_properties = {
-                **existing_rel_cp,
-                'basic_data': movie_data,
-            }
-            relation.last_seen = scan_start_time or timezone.now()  # Mark as seen during this scan
-            relations_to_update.append(relation)
-        else:
-            # Create new relation
-            relation = M3UMovieRelation(
-                m3u_account=account,
-                movie=movie,
-                category=category,
-                stream_id=stream_id,
-                container_extension=movie_data.get('container_extension', 'mp4'),
-                custom_properties={
+        for source in data['sources'].values():
+            stream_id = source['stream_id']
+            category = source['category']
+            movie_data = source['movie_data']
+
+            if stream_id in existing_relations:
+                relation = existing_relations[stream_id]
+                relation.movie = movie
+                relation.category = category
+                relation.container_extension = movie_data.get(
+                    'container_extension', 'mp4'
+                )
+                existing_rel_cp = relation.custom_properties or {}
+                relation.custom_properties = {
+                    **existing_rel_cp,
                     'basic_data': movie_data,
-                    'detailed_fetched': False
-                },
-                last_seen=scan_start_time or timezone.now()  # Mark as seen during this scan
-            )
-            relations_to_create.append(relation)
+                }
+                relation.last_seen = scan_start_time or timezone.now()
+                relations_to_update.append(relation)
+            else:
+                relations_to_create.append(M3UMovieRelation(
+                    m3u_account=account,
+                    movie=movie,
+                    category=category,
+                    stream_id=stream_id,
+                    container_extension=movie_data.get(
+                        'container_extension', 'mp4'
+                    ),
+                    custom_properties={
+                        'basic_data': movie_data,
+                        'detailed_fetched': False,
+                    },
+                    last_seen=scan_start_time or timezone.now(),
+                ))
 
     # Execute batch operations
     logger.info(f"Executing batch operations: {len(movies_to_create)} movies to create, {len(movies_to_update)} to update")
@@ -858,8 +869,16 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
             else:
                 series_key = f"name_{name}_{year or 'None'}"
 
-            # Skip duplicates in this batch
+            source_data = {
+                'series_id': series_id,
+                'category': category,
+                'series_data': series_data,
+            }
+
+            # Keep one canonical Series row while retaining every concrete
+            # upstream series/category relation in the batch.
             if series_key in series_keys:
+                series_keys[series_key]['sources'][series_id] = source_data
                 continue
 
             # Prepare series properties
@@ -909,10 +928,8 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
 
             series_keys[series_key] = {
                 'props': series_props,
-                'series_id': series_id,
-                'category': category,
-                'series_data': series_data,
-                'logo_url': logo_url  # Keep logo URL for later processing
+                'logo_url': logo_url,  # Keep logo URL for later processing
+                'sources': {series_id: source_data},
             }
 
         except Exception as e:
@@ -983,7 +1000,11 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
             existing_series[f"name_{key_tuple[0]}_{key_tuple[1] or 'None'}"] = series
 
     # Get existing relations
-    series_ids = [data['series_id'] for data in series_keys.values()]
+    series_ids = [
+        series_id
+        for data in series_keys.values()
+        for series_id in data['sources']
+    ]
     existing_relations = {
         rel.external_series_id: rel for rel in M3USeriesRelation.objects.filter(
             m3u_account=account,
@@ -994,9 +1015,6 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
     # Process each series
     for series_key, data in series_keys.items():
         series_props = data['props']
-        series_id = data['series_id']
-        category = data['category']
-        series_data = data['series_data']
         logo_url = data.get('logo_url')
 
         if series_key in existing_series:
@@ -1050,36 +1068,35 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
 
             series_to_create.append(series)
 
-        # Handle relation
-        if series_id in existing_relations:
-            # Update existing relation
-            relation = existing_relations[series_id]
-            relation.series = series
-            relation.category = category
-            # Merge so list sync updates basic_data without dropping detail
-            # payloads or detailed_fetched / episodes_fetched flags.
-            existing_rel_cp = relation.custom_properties or {}
-            relation.custom_properties = {
-                **existing_rel_cp,
-                'basic_data': series_data,
-            }
-            relation.last_seen = scan_start_time or timezone.now()  # Mark as seen during this scan
-            relations_to_update.append(relation)
-        else:
-            # Create new relation
-            relation = M3USeriesRelation(
-                m3u_account=account,
-                series=series,
-                category=category,
-                external_series_id=series_id,
-                custom_properties={
+        for source in data['sources'].values():
+            series_id = source['series_id']
+            category = source['category']
+            series_data = source['series_data']
+
+            if series_id in existing_relations:
+                relation = existing_relations[series_id]
+                relation.series = series
+                relation.category = category
+                existing_rel_cp = relation.custom_properties or {}
+                relation.custom_properties = {
+                    **existing_rel_cp,
                     'basic_data': series_data,
-                    'detailed_fetched': False,
-                    'episodes_fetched': False
-                },
-                last_seen=scan_start_time or timezone.now()  # Mark as seen during this scan
-            )
-            relations_to_create.append(relation)
+                }
+                relation.last_seen = scan_start_time or timezone.now()
+                relations_to_update.append(relation)
+            else:
+                relations_to_create.append(M3USeriesRelation(
+                    m3u_account=account,
+                    series=series,
+                    category=category,
+                    external_series_id=series_id,
+                    custom_properties={
+                        'basic_data': series_data,
+                        'detailed_fetched': False,
+                        'episodes_fetched': False,
+                    },
+                    last_seen=scan_start_time or timezone.now(),
+                ))
 
     # Execute batch operations
     logger.info(f"Executing batch operations: {len(series_to_create)} series to create, {len(series_to_update)} to update")
@@ -1324,6 +1341,7 @@ def parse_date(date_string):
 def refresh_series_episodes(account, series, external_series_id, episodes_data=None):
     """Refresh episodes for a series - only called on-demand"""
     try:
+        detailed_series_info = None
         if not episodes_data:
             # Fetch detailed series info including episodes
             with XtreamCodesClient(
@@ -1336,7 +1354,8 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
                 if series_info:
                     # Update series with detailed info
                     info = series_info.get('info', {})
-                    if info:
+                    if isinstance(info, dict) and info:
+                        detailed_series_info = clean_custom_properties(info)
                         # Only update fields if new value is non-empty and either no existing value or existing value is empty
                         updated = False
                         if should_update_field(series.description, info.get('plot')):
@@ -1374,6 +1393,8 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
 
         if series_relation:
             custom_props = series_relation.custom_properties or {}
+            if detailed_series_info:
+                custom_props['detailed_info'] = detailed_series_info
             custom_props['episodes_fetched'] = True
             custom_props['detailed_fetched'] = True
             series_relation.custom_properties = custom_props

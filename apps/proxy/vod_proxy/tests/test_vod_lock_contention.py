@@ -224,6 +224,25 @@ def _seed_session(redis, session_id, active_streams=1, profile_id=7):
 
 
 class TestAtomicActiveStreams(SimpleTestCase):
+    def test_source_metadata_survives_redis_serialization(self):
+        _, SerializableConnectionState = _import_vod()
+        state = SerializableConnectionState(
+            session_id="vod_source",
+            stream_url="http://example.com/movie.mkv",
+            headers={},
+            source_key="movie:1:123",
+            source_metadata={
+                "key": "movie:1:123",
+                "label": "Provider — Movies DE",
+                "stream_id": "123",
+            },
+        )
+
+        restored = SerializableConnectionState.from_dict(state.to_dict())
+
+        self.assertEqual(restored.source_key, "movie:1:123")
+        self.assertEqual(restored.source_metadata["label"], "Provider — Movies DE")
+
     def test_incr_decr_round_trip(self):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
