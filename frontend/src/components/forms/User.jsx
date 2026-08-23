@@ -37,6 +37,7 @@ import {
   updateUser,
   userToFormValues,
 } from '../../utils/forms/UserUtils.js';
+import VODUserCategorySelector from './VODUserCategorySelector.jsx';
 
 const User = ({ user = null, isOpen, onClose }) => {
   const profiles = useChannelsStore((s) => s.profiles);
@@ -51,6 +52,8 @@ const User = ({ user = null, isOpen, onClose }) => {
   const [generating, setGenerating] = useState(false);
   const [_generatedKey, setGeneratedKey] = useState(null);
   const [userAPIKey, setUserAPIKey] = useState(user?.api_key || null);
+  const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
+  const [vodCategorySelection, setVODCategorySelection] = useState([]);
 
   const theme = useMantineTheme();
 
@@ -95,7 +98,9 @@ const User = ({ user = null, isOpen, onClose }) => {
 
   useEffect(() => {
     if (user?.id) {
-      form.setValues(userToFormValues(user));
+      const values = userToFormValues(user);
+      form.setValues(values);
+      setVODCategorySelection(values.vod_category_relation_ids || []);
 
       if (user.custom_properties?.xc_password) {
         setEnableXC(true);
@@ -104,6 +109,7 @@ const User = ({ user = null, isOpen, onClose }) => {
       setUserAPIKey(user.api_key || null);
     } else {
       form.reset();
+      setVODCategorySelection([]);
     }
   }, [user]);
 
@@ -127,17 +133,6 @@ const User = ({ user = null, isOpen, onClose }) => {
 
   const canGenerateKey =
     authUser.user_level == USER_LEVELS.ADMIN || authUser.id === user?.id;
-  const vodCategoryOptions = Object.values(vodCategories)
-    .flatMap((category) =>
-      (category.m3u_accounts || [])
-        .filter((relation) => relation.enabled)
-        .map((relation) => ({
-          value: String(relation.id),
-          label: `${relation.account_name} — ${category.name} (${category.category_type})`,
-        }))
-    )
-    .sort((left, right) => left.label.localeCompare(right.label));
-
   const onGenerateKey = async () => {
     if (!canGenerateKey) {
       return;
@@ -489,16 +484,30 @@ const User = ({ user = null, isOpen, onClose }) => {
                 {...form.getInputProps('vod_language_match_mode')}
                 key={form.key('vod_language_match_mode')}
               />
-              <MultiSelect
-                label="Allowed source categories"
-                description="Optional hard boundary. Leave empty to use every enabled source category; selected categories are evaluated by the language and resolution rules below."
-                placeholder="All enabled source categories"
-                searchable
-                clearable
-                data={vodCategoryOptions}
-                {...form.getInputProps('vod_category_relation_ids')}
-                key={form.key('vod_category_relation_ids')}
-              />
+              <Stack gap={4}>
+                <Text size="sm" fw={500}>
+                  Allowed source categories
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Optional hard boundary before language and resolution rules.
+                  An empty selection uses every enabled source category.
+                </Text>
+                <Group justify="space-between">
+                  <Text size="sm">
+                    {vodCategorySelection.length
+                      ? `${vodCategorySelection.length} categories allowed`
+                      : 'All enabled categories allowed'}
+                  </Text>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="default"
+                    onClick={() => setCategorySelectorOpen(true)}
+                  >
+                    Manage categories
+                  </Button>
+                </Group>
+              </Stack>
               <TagsInput
                 label="Preferred resolutions"
                 description="Ordered from most to least preferred, for example 1080p, 720p."
@@ -547,6 +556,16 @@ const User = ({ user = null, isOpen, onClose }) => {
           </Button>
         </Group>
       </form>
+      <VODUserCategorySelector
+        opened={categorySelectorOpen}
+        onClose={() => setCategorySelectorOpen(false)}
+        categories={vodCategories}
+        selectedIds={vodCategorySelection}
+        onChange={(ids) => {
+          setVODCategorySelection(ids);
+          form.setFieldValue('vod_category_relation_ids', ids);
+        }}
+      />
     </Modal>
   );
 };

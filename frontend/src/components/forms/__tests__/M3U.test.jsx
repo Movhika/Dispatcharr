@@ -56,14 +56,6 @@ vi.mock('../M3UGroupFilter', () => ({
   ),
 }));
 
-vi.mock('../M3UFilters', () => ({
-  default: ({ onChange }) => (
-    <div data-testid="m3u-filters">
-      <button onClick={() => onChange?.([])}>M3UFilters</button>
-    </div>
-  ),
-}));
-
 vi.mock('../ScheduleInput', () => ({
   default: ({ onChange, value }) => (
     <div data-testid="schedule-input">
@@ -491,12 +483,6 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       expect(screen.getByTestId('m3u-group-filter')).toBeInTheDocument();
-    });
-
-    it('renders M3UFilters sub-component', () => {
-      setupStores();
-      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(screen.getByTestId('m3u-filters')).toBeInTheDocument();
     });
 
     it('renders ScheduleInput sub-component', () => {

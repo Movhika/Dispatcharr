@@ -25,7 +25,6 @@ import useChannelsStore from '../../store/channels';
 import { isNotEmpty, useForm } from '@mantine/form';
 import useEPGsStore from '../../store/epgs';
 import useVODStore from '../../store/useVODStore';
-import M3UFilters from './M3UFilters';
 import ScheduleInput from './ScheduleInput';
 import { DateTimePicker } from '@mantine/dates';
 import { showNotification } from '../../utils/notificationUtils.js';
@@ -57,7 +56,6 @@ const M3U = ({
   const [expDate, setExpDate] = useState(null);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
-  const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
@@ -147,9 +145,7 @@ const M3U = ({
   useEffect(() => {
     if (storeExpDate === undefined) return;
     const next = expDateFromPlaylist(storeExpDate);
-    setExpDate((prev) =>
-      expDateKey(prev) === expDateKey(next) ? prev : next
-    );
+    setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
   }, [storeExpDate]);
 
   const handleNewPlaylist = async (newPlaylist, values, create_epg) => {
@@ -215,10 +211,6 @@ const M3U = ({
     setFile(null);
     setPlaylist(null);
     onClose();
-  };
-
-  const closeFilter = () => {
-    setFilterModalOpen(false);
   };
 
   useEffect(() => {
@@ -493,13 +485,6 @@ const M3U = ({
                 <>
                   <Button
                     variant="filled"
-                    size="sm"
-                    onClick={() => setFilterModalOpen(true)}
-                  >
-                    Filters
-                  </Button>
-                  <Button
-                    variant="filled"
                     // color={theme.custom.colors.buttonPrimary}
                     size="sm"
                     onClick={() => {
@@ -550,11 +535,6 @@ const M3U = ({
             isOpen={groupFilterModalOpen}
             playlist={playlist}
             onClose={closeGroupFilter}
-          />
-          <M3UFilters
-            isOpen={filterModalOpen}
-            playlist={playlist}
-            onClose={closeFilter}
           />
         </>
       )}
