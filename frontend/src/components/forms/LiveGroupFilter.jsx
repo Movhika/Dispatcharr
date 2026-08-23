@@ -645,140 +645,138 @@ const LiveGroupFilter = ({
 
       <Divider label="Groups & Auto Sync Settings" labelPosition="center" />
 
-      <div style={{ maxHeight: 'calc(50vh - 80px)', overflowY: 'auto' }}>
-        <Table striped highlightOnHover withTableBorder stickyHeader>
-          <TableThead>
-            <TableTr>
-              <TableTh w={44}>
+      <Table striped highlightOnHover withTableBorder stickyHeader>
+        <TableThead>
+          <TableTr>
+            <TableTh w={44}>
+              <Checkbox
+                aria-label="Select visible groups"
+                checked={allVisibleSelected}
+                onChange={(event) =>
+                  toggleVisibleSelection(event.currentTarget.checked)
+                }
+              />
+            </TableTh>
+            <TableTh>Group</TableTh>
+            <TableTh w={100}>Enabled</TableTh>
+            <TableTh w={105}>
+              <Group gap={5} wrap="nowrap">
+                Auto sync
+                <Tooltip
+                  label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
+                  multiline
+                  w={300}
+                  withArrow
+                >
+                  <Info size={14} aria-label="About Auto sync" />
+                </Tooltip>
+              </Group>
+            </TableTh>
+            <TableTh w={120}>Numbering</TableTh>
+            <TableTh w={150}>Channel range</TableTh>
+            <TableTh w={70}>Setup</TableTh>
+          </TableTr>
+        </TableThead>
+        <TableTbody>
+          {visibleGroups.map((group) => (
+            <TableTr key={group.channel_group}>
+              <TableTd>
                 <Checkbox
-                  aria-label="Select visible groups"
-                  checked={allVisibleSelected}
+                  aria-label={`Select ${group.name}`}
+                  checked={selectedGroupIds.has(group.channel_group)}
                   onChange={(event) =>
-                    toggleVisibleSelection(event.currentTarget.checked)
+                    toggleSelectedGroup(
+                      group.channel_group,
+                      event.currentTarget.checked
+                    )
                   }
                 />
-              </TableTh>
-              <TableTh>Group</TableTh>
-              <TableTh w={100}>Enabled</TableTh>
-              <TableTh w={105}>
-                <Group gap={5} wrap="nowrap">
-                  Auto sync
-                  <Tooltip
-                    label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
-                    multiline
-                    w={300}
-                    withArrow
-                  >
-                    <Info size={14} aria-label="About Auto sync" />
-                  </Tooltip>
-                </Group>
-              </TableTh>
-              <TableTh w={120}>Numbering</TableTh>
-              <TableTh w={150}>Channel range</TableTh>
-              <TableTh w={70}>Setup</TableTh>
-            </TableTr>
-          </TableThead>
-          <TableTbody>
-            {visibleGroups.map((group) => (
-              <TableTr key={group.channel_group}>
-                <TableTd>
-                  <Checkbox
-                    aria-label={`Select ${group.name}`}
-                    checked={selectedGroupIds.has(group.channel_group)}
-                    onChange={(event) =>
-                      toggleSelectedGroup(
-                        group.channel_group,
-                        event.currentTarget.checked
-                      )
-                    }
-                  />
-                </TableTd>
-                <TableTd>
-                  <Tooltip
-                    label="This group was not seen in the last M3U refresh and may be removed after its retention period."
-                    disabled={!group.is_stale}
-                  >
-                    <Text c={group.is_stale ? 'orange' : undefined}>
-                      {group.name}
-                    </Text>
-                  </Tooltip>
-                </TableTd>
-                <TableTd>
-                  <Button
-                    size="compact-xs"
-                    color={group.enabled ? 'green' : 'gray'}
-                    variant={group.enabled ? 'filled' : 'light'}
-                    aria-label={`Enable ${group.name}`}
-                    aria-pressed={group.enabled}
-                    onClick={() => toggleGroupEnabled(group.channel_group)}
-                  >
-                    {group.enabled ? 'Active' : 'Inactive'}
-                  </Button>
-                </TableTd>
-                <TableTd>
-                  <Checkbox
-                    aria-label={`Auto sync ${group.name}`}
-                    checked={group.auto_channel_sync && group.enabled}
-                    disabled={!group.enabled}
-                    onChange={() => toggleAutoSync(group.channel_group)}
-                  />
-                </TableTd>
-                <TableTd>
-                  <Text size="sm">
-                    {{
-                      fixed: 'Fixed',
-                      provider: 'Provider',
-                      next_available: 'Next available',
-                    }[
-                      group.custom_properties?.channel_numbering_mode || 'fixed'
-                    ] || 'Fixed'}
+              </TableTd>
+              <TableTd>
+                <Tooltip
+                  label="This group was not seen in the last M3U refresh and may be removed after its retention period."
+                  disabled={!group.is_stale}
+                >
+                  <Text c={group.is_stale ? 'orange' : undefined}>
+                    {group.name}
                   </Text>
-                </TableTd>
-                <TableTd>
-                  {group.auto_channel_sync && group.enabled ? (
-                    <Text size="sm">
-                      {(group.custom_properties?.channel_numbering_mode ||
-                        'fixed') === 'next_available'
-                        ? 'From 1'
-                        : `${
-                            (group.custom_properties?.channel_numbering_mode ||
-                              'fixed') === 'provider'
-                              ? group.custom_properties
-                                  ?.channel_numbering_fallback || 1
-                              : group.auto_sync_channel_start || 1
-                          } – ${group.auto_sync_channel_end || 'unlimited'}`}
-                    </Text>
-                  ) : (
-                    <Text size="xs" c="dimmed">
-                      Auto sync disabled
-                    </Text>
-                  )}
-                </TableTd>
-                <TableTd>
-                  <Tooltip label="Configure advanced options" withArrow>
-                    <ActionIcon
-                      variant="subtle"
-                      disabled={!group.enabled}
-                      onClick={() => {
-                        configureSnapshotRef.current = {
-                          ...group,
-                          custom_properties: {
-                            ...(group.custom_properties || {}),
-                          },
-                        };
-                        setConfiguringGroupId(group.channel_group);
-                      }}
-                      aria-label={`Configure ${group.name}`}
-                    >
-                      <Cog size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                </TableTd>
-              </TableTr>
-            ))}
-          </TableTbody>
-        </Table>
-      </div>
+                </Tooltip>
+              </TableTd>
+              <TableTd>
+                <Button
+                  size="compact-xs"
+                  color={group.enabled ? 'green' : 'gray'}
+                  variant={group.enabled ? 'filled' : 'light'}
+                  aria-label={`Enable ${group.name}`}
+                  aria-pressed={group.enabled}
+                  onClick={() => toggleGroupEnabled(group.channel_group)}
+                >
+                  {group.enabled ? 'Active' : 'Inactive'}
+                </Button>
+              </TableTd>
+              <TableTd>
+                <Checkbox
+                  aria-label={`Auto sync ${group.name}`}
+                  checked={group.auto_channel_sync && group.enabled}
+                  disabled={!group.enabled}
+                  onChange={() => toggleAutoSync(group.channel_group)}
+                />
+              </TableTd>
+              <TableTd>
+                <Text size="sm">
+                  {{
+                    fixed: 'Fixed',
+                    provider: 'Provider',
+                    next_available: 'Next available',
+                  }[
+                    group.custom_properties?.channel_numbering_mode || 'fixed'
+                  ] || 'Fixed'}
+                </Text>
+              </TableTd>
+              <TableTd>
+                {group.auto_channel_sync && group.enabled ? (
+                  <Text size="sm">
+                    {(group.custom_properties?.channel_numbering_mode ||
+                      'fixed') === 'next_available'
+                      ? 'From 1'
+                      : `${
+                          (group.custom_properties?.channel_numbering_mode ||
+                            'fixed') === 'provider'
+                            ? group.custom_properties
+                                ?.channel_numbering_fallback || 1
+                            : group.auto_sync_channel_start || 1
+                        } – ${group.auto_sync_channel_end || 'unlimited'}`}
+                  </Text>
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    Auto sync disabled
+                  </Text>
+                )}
+              </TableTd>
+              <TableTd>
+                <Tooltip label="Configure advanced options" withArrow>
+                  <ActionIcon
+                    variant="subtle"
+                    disabled={!group.enabled}
+                    onClick={() => {
+                      configureSnapshotRef.current = {
+                        ...group,
+                        custom_properties: {
+                          ...(group.custom_properties || {}),
+                        },
+                      };
+                      setConfiguringGroupId(group.channel_group);
+                    }}
+                    aria-label={`Configure ${group.name}`}
+                  >
+                    <Cog size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              </TableTd>
+            </TableTr>
+          ))}
+        </TableTbody>
+      </Table>
 
       <Modal
         opened={rulesOpen}

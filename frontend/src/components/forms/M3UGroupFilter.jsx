@@ -162,9 +162,17 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
           </Button>
         </Group>
       }
-      size={1000}
+      size="95vw"
       styles={{
-        content: { '--mantine-color-body': '#27272A' },
+        content: {
+          '--mantine-color-body': '#27272A',
+          height: '96vh',
+          overflowX: 'hidden',
+        },
+        body: {
+          height: 'calc(96vh - 60px)',
+          overflowX: 'hidden',
+        },
         title: { flex: 1 },
       }}
       scrollAreaComponent={Modal.NativeScrollArea}
@@ -173,7 +181,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
       yOffset="2vh"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
-      <Stack>
+      <Stack mih="100%">
         <Tabs value={activeTab} onChange={setActiveTab}>
           <TabsList>
             <TabsTab value="live">Live</TabsTab>
