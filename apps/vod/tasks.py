@@ -26,6 +26,7 @@ def _send_vod_refresh_progress(
     progress,
     items_processed=None,
     items_total=None,
+    provider_items_total=None,
 ):
     """Persist and broadcast coarse VOD refresh progress without per-row writes."""
     from apps.m3u.tasks import send_m3u_update
@@ -38,7 +39,12 @@ def _send_vod_refresh_progress(
 
     item_summary = ""
     if items_processed is not None and items_total is not None:
-        item_summary = f" ({items_processed:,}/{items_total:,})"
+        item_summary = f" ({items_processed:,}/{items_total:,} eligible)"
+        if (
+            provider_items_total is not None
+            and provider_items_total != items_total
+        ):
+            item_summary += f" · {provider_items_total:,} provider items"
     remaining_summary = (
         f" · approximately {max(round(remaining), 1)}s remaining"
         if remaining is not None
@@ -58,6 +64,7 @@ def _send_vod_refresh_progress(
         phase=phase,
         items_processed=items_processed,
         items_total=items_total,
+        provider_items_total=provider_items_total,
         elapsed_time=elapsed,
         time_remaining=remaining,
     )
@@ -81,6 +88,17 @@ def _provider_vod_identity(item, id_field):
     return provider_id, name
 
 
+def _provider_category_id(item):
+    """Return a normalized Xtream category ID, or ``None`` when absent."""
+    if not isinstance(item, dict):
+        return None
+    raw_category_id = item.get('category_id')
+    if raw_category_id is None:
+        return None
+    category_id = str(raw_category_id).strip()
+    return category_id or None
+
+
 def _empty_categories_should_abort(categories_data, account, category_type):
     """True when an empty provider response would wipe existing group selections."""
     if categories_data:
@@ -89,6 +107,59 @@ def _empty_categories_should_abort(categories_data, account, category_type):
         m3u_account=account,
         category__category_type=category_type,
     ).exclude(category__name='Uncategorized').exists()
+
+
+def _retain_enabled_vod_rows(rows, categories_by_provider, relations):
+    """Compact a provider catalog in place to rows from enabled categories.
+
+    Xtream's unscoped catalog endpoints return every provider item. Filtering
+    before chunk processing avoids model construction and database lookups for
+    disabled categories while retaining the single-request provider behavior.
+    Non-empty provider category IDs that were ignored by discovery rules are
+    skipped rather than being misclassified as Uncategorized.
+    """
+    provider_total = len(rows)
+    enabled_provider_ids = set()
+
+    for provider_id, category in categories_by_provider.items():
+        if provider_id == '__uncategorized__':
+            continue
+        relation = relations.get(category.id)
+        if relation is not None and relation.enabled:
+            enabled_provider_ids.add(str(provider_id).strip())
+
+    uncategorized = categories_by_provider.get('__uncategorized__')
+    uncategorized_relation = (
+        relations.get(uncategorized.id) if uncategorized is not None else None
+    )
+    uncategorized_enabled = bool(
+        uncategorized_relation is not None and uncategorized_relation.enabled
+    )
+
+    write_index = 0
+    skipped_disabled_or_unknown = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped_disabled_or_unknown += 1
+            continue
+        provider_category_id = _provider_category_id(row)
+        keep = (
+            provider_category_id in enabled_provider_ids
+            if provider_category_id
+            else uncategorized_enabled
+        )
+        if keep:
+            rows[write_index] = row
+            write_index += 1
+        else:
+            skipped_disabled_or_unknown += 1
+
+    del rows[write_index:]
+    return {
+        'provider_total': provider_total,
+        'eligible_total': write_index,
+        'skipped_total': skipped_disabled_or_unknown,
+    }
 
 
 def lookup_by_name_year(model, name_year_pairs):
@@ -281,10 +352,10 @@ def refresh_categories(account_id, client=None):
     movies_category_id_map = {}
     for cat_data in categories_data:
         cat_name = cat_data.get('category_name', 'Unknown')
-        provider_cat_id = cat_data.get('category_id')
+        provider_cat_id = _provider_category_id(cat_data)
         our_category = category_map.get(cat_name)
-        if provider_cat_id and our_category:
-            movies_category_id_map[str(provider_cat_id)] = our_category
+        if provider_cat_id is not None and our_category:
+            movies_category_id_map[provider_cat_id] = our_category
 
     # Get the category list to properly map category IDs and names
     logger.info("Fetching series categories from provider...")
@@ -309,10 +380,10 @@ def refresh_categories(account_id, client=None):
     series_category_id_map = {}
     for cat_data in categories_data:
         cat_name = cat_data.get('category_name', 'Unknown')
-        provider_cat_id = cat_data.get('category_id')
+        provider_cat_id = _provider_category_id(cat_data)
         our_category = category_map.get(cat_name)
-        if provider_cat_id and our_category:
-            series_category_id_map[str(provider_cat_id)] = our_category
+        if provider_cat_id is not None and our_category:
+            series_category_id_map[provider_cat_id] = our_category
 
     return movies_category_id_map, series_category_id_map
 
@@ -362,10 +433,24 @@ def refresh_movies(
     logger.info("Fetching all movies from provider...")
     all_movies_data = client.get_vod_streams()  # No category_id = get all movies
 
-    # Process movies in chunks using the simple approach
+    catalog_counts = _retain_enabled_vod_rows(
+        all_movies_data,
+        categories_by_provider,
+        relations,
+    )
+
+    # Process only enabled movie categories in chunks. The provider total is
+    # still reported separately so the UI explains the reduction.
     chunk_size = 1000
     total_movies = len(all_movies_data)
+    provider_total_movies = catalog_counts['provider_total']
     total_chunks = (total_movies + chunk_size - 1) // chunk_size if total_movies > 0 else 0
+
+    logger.info(
+        "Movie catalog filtered from %d provider rows to %d enabled rows",
+        provider_total_movies,
+        total_movies,
+    )
 
     if progress_started_at is not None:
         _send_vod_refresh_progress(
@@ -375,6 +460,7 @@ def refresh_movies(
             progress=10,
             items_processed=0,
             items_total=total_movies,
+            provider_items_total=provider_total_movies,
         )
 
     for i in range(0, total_movies, chunk_size):
@@ -393,10 +479,27 @@ def refresh_movies(
                 progress=progress,
                 items_processed=completed,
                 items_total=total_movies,
+                provider_items_total=provider_total_movies,
             )
 
+    if progress_started_at is not None and total_movies == 0:
+        _send_vod_refresh_progress(
+            account.id,
+            started_at=progress_started_at,
+            phase="Processing movies",
+            progress=50,
+            items_processed=0,
+            items_total=0,
+            provider_items_total=provider_total_movies,
+        )
+
     del all_movies_data
-    logger.info(f"Completed processing all {total_movies} movies in {total_chunks} chunks")
+    logger.info(
+        "Completed processing %d eligible movies in %d chunks (%d provider rows)",
+        total_movies,
+        total_chunks,
+        provider_total_movies,
+    )
 
 
 def refresh_series(
@@ -445,10 +548,23 @@ def refresh_series(
     logger.info("Fetching all series from provider...")
     all_series_data = client.get_series()  # No category_id = get all series
 
-    # Process series in chunks using the simple approach
+    catalog_counts = _retain_enabled_vod_rows(
+        all_series_data,
+        categories_by_provider,
+        relations,
+    )
+
+    # Process only enabled series categories in chunks.
     chunk_size = 1000
     total_series = len(all_series_data)
+    provider_total_series = catalog_counts['provider_total']
     total_chunks = (total_series + chunk_size - 1) // chunk_size if total_series > 0 else 0
+
+    logger.info(
+        "Series catalog filtered from %d provider rows to %d enabled rows",
+        provider_total_series,
+        total_series,
+    )
 
     if progress_started_at is not None:
         _send_vod_refresh_progress(
@@ -458,6 +574,7 @@ def refresh_series(
             progress=52,
             items_processed=0,
             items_total=total_series,
+            provider_items_total=provider_total_series,
         )
 
     for i in range(0, total_series, chunk_size):
@@ -476,10 +593,27 @@ def refresh_series(
                 progress=progress,
                 items_processed=completed,
                 items_total=total_series,
+                provider_items_total=provider_total_series,
             )
 
+    if progress_started_at is not None and total_series == 0:
+        _send_vod_refresh_progress(
+            account.id,
+            started_at=progress_started_at,
+            phase="Processing series",
+            progress=95,
+            items_processed=0,
+            items_total=0,
+            provider_items_total=provider_total_series,
+        )
+
     del all_series_data
-    logger.info(f"Completed processing all {total_series} series in {total_chunks} chunks")
+    logger.info(
+        "Completed processing %d eligible series in %d chunks (%d provider rows)",
+        total_series,
+        total_chunks,
+        provider_total_series,
+    )
 
 
 def _discovery_item_names(client, account, scope, categories_data):
@@ -500,7 +634,7 @@ def _discovery_item_names(client, account, scope, categories_data):
     )
     names = {}
     for row in provider_rows:
-        provider_category_id = str(row.get("category_id") or "")
+        provider_category_id = _provider_category_id(row) or ""
         names.setdefault(provider_category_id, []).append(str(row.get("name") or ""))
     return names
 
@@ -729,7 +863,7 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
             # Get category with proper error handling
             category = None
 
-            provider_cat_id = str(movie_data.get('category_id', '')) if movie_data.get('category_id') else None
+            provider_cat_id = _provider_category_id(movie_data)
             movie_data['_provider_category_id'] = provider_cat_id
             movie_data['_category_id'] = None
 
@@ -743,8 +877,10 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
                 if relation and not relation.enabled:
                     logger.debug("Skipping disabled category")
                     continue
-            else:
-                # Assign to Uncategorized category if no category_id provided
+            elif provider_cat_id is None:
+                # Assign only genuinely uncategorized rows. A non-empty
+                # unknown ID belongs to a category intentionally omitted by
+                # discovery rules and must never leak into Uncategorized.
                 logger.debug(f"No category ID provided for movie {name}, assigning to 'Uncategorized'")
                 category = categories.get('__uncategorized__')
                 if category:
@@ -754,6 +890,13 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
                     if relation and not relation.enabled:
                         logger.debug("Skipping disabled 'Uncategorized' category")
                         continue
+            else:
+                logger.debug(
+                    "Skipping movie %s from unknown or ignored provider category %s",
+                    name,
+                    provider_cat_id,
+                )
+                continue
 
             # Extract metadata
             year = extract_year_from_data(movie_data, 'name')
@@ -1128,7 +1271,7 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
             # Get category with proper error handling
             category = None
 
-            provider_cat_id = str(series_data.get('category_id', '')) if series_data.get('category_id') else None
+            provider_cat_id = _provider_category_id(series_data)
             series_data['_provider_category_id'] = provider_cat_id
             series_data['_category_id'] = None
 
@@ -1141,8 +1284,9 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
                 if relation and not relation.enabled:
                     logger.debug("Skipping disabled category")
                     continue
-            else:
-                # Assign to Uncategorized category if no category_id provided
+            elif provider_cat_id is None:
+                # Assign only genuinely uncategorized rows. Unknown non-empty
+                # IDs are omitted categories, not Uncategorized content.
                 logger.debug(f"No category ID provided for series {name}, assigning to 'Uncategorized'")
                 category = categories.get('__uncategorized__')
                 if category:
@@ -1152,6 +1296,13 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
                     if relation and not relation.enabled:
                         logger.debug("Skipping disabled 'Uncategorized' category")
                         continue
+            else:
+                logger.debug(
+                    "Skipping series %s from unknown or ignored provider category %s",
+                    name,
+                    provider_cat_id,
+                )
+                continue
 
             # Extract metadata
             year = extract_year(series_data.get('releaseDate', ''))

@@ -143,11 +143,27 @@ def _ensure_m3u_refresh_terminal_status(account_id):
     """Mark refresh as failed when the task exits while still in progress."""
     _release_task_db_connection()
     try:
-        current_status = (
+        current_state = (
             M3UAccount.objects.filter(id=account_id)
-            .values_list("status", flat=True)
+            .values("status", "last_message")
             .first()
         )
+        if not current_state:
+            return
+
+        current_status = current_state["status"]
+        last_message = current_state.get("last_message") or ""
+
+        # The VOD task is queued at the end of a successful live refresh and
+        # uses the same account status while it works. On fast workers it can
+        # set PARSING before this task reaches its finally block. That is a
+        # valid hand-off, not an incomplete live refresh.
+        if (
+            current_status == M3UAccount.Status.PARSING
+            and last_message.startswith("VOD refresh:")
+        ):
+            return
+
         if current_status in _NON_TERMINAL_REFRESH_STATUSES:
             message = "Refresh did not complete successfully"
             M3UAccount.objects.filter(id=account_id).update(

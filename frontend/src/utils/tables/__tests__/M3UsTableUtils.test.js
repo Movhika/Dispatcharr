@@ -451,6 +451,7 @@ describe('M3UsTableUtils', () => {
             time_remaining: 12,
             items_processed: 1000,
             items_total: 2500,
+            provider_items_total: 156260,
           })
         ).toEqual({
           type: 'vod',
@@ -460,6 +461,7 @@ describe('M3UsTableUtils', () => {
           timeRemaining: 'duration:12',
           itemsProcessed: 1000,
           itemsTotal: 2500,
+          providerItemsTotal: 156260,
         });
       });
     });

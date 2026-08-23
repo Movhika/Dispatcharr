@@ -169,6 +169,7 @@ export const getStatusContent = (data) => {
           : 'calculating...',
         itemsProcessed: data.items_processed,
         itemsTotal: data.items_total,
+        providerItemsTotal: data.provider_items_total,
       };
 
     default:

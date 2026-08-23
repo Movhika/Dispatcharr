@@ -1099,6 +1099,7 @@ describe('M3UTable', () => {
             timeRemaining: '12s',
             itemsProcessed: 1000,
             itemsTotal: 2500,
+            providerItemsTotal: 156260,
           },
           { progress: 52 }
         )
@@ -1107,6 +1108,7 @@ describe('M3UTable', () => {
       expect(getByText('52%')).toBeInTheDocument();
       expect(getByText('12s')).toBeInTheDocument();
       expect(getByText('1000 / 2500')).toBeInTheDocument();
+      expect(getByText('156260')).toBeInTheDocument();
     });
 
     it('renders groups processing progress', () => {

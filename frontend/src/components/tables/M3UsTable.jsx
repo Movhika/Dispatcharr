@@ -232,10 +232,17 @@ const M3UTable = () => {
             )}
             {content.itemsTotal != null && (
               <StatusRow
-                label="Items"
+                label="Eligible"
                 value={`${content.itemsProcessed || 0} / ${content.itemsTotal}`}
               />
             )}
+            {content.providerItemsTotal != null &&
+              content.providerItemsTotal !== content.itemsTotal && (
+                <StatusRow
+                  label="Provider catalog"
+                  value={content.providerItemsTotal}
+                />
+              )}
           </StatusBox>
         );
       case 'error':
