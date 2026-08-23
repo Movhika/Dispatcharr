@@ -1244,14 +1244,20 @@ def xc_get_vod_categories(user, request=None):
 
     response = []
 
-    # Category availability is global. Per-user policies only choose source
-    # editions using language, subtitle, and resolution metadata.
     categories = VODCategory.objects.filter(
         category_type='movie',
         m3u_relations__enabled=True,
         m3u_relations__m3u_account__is_active=True,
         m3umovierelation__m3u_account__is_active=True,
     )
+    if policy:
+        from apps.vod.policies import policy_category_map
+
+        allowed_category_ids = {
+            category_id
+            for _account_id, category_id in policy_category_map(policy)
+        }
+        categories = categories.filter(pk__in=allowed_category_ids)
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:
@@ -1377,6 +1383,14 @@ def xc_get_series_categories(user, request=None):
         m3u_relations__m3u_account__is_active=True,
         m3useriesrelation__m3u_account__is_active=True,
     )
+    if policy:
+        from apps.vod.policies import policy_category_map
+
+        allowed_category_ids = {
+            category_id
+            for _account_id, category_id in policy_category_map(policy)
+        }
+        categories = categories.filter(pk__in=allowed_category_ids)
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:

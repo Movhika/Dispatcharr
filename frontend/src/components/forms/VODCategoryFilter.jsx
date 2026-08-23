@@ -8,7 +8,6 @@ import {
   SegmentedControl,
   Select,
   Stack,
-  Switch,
   Table,
   TableTbody,
   TableTd,
@@ -35,10 +34,6 @@ const VODCategoryFilter = ({
   categoryStates,
   setCategoryStates,
   type,
-  autoEnableNewGroups,
-  setAutoEnableNewGroups,
-  useGroupRules,
-  setUseGroupRules,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
@@ -204,32 +199,17 @@ const VODCategoryFilter = ({
   return (
     <>
       <Stack pt="sm">
-        <Group justify="space-between" align="center">
-          <Group>
-            <Switch
-              label="Use discovery rules"
-              checked={useGroupRules}
-              onChange={(event) =>
-                setUseGroupRules(event.currentTarget.checked)
-              }
-              size="sm"
-            />
-            <Button
-              variant="default"
-              size="xs"
-              onClick={() => setRulesOpen(true)}
-            >
-              Rules
-            </Button>
-          </Group>
-          <Switch
-            label={`Enable unmatched new ${type === 'movie' ? 'movie' : 'series'} categories`}
-            checked={autoEnableNewGroups}
-            onChange={(event) =>
-              setAutoEnableNewGroups(event.currentTarget.checked)
-            }
-            size="sm"
-          />
+        <Group justify="flex-start" align="center">
+          <Button
+            variant="default"
+            size="xs"
+            onClick={() => setRulesOpen(true)}
+          >
+            Import rules
+          </Button>
+          <Text size="xs" c="dimmed">
+            New unmatched categories are imported inactive.
+          </Text>
         </Group>
 
         <Flex gap="sm" align="end" wrap="wrap">
@@ -476,7 +456,7 @@ const VODCategoryFilter = ({
       <Modal
         opened={rulesOpen}
         onClose={() => setRulesOpen(false)}
-        title={`${type === 'movie' ? 'Movie' : 'Series'} discovery rules`}
+        title={`${type === 'movie' ? 'Movie' : 'Series'} import rules`}
         size="95vw"
         scrollAreaComponent={Modal.NativeScrollArea}
       >

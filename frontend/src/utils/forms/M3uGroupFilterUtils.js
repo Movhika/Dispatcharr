@@ -48,7 +48,9 @@ export const saveAndRefreshPlaylist = async (
     seriesCategoryStates
   );
 
-  await updatePlaylist(playlist, autoEnableSettings);
+  if (autoEnableSettings && Object.keys(autoEnableSettings).length) {
+    await updatePlaylist(playlist, autoEnableSettings);
+  }
   await updateM3UGroupSettings(playlist, groupSettings, categorySettings);
   await refreshPlaylist(playlist);
 };

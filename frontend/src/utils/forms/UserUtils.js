@@ -66,10 +66,16 @@ export const userToFormValues = (user) => {
     vod_export_mode: vodPolicy.export_mode || 'compact',
     vod_audio_languages: vodConstraints.required_audio_languages || [],
     vod_subtitle_languages: vodConstraints.required_subtitle_languages || [],
+    vod_language_match_mode: vodConstraints.language_match_mode || 'all',
     vod_preferred_resolutions: vodConstraints.preferred_resolutions || [],
-    vod_min_height: vodConstraints.min_height || 0,
-    vod_max_height: vodConstraints.max_height || 0,
+    vod_min_resolution:
+      vodConstraints.min_resolution || vodConstraints.min_height || 0,
+    vod_max_resolution:
+      vodConstraints.max_resolution || vodConstraints.max_height || 0,
     vod_allow_unknown: vodConstraints.allow_unknown_metadata !== false,
+    vod_category_relation_ids: (vodPolicy.category_relation_ids || []).map(
+      String
+    ),
   };
 };
 
@@ -119,21 +125,27 @@ export const formValuesToPayload = (values, existingUser) => {
       required_subtitle_languages: normalizeLanguageCodes(
         payload.vod_subtitle_languages
       ),
+      language_match_mode: payload.vod_language_match_mode || 'all',
       preferred_resolutions: payload.vod_preferred_resolutions || [],
-      min_height: payload.vod_min_height || 0,
-      max_height: payload.vod_max_height || 0,
+      min_resolution: payload.vod_min_resolution || 0,
+      max_resolution: payload.vod_max_resolution || 0,
       allow_unknown_metadata: payload.vod_allow_unknown !== false,
     },
     ranking: ['audio_language', 'subtitle_language', 'resolution'],
+    category_relation_ids: (payload.vod_category_relation_ids || []).map(
+      Number
+    ),
   };
   [
     'vod_export_mode',
     'vod_audio_languages',
     'vod_subtitle_languages',
+    'vod_language_match_mode',
     'vod_preferred_resolutions',
-    'vod_min_height',
-    'vod_max_height',
+    'vod_min_resolution',
+    'vod_max_resolution',
     'vod_allow_unknown',
+    'vod_category_relation_ids',
   ].forEach((key) => delete payload[key]);
 
   payload.custom_properties = customProps;
@@ -166,10 +178,12 @@ export const getFormInitialValues = () => {
     vod_export_mode: 'compact',
     vod_audio_languages: [],
     vod_subtitle_languages: [],
+    vod_language_match_mode: 'all',
     vod_preferred_resolutions: [],
-    vod_min_height: 0,
-    vod_max_height: 0,
+    vod_min_resolution: 0,
+    vod_max_resolution: 0,
     vod_allow_unknown: true,
+    vod_category_relation_ids: [],
   };
 };
 

@@ -10,6 +10,7 @@ from apps.m3u.serializers import M3UAccountSerializer
 from .metadata import (
     normalize_language_list,
     normalize_source_metadata,
+    summarize_relation_metadata,
     validate_source_metadata,
 )
 
@@ -127,6 +128,7 @@ class VODCategorySerializer(serializers.ModelSerializer):
 class SeriesSerializer(serializers.ModelSerializer):
     logo = VODLogoSerializer(read_only=True)
     episode_count = serializers.SerializerMethodField()
+    source_metadata = serializers.SerializerMethodField()
 
     class Meta:
         model = Series
@@ -135,13 +137,20 @@ class SeriesSerializer(serializers.ModelSerializer):
     def get_episode_count(self, obj):
         return obj.episodes.count()
 
+    def get_source_metadata(self, obj):
+        return summarize_relation_metadata(obj.m3u_relations.all())
+
 
 class MovieSerializer(serializers.ModelSerializer):
     logo = VODLogoSerializer(read_only=True)
+    source_metadata = serializers.SerializerMethodField()
 
     class Meta:
         model = Movie
         fields = '__all__'
+
+    def get_source_metadata(self, obj):
+        return summarize_relation_metadata(obj.m3u_relations.all())
 
 
 class EpisodeSerializer(serializers.ModelSerializer):
@@ -403,8 +412,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be an object")
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
+            "min_resolution", "max_resolution",
+            # Accept the former names when older clients edit a policy.
             "min_height", "max_height", "allow_unknown_metadata",
-            "preferred_resolutions",
+            "preferred_resolutions", "language_match_mode",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
@@ -434,7 +445,11 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         normalized["preferred_resolutions"] = list(
             dict.fromkeys(str(value).strip() for value in resolutions if str(value).strip())
         )
-        for field in ("min_height", "max_height"):
+        if "min_resolution" not in normalized and "min_height" in normalized:
+            normalized["min_resolution"] = normalized.pop("min_height")
+        if "max_resolution" not in normalized and "max_height" in normalized:
+            normalized["max_resolution"] = normalized.pop("max_height")
+        for field in ("min_resolution", "max_resolution"):
             try:
                 normalized[field] = max(0, int(normalized.get(field) or 0))
             except (TypeError, ValueError):
@@ -442,16 +457,22 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                     {field: "Must be a non-negative integer"}
                 )
         if (
-            normalized["min_height"]
-            and normalized["max_height"]
-            and normalized["min_height"] > normalized["max_height"]
+            normalized["min_resolution"]
+            and normalized["max_resolution"]
+            and normalized["min_resolution"] > normalized["max_resolution"]
         ):
             raise serializers.ValidationError(
-                "min_height cannot be greater than max_height"
+                "min_resolution cannot be greater than max_resolution"
             )
         for field in ("allow_unknown_metadata",):
             if field in normalized and not isinstance(normalized[field], bool):
                 raise serializers.ValidationError({field: "Must be a boolean"})
+        language_match_mode = normalized.get("language_match_mode", "all")
+        if language_match_mode not in {"all", "any"}:
+            raise serializers.ValidationError(
+                {"language_match_mode": "Use either all or any"}
+            )
+        normalized["language_match_mode"] = language_match_mode
         return normalized
 
     def _assign_users(self, policy, users):

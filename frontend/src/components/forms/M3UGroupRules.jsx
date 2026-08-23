@@ -5,6 +5,7 @@ import {
   Button,
   Checkbox,
   Group,
+  Modal,
   NumberInput,
   ScrollArea,
   Select,
@@ -19,7 +20,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Play, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
 import {
@@ -30,6 +31,9 @@ import {
 const M3UGroupRules = ({ accountId, scope }) => {
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewRule, setPreviewRule] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!accountId) return;
@@ -67,7 +71,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
     setRules((current) => [...current, created]);
   };
 
-  const saveRule = async (rule) => {
+  const rulePayload = (rule) => {
     const metadataDefaults = {
       ...(rule.metadata_defaults || {}),
       audio_languages: normalizeLanguageCodes(
@@ -88,7 +92,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
       });
       return;
     }
-    const saved = await API.updateM3UGroupRule(accountId, rule.id, {
+    return {
       scope,
       match_field: rule.match_field,
       match_mode: rule.match_mode,
@@ -99,13 +103,53 @@ const M3UGroupRules = ({ accountId, scope }) => {
       enabled: rule.enabled,
       order: rule.order,
       metadata_defaults: scope === 'live' ? {} : metadataDefaults,
-    });
+    };
+  };
+
+  const saveRule = async (rule, notify = true) => {
+    const payload = rulePayload(rule);
+    if (!payload) return null;
+    const saved = await API.updateM3UGroupRule(accountId, rule.id, payload);
     updateLocal(rule.id, saved);
-    showNotification({
-      title: 'Discovery rule saved',
-      message: 'The rule applies to groups discovered by future scans.',
-      color: 'green',
-    });
+    if (notify) {
+      showNotification({
+        title: 'Import rule saved',
+        message: 'The rule applies automatically during future scans.',
+        color: 'green',
+      });
+    }
+    return saved;
+  };
+
+  const openPreview = async (rule) => {
+    const payload = rulePayload(rule);
+    if (!payload) return;
+    setPreviewRule(rule);
+    setPreviewLoading(true);
+    try {
+      setPreview(await API.previewM3UGroupRule(accountId, rule.id, payload));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const applyPreview = async () => {
+    if (!previewRule) return;
+    setPreviewLoading(true);
+    try {
+      const saved = await saveRule(previewRule, false);
+      if (!saved) return;
+      const result = await API.applyM3UGroupRule(accountId, saved.id);
+      showNotification({
+        title: 'Import rule applied',
+        message: `${result.updated || 0} existing entries were updated.`,
+        color: 'green',
+      });
+      setPreview(null);
+      setPreviewRule(null);
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const updateMetadata = (rule, field, value) => {
@@ -127,11 +171,12 @@ const M3UGroupRules = ({ accountId, scope }) => {
       <Group justify="space-between">
         <div>
           <Text fw={600} size="sm">
-            Rules for newly discovered groups
+            Import rules
           </Text>
           <Text c="dimmed" size="xs">
             First matching rule wins. The exclusion expression vetoes a match.
-            Existing choices and learned or manual metadata are not changed.
+            Existing choices and learned or manual metadata are not changed
+            unless you preview and explicitly apply a rule.
           </Text>
         </div>
         <Button
@@ -147,7 +192,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
 
       {rules.length === 0 ? (
         <Alert color="gray" variant="light">
-          No rule configured. The “Automatically enable” setting above is used.
+          No rule configured. New unmatched groups are imported inactive.
         </Alert>
       ) : (
         <ScrollArea type="auto">
@@ -343,6 +388,14 @@ const M3UGroupRules = ({ accountId, scope }) => {
                         <Save size={15} />
                       </ActionIcon>
                       <ActionIcon
+                        aria-label="Preview and apply rule"
+                        color="green"
+                        variant="subtle"
+                        onClick={() => openPreview(rule)}
+                      >
+                        <Play size={15} />
+                      </ActionIcon>
+                      <ActionIcon
                         aria-label="Delete rule"
                         color="red"
                         variant="subtle"
@@ -358,6 +411,81 @@ const M3UGroupRules = ({ accountId, scope }) => {
           </Table>
         </ScrollArea>
       )}
+
+      <Modal
+        opened={!!previewRule}
+        onClose={() => {
+          setPreviewRule(null);
+          setPreview(null);
+        }}
+        title="Import rule preview"
+        size="xl"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            This preview evaluates the complete ordered rule set. Only rows for
+            which this rule is the first match are shown.
+          </Text>
+          <Text fw={600}>
+            {previewLoading
+              ? 'Evaluating…'
+              : `${preview?.count || 0} matching existing entries`}
+          </Text>
+          <ScrollArea h="45vh">
+            <Table striped withTableBorder stickyHeader>
+              <TableThead>
+                <TableTr>
+                  <TableTh>Name</TableTh>
+                  <TableTh w={90}>Current</TableTh>
+                  <TableTh w={110}>Result</TableTh>
+                  <TableTh w={90}>Items</TableTh>
+                </TableTr>
+              </TableThead>
+              <TableTbody>
+                {(preview?.results || []).map((row) => (
+                  <TableTr key={row.relation_id}>
+                    <TableTd>{row.name}</TableTd>
+                    <TableTd>
+                      {row.currently_enabled ? 'Active' : 'Inactive'}
+                    </TableTd>
+                    <TableTd>
+                      {row.would_enable === null
+                        ? 'No change'
+                        : row.would_enable
+                          ? 'Active'
+                          : 'Inactive'}
+                    </TableTd>
+                    <TableTd>{row.item_count}</TableTd>
+                  </TableTr>
+                ))}
+              </TableTbody>
+            </Table>
+          </ScrollArea>
+          {preview?.truncated && (
+            <Text size="xs" c="dimmed">
+              Showing the first 200 matches.
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => {
+                setPreviewRule(null);
+                setPreview(null);
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              loading={previewLoading}
+              disabled={!preview?.count || previewRule?.action === 'ignore'}
+              onClick={applyPreview}
+            >
+              Save and apply to existing
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 };

@@ -1,10 +1,15 @@
 """Playback history helpers shared by redirect, proxy, and player telemetry."""
 
+import logging
+
 from django.utils import timezone
 
-from .metadata import ensure_source_asset
+from .metadata import sync_relation_declared_metadata
 from .models import VODPlaybackSession, VODSourceAsset
 from .policies import relation_category
+
+
+logger = logging.getLogger(__name__)
 
 
 def _relation_content(relation):
@@ -37,7 +42,23 @@ def record_playback_selection(
 ):
     """Create/update the auditable choice without probing provider media."""
     asset_type, content = _relation_content(relation)
-    asset = ensure_source_asset(relation)
+    # Playback history must remain useful even when lazy source-asset creation
+    # fails (for example while a refresh holds a conflicting row lock).  The
+    # relation/account/category still identify the exact source and a later
+    # playback or manual bulk edit can create the asset.
+    try:
+        # This is not a media probe. It snapshots metadata the provider already
+        # supplied (including the container extension) into the indexed source
+        # library when that exact edition is actually used.
+        asset = sync_relation_declared_metadata(relation)
+    except Exception as exc:
+        asset = None
+        logger.warning(
+            "Could not attach a source asset to playback %s (relation %s): %s",
+            session_id,
+            getattr(relation, "id", None),
+            exc,
+        )
     category = relation_category(relation)
     values = {
         "user": user if getattr(user, "is_authenticated", False) else None,

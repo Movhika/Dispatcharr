@@ -23,6 +23,7 @@ import { Copy, Key, RotateCcwKey, X } from 'lucide-react';
 import { useForm } from '@mantine/form';
 import useChannelsStore from '../../store/channels';
 import useOutputProfilesStore from '../../store/outputProfiles';
+import useVODStore from '../../store/useVODStore';
 import { USER_LEVEL_LABELS, USER_LEVELS } from '../../constants';
 import useAuthStore from '../../store/auth';
 import { copyToClipboard } from '../../utils';
@@ -42,6 +43,8 @@ const User = ({ user = null, isOpen, onClose }) => {
   const outputProfiles = useOutputProfilesStore((s) => s.profiles);
   const authUser = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+  const vodCategories = useVODStore((s) => s.categories);
+  const fetchVODCategories = useVODStore((s) => s.fetchCategories);
 
   const [, setEnableXC] = useState(false);
   const [selectedProfiles, setSelectedProfiles] = useState(new Set());
@@ -104,6 +107,10 @@ const User = ({ user = null, isOpen, onClose }) => {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (isOpen) fetchVODCategories();
+  }, [fetchVODCategories, isOpen]);
+
   const generateXCPassword = () => {
     form.setValues({
       xc_password: Math.random().toString(36).slice(2),
@@ -120,6 +127,16 @@ const User = ({ user = null, isOpen, onClose }) => {
 
   const canGenerateKey =
     authUser.user_level == USER_LEVELS.ADMIN || authUser.id === user?.id;
+  const vodCategoryOptions = Object.values(vodCategories)
+    .flatMap((category) =>
+      (category.m3u_accounts || [])
+        .filter((relation) => relation.enabled)
+        .map((relation) => ({
+          value: String(relation.id),
+          label: `${relation.account_name} — ${category.name} (${category.category_type})`,
+        }))
+    )
+    .sort((left, right) => left.label.localeCompare(right.label));
 
   const onGenerateKey = async () => {
     if (!canGenerateKey) {
@@ -456,6 +473,32 @@ const User = ({ user = null, isOpen, onClose }) => {
                 {...form.getInputProps('vod_subtitle_languages')}
                 key={form.key('vod_subtitle_languages')}
               />
+              <Select
+                label="Language matching"
+                description="Require every configured language field, or allow a source when either its audio or subtitles match."
+                data={[
+                  {
+                    value: 'all',
+                    label: 'Audio and subtitles must match',
+                  },
+                  {
+                    value: 'any',
+                    label: 'Audio or subtitles may match',
+                  },
+                ]}
+                {...form.getInputProps('vod_language_match_mode')}
+                key={form.key('vod_language_match_mode')}
+              />
+              <MultiSelect
+                label="Allowed source categories"
+                description="Optional hard boundary. Leave empty to use every enabled source category; selected categories are evaluated by the language and resolution rules below."
+                placeholder="All enabled source categories"
+                searchable
+                clearable
+                data={vodCategoryOptions}
+                {...form.getInputProps('vod_category_relation_ids')}
+                key={form.key('vod_category_relation_ids')}
+              />
               <TagsInput
                 label="Preferred resolutions"
                 description="Ordered from most to least preferred, for example 1080p, 720p."
@@ -465,18 +508,20 @@ const User = ({ user = null, isOpen, onClose }) => {
               />
               <Group grow align="flex-start">
                 <NumberInput
-                  label="Minimum height"
+                  label="Minimum video resolution"
+                  description="Vertical pixels; for example 1080 means 1920×1080. Use 0 for no minimum."
                   min={0}
                   step={120}
-                  {...form.getInputProps('vod_min_height')}
-                  key={form.key('vod_min_height')}
+                  {...form.getInputProps('vod_min_resolution')}
+                  key={form.key('vod_min_resolution')}
                 />
                 <NumberInput
-                  label="Maximum height"
+                  label="Maximum video resolution"
+                  description="Vertical pixels; for example 2160 means 3840×2160. Use 0 for no maximum."
                   min={0}
                   step={120}
-                  {...form.getInputProps('vod_max_height')}
-                  key={form.key('vod_max_height')}
+                  {...form.getInputProps('vod_max_resolution')}
+                  key={form.key('vod_max_resolution')}
                 />
               </Group>
               <Switch

@@ -163,6 +163,7 @@ def ensure_source_asset(relation):
         asset_type=asset_type,
         provider_origin_key=provider_origin_key(relation.m3u_account),
         provider_asset_id=str(getattr(relation, id_field) or ""),
+        declared_metadata=relation_declared_metadata(relation),
     )
     relation.source_asset = asset
     relation.save(update_fields=["source_asset"])
@@ -198,6 +199,7 @@ def ensure_source_assets(relations):
                     asset_type=asset_type,
                     provider_origin_key=provider_origin_key(relation.m3u_account),
                     provider_asset_id=str(getattr(relation, id_field) or ""),
+                    declared_metadata=relation_declared_metadata(relation),
                 )
             )
         if assets:
@@ -238,15 +240,30 @@ def relation_declared_metadata(relation):
         value = detailed.get(key)
         if value not in (None, "", [], {}):
             result[key] = value
+    # Movie/episode container extensions are already stored on the relation by
+    # the fast catalog import.  They do not require an advanced provider fetch
+    # and should therefore be visible in the effective source metadata.
+    container_extension = getattr(relation, "container_extension", None)
+    if not container_extension:
+        for payload_name in ("movie_data", "basic_data"):
+            payload = props.get(payload_name) or {}
+            if isinstance(payload, dict) and payload.get("container_extension"):
+                container_extension = payload["container_extension"]
+                break
+    if container_extension:
+        result["container_extension"] = str(container_extension).lower()
     video = result.get("video")
     if isinstance(video, dict):
         width = video.get("width")
         height = video.get("height")
         if height:
             result["height"] = height
-            result["resolution"] = (
-                f"{width}x{height}" if width else f"{height}p"
-            )
+            # Resolution policies use vertical pixels (720p/1080p/2160p).
+            # Preserve width separately instead of making the policy compare
+            # incomparable strings such as 1920x1080 and 1080p.
+            result["resolution"] = f"{height}p"
+            if width:
+                result["width"] = width
     audio = result.get("audio")
     if isinstance(audio, dict):
         tags = audio.get("tags") if isinstance(audio.get("tags"), dict) else {}
@@ -274,9 +291,80 @@ def relation_declared_metadata(relation):
     return normalize_source_metadata(result)
 
 
+def sync_relation_declared_metadata(relation):
+    """Persist provider/relation metadata on the lazy source-asset index."""
+    asset = ensure_source_asset(relation)
+    declared = relation_declared_metadata(relation)
+    merged = {**(asset.declared_metadata or {}), **declared}
+    if merged != (asset.declared_metadata or {}):
+        asset.declared_metadata = merged
+        asset.save(update_fields=["declared_metadata", "updated_at"])
+    return asset
+
+
 def effective_relation_metadata(relation):
     asset = relation.source_asset or ensure_source_asset(relation)
     return asset.effective_metadata(
         category_defaults=category_defaults_for_relation(relation),
         relation_declared=relation_declared_metadata(relation),
     )
+
+
+def summarize_relation_metadata(relations, category_mapping=None):
+    """Return a compact union of metadata across enabled source relations.
+
+    Callers should load ``source_asset`` with ``select_related``/``Prefetch``.
+    The category mapping is cached globally, so this helper never performs a
+    query per VOD row.
+    """
+    if category_mapping is None:
+        from .policies import enabled_category_map
+
+        category_mapping = enabled_category_map()
+
+    audio_languages = set()
+    subtitle_languages = set()
+    resolutions = set()
+    containers = set()
+    source_count = 0
+    for relation in relations:
+        category_id = getattr(relation, "category_id", None)
+        if category_id is None:
+            series_relation = getattr(relation, "series_relation", None)
+            category_id = getattr(series_relation, "category_id", None)
+        defaults = category_mapping.get(
+            (relation.m3u_account_id, category_id)
+        )
+        if defaults is None:
+            continue
+        declared = relation_declared_metadata(relation)
+        if relation.source_asset_id:
+            metadata = relation.source_asset.effective_metadata(
+                category_defaults=defaults,
+                relation_declared=declared,
+            )["values"]
+        else:
+            metadata = normalize_source_metadata({**defaults, **declared})
+        audio_languages.update(
+            normalize_language_list(
+                metadata.get("audio_languages") or metadata.get("languages")
+            )
+        )
+        subtitle_languages.update(
+            normalize_language_list(metadata.get("subtitle_languages"))
+        )
+        resolution = metadata.get("resolution") or metadata.get("height")
+        if resolution not in (None, "", [], {}):
+            resolutions.add(str(resolution))
+        container = metadata.get("container_extension")
+        if container:
+            containers.add(str(container).lower())
+        source_count += 1
+
+    return {
+        "audio_languages": sorted(audio_languages),
+        "subtitle_languages": sorted(subtitle_languages),
+        "resolutions": sorted(resolutions),
+        "container_extensions": sorted(containers),
+        "source_count": source_count,
+    }

@@ -19,6 +19,11 @@ describe('useVODStore', () => {
         type: 'all',
         search: '',
         category: '',
+        m3u_account: '',
+        audio_language: '',
+        subtitle_language: '',
+        resolution: '',
+        container_extension: '',
       },
       currentPage: 1,
       totalCount: 0,
@@ -39,6 +44,11 @@ describe('useVODStore', () => {
       type: 'all',
       search: '',
       category: '',
+      m3u_account: '',
+      audio_language: '',
+      subtitle_language: '',
+      resolution: '',
+      container_extension: '',
     });
     expect(result.current.currentPage).toBe(1);
     expect(result.current.totalCount).toBe(0);
@@ -57,6 +67,11 @@ describe('useVODStore', () => {
       type: 'all',
       search: 'test',
       category: 'action',
+      m3u_account: '',
+      audio_language: '',
+      subtitle_language: '',
+      resolution: '',
+      container_extension: '',
     });
     expect(result.current.currentPage).toBe(1);
   });
@@ -123,7 +138,7 @@ describe('useVODStore', () => {
       count: 2,
     };
 
-    api.getMovies.mockResolvedValue(mockResponse);
+    api.getAllContent.mockResolvedValue(mockResponse);
 
     const { result } = renderHook(() => useVODStore());
 
@@ -135,7 +150,8 @@ describe('useVODStore', () => {
       await result.current.fetchContent();
     });
 
-    expect(api.getMovies).toHaveBeenCalled();
+    expect(api.getAllContent).toHaveBeenCalled();
+    expect(api.getAllContent.mock.calls[0][0].get('type')).toBe('movies');
     expect(result.current.currentPageContent).toEqual([
       { id: 1, name: 'Movie 1', contentType: 'movie' },
       { id: 2, name: 'Movie 2', contentType: 'movie' },
@@ -152,7 +168,7 @@ describe('useVODStore', () => {
       count: 2,
     };
 
-    api.getSeries.mockResolvedValue(mockResponse);
+    api.getAllContent.mockResolvedValue(mockResponse);
 
     const { result } = renderHook(() => useVODStore());
 
@@ -164,7 +180,8 @@ describe('useVODStore', () => {
       await result.current.fetchContent();
     });
 
-    expect(api.getSeries).toHaveBeenCalled();
+    expect(api.getAllContent).toHaveBeenCalled();
+    expect(api.getAllContent.mock.calls[0][0].get('type')).toBe('series');
     expect(result.current.currentPageContent).toEqual([
       { id: 1, name: 'Series 1', contentType: 'series' },
       { id: 2, name: 'Series 2', contentType: 'series' },

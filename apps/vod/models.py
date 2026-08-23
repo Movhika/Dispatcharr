@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models import Q
+from django.contrib.postgres.indexes import GinIndex
 from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -224,7 +225,10 @@ class VODSourceAsset(models.Model):
             models.Index(
                 fields=("asset_type", "provider_origin_key", "provider_asset_id"),
                 name="vod_asset_provider_idx",
-            )
+            ),
+            GinIndex(fields=("manual_metadata",), name="vod_asset_manual_gin"),
+            GinIndex(fields=("observed_metadata",), name="vod_asset_observed_gin"),
+            GinIndex(fields=("declared_metadata",), name="vod_asset_declared_gin"),
         ]
 
     def effective_metadata(self, category_defaults=None, relation_declared=None):
@@ -484,6 +488,9 @@ class M3UVODCategoryRelation(models.Model):
         verbose_name = 'M3U VOD Category Relation'
         verbose_name_plural = 'M3U VOD Category Relations'
         unique_together = [('m3u_account', 'category')]
+        indexes = [
+            GinIndex(fields=("metadata_defaults",), name="vod_cat_defaults_gin"),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.category.name}"

@@ -754,9 +754,9 @@ def process_groups(account, groups, scan_start_time=None):
         scan_start_time = timezone.now()
 
     account_custom_props = ensure_custom_properties_dict(account.custom_properties)
-    auto_enable_new_groups_live = account_custom_props.get(
-        "auto_enable_new_groups_live", True
-    )
+    # New groups are opt-in: the first matching active import rule decides,
+    # otherwise the group is imported disabled for manual review.
+    auto_enable_new_groups_live = False
     from apps.m3u.group_rules import account_group_rules, evaluate_group_rules
 
     discovery_rules = account_group_rules(account, "live")

@@ -32,13 +32,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [movieCategoryStates, setMovieCategoryStates] = useState([]);
   const [seriesCategoryStates, setSeriesCategoryStates] = useState([]);
-  const [autoEnableNewGroupsLive, setAutoEnableNewGroupsLive] = useState(true);
-  const [autoEnableNewGroupsVod, setAutoEnableNewGroupsVod] = useState(true);
-  const [autoEnableNewGroupsSeries, setAutoEnableNewGroupsSeries] =
-    useState(true);
-  const [useGroupRulesLive, setUseGroupRulesLive] = useState(true);
-  const [useGroupRulesMovie, setUseGroupRulesMovie] = useState(true);
-  const [useGroupRulesSeries, setUseGroupRulesSeries] = useState(true);
   const [activeTab, setActiveTab] = useState('live');
   const [developerMode, setDeveloperMode] = useState(false);
 
@@ -46,20 +39,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
     setDeveloperMode(enabled);
     if (!enabled && activeTab === 'raw-data') setActiveTab('live');
   };
-
-  useEffect(() => {
-    if (!playlist) return;
-
-    // Initialize account-level settings
-    setAutoEnableNewGroupsLive(playlist.auto_enable_new_groups_live ?? true);
-    setAutoEnableNewGroupsVod(playlist.auto_enable_new_groups_vod ?? true);
-    setAutoEnableNewGroupsSeries(
-      playlist.auto_enable_new_groups_series ?? true
-    );
-    setUseGroupRulesLive(playlist.use_group_rules_live ?? true);
-    setUseGroupRulesMovie(playlist.use_group_rules_movie ?? true);
-    setUseGroupRulesSeries(playlist.use_group_rules_series ?? true);
-  }, [playlist]);
 
   useEffect(() => {
     if (isOpen) return;
@@ -107,14 +86,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
         groupStates,
         movieCategoryStates,
         seriesCategoryStates,
-        {
-          auto_enable_new_groups_live: autoEnableNewGroupsLive,
-          auto_enable_new_groups_vod: autoEnableNewGroupsVod,
-          auto_enable_new_groups_series: autoEnableNewGroupsSeries,
-          use_group_rules_live: useGroupRulesLive,
-          use_group_rules_movie: useGroupRulesMovie,
-          use_group_rules_series: useGroupRulesSeries,
-        }
+        {}
       );
 
       showNotification({
@@ -197,10 +169,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               playlist={playlist}
               groupStates={groupStates}
               setGroupStates={setGroupStates}
-              autoEnableNewGroupsLive={autoEnableNewGroupsLive}
-              setAutoEnableNewGroupsLive={setAutoEnableNewGroupsLive}
-              useGroupRules={useGroupRulesLive}
-              setUseGroupRules={setUseGroupRulesLive}
             />
           </TabsPanel>
 
@@ -210,10 +178,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               categoryStates={movieCategoryStates}
               setCategoryStates={setMovieCategoryStates}
               type="movie"
-              autoEnableNewGroups={autoEnableNewGroupsVod}
-              setAutoEnableNewGroups={setAutoEnableNewGroupsVod}
-              useGroupRules={useGroupRulesMovie}
-              setUseGroupRules={setUseGroupRulesMovie}
             />
           </TabsPanel>
 
@@ -223,10 +187,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               categoryStates={seriesCategoryStates}
               setCategoryStates={setSeriesCategoryStates}
               type="series"
-              autoEnableNewGroups={autoEnableNewGroupsSeries}
-              setAutoEnableNewGroups={setAutoEnableNewGroupsSeries}
-              useGroupRules={useGroupRulesSeries}
-              setUseGroupRules={setUseGroupRulesSeries}
             />
           </TabsPanel>
 

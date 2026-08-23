@@ -47,8 +47,25 @@ def enabled_category_map():
 
 
 def policy_category_map(policy):
-    """Backward-compatible alias; category priority is no longer user policy."""
-    return enabled_category_map()
+    """Return globally enabled sources narrowed by an optional user allowlist.
+
+    An empty allowlist deliberately means "all enabled categories" so existing
+    users keep their current catalog.  Category priority is not used for
+    ranking; the allowlist is only a hard source boundary before technical
+    language/resolution policy is evaluated.
+    """
+    mapping = enabled_category_map()
+    if not policy:
+        return mapping
+    allowed = set(
+        policy.vodpolicycategory_set.filter(enabled=True).values_list(
+            "category_relation__m3u_account_id",
+            "category_relation__category_id",
+        )
+    )
+    if not allowed:
+        return mapping
+    return {key: value for key, value in mapping.items() if key in allowed}
 
 
 def relation_category_id(relation):
@@ -81,8 +98,12 @@ def _language_set(value):
     return set(normalize_language_list(value))
 
 
-def _height(metadata):
-    value = metadata.get("height") or metadata.get("resolution") or metadata.get("quality")
+def _vertical_resolution(metadata):
+    value = (
+        metadata.get("height")
+        or metadata.get("resolution")
+        or metadata.get("quality")
+    )
     if isinstance(value, dict):
         value = value.get("height") or value.get("resolution")
     text = str(value or "").lower()
@@ -134,32 +155,55 @@ def relation_allowed(relation, policy, category_mapping=None):
     observed_audio = _language_set(
         metadata.get("audio_languages") or metadata.get("languages")
     )
-    if required_audio and not observed_audio and not allow_unknown:
-        return False
-    if required_audio and observed_audio and required_audio.isdisjoint(observed_audio):
-        return False
-
     required_subtitles = _language_set(
         constraints.get("required_subtitle_languages")
     )
     observed_subtitles = _language_set(metadata.get("subtitle_languages"))
-    if required_subtitles and not observed_subtitles and not allow_unknown:
-        return False
-    if (
-        required_subtitles
-        and observed_subtitles
-        and required_subtitles.isdisjoint(observed_subtitles)
-    ):
-        return False
+    language_mode = constraints.get("language_match_mode", "all")
+    language_checks = []
+    if required_audio:
+        language_checks.append(
+            None
+            if not observed_audio
+            else not required_audio.isdisjoint(observed_audio)
+        )
+    if required_subtitles:
+        language_checks.append(
+            None
+            if not observed_subtitles
+            else not required_subtitles.isdisjoint(observed_subtitles)
+        )
+    if language_checks:
+        known_checks = [value for value in language_checks if value is not None]
+        if language_mode == "any":
+            # A known match is sufficient. A known non-match is not rescued by
+            # another unknown field; this prevents ENG audio with unclassified
+            # subtitles from leaking into a GER policy.
+            if known_checks and not any(known_checks):
+                return False
+            if not known_checks and not allow_unknown:
+                return False
+        else:
+            if any(value is False for value in language_checks):
+                return False
+            if (
+                any(value is None for value in language_checks)
+                and not allow_unknown
+            ):
+                return False
 
-    height = _height(metadata)
-    min_height = _constraint_int(constraints, "min_height")
-    max_height = _constraint_int(constraints, "max_height")
-    if min_height and not height and not allow_unknown:
+    resolution = _vertical_resolution(metadata)
+    min_resolution = _constraint_int(
+        constraints, "min_resolution"
+    ) or _constraint_int(constraints, "min_height")
+    max_resolution = _constraint_int(
+        constraints, "max_resolution"
+    ) or _constraint_int(constraints, "max_height")
+    if min_resolution and not resolution and not allow_unknown:
         return False
-    if min_height and height and height < min_height:
+    if min_resolution and resolution and resolution < min_resolution:
         return False
-    if max_height and height and height > max_height:
+    if max_resolution and resolution and resolution > max_resolution:
         return False
     return True
 
@@ -175,16 +219,16 @@ def _preference_score(observed, preferred):
     return 0
 
 
-def _resolution_score(height, preferred):
+def _resolution_score(resolution, preferred):
     values = []
     for value in preferred or []:
-        parsed = _height({"resolution": value})
+        parsed = _vertical_resolution({"resolution": value})
         if parsed and parsed not in values:
             values.append(parsed)
     if not values:
-        return height
+        return resolution
     try:
-        return len(values) - values.index(height)
+        return len(values) - values.index(resolution)
     except ValueError:
         return 0
 
@@ -208,7 +252,8 @@ def relation_rank(relation, category_mapping, policy=None):
             constraints.get("required_subtitle_languages"),
         ),
         "resolution": _resolution_score(
-            _height(metadata), constraints.get("preferred_resolutions")
+            _vertical_resolution(metadata),
+            constraints.get("preferred_resolutions"),
         ),
     }
     requested = list((policy.ranking if policy else None) or [])

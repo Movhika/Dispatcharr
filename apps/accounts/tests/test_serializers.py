@@ -2,7 +2,12 @@ from django.test import TestCase
 
 from apps.accounts.models import User
 from apps.accounts.serializers import UserSerializer
-from apps.vod.models import VODAccessPolicy
+from apps.m3u.models import M3UAccount
+from apps.vod.models import (
+    M3UVODCategoryRelation,
+    VODAccessPolicy,
+    VODCategory,
+)
 
 
 class UserSerializerValidationTests(TestCase):
@@ -64,6 +69,21 @@ class UserSerializerValidationTests(TestCase):
         )
 
     def test_vod_preferences_are_saved_per_user_and_normalize_languages(self):
+        account = M3UAccount.objects.create(
+            name="provider",
+            account_type=M3UAccount.Types.XC,
+            server_url="https://provider.example",
+            username="user",
+            password="secret",
+        )
+        category = VODCategory.objects.create(
+            name="Anime", category_type="series"
+        )
+        category_relation = M3UVODCategoryRelation.objects.create(
+            m3u_account=account,
+            category=category,
+            enabled=True,
+        )
         serializer = UserSerializer(
             data={
                 "username": "vod-user",
@@ -74,6 +94,7 @@ class UserSerializerValidationTests(TestCase):
                         "required_audio_languages": ["deu", "eng"],
                         "required_subtitle_languages": ["de"],
                         "preferred_resolutions": ["1080p", "720p"],
+                        "language_match_mode": "any",
                         "allow_unknown_metadata": False,
                     },
                     "ranking": [
@@ -81,6 +102,7 @@ class UserSerializerValidationTests(TestCase):
                         "subtitle_language",
                         "resolution",
                     ],
+                    "category_relation_ids": [category_relation.id],
                 },
             }
         )
@@ -97,6 +119,15 @@ class UserSerializerValidationTests(TestCase):
             ["ger"],
         )
         self.assertEqual(policy.export_mode, "compact")
+        self.assertEqual(policy.hard_constraints["language_match_mode"], "any")
+        self.assertEqual(
+            list(
+                policy.vodpolicycategory_set.values_list(
+                    "category_relation_id", flat=True
+                )
+            ),
+            [category_relation.id],
+        )
 
     def test_vod_preferences_do_not_modify_a_policy_shared_by_other_users(self):
         first = User.objects.create_user(username="first", password="secret")

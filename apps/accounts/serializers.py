@@ -115,6 +115,11 @@ class UserSerializer(serializers.ModelSerializer):
             "export_mode": policy.export_mode,
             "hard_constraints": policy.hard_constraints or {},
             "ranking": policy.ranking or [],
+            "category_relation_ids": list(
+                policy.vodpolicycategory_set.filter(enabled=True).values_list(
+                    "category_relation_id", flat=True
+                )
+            ),
             "inherited": inherited,
         }
 
@@ -137,16 +142,45 @@ class UserSerializer(serializers.ModelSerializer):
                 ["audio_language", "subtitle_language", "resolution"],
             )
         )
+        category_relation_ids = value.get("category_relation_ids", [])
+        if not isinstance(category_relation_ids, list):
+            raise serializers.ValidationError(
+                {"category_relation_ids": "Must be a list"}
+            )
+        from apps.vod.models import M3UVODCategoryRelation
+
+        normalized_category_ids = []
+        for relation_id in category_relation_ids:
+            try:
+                normalized_category_ids.append(int(relation_id))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"category_relation_ids": "Must contain numeric IDs"}
+                )
+        normalized_category_ids = list(dict.fromkeys(normalized_category_ids))
+        existing = set(
+            M3UVODCategoryRelation.objects.filter(
+                id__in=normalized_category_ids,
+                enabled=True,
+                m3u_account__is_active=True,
+            ).values_list("id", flat=True)
+        )
+        missing = set(normalized_category_ids) - existing
+        if missing:
+            raise serializers.ValidationError(
+                {"category_relation_ids": "Contains unavailable categories"}
+            )
         return {
             "export_mode": export_mode,
             "hard_constraints": constraints,
             "ranking": ranking,
+            "category_relation_ids": normalized_category_ids,
         }
 
     def _save_vod_policy(self, user, settings):
         if settings is None:
             return
-        from apps.vod.models import VODAccessPolicy
+        from apps.vod.models import VODAccessPolicy, VODPolicyCategory
 
         assigned = (
             user.vod_access_policies.filter(is_active=True).order_by("id").first()
@@ -175,6 +209,22 @@ class UserSerializer(serializers.ModelSerializer):
             ]
         )
         assigned.users.add(user)
+        assigned.vodpolicycategory_set.all().delete()
+        VODPolicyCategory.objects.bulk_create(
+            [
+                VODPolicyCategory(
+                    policy=assigned,
+                    category_relation_id=relation_id,
+                    enabled=True,
+                )
+                for relation_id in settings.get("category_relation_ids", [])
+            ]
+        )
+        # XC responses and policy_for_user are generation-cached. Invalidate
+        # them now so a saved category/language policy applies immediately.
+        from apps.vod.catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation()
 
     def validate_username(self, value):
         if not SAFE_CREDENTIAL_RE.fullmatch(value):

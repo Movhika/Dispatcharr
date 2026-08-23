@@ -20,7 +20,6 @@ import {
   Text,
   TextInput,
   Tooltip,
-  Switch,
 } from '@mantine/core';
 import { Info, Settings as Cog } from 'lucide-react';
 import GroupConfigureModal from './GroupConfigureModal';
@@ -32,6 +31,7 @@ import ErrorBoundary from '../ErrorBoundary.jsx';
 import M3UGroupRules from './M3UGroupRules.jsx';
 const AutoSyncAdvanced = React.lazy(() => import('./AutoSyncAdvanced.jsx'));
 const LogoForm = React.lazy(() => import('./Logo.jsx'));
+const M3UFilters = React.lazy(() => import('./M3UFilters.jsx'));
 import {
   abortTimers,
   computeAutoSyncStart,
@@ -52,15 +52,7 @@ const EMPTY_BULK_SETTINGS = {
   orphanCleanup: 'keep',
 };
 
-const LiveGroupFilter = ({
-  playlist,
-  groupStates,
-  setGroupStates,
-  autoEnableNewGroupsLive,
-  setAutoEnableNewGroupsLive,
-  useGroupRules,
-  setUseGroupRules,
-}) => {
+const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const streamProfiles = useStreamProfilesStore((s) => s.profiles);
   const fetchStreamProfiles = useStreamProfilesStore((s) => s.fetchProfiles);
@@ -71,6 +63,7 @@ const LiveGroupFilter = ({
   const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
   const [epgSources, setEpgSources] = useState([]);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [streamFiltersOpen, setStreamFiltersOpen] = useState(false);
 
   const {
     logos: channelLogos,
@@ -445,7 +438,7 @@ const LiveGroupFilter = ({
           };
         })
     );
-  }, [playlist, channelGroups]);
+  }, [playlist, channelGroups, setGroupStates]);
 
   const toggleGroupEnabled = (id) => {
     setGroupStates((prev) =>
@@ -570,30 +563,20 @@ const LiveGroupFilter = ({
 
   return (
     <Stack style={{ paddingTop: 10 }}>
-      <Group justify="space-between" align="center">
-        <Group>
-          <Switch
-            label="Use discovery rules"
-            checked={useGroupRules}
-            onChange={(event) => setUseGroupRules(event.currentTarget.checked)}
-            size="sm"
-          />
-          <Button
-            variant="default"
-            size="xs"
-            onClick={() => setRulesOpen(true)}
-          >
-            Rules
-          </Button>
-        </Group>
-        <Switch
-          label="Automatically enable new groups discovered on future scans"
-          checked={autoEnableNewGroupsLive}
-          onChange={(event) =>
-            setAutoEnableNewGroupsLive(event.currentTarget.checked)
-          }
-          size="sm"
-        />
+      <Group justify="flex-start" align="center">
+        <Button variant="default" size="xs" onClick={() => setRulesOpen(true)}>
+          Import rules
+        </Button>
+        <Button
+          variant="default"
+          size="xs"
+          onClick={() => setStreamFiltersOpen(true)}
+        >
+          Stream filters
+        </Button>
+        <Text size="xs" c="dimmed">
+          New unmatched groups are imported inactive.
+        </Text>
       </Group>
 
       <Flex gap="sm" align="center" wrap="wrap">
@@ -781,12 +764,24 @@ const LiveGroupFilter = ({
       <Modal
         opened={rulesOpen}
         onClose={() => setRulesOpen(false)}
-        title="Live discovery rules"
+        title="Live import rules"
         size="95vw"
         scrollAreaComponent={Modal.NativeScrollArea}
       >
         <M3UGroupRules accountId={playlist.id} scope="live" />
       </Modal>
+
+      {streamFiltersOpen && (
+        <ErrorBoundary>
+          <Suspense fallback={<Loader />}>
+            <M3UFilters
+              playlist={playlist}
+              isOpen={streamFiltersOpen}
+              onClose={() => setStreamFiltersOpen(false)}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      )}
 
       {/* Per-group settings stay out of the table so large provider catalogs
           render only lightweight summaries in each row. */}

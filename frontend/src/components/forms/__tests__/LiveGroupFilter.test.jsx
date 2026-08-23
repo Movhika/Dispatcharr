@@ -373,31 +373,17 @@ describe('LiveGroupFilter', () => {
       expect(screen.getByLabelText('About Auto sync')).toBeInTheDocument();
     });
 
-    it('renders the auto-enable new groups checkbox', () => {
+    it('shows import rules and stream filters instead of an auto-enable switch', () => {
       renderWith();
       expect(
-        screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
-        })
+        screen.getByRole('button', { name: 'Import rules' })
       ).toBeInTheDocument();
-    });
-
-    it('reflects initialAutoEnable=true on the checkbox', () => {
-      renderWith({ initialAutoEnable: true });
       expect(
-        screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
-        })
-      ).toBeChecked();
-    });
-
-    it('reflects initialAutoEnable=false on the checkbox', () => {
-      renderWith({ initialAutoEnable: false });
+        screen.getByRole('button', { name: 'Stream filters' })
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
-        })
-      ).not.toBeChecked();
+        screen.getByText('New unmatched groups are imported inactive.')
+      ).toBeInTheDocument();
     });
 
     it('renders the group name filter input', () => {
@@ -553,28 +539,6 @@ describe('LiveGroupFilter', () => {
       rerender(<Wrapper initialGroups={[]} playlist={playlist} />);
       // Still renders Sports; no duplicate init
       expect(screen.getAllByText('Sports')).toHaveLength(1);
-    });
-  });
-
-  // ── autoEnableNewGroupsLive checkbox ──────────────────────────────────────
-
-  describe('autoEnableNewGroupsLive checkbox', () => {
-    it('toggles off when clicked while checked', () => {
-      renderWith({ initialAutoEnable: true });
-      const cb = screen.getByRole('checkbox', {
-        name: /Automatically enable new groups/i,
-      });
-      fireEvent.click(cb);
-      expect(cb).not.toBeChecked();
-    });
-
-    it('toggles on when clicked while unchecked', () => {
-      renderWith({ initialAutoEnable: false });
-      const cb = screen.getByRole('checkbox', {
-        name: /Automatically enable new groups/i,
-      });
-      fireEvent.click(cb);
-      expect(cb).toBeChecked();
     });
   });
 

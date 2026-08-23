@@ -1431,6 +1431,20 @@ export default class API {
     );
   }
 
+  static async previewM3UGroupRule(accountId, id, values) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/${id}/preview/`,
+      { method: 'POST', body: values }
+    );
+  }
+
+  static async applyM3UGroupRule(accountId, id) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/${id}/apply/`,
+      { method: 'POST', body: {} }
+    );
+  }
+
   static async getM3UDeveloperCatalog(accountId, scope, search = '', page = 1) {
     const params = new URLSearchParams({
       scope,

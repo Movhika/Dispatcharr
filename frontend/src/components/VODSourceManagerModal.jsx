@@ -38,6 +38,9 @@ const metadataSummary = (playback) => {
     (metadata.subtitle_languages || []).length
       ? `Subs: ${metadata.subtitle_languages.join(', ')}`
       : null,
+    metadata.container_extension
+      ? `Format: ${metadata.container_extension}`
+      : null,
   ]
     .filter(Boolean)
     .join(' • ');
@@ -53,6 +56,13 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     setLoading(true);
     try {
       setPlaybacks(normalizeList(await API.getVODPlaybackSessions()));
+    } catch (error) {
+      setPlaybacks([]);
+      showNotification({
+        title: 'Playback history unavailable',
+        message: error?.message || 'The playback history could not be loaded.',
+        color: 'red',
+      });
     } finally {
       setLoading(false);
     }
@@ -153,6 +163,15 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                 </TableTr>
               </TableThead>
               <TableTbody>
+                {!loading && playbacks.length === 0 && (
+                  <TableTr>
+                    <TableTd colSpan={9}>
+                      <Text c="dimmed" ta="center" py="lg">
+                        No VOD playback has been recorded yet.
+                      </Text>
+                    </TableTd>
+                  </TableTr>
+                )}
                 {playbacks.map((playback) => (
                   <TableTr key={playback.id}>
                     <TableTd>
@@ -182,15 +201,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                     </TableTd>
                   </TableTr>
                 ))}
-                {!loading && playbacks.length === 0 && (
-                  <TableTr>
-                    <TableTd colSpan={9}>
-                      <Text ta="center" c="dimmed" py="xl">
-                        No VOD playback has been recorded yet.
-                      </Text>
-                    </TableTd>
-                  </TableTr>
-                )}
               </TableTbody>
             </Table>
           </ScrollArea>
@@ -241,6 +251,19 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               setManualMetadata({
                 ...manualMetadata,
                 resolution: value || '',
+              })
+            }
+          />
+          <Select
+            clearable
+            searchable
+            label="Format"
+            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            value={manualMetadata.container_extension || null}
+            onChange={(value) =>
+              setManualMetadata({
+                ...manualMetadata,
+                container_extension: value || '',
               })
             }
           />

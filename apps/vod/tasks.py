@@ -407,7 +407,7 @@ def refresh_movies(
 
     # Ensure there's a relation for the Uncategorized category
     account_custom_props = account.custom_properties or {}
-    auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
+    auto_enable_new = False
 
     uncategorized_relation, rel_created = M3UVODCategoryRelation.objects.get_or_create(
         category=uncategorized_category,
@@ -522,7 +522,7 @@ def refresh_series(
 
     # Ensure there's a relation for the Uncategorized category
     account_custom_props = account.custom_properties or {}
-    auto_enable_new = account_custom_props.get("auto_enable_new_groups_series", True)
+    auto_enable_new = False
 
     uncategorized_relation, rel_created = M3UVODCategoryRelation.objects.get_or_create(
         category=uncategorized_category,
@@ -618,10 +618,6 @@ def refresh_series(
 
 def _discovery_item_names(client, account, scope, categories_data):
     """Fetch contained names only when a content-aware rule needs them."""
-    if not (account.custom_properties or {}).get(
-        f"use_group_rules_{scope}", True
-    ):
-        return {}
     if not account.group_rules.filter(
         scope=scope,
         match_field="item_name",
@@ -669,9 +665,9 @@ def batch_create_categories(
     # Check if we should auto-enable new categories based on account settings
     account_custom_props = account.custom_properties or {}
     if category_type == 'movie':
-        auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
+        auto_enable_new = False
     else:  # series
-        auto_enable_new = account_custom_props.get("auto_enable_new_groups_series", True)
+        auto_enable_new = False
 
     from apps.m3u.group_rules import account_group_rules, evaluate_group_rules
 
@@ -1865,6 +1861,9 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
             series_relation.custom_properties = custom_props
             series_relation.last_episode_refresh = timezone.now()
             series_relation.save()
+            from .metadata import sync_relation_declared_metadata
+
+            sync_relation_declared_metadata(series_relation)
 
     except Exception as e:
         logger.error(f"Error refreshing episodes for series {series.name}: {str(e)}")
@@ -2853,6 +2852,9 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                 relation.custom_properties = relation_custom_props
                 relation.last_advanced_refresh = now
                 relation.save(update_fields=['custom_properties', 'last_advanced_refresh'])
+                from .metadata import sync_relation_declared_metadata
+
+                sync_relation_declared_metadata(relation)
 
         return "Advanced data refreshed."
     except Exception as e:

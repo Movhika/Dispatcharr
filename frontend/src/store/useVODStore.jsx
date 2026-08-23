@@ -5,6 +5,7 @@ const getFetchContentParams = (state) => {
   const params = new URLSearchParams();
   params.append('page', state.currentPage);
   params.append('page_size', state.pageSize);
+  params.append('type', state.filters.type);
 
   if (state.filters.search) {
     params.append('search', state.filters.search);
@@ -15,6 +16,14 @@ const getFetchContentParams = (state) => {
   }
   if (state.filters.m3u_account) {
     params.append('m3u_account', state.filters.m3u_account);
+  }
+  for (const key of [
+    'audio_language',
+    'subtitle_language',
+    'resolution',
+    'container_extension',
+  ]) {
+    if (state.filters[key]) params.append(key, state.filters[key]);
   }
   return params;
 };
@@ -136,6 +145,10 @@ const useVODStore = create((set, get) => ({
     search: '',
     category: '',
     m3u_account: '',
+    audio_language: '',
+    subtitle_language: '',
+    resolution: '',
+    container_extension: '',
   },
   currentPage: 1,
   totalCount: 0,
@@ -165,47 +178,20 @@ const useVODStore = create((set, get) => ({
 
       const params = getFetchContentParams(state);
 
-      let allResults = [];
-      let totalCount = 0;
-
-      if (state.filters.type === 'movies') {
-        // Fetch only movies
-        const response = await api.getMovies(params);
-        const results = response.results || response;
-
-        allResults = results.map((item) => ({ ...item, contentType: 'movie' }));
-        totalCount = response.count || results.length;
-      } else if (state.filters.type === 'series') {
-        // Fetch only series
-        const response = await api.getSeries(params);
-        const results = response.results || response;
-
-        allResults = results.map((item) => ({
-          ...item,
-          contentType: 'series',
-        }));
-        totalCount = response.count || results.length;
-      } else {
-        // Use the new unified backend endpoint for 'all' view
-        const response = await api.getAllContent(params);
-        console.log('getAllContent response:', response);
-
-        const results = response.results || response;
-        console.log('results:', results);
-
-        // Check if results is actually an array before calling map
-        if (!Array.isArray(results)) {
-          console.error('Results is not an array:', results);
-          throw new Error('Invalid response format - results is not an array');
-        }
-
-        // The backend already provides content_type and proper sorting/pagination
-        allResults = results.map((item) => ({
-          ...item,
-          contentType: item.content_type, // Backend provides this field
-        }));
-        totalCount = response.count || results.length;
+      // One database-level endpoint keeps pagination, technical filters, and
+      // select-all semantics identical for All, Movies, and Series.
+      const response = await api.getAllContent(params);
+      const results = response.results || response;
+      if (!Array.isArray(results)) {
+        throw new Error('Invalid response format - results is not an array');
       }
+      const allResults = results.map((item) => ({
+        ...item,
+        contentType:
+          item.content_type ||
+          (state.filters.type === 'series' ? 'series' : 'movie'),
+      }));
+      const totalCount = response.count || results.length;
 
       // Store the current page results directly (don't accumulate all pages)
       set({

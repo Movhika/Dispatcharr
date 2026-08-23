@@ -39,6 +39,7 @@ import {
 } from '../utils/pages/VODsUtils.js';
 import {
   languageCodeError,
+  normalizeLanguageCode,
   normalizeLanguageCodes,
 } from '../utils/languageCodes.js';
 
@@ -51,6 +52,10 @@ const VODSourceManagerModal = React.lazy(
 const itemKey = (item) => `${item.contentType}:${item.id}`;
 const logoUrl = (item) =>
   item.logo?.cache_url || item.logo?.url || item.logo_url || null;
+const sourceMetadataValue = (item, field) => {
+  const values = item.source_metadata?.[field] || [];
+  return Array.isArray(values) && values.length ? values.join(', ') : '—';
+};
 
 const VODsPage = () => {
   const currentPageContent = useVODStore((s) => s.currentPageContent);
@@ -76,6 +81,7 @@ const VODsPage = () => {
     audio_languages: [],
     subtitle_languages: [],
     resolution: '',
+    container_extension: '',
   });
   const [bulkSaving, setBulkSaving] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
@@ -132,7 +138,16 @@ const VODsPage = () => {
     // Explicit selections are cleared because their previous rows may no
     // longer be part of the visible filter universe.
     setSelected(new Set());
-  }, [filters.type, filters.search, filters.category, filters.m3u_account]);
+  }, [
+    filters.type,
+    filters.search,
+    filters.category,
+    filters.m3u_account,
+    filters.audio_language,
+    filters.subtitle_language,
+    filters.resolution,
+    filters.container_extension,
+  ]);
 
   const toggleItem = (key, checked) => {
     setSelected((current) => {
@@ -210,6 +225,12 @@ const VODsPage = () => {
   const bulkLanguageError =
     languageCodeError(bulkMetadata.audio_languages) ||
     languageCodeError(bulkMetadata.subtitle_languages);
+  const audioFilterError = filters.audio_language
+    ? languageCodeError([filters.audio_language])
+    : null;
+  const subtitleFilterError = filters.subtitle_language
+    ? languageCodeError([filters.subtitle_language])
+    : null;
   const m3uOptions = playlists
     .filter(
       (playlist) =>
@@ -290,6 +311,67 @@ const VODsPage = () => {
             clearable
             miw={180}
           />
+          <TextInput
+            label="DUB"
+            description="ISO 639-2/B"
+            placeholder="ger"
+            value={filters.audio_language}
+            onChange={(event) =>
+              setFilters({
+                audio_language: event.currentTarget.value.trim().toLowerCase(),
+              })
+            }
+            onBlur={() =>
+              setFilters({
+                audio_language: normalizeLanguageCode(filters.audio_language),
+              })
+            }
+            error={audioFilterError}
+            w={105}
+          />
+          <TextInput
+            label="SUB"
+            description="ISO 639-2/B"
+            placeholder="ger"
+            value={filters.subtitle_language}
+            onChange={(event) =>
+              setFilters({
+                subtitle_language: event.currentTarget.value
+                  .trim()
+                  .toLowerCase(),
+              })
+            }
+            onBlur={() =>
+              setFilters({
+                subtitle_language: normalizeLanguageCode(
+                  filters.subtitle_language
+                ),
+              })
+            }
+            error={subtitleFilterError}
+            w={105}
+          />
+          <Select
+            label="Resolution"
+            placeholder="Any"
+            clearable
+            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            value={filters.resolution || null}
+            onChange={(value) => setFilters({ resolution: value || '' })}
+            w={130}
+          />
+          <Select
+            label="Format"
+            placeholder="Any"
+            clearable
+            searchable
+            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            value={filters.container_extension || null}
+            onChange={(value) =>
+              setFilters({ container_extension: value || '' })
+            }
+            w={115}
+          />
           <Select
             label="Rows"
             value={String(pageSize)}
@@ -332,6 +414,10 @@ const VODsPage = () => {
                 <TableTh w={100}>Type</TableTh>
                 <TableTh w={90}>Year</TableTh>
                 <TableTh>Genre</TableTh>
+                <TableTh w={125}>DUB</TableTh>
+                <TableTh w={125}>SUB</TableTh>
+                <TableTh w={130}>Resolution</TableTh>
+                <TableTh w={100}>Format</TableTh>
                 <TableTh w={60}>Open</TableTh>
               </TableTr>
             </TableThead>
@@ -373,6 +459,16 @@ const VODsPage = () => {
                   </TableTd>
                   <TableTd>{item.year || '—'}</TableTd>
                   <TableTd>{item.genre || '—'}</TableTd>
+                  <TableTd>
+                    {sourceMetadataValue(item, 'audio_languages')}
+                  </TableTd>
+                  <TableTd>
+                    {sourceMetadataValue(item, 'subtitle_languages')}
+                  </TableTd>
+                  <TableTd>{sourceMetadataValue(item, 'resolutions')}</TableTd>
+                  <TableTd>
+                    {sourceMetadataValue(item, 'container_extensions')}
+                  </TableTd>
                   <TableTd>
                     <ActionIcon
                       aria-label={`Open ${item.name}`}
@@ -442,11 +538,26 @@ const VODsPage = () => {
           />
           <Select
             label="Resolution"
+            description="Leave empty to keep existing values"
             clearable
             data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
             value={bulkMetadata.resolution || null}
             onChange={(value) =>
               setBulkMetadata({ ...bulkMetadata, resolution: value || '' })
+            }
+          />
+          <Select
+            label="Format"
+            description="Leave empty to keep existing values"
+            clearable
+            searchable
+            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            value={bulkMetadata.container_extension || null}
+            onChange={(value) =>
+              setBulkMetadata({
+                ...bulkMetadata,
+                container_extension: value || '',
+              })
             }
           />
           <Group justify="flex-end">

@@ -290,14 +290,15 @@ describe('VODCategoryFilter', () => {
     );
   });
 
-  it('keeps the automatic-discovery default editable', () => {
+  it('uses import rules and keeps unmatched new categories inactive', () => {
     render(<Wrapper initialAutoEnable={false} />);
 
-    const checkbox = screen.getByLabelText(
-      /enable unmatched new movie categories/i
-    );
-    expect(checkbox).not.toBeChecked();
-    fireEvent.click(checkbox);
-    expect(checkbox).toBeChecked();
+    expect(screen.getByText('Import rules')).toBeInTheDocument();
+    expect(
+      screen.getByText('New unmatched categories are imported inactive.')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/enable unmatched new movie categories/i)
+    ).not.toBeInTheDocument();
   });
 });

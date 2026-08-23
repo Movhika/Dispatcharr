@@ -329,8 +329,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             )
 
             # Create relations for both categories (disabled by default until first refresh)
-            account_custom_props = instance.custom_properties or {}
-            auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
+            auto_enable_new = False
 
             M3UVODCategoryRelation.objects.get_or_create(
                 category=movie_category,
@@ -743,6 +742,176 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(m3u_account_id=self.kwargs["account_id"])
+
+    def _preview_rows(self, target_rule, draft=None):
+        """Evaluate ordered rules against already imported groups/categories."""
+        from collections import defaultdict
+        from apps.m3u.group_rules import compile_group_rules, evaluate_group_rules
+
+        account = target_rule.m3u_account
+        scope = target_rule.scope
+        if draft:
+            serializer = self.get_serializer(target_rule, data=draft, partial=True)
+            serializer.is_valid(raise_exception=True)
+            for field, value in serializer.validated_data.items():
+                setattr(target_rule, field, value)
+            scope = target_rule.scope
+
+        ordered_rules = list(
+            account.group_rules.filter(scope=scope, enabled=True).order_by(
+                "order", "id"
+            )
+        )
+        ordered_rules = [
+            target_rule if rule.id == target_rule.id else rule
+            for rule in ordered_rules
+        ]
+        if target_rule.enabled and not any(
+            rule.id == target_rule.id for rule in ordered_rules
+        ):
+            ordered_rules.append(target_rule)
+            ordered_rules.sort(key=lambda rule: (rule.order, rule.id))
+        elif not target_rule.enabled:
+            ordered_rules = [
+                rule for rule in ordered_rules if rule.id != target_rule.id
+            ]
+        compiled = compile_group_rules(ordered_rules)
+        item_names = defaultdict(list)
+
+        if scope == M3UGroupRule.Scope.LIVE:
+            from apps.channels.models import Stream
+
+            relations = list(
+                ChannelGroupM3UAccount.objects.filter(
+                    m3u_account=account
+                ).select_related("channel_group")
+            )
+            if any(
+                rule.match_field == M3UGroupRule.MatchField.ITEM_NAME
+                for rule in ordered_rules
+            ):
+                for group_id, name in Stream.objects.filter(
+                    m3u_account=account,
+                    channel_group_id__isnull=False,
+                ).values_list("channel_group_id", "name"):
+                    item_names[group_id].append(name)
+            targets = [
+                (relation, relation.channel_group_id, relation.channel_group.name)
+                for relation in relations
+            ]
+        else:
+            relations = list(
+                M3UVODCategoryRelation.objects.filter(
+                    m3u_account=account,
+                    category__category_type=scope,
+                ).select_related("category")
+            )
+            if any(
+                rule.match_field == M3UGroupRule.MatchField.ITEM_NAME
+                for rule in ordered_rules
+            ):
+                if scope == M3UGroupRule.Scope.MOVIE:
+                    from apps.vod.models import M3UMovieRelation
+
+                    names = M3UMovieRelation.objects.filter(
+                        m3u_account=account,
+                        category_id__isnull=False,
+                    ).values_list("category_id", "movie__name")
+                else:
+                    from apps.vod.models import M3USeriesRelation
+
+                    names = M3USeriesRelation.objects.filter(
+                        m3u_account=account,
+                        category_id__isnull=False,
+                    ).values_list("category_id", "series__name")
+                for category_id, name in names:
+                    item_names[category_id].append(name)
+            targets = [
+                (relation, relation.category_id, relation.category.name)
+                for relation in relations
+            ]
+
+        matches = []
+        for relation, item_key, name in targets:
+            decision = evaluate_group_rules(
+                compiled,
+                group_name=name,
+                item_names=item_names[item_key],
+                default_enabled=False,
+            )
+            if decision.matched_rule_id != target_rule.id:
+                continue
+            matches.append(
+                {
+                    "relation_id": relation.id,
+                    "name": name,
+                    "currently_enabled": relation.enabled,
+                    "action": decision.action,
+                    "would_enable": (
+                        decision.enabled if not decision.ignored else None
+                    ),
+                    "metadata_defaults": decision.metadata_defaults or {},
+                    "item_count": len(item_names[item_key]),
+                }
+            )
+        return matches
+
+    @action(detail=True, methods=["post"], url_path="preview")
+    def preview(self, request, *args, **kwargs):
+        if getattr(request.user, "user_level", 0) < 10:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        rule = self.get_object()
+        matches = self._preview_rows(rule, draft=request.data)
+        return Response(
+            {
+                "count": len(matches),
+                "results": matches[:200],
+                "truncated": len(matches) > 200,
+                "first_match_wins": True,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="apply")
+    def apply(self, request, *args, **kwargs):
+        """Explicitly apply a saved rule to existing matching relations."""
+        if getattr(request.user, "user_level", 0) < 10:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        rule = self.get_object()
+        if rule.action == M3UGroupRule.Action.IGNORE:
+            return Response(
+                {
+                    "detail": (
+                        "Ignore only prevents future imports. Existing entries "
+                        "are never deleted by an import rule."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        matches = self._preview_rows(rule)
+        relation_ids = [match["relation_id"] for match in matches]
+        if rule.scope == M3UGroupRule.Scope.LIVE:
+            ChannelGroupM3UAccount.objects.filter(id__in=relation_ids).update(
+                enabled=rule.action == M3UGroupRule.Action.ENABLE
+            )
+        else:
+            relations = list(
+                M3UVODCategoryRelation.objects.filter(id__in=relation_ids)
+            )
+            for relation in relations:
+                relation.enabled = rule.action == M3UGroupRule.Action.ENABLE
+                relation.metadata_defaults = {
+                    **(relation.metadata_defaults or {}),
+                    **(rule.metadata_defaults or {}),
+                }
+            M3UVODCategoryRelation.objects.bulk_update(
+                relations,
+                ["enabled", "metadata_defaults"],
+                batch_size=1000,
+            )
+            from apps.vod.catalog_cache import bump_catalog_generation
+
+            bump_catalog_generation()
+        return Response({"updated": len(relation_ids)})
 
 
 class ServerGroupViewSet(viewsets.ModelViewSet):

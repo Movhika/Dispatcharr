@@ -17,6 +17,7 @@ class StreamVodRedirectTests(SimpleTestCase):
 
     @patch("apps.proxy.vod_proxy.views._find_idle_vod_session", return_value=None)
     @patch("apps.proxy.vod_proxy.views._select_vod_stream")
+    @patch("apps.proxy.vod_proxy.views._record_playback_best_effort")
     @patch(
         "core.models.CoreSettings.is_default_stream_profile_redirect",
         return_value=True,
@@ -276,11 +277,18 @@ class HeadVodRedirectTests(SimpleTestCase):
         mock_manager_cls,
         _network_ok,
         _is_redirect,
+        mock_record,
         mock_select,
         _idle,
     ):
+        relation = MagicMock()
         mock_select.return_value = {
             "final_stream_url": "http://provider.example/movie.mp4",
+            "relation": relation,
+            "failover_chain": [{"relation_id": 42, "result": "selected"}],
+            "source_metadata": {
+                "technical_metadata": {"container_extension": "mp4"}
+            },
         }
 
         request = self.factory.head(
@@ -295,6 +303,14 @@ class HeadVodRedirectTests(SimpleTestCase):
         self.assertIsInstance(response, HttpResponseRedirect)
         self.assertEqual(response["Location"], "http://provider.example/movie.mp4")
         mock_select.assert_called_once()
+        mock_record.assert_called_once()
+        self.assertIs(mock_record.call_args.kwargs["relation"], relation)
+        self.assertEqual(
+            mock_record.call_args.kwargs["custom_properties"][
+                "source_effective_metadata"
+            ]["container_extension"],
+            "mp4",
+        )
         mock_manager_cls.get_instance.assert_not_called()
 
     @patch("apps.proxy.vod_proxy.views._select_vod_stream")

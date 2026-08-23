@@ -7,6 +7,8 @@ vi.mock('../../../api', () => ({
     createM3UGroupRule: vi.fn(),
     updateM3UGroupRule: vi.fn(),
     deleteM3UGroupRule: vi.fn(),
+    previewM3UGroupRule: vi.fn(),
+    applyM3UGroupRule: vi.fn(),
   },
 }));
 
@@ -35,6 +37,13 @@ vi.mock('@mantine/core', () => {
       />
     ),
     Group: Wrapper,
+    Modal: ({ children, opened, title }) =>
+      opened ? (
+        <div>
+          <div>{title}</div>
+          {children}
+        </div>
+      ) : null,
     NumberInput: ({ value, onChange }) => (
       <input
         aria-label="Rule order"
@@ -82,6 +91,7 @@ vi.mock('@mantine/core', () => {
 });
 
 vi.mock('lucide-react', () => ({
+  Play: () => null,
   Plus: () => null,
   Save: () => null,
   Trash2: () => null,
@@ -114,6 +124,20 @@ describe('M3UGroupRules', () => {
         ...payload,
       })
     );
+    API.previewM3UGroupRule.mockResolvedValue({
+      count: 1,
+      results: [
+        {
+          relation_id: 9,
+          name: 'GERMANY ANIME',
+          currently_enabled: false,
+          would_enable: true,
+          item_count: 12,
+        },
+      ],
+      truncated: false,
+    });
+    API.applyM3UGroupRule.mockResolvedValue({ updated: 1 });
   });
 
   it('loads and saves an edited future-discovery rule', async () => {
@@ -133,6 +157,24 @@ describe('M3UGroupRules', () => {
           action: 'enable',
         })
       )
+    );
+  });
+
+  it('previews the complete ordered rule result before applying it', async () => {
+    render(<M3UGroupRules accountId={49} scope="movie" />);
+
+    await screen.findByLabelText('Include regular expression');
+    fireEvent.click(screen.getByLabelText('Preview and apply rule'));
+
+    expect(await screen.findByText('GERMANY ANIME')).toBeInTheDocument();
+    expect(API.previewM3UGroupRule).toHaveBeenCalledWith(
+      49,
+      5,
+      expect.objectContaining({ regex_pattern: '^GERMANY' })
+    );
+    fireEvent.click(screen.getByText('Save and apply to existing'));
+    await waitFor(() =>
+      expect(API.applyM3UGroupRule).toHaveBeenCalledWith(49, 5)
     );
   });
 });

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../store/useVODStore', () => ({ default: vi.fn() }));
 vi.mock('../../store/auth', () => ({ default: vi.fn() }));
+vi.mock('../../store/playlists', () => ({ default: vi.fn() }));
 vi.mock('../../api', () => ({
   default: { bulkUpdateVODSourceMetadata: vi.fn() },
 }));
@@ -148,6 +149,7 @@ vi.mock('@mantine/core', () => {
 
 import API from '../../api';
 import useAuthStore from '../../store/auth';
+import usePlaylistsStore from '../../store/playlists';
 import useVODStore from '../../store/useVODStore';
 import VODsPage from '../VODs';
 
@@ -163,7 +165,16 @@ describe('VODsPage list and bulk editing', () => {
       { id: 2, name: 'Series B', contentType: 'series', year: 2024 },
     ],
     categories: {},
-    filters: { type: 'all', search: '', category: '' },
+    filters: {
+      type: 'all',
+      search: '',
+      category: '',
+      m3u_account: '',
+      audio_language: '',
+      subtitle_language: '',
+      resolution: '',
+      container_extension: '',
+    },
     currentPage: 1,
     totalCount: 30,
     pageSize: 24,
@@ -182,6 +193,9 @@ describe('VODsPage list and bulk editing', () => {
     useVODStore.mockImplementation((selector) => selector(state));
     useAuthStore.mockImplementation((selector) =>
       selector({ user: { id: 1, user_level: 10 } })
+    );
+    usePlaylistsStore.mockImplementation((selector) =>
+      selector({ playlists: [], fetchPlaylists: vi.fn() })
     );
   });
 
@@ -243,7 +257,7 @@ describe('VODsPage list and bulk editing', () => {
       screen.getByRole('button', { name: 'Edit selected (30)' })
     ).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Edit selected (30)' }));
-    fireEvent.change(screen.getByLabelText('Resolution'), {
+    fireEvent.change(screen.getAllByLabelText('Resolution').at(-1), {
       target: { value: '1080p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply and lock' }));

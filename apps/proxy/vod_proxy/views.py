@@ -1228,6 +1228,29 @@ def head_vod(
                         "[VOD-HEAD] Redirecting to provider URL: %s",
                         selected["final_stream_url"],
                     )
+                    selected_relation = selected.get("relation")
+                    if selected_relation is not None:
+                        from apps.vod.models import VODPlaybackSession
+
+                        _record_playback_best_effort(
+                            session_id=(
+                                f"head_redirect_{int(time.time() * 1000)}_"
+                                f"{random.randint(1000, 9999)}"
+                            ),
+                            user=user,
+                            relation=selected_relation,
+                            mode=VODPlaybackSession.Mode.REDIRECT,
+                            status=VODPlaybackSession.Status.REDIRECTED,
+                            client_ip=client_ip,
+                            user_agent=client_user_agent,
+                            failover_chain=selected.get("failover_chain"),
+                            custom_properties={
+                                "request_method": "HEAD",
+                                "source_effective_metadata": selected.get(
+                                    "source_metadata", {}
+                                ).get("technical_metadata", {}),
+                            },
+                        )
                     return HttpResponseRedirect(selected["final_stream_url"])
 
             path_parts = request.path.rstrip('/').split('/')
@@ -1371,6 +1394,29 @@ def head_vod(
         # Custom header with session URL for FUSE
         head_response['X-Session-URL'] = session_url
         head_response['X-Dispatcharr-Session'] = session_id
+
+        selected_relation = selected.get("relation")
+        if selected_relation is not None:
+            from apps.vod.models import VODPlaybackSession
+
+            _record_playback_best_effort(
+                session_id=session_id,
+                user=user,
+                relation=selected_relation,
+                mode=VODPlaybackSession.Mode.PROXY,
+                status=VODPlaybackSession.Status.REQUESTED,
+                client_ip=client_ip,
+                user_agent=client_user_agent,
+                failover_chain=selected.get("failover_chain"),
+                custom_properties={
+                    "request_method": "HEAD",
+                    "provider_content_type": content_type_header,
+                    "provider_content_length": total_size,
+                    "source_effective_metadata": selected.get(
+                        "source_metadata", {}
+                    ).get("technical_metadata", {}),
+                },
+            )
 
         logger.info(f"[VOD-HEAD] Returning HEAD response with session URL: {session_url}")
         return head_response

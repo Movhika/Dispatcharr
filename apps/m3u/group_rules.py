@@ -36,9 +36,8 @@ def compile_group_rules(rules: Iterable[M3UGroupRule]):
 
 
 def account_group_rules(account, scope: str):
-    custom_properties = account.custom_properties or {}
-    if not custom_properties.get(f"use_group_rules_{scope}", True):
-        return []
+    # Active rules are the configuration. A separate account-level switch only
+    # created contradictory states (rules existed but were silently ignored).
     return compile_group_rules(
         account.group_rules.filter(scope=scope, enabled=True).order_by("order", "id")
     )

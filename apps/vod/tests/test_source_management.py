@@ -9,6 +9,7 @@ from apps.vod.metadata import (
     ensure_source_asset,
     ensure_source_assets,
     normalize_language_list,
+    relation_declared_metadata,
 )
 from apps.vod.playback import record_playback_selection
 from apps.vod.serializers import VODPlaybackSessionSerializer
@@ -22,15 +23,18 @@ from apps.vod.models import (
     Series,
     VODAccessPolicy,
     VODPlaybackSession,
+    VODPolicyCategory,
     VODSourceAsset,
     VODCategory,
 )
 from apps.vod.policies import (
     ordered_failover_candidates,
+    relation_allowed,
     select_relation_ids_for_policy,
     select_relations_for_policy,
 )
 from apps.vod.api_views import (
+    _vod_relation_sql,
     MovieViewSet,
     UnifiedContentViewSet,
     VODSourceAssetViewSet,
@@ -115,6 +119,75 @@ class VODSourceManagementTests(TestCase):
             ["ger", "eng"],
         )
 
+    def test_category_allowlist_and_audio_or_subtitle_policy(self):
+        self.english_category.metadata_defaults = {
+            "audio_languages": ["eng"],
+            "subtitle_languages": ["ger"],
+            "resolution": "1080p",
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "required_audio_languages": ["ger"],
+            "required_subtitle_languages": ["ger"],
+            "language_match_mode": "any",
+            "allow_unknown_metadata": False,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.english_category,
+            enabled=True,
+        )
+
+        self.assertTrue(relation_allowed(self.english_relation, self.policy))
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
+    def test_audio_or_subtitle_does_not_accept_a_known_mismatch_plus_unknown(self):
+        self.english_category.metadata_defaults = {
+            "audio_languages": ["eng"],
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "required_audio_languages": ["ger"],
+            "required_subtitle_languages": ["ger"],
+            "language_match_mode": "any",
+            "allow_unknown_metadata": True,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_resolution_constraints_use_vertical_resolution_names(self):
+        self.policy.hard_constraints = {
+            "min_resolution": 720,
+            "max_resolution": 1080,
+            "allow_unknown_metadata": False,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_series_technical_sql_can_match_episode_metadata_and_format(self):
+        joins, conditions, params, canonical_column = _vod_relation_sql(
+            {
+                "audio_language": "deu",
+                "subtitle_language": "ger",
+                "resolution": "1080p",
+                "container_extension": "mkv",
+            },
+            "series",
+        )
+
+        sql = " ".join(conditions)
+        self.assertEqual(canonical_column, "series_id")
+        self.assertIn("vod_m3useriesrelation", joins)
+        self.assertIn("vod_m3uepisoderelation", sql)
+        self.assertIn("episode_relation.container_extension", sql)
+        for value in ("ger", "1080p", "mkv"):
+            self.assertIn(value, params)
+        self.assertNotIn("deu", params)
+
     def test_episode_inherits_defaults_from_its_series_category(self):
         series = Series.objects.create(name="Avatar Series")
         series_relation = M3USeriesRelation.objects.create(
@@ -139,6 +212,17 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             category_defaults_for_relation(episode_relation)["audio_languages"],
             ["deu"],
+        )
+
+    def test_fast_catalog_container_is_declared_source_metadata(self):
+        self.german_relation.container_extension = "MKV"
+        self.german_relation.save(update_fields=["container_extension"])
+
+        self.assertEqual(
+            relation_declared_metadata(self.german_relation)[
+                "container_extension"
+            ],
+            "mkv",
         )
 
     def test_language_preference_wins_over_account_and_category_priority(self):
@@ -238,6 +322,25 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             {row["category_id"] for row in rows},
             {str(self.german.id), str(self.english.id)},
+        )
+
+    def test_xc_categories_follow_the_user_category_allowlist(self):
+        user = get_user_model().objects.create_user(
+            username="limited-category-user",
+            password="test-password",
+        )
+        self.policy.users.add(user)
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.german_category,
+            enabled=True,
+        )
+
+        rows = xc_get_vod_categories(user)
+
+        self.assertEqual(
+            [row["category_id"] for row in rows],
+            [str(self.german.id)],
         )
 
     def test_same_provider_id_is_not_automatically_linked_across_accounts(self):

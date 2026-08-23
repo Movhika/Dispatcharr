@@ -6,7 +6,8 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
+from django.db.models.expressions import RawSQL
 import django_filters
 import logging
 from types import SimpleNamespace
@@ -45,10 +46,200 @@ from .image_proxy import (
 )
 from .tasks import refresh_series_episodes, refresh_movie_advanced_data
 from .utils import get_series_display_name
+from .metadata import normalize_language_code
 from django.utils import timezone
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_json_array_match(field, value, asset_alias="asset"):
+    """PostgreSQL SQL for one effective-metadata array membership check."""
+    # Keep the key/membership operators directly on the indexed JSONB columns.
+    # COALESCE around the column would prevent PostgreSQL from using their GIN
+    # indexes.  Only the boolean existence result needs a NULL fallback for a
+    # relation which has no source asset yet.
+    manual = f"{asset_alias}.manual_metadata"
+    observed = f"{asset_alias}.observed_metadata"
+    declared = f"{asset_alias}.declared_metadata"
+    category = "category_relation.metadata_defaults"
+    sql = f"""(
+        ({manual} ? %s AND ({manual} -> %s) ? %s)
+        OR (
+            NOT COALESCE({manual} ? %s, false)
+            AND {observed} ? %s
+            AND ({observed} -> %s) ? %s
+        )
+        OR (
+            NOT COALESCE({manual} ? %s, false)
+            AND NOT COALESCE({observed} ? %s, false)
+            AND {declared} ? %s
+            AND ({declared} -> %s) ? %s
+        )
+        OR (
+            NOT COALESCE({manual} ? %s, false)
+            AND NOT COALESCE({observed} ? %s, false)
+            AND NOT COALESCE({declared} ? %s, false)
+            AND ({category} -> %s) ? %s
+        )
+    )"""
+    params = [
+        field, field, value,
+        field, field, field, value,
+        field, field, field, field, value,
+        field, field, field, field, value,
+    ]
+    return sql, params
+
+
+def _effective_json_scalar_match(
+    field, value, relation_fallback="NULL", asset_alias="asset"
+):
+    """PostgreSQL SQL for a case-insensitive effective scalar match."""
+    manual = f"{asset_alias}.manual_metadata"
+    observed = f"{asset_alias}.observed_metadata"
+    declared = f"{asset_alias}.declared_metadata"
+    category = "category_relation.metadata_defaults"
+    expression = f"""CASE
+        WHEN COALESCE({manual} ? %s, false) THEN {manual} ->> %s
+        WHEN COALESCE({observed} ? %s, false) THEN {observed} ->> %s
+        WHEN COALESCE({declared} ? %s, false) THEN {declared} ->> %s
+        WHEN COALESCE({category} ? %s, false) THEN {category} ->> %s
+        ELSE {relation_fallback}
+    END"""
+    return f"LOWER(COALESCE(({expression}), '')) = LOWER(%s)", [
+        field, field,
+        field, field,
+        field, field,
+        field, field,
+        value,
+    ]
+
+
+def _vod_relation_sql(filters, relation_type):
+    """Build one relation-exact SQL source predicate for VOD list/bulk use."""
+    filters = filters if isinstance(filters, dict) else {}
+    if relation_type == "movie":
+        table = "vod_m3umovierelation"
+        canonical_column = "movie_id"
+        container_fallback = "relation.container_extension"
+    else:
+        table = "vod_m3useriesrelation"
+        canonical_column = "series_id"
+        container_fallback = "NULL"
+    joins = f"""
+        {table} relation
+        JOIN m3u_m3uaccount account
+          ON relation.m3u_account_id = account.id
+        LEFT JOIN vod_vodcategory category
+          ON relation.category_id = category.id
+        LEFT JOIN vod_vodsourceasset asset
+          ON relation.source_asset_id = asset.id
+        LEFT JOIN vod_m3uvodcategoryrelation category_relation
+          ON category_relation.m3u_account_id = relation.m3u_account_id
+         AND category_relation.category_id = relation.category_id
+    """
+    conditions = ["account.is_active = true"]
+    params = []
+    technical_conditions = []
+    technical_params = []
+    episode_conditions = []
+    episode_params = []
+
+    m3u_account = str(filters.get("m3u_account") or "").strip()
+    if m3u_account.isdigit():
+        conditions.append("relation.m3u_account_id = %s")
+        params.append(int(m3u_account))
+
+    category_value = str(filters.get("category") or "").strip()
+    if category_value:
+        category_name = category_value
+        category_type = None
+        if "|" in category_value:
+            category_name, category_type = category_value.rsplit("|", 1)
+        if category_type and category_type != relation_type:
+            conditions.append("1 = 0")
+        else:
+            conditions.append("category.name = %s")
+            params.append(category_name)
+
+    for parameter, field in (
+        ("audio_language", "audio_languages"),
+        ("subtitle_language", "subtitle_languages"),
+    ):
+        value = normalize_language_code(filters.get(parameter))
+        if value:
+            sql, sql_params = _effective_json_array_match(field, value)
+            technical_conditions.append(sql)
+            technical_params.extend(sql_params)
+            if relation_type == "series":
+                sql, sql_params = _effective_json_array_match(
+                    field, value, asset_alias="episode_asset"
+                )
+                episode_conditions.append(sql)
+                episode_params.extend(sql_params)
+
+    resolution = str(filters.get("resolution") or "").strip().lower()
+    if resolution:
+        sql, sql_params = _effective_json_scalar_match("resolution", resolution)
+        technical_conditions.append(sql)
+        technical_params.extend(sql_params)
+        if relation_type == "series":
+            sql, sql_params = _effective_json_scalar_match(
+                "resolution", resolution, asset_alias="episode_asset"
+            )
+            episode_conditions.append(sql)
+            episode_params.extend(sql_params)
+
+    container = str(filters.get("container_extension") or "").strip().lower()
+    if container:
+        sql, sql_params = _effective_json_scalar_match(
+            "container_extension", container, container_fallback
+        )
+        technical_conditions.append(sql)
+        technical_params.extend(sql_params)
+        if relation_type == "series":
+            sql, sql_params = _effective_json_scalar_match(
+                "container_extension",
+                container,
+                "episode_relation.container_extension",
+                asset_alias="episode_asset",
+            )
+            episode_conditions.append(sql)
+            episode_params.extend(sql_params)
+
+    if relation_type == "series" and technical_conditions:
+        # Series-level defaults/assets are cheap to test. Technical data that
+        # was learned from actual episode playback lives on episode assets, so
+        # use one correlated EXISTS for the complete filter set. This ensures
+        # DUB/SUB/resolution/format all describe the same source edition.
+        episode_sql = f"""EXISTS (
+            SELECT 1
+            FROM vod_m3uepisoderelation episode_relation
+            LEFT JOIN vod_vodsourceasset episode_asset
+              ON episode_relation.source_asset_id = episode_asset.id
+            WHERE episode_relation.series_relation_id = relation.id
+              AND {' AND '.join(episode_conditions)}
+        )"""
+        conditions.append(
+            f"(({' AND '.join(technical_conditions)}) OR {episode_sql})"
+        )
+        params.extend(technical_params)
+        params.extend(episode_params)
+    else:
+        conditions.extend(technical_conditions)
+        params.extend(technical_params)
+
+    return joins, conditions, params, canonical_column
+
+
+def _vod_source_relation_prefetch(model):
+    return Prefetch(
+        "m3u_relations",
+        queryset=model.objects.filter(
+            m3u_account__is_active=True,
+        ).select_related("m3u_account", "category", "source_asset"),
+    )
 
 
 def _validated_source_metadata(value):
@@ -69,35 +260,27 @@ def _filtered_vod_content(filters):
     filters = filters if isinstance(filters, dict) else {}
     content_type = filters.get("type") or "all"
     search = str(filters.get("search") or "").strip()
-    category = str(filters.get("category") or "").strip()
-    m3u_account = str(filters.get("m3u_account") or "").strip()
 
-    movie_sources = Q(m3u_relations__m3u_account__is_active=True)
-    series_sources = Q(m3u_relations__m3u_account__is_active=True)
-
-    if m3u_account.isdigit():
-        account_id = int(m3u_account)
-        movie_sources &= Q(m3u_relations__m3u_account_id=account_id)
-        series_sources &= Q(m3u_relations__m3u_account_id=account_id)
-
-    if category:
-        category_name = category
-        category_type = None
-        if "|" in category:
-            category_name, category_type = category.rsplit("|", 1)
-        if category_type == "series":
-            movie_sources &= Q(pk__in=[])
-        else:
-            movie_sources &= Q(m3u_relations__category__name=category_name)
-        if category_type == "movie":
-            series_sources &= Q(pk__in=[])
-        else:
-            series_sources &= Q(m3u_relations__category__name=category_name)
-
-    # Keep all source predicates in one filter() call. Django then applies the
-    # account, category, and active-state checks to the same M3U relation.
-    movies = Movie.objects.filter(movie_sources)
-    series = Series.objects.filter(series_sources)
+    movie_joins, movie_conditions, movie_params, movie_column = (
+        _vod_relation_sql(filters, "movie")
+    )
+    series_joins, series_conditions, series_params, series_column = (
+        _vod_relation_sql(filters, "series")
+    )
+    movies = Movie.objects.filter(
+        id__in=RawSQL(
+            f"SELECT relation.{movie_column} FROM {movie_joins} "
+            f"WHERE {' AND '.join(movie_conditions)}",
+            movie_params,
+        )
+    )
+    series = Series.objects.filter(
+        id__in=RawSQL(
+            f"SELECT relation.{series_column} FROM {series_joins} "
+            f"WHERE {' AND '.join(series_conditions)}",
+            series_params,
+        )
+    )
     if content_type == "movies":
         series = series.none()
     elif content_type == "series":
@@ -141,7 +324,16 @@ def _filtered_vod_relation_query(filters, relation_type):
         query &= Q(m3u_account_id=int(m3u_account))
 
     category = str(filters.get("category") or "").strip()
-    if not category:
+    technical_filters = any(
+        filters.get(key)
+        for key in (
+            "audio_language",
+            "subtitle_language",
+            "resolution",
+            "container_extension",
+        )
+    )
+    if not category and not technical_filters:
         return query
 
     category_name = category
@@ -158,7 +350,20 @@ def _filtered_vod_relation_query(filters, relation_type):
         if relation_type in {"movie", "series"}
         else "series_relation__category__name"
     )
-    return query & Q(**{category_field: category_name})
+    if category:
+        query &= Q(**{category_field: category_name})
+    if technical_filters and relation_type in {"movie", "series"}:
+        joins, conditions, params, _canonical_column = _vod_relation_sql(
+            filters, relation_type
+        )
+        query &= Q(
+            pk__in=RawSQL(
+                f"SELECT relation.id FROM {joins} "
+                f"WHERE {' AND '.join(conditions)}",
+                params,
+            )
+        )
+    return query
 
 
 class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
@@ -634,10 +839,16 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         filters = {
             "m3u_account": self.request.query_params.get("m3u_account", ""),
             "category": self.request.query_params.get("category", ""),
+            "audio_language": self.request.query_params.get("audio_language", ""),
+            "subtitle_language": self.request.query_params.get("subtitle_language", ""),
+            "resolution": self.request.query_params.get("resolution", ""),
+            "container_extension": self.request.query_params.get(
+                "container_extension", ""
+            ),
         }
         movies, _ = _filtered_vod_content(filters)
         qs = movies.select_related('logo').prefetch_related(
-            'm3u_relations__m3u_account'
+            _vod_source_relation_prefetch(M3UMovieRelation)
         )
         user = getattr(self.request, 'user', None)
         if (
@@ -891,10 +1102,16 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         filters = {
             "m3u_account": self.request.query_params.get("m3u_account", ""),
             "category": self.request.query_params.get("category", ""),
+            "audio_language": self.request.query_params.get("audio_language", ""),
+            "subtitle_language": self.request.query_params.get("subtitle_language", ""),
+            "resolution": self.request.query_params.get("resolution", ""),
+            "container_extension": self.request.query_params.get(
+                "container_extension", ""
+            ),
         }
         _, series = _filtered_vod_content(filters)
         return series.select_related('logo').prefetch_related(
-            'm3u_relations__m3u_account'
+            _vod_source_relation_prefetch(M3USeriesRelation)
         )
 
     @action(detail=True, methods=['get'], url_path='providers')
@@ -1226,7 +1443,7 @@ class VODCategoryViewSet(viewsets.ReadOnlyModelViewSet):
 
                 if vod_enabled:
                     # Ensure relations exist for this account
-                    auto_enable_new = custom_props.get("auto_enable_new_groups_vod", True)
+                    auto_enable_new = False
 
                     M3UVODCategoryRelation.objects.get_or_create(
                         category=movie_category,
@@ -1269,18 +1486,12 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """Override list to handle unified content properly - database-level approach"""
-        import logging
         from django.db import connection
-
-        logger = logging.getLogger(__name__)
-        logger.error("=== UnifiedContentViewSet.list() called ===")
 
         try:
             # Get pagination parameters
             page_size = int(request.query_params.get('page_size', 24))
             page_number = int(request.query_params.get('page', 1))
-
-            logger.error(f"Page {page_number}, page_size {page_size}")
 
             # Calculate offset for unified pagination
             offset = (page_number - 1) * page_size
@@ -1291,55 +1502,54 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             search = request.query_params.get('search', '')
             category = request.query_params.get('category', '')
             m3u_account = request.query_params.get('m3u_account', '')
+            content_filter = request.query_params.get('type', 'all')
+            list_filters = {
+                "m3u_account": m3u_account,
+                "category": category,
+                "audio_language": request.query_params.get(
+                    'audio_language', ''
+                ),
+                "subtitle_language": request.query_params.get(
+                    'subtitle_language', ''
+                ),
+                "resolution": request.query_params.get('resolution', ''),
+                "container_extension": request.query_params.get(
+                    'container_extension', ''
+                ),
+            }
+            (
+                movie_joins,
+                movie_source_conditions,
+                movie_params,
+                _movie_column,
+            ) = _vod_relation_sql(list_filters, "movie")
+            (
+                series_joins,
+                series_source_conditions,
+                series_params,
+                _series_column,
+            ) = _vod_relation_sql(list_filters, "series")
+            movie_source_conditions.insert(0, "relation.movie_id = movies.id")
+            series_source_conditions.insert(0, "relation.series_id = series.id")
 
-            # Build one correlated source predicate per content type. Keeping
-            # active account, selected account, and category inside the same
-            # EXISTS prevents different relations of one canonical title from
-            # satisfying different parts of the filter.
-            movie_source_conditions = [
-                "mmr.movie_id = movies.id",
-                "ma.is_active = true",
-            ]
-            series_source_conditions = [
-                "msr.series_id = series.id",
-                "ma.is_active = true",
-            ]
-            movie_params = []
-            series_params = []
-
-            if str(m3u_account).isdigit():
-                account_id = int(m3u_account)
-                movie_source_conditions.append("mmr.m3u_account_id = %s")
-                series_source_conditions.append("msr.m3u_account_id = %s")
-                movie_params.append(account_id)
-                series_params.append(account_id)
-
-            category_name = category
             category_type = None
             if category and '|' in category:
-                category_name, category_type = category.rsplit('|', 1)
-
-            movie_enabled = category_type != 'series'
-            series_enabled = category_type != 'movie'
-            if category and movie_enabled:
-                movie_source_conditions.append("c.name = %s")
-                movie_params.append(category_name)
-            if category and series_enabled:
-                series_source_conditions.append("c.name = %s")
-                series_params.append(category_name)
+                _category_name, category_type = category.rsplit('|', 1)
+            movie_enabled = (
+                category_type != 'series' and content_filter != 'series'
+            )
+            series_enabled = (
+                category_type != 'movie' and content_filter != 'movies'
+            )
 
             where_conditions = [
                 "EXISTS ("
-                "SELECT 1 FROM vod_m3umovierelation mmr "
-                "JOIN m3u_m3uaccount ma ON mmr.m3u_account_id = ma.id "
-                "LEFT JOIN vod_vodcategory c ON mmr.category_id = c.id "
+                f"SELECT 1 FROM {movie_joins} "
                 f"WHERE {' AND '.join(movie_source_conditions)}"
                 ")"
                 if movie_enabled else "1=0",
                 "EXISTS ("
-                "SELECT 1 FROM vod_m3useriesrelation msr "
-                "JOIN m3u_m3uaccount ma ON msr.m3u_account_id = ma.id "
-                "LEFT JOIN vod_vodcategory c ON msr.category_id = c.id "
+                f"SELECT 1 FROM {series_joins} "
                 f"WHERE {' AND '.join(series_source_conditions)}"
                 ")"
                 if series_enabled else "1=0",
@@ -1413,8 +1623,6 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
             params.extend([page_size, offset])
 
-            logger.error(f"Executing SQL with LIMIT {page_size} OFFSET {offset}")
-
             with connection.cursor() as cursor:
                 cursor.execute(sql, params)
                 columns = [col[0] for col in cursor.description]
@@ -1460,7 +1668,54 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     }
                     results.append(formatted_item)
 
-            logger.error(f"Retrieved {len(results)} results via SQL")
+            # Add technical source summaries with two bounded relation queries
+            # for the current page.  This keeps the unified list free of N+1
+            # lookups even when a title has several source editions.
+            from collections import defaultdict
+            from .metadata import summarize_relation_metadata
+            from .policies import enabled_category_map
+
+            movie_ids = [
+                item["id"] for item in results
+                if item["content_type"] == "movie"
+            ]
+            series_ids = [
+                item["id"] for item in results
+                if item["content_type"] == "series"
+            ]
+            relations_by_content = defaultdict(list)
+            if movie_ids:
+                for relation in M3UMovieRelation.objects.filter(
+                    _filtered_vod_relation_query(list_filters, "movie"),
+                    movie_id__in=movie_ids,
+                ).select_related("source_asset"):
+                    relations_by_content[("movie", relation.movie_id)].append(
+                        relation
+                    )
+            if series_ids:
+                for relation in M3USeriesRelation.objects.filter(
+                    _filtered_vod_relation_query(list_filters, "series"),
+                    series_id__in=series_ids,
+                ).select_related("source_asset"):
+                    relations_by_content[("series", relation.series_id)].append(
+                        relation
+                    )
+                # Series container formats and learned technical metadata live
+                # on concrete episode sources. One page-bounded query folds
+                # those values into the series row without an N+1 lookup.
+                for relation in M3UEpisodeRelation.objects.filter(
+                    _filtered_vod_relation_query(list_filters, "episode"),
+                    episode__series_id__in=series_ids,
+                ).select_related("episode", "source_asset", "series_relation"):
+                    relations_by_content[
+                        ("series", relation.episode.series_id)
+                    ].append(relation)
+            category_mapping = enabled_category_map()
+            for item in results:
+                item["source_metadata"] = summarize_relation_metadata(
+                    relations_by_content[(item["content_type"], item["id"])],
+                    category_mapping,
+                )
 
             # Get total count estimate (for pagination info)
             # Use a separate efficient count query

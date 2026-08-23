@@ -396,11 +396,7 @@ describe('M3UGroupFilter', () => {
           expect.any(Array),
           expect.any(Array),
           expect.any(Array),
-          expect.objectContaining({
-            auto_enable_new_groups_live: true,
-            auto_enable_new_groups_vod: true,
-            auto_enable_new_groups_series: true,
-          })
+          {}
         );
       });
     });

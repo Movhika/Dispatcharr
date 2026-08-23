@@ -11,6 +11,7 @@ vi.mock('../../../constants', () => ({
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
 vi.mock('../../../store/outputProfiles', () => ({ default: vi.fn() }));
 vi.mock('../../../store/auth', () => ({ default: vi.fn() }));
+vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
 
 // ── Utility mocks ──────────────────────────────────────────────────────────────
 vi.mock('../../../utils', () => ({ copyToClipboard: vi.fn() }));
@@ -153,6 +154,7 @@ vi.mock('@mantine/core', () => ({
 import useChannelsStore from '../../../store/channels';
 import useOutputProfilesStore from '../../../store/outputProfiles';
 import useAuthStore from '../../../store/auth';
+import useVODStore from '../../../store/useVODStore';
 import * as UserUtils from '../../../utils/forms/UserUtils.js';
 import { copyToClipboard } from '../../../utils';
 import User from '../User';
@@ -187,6 +189,9 @@ const setupMocks = ({
   );
   vi.mocked(useAuthStore).mockImplementation((sel) =>
     sel({ user: authUser, setUser: mockSetUser })
+  );
+  vi.mocked(useVODStore).mockImplementation((sel) =>
+    sel({ categories: {}, fetchCategories: vi.fn() })
   );
 
   // Reset form state
