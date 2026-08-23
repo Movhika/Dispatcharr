@@ -29,6 +29,7 @@ class StreamVodRedirectTests(SimpleTestCase):
         mock_manager_cls,
         _network_ok,
         _is_redirect,
+        _record,
         mock_select,
         _idle,
     ):
@@ -266,6 +267,7 @@ class HeadVodRedirectTests(SimpleTestCase):
 
     @patch("apps.proxy.vod_proxy.views._find_idle_vod_session", return_value=None)
     @patch("apps.proxy.vod_proxy.views._select_vod_stream")
+    @patch("apps.proxy.vod_proxy.views._record_playback_best_effort")
     @patch(
         "core.models.CoreSettings.is_default_stream_profile_redirect",
         return_value=True,

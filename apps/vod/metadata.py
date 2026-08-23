@@ -152,9 +152,11 @@ def provider_origin_key(account):
 
 @transaction.atomic
 def ensure_source_asset(relation):
-    relation = relation.__class__.objects.select_for_update().select_related(
-        "m3u_account__server_group"
-    ).get(pk=relation.pk)
+    relation = (
+        relation.__class__.objects.select_for_update(of=("self",))
+        .select_related("m3u_account__server_group")
+        .get(pk=relation.pk)
+    )
     if relation.source_asset_id:
         return relation.source_asset
 
@@ -185,7 +187,11 @@ def ensure_source_assets(relations):
     asset_ids = set()
     for model, relation_ids in ids_by_model.items():
         locked = list(
-            model.objects.select_for_update()
+            # ``server_group`` is optional, so select_related() adds a LEFT
+            # OUTER JOIN. PostgreSQL cannot lock the nullable side of that
+            # join. We only mutate relation rows here and therefore lock the
+            # base table explicitly.
+            model.objects.select_for_update(of=("self",))
             .select_related("m3u_account__server_group")
             .filter(pk__in=relation_ids)
             .order_by("pk")

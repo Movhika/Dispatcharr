@@ -85,6 +85,12 @@ def relation_category(relation):
 
 def allowed_category_query(policy):
     mapping = policy_category_map(policy)
+    # Keep upgraded installations usable between the schema migration and
+    # their first VOD refresh. Older catalogs can contain movie/series
+    # relations before M3UVODCategoryRelation rows have been discovered.
+    # Once category inventory exists, it remains the hard visibility boundary.
+    if not mapping:
+        return Q()
     query = Q(pk__in=[])
     categories_by_account = {}
     for account_id, category_id in mapping:
@@ -144,7 +150,7 @@ def relation_allowed(relation, policy, category_mapping=None):
     category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
     )
-    if category_relation is None:
+    if category_relation is None and category_mapping:
         return False
 
     metadata = relation_metadata(relation, category_relation)

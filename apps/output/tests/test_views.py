@@ -15,6 +15,7 @@ from apps.vod.models import (
     M3USeriesRelation,
     Movie,
     Series,
+    VODAccessPolicy,
     VODCategory,
     VODLogo,
 )
@@ -839,6 +840,12 @@ class XcVodSeriesRegressionTests(TestCase):
         self.assertEqual(stream["imdb_id"], "")
 
     def test_vod_streams_preserves_each_category_variant(self):
+        policy = VODAccessPolicy.objects.create(
+            name=f"variants-{uuid4().hex[:8]}",
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        policy.users.add(self.user)
         low = self._account(f"low-{uuid4().hex[:6]}", priority=1)
         high = self._account(f"high-{uuid4().hex[:6]}", priority=10)
         action = VODCategory.objects.create(name="Action", category_type="movie")
@@ -872,6 +879,12 @@ class XcVodSeriesRegressionTests(TestCase):
         self.assertEqual(by_category[str(action.id)]["tmdb_id"], "")
 
     def test_series_preserves_each_category_variant_and_source_name(self):
+        policy = VODAccessPolicy.objects.create(
+            name=f"variants-{uuid4().hex[:8]}",
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        policy.users.add(self.user)
         account = self._account(f"acct-{uuid4().hex[:6]}", priority=5)
         netflix = VODCategory.objects.create(
             name="NETFLIX ANIME",
