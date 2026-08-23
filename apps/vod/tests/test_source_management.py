@@ -30,7 +30,11 @@ from apps.vod.policies import (
     select_relation_ids_for_policy,
     select_relations_for_policy,
 )
-from apps.vod.api_views import VODSourceAssetViewSet
+from apps.vod.api_views import (
+    MovieViewSet,
+    UnifiedContentViewSet,
+    VODSourceAssetViewSet,
+)
 
 
 class VODSourceManagementTests(TestCase):
@@ -393,3 +397,167 @@ class VODSourceManagementTests(TestCase):
             self.german_relation.source_asset.manual_metadata["resolution"],
             "1080p",
         )
+
+    def test_bulk_metadata_limits_selected_movie_to_filtered_account_and_category(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-filtered-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "selections": [
+                    {"content_type": "movie", "id": self.movie.id},
+                ],
+                "filters": {
+                    "type": "movies",
+                    "search": "Avatar",
+                    "category": f"{self.german.name}|movie",
+                    "m3u_account": str(self.account_a.id),
+                },
+                "metadata": {"resolution": "1080p"},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated_sources"], 1)
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+        self.assertIsNotNone(self.german_relation.source_asset_id)
+        self.assertIsNone(self.english_relation.source_asset_id)
+
+    def test_account_and_category_filters_require_one_matching_source_relation(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-cross-filter-admin",
+            password="test-password",
+            user_level=10,
+        )
+        query = {
+            "m3u_account": str(self.account_a.id),
+            "category": f"{self.english.name}|movie",
+            "page_size": 24,
+        }
+
+        for viewset in (MovieViewSet, UnifiedContentViewSet):
+            request = APIRequestFactory().get("/api/vod/", query)
+            force_authenticate(request, user=admin)
+            response = viewset.as_view({"get": "list"})(request)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data["count"], 0)
+            self.assertEqual(response.data["results"], [])
+
+    def test_select_all_does_not_cross_match_account_and_category(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-cross-bulk-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "select_all": True,
+                "filters": {
+                    "type": "movies",
+                    "category": f"{self.english.name}|movie",
+                    "m3u_account": str(self.account_a.id),
+                },
+                "exclude_selections": [],
+                "metadata": {"resolution": "2160p"},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated_sources"], 0)
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+        self.assertIsNone(self.german_relation.source_asset_id)
+        self.assertIsNone(self.english_relation.source_asset_id)
+
+    def test_select_all_limits_series_and_episodes_to_filtered_account(self):
+        series = Series.objects.create(name="Filtered series")
+        series_category = VODCategory.objects.create(
+            name="GERMAN SERIES", category_type="series"
+        )
+        other_category = VODCategory.objects.create(
+            name="ENGLISH SERIES", category_type="series"
+        )
+        relation_a = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=series_category,
+            external_series_id="series-a",
+        )
+        relation_b = M3USeriesRelation.objects.create(
+            m3u_account=self.account_b,
+            series=series,
+            category=other_category,
+            external_series_id="series-b",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        episode_a = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=relation_a,
+            stream_id="episode-a",
+        )
+        episode_b = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_b,
+            episode=episode,
+            series_relation=relation_b,
+            stream_id="episode-b",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-series-filtered-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "select_all": True,
+                "filters": {
+                    "type": "series",
+                    "search": "Filtered",
+                    "category": f"{series_category.name}|series",
+                    "m3u_account": str(self.account_a.id),
+                },
+                "exclude_selections": [],
+                "metadata": {"audio_languages": ["ger"]},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated_sources"], 2)
+        relation_a.refresh_from_db()
+        relation_b.refresh_from_db()
+        episode_a.refresh_from_db()
+        episode_b.refresh_from_db()
+        self.assertIsNotNone(relation_a.source_asset_id)
+        self.assertIsNotNone(episode_a.source_asset_id)
+        self.assertIsNone(relation_b.source_asset_id)
+        self.assertIsNone(episode_b.source_asset_id)

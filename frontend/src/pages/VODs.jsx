@@ -190,7 +190,9 @@ const VODsPage = () => {
             filters,
             exclude_selections: selections,
           })
-        : await API.bulkUpdateVODSourceMetadata(selections, metadata);
+        : await API.bulkUpdateVODSourceMetadata(selections, metadata, {
+            filters,
+          });
       showNotification({
         title: 'Source metadata updated',
         message: `${result.updated_sources || 0} source editions were updated and locked.`,

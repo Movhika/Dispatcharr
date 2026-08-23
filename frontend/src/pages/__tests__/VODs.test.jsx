@@ -218,7 +218,8 @@ describe('VODsPage list and bulk editing', () => {
     await waitFor(() =>
       expect(API.bulkUpdateVODSourceMetadata).toHaveBeenCalledWith(
         [{ content_type: 'movie', id: 1 }],
-        { audio_languages: ['ger', 'eng'] }
+        { audio_languages: ['ger', 'eng'] },
+        { filters: state.filters }
       )
     );
   });

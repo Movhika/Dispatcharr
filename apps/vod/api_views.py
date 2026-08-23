@@ -72,20 +72,36 @@ def _filtered_vod_content(filters):
     category = str(filters.get("category") or "").strip()
     m3u_account = str(filters.get("m3u_account") or "").strip()
 
-    movies = Movie.objects.filter(
-        m3u_relations__m3u_account__is_active=True
-    )
-    series = Series.objects.filter(
-        m3u_relations__m3u_account__is_active=True
-    )
+    movie_sources = Q(m3u_relations__m3u_account__is_active=True)
+    series_sources = Q(m3u_relations__m3u_account__is_active=True)
+
+    if m3u_account.isdigit():
+        account_id = int(m3u_account)
+        movie_sources &= Q(m3u_relations__m3u_account_id=account_id)
+        series_sources &= Q(m3u_relations__m3u_account_id=account_id)
+
+    if category:
+        category_name = category
+        category_type = None
+        if "|" in category:
+            category_name, category_type = category.rsplit("|", 1)
+        if category_type == "series":
+            movie_sources &= Q(pk__in=[])
+        else:
+            movie_sources &= Q(m3u_relations__category__name=category_name)
+        if category_type == "movie":
+            series_sources &= Q(pk__in=[])
+        else:
+            series_sources &= Q(m3u_relations__category__name=category_name)
+
+    # Keep all source predicates in one filter() call. Django then applies the
+    # account, category, and active-state checks to the same M3U relation.
+    movies = Movie.objects.filter(movie_sources)
+    series = Series.objects.filter(series_sources)
     if content_type == "movies":
         series = series.none()
     elif content_type == "series":
         movies = movies.none()
-
-    if m3u_account.isdigit():
-        movies = movies.filter(m3u_relations__m3u_account_id=int(m3u_account))
-        series = series.filter(m3u_relations__m3u_account_id=int(m3u_account))
 
     if search:
         # The unified "All" endpoint currently searches names only, while
@@ -107,25 +123,42 @@ def _filtered_vod_content(filters):
                 | Q(genre__icontains=search)
             )
 
-    if category:
-        category_name = category
-        category_type = None
-        if "|" in category:
-            category_name, category_type = category.rsplit("|", 1)
-        if category_type == "series":
-            movies = movies.none()
-        else:
-            movies = movies.filter(
-                m3u_relations__category__name=category_name
-            )
-        if category_type == "movie":
-            series = series.none()
-        else:
-            series = series.filter(
-                m3u_relations__category__name=category_name
-            )
-
     return movies.distinct(), series.distinct()
+
+
+def _filtered_vod_relation_query(filters, relation_type):
+    """Limit bulk edits to the source relations represented by list filters.
+
+    Search and content-type filters select canonical Movie/Series rows. Account
+    and category filters additionally describe which concrete source relations
+    made those rows visible, so they must remain in force during mass editing.
+    """
+    filters = filters if isinstance(filters, dict) else {}
+    query = Q(m3u_account__is_active=True)
+
+    m3u_account = str(filters.get("m3u_account") or "").strip()
+    if m3u_account.isdigit():
+        query &= Q(m3u_account_id=int(m3u_account))
+
+    category = str(filters.get("category") or "").strip()
+    if not category:
+        return query
+
+    category_name = category
+    category_type = None
+    if "|" in category:
+        category_name, category_type = category.rsplit("|", 1)
+
+    expected_type = "movie" if relation_type == "movie" else "series"
+    if category_type and category_type != expected_type:
+        return Q(pk__in=[])
+
+    category_field = (
+        "category__name"
+        if relation_type in {"movie", "series"}
+        else "series_relation__category__name"
+    )
+    return query & Q(**{category_field: category_name})
 
 
 class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
@@ -164,12 +197,14 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["patch"], url_path="bulk-manual-metadata")
     def bulk_manual_metadata(self, request):
-        """Set locked metadata on every source behind selected movies/series."""
+        """Set locked metadata on source relations matching the list selection."""
         if not _is_admin(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
         selections = request.data.get("selections", [])
         exclude_selections = request.data.get("exclude_selections", [])
         select_all = request.data.get("select_all") is True
+        filters = request.data.get("filters")
+        filters = filters if isinstance(filters, dict) else {}
         metadata = request.data.get("metadata", {})
         if (
             not isinstance(selections, list)
@@ -220,7 +255,7 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         }
 
         if select_all:
-            movies, series = _filtered_vod_content(request.data.get("filters"))
+            movies, series = _filtered_vod_content(filters)
             if excluded_movie_ids:
                 movies = movies.exclude(id__in=excluded_movie_ids)
             if excluded_series_ids:
@@ -232,14 +267,17 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             series_ids = explicit_series_ids
 
         relation_querysets = [
-            M3UMovieRelation.objects.filter(movie_id__in=movie_ids).select_related(
-                "m3u_account__server_group"
-            ),
-            M3USeriesRelation.objects.filter(series_id__in=series_ids).select_related(
-                "m3u_account__server_group"
-            ),
+            M3UMovieRelation.objects.filter(
+                _filtered_vod_relation_query(filters, "movie"),
+                movie_id__in=movie_ids,
+            ).select_related("m3u_account__server_group"),
+            M3USeriesRelation.objects.filter(
+                _filtered_vod_relation_query(filters, "series"),
+                series_id__in=series_ids,
+            ).select_related("m3u_account__server_group"),
             M3UEpisodeRelation.objects.filter(
-                episode__series_id__in=series_ids
+                _filtered_vod_relation_query(filters, "episode"),
+                episode__series_id__in=series_ids,
             ).select_related("m3u_account__server_group"),
         ]
         updated_asset_ids = set()
@@ -590,10 +628,17 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             return [Authenticated()]
 
     def get_queryset(self):
-        # Only return movies that have active M3U relations
-        qs = Movie.objects.filter(
-            m3u_relations__m3u_account__is_active=True
-        ).distinct().select_related('logo').prefetch_related('m3u_relations__m3u_account')
+        # Apply active account, selected account, and category to the same
+        # concrete source relation. The filter backend may repeat the latter
+        # two predicates, but cannot broaden this relation-exact result set.
+        filters = {
+            "m3u_account": self.request.query_params.get("m3u_account", ""),
+            "category": self.request.query_params.get("category", ""),
+        }
+        movies, _ = _filtered_vod_content(filters)
+        qs = movies.select_related('logo').prefetch_related(
+            'm3u_relations__m3u_account'
+        )
         user = getattr(self.request, 'user', None)
         if (
             user is not None
@@ -843,10 +888,14 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             return [Authenticated()]
 
     def get_queryset(self):
-        # Only return series that have active M3U relations.
-        return Series.objects.filter(
-            m3u_relations__m3u_account__is_active=True
-        ).distinct().select_related('logo').prefetch_related('m3u_relations__m3u_account')
+        filters = {
+            "m3u_account": self.request.query_params.get("m3u_account", ""),
+            "category": self.request.query_params.get("category", ""),
+        }
+        _, series = _filtered_vod_content(filters)
+        return series.select_related('logo').prefetch_related(
+            'm3u_relations__m3u_account'
+        )
 
     @action(detail=True, methods=['get'], url_path='providers')
     def get_providers(self, request, pk=None):
@@ -1243,48 +1292,71 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             category = request.query_params.get('category', '')
             m3u_account = request.query_params.get('m3u_account', '')
 
-            # Build WHERE clauses
-            where_conditions = [
-                # Only active content
-                "movies.id IN (SELECT DISTINCT movie_id FROM vod_m3umovierelation mmr JOIN m3u_m3uaccount ma ON mmr.m3u_account_id = ma.id WHERE ma.is_active = true)",
-                "series.id IN (SELECT DISTINCT series_id FROM vod_m3useriesrelation msr JOIN m3u_m3uaccount ma ON msr.m3u_account_id = ma.id WHERE ma.is_active = true)"
+            # Build one correlated source predicate per content type. Keeping
+            # active account, selected account, and category inside the same
+            # EXISTS prevents different relations of one canonical title from
+            # satisfying different parts of the filter.
+            movie_source_conditions = [
+                "mmr.movie_id = movies.id",
+                "ma.is_active = true",
             ]
-
+            series_source_conditions = [
+                "msr.series_id = series.id",
+                "ma.is_active = true",
+            ]
             movie_params = []
             series_params = []
 
-            if search:
-                where_conditions[0] += " AND LOWER(movies.name) LIKE %s"
-                where_conditions[1] += " AND LOWER(series.name) LIKE %s"
-                search_param = f"%{search.lower()}%"
-                movie_params.append(search_param)
-                series_params.append(search_param)
-
             if str(m3u_account).isdigit():
                 account_id = int(m3u_account)
-                where_conditions[0] += " AND movies.id IN (SELECT movie_id FROM vod_m3umovierelation WHERE m3u_account_id = %s)"
-                where_conditions[1] += " AND series.id IN (SELECT series_id FROM vod_m3useriesrelation WHERE m3u_account_id = %s)"
+                movie_source_conditions.append("mmr.m3u_account_id = %s")
+                series_source_conditions.append("msr.m3u_account_id = %s")
                 movie_params.append(account_id)
                 series_params.append(account_id)
 
-            if category:
-                if '|' in category:
-                    cat_name, cat_type = category.rsplit('|', 1)
-                    if cat_type == 'movie':
-                        where_conditions[0] += " AND movies.id IN (SELECT movie_id FROM vod_m3umovierelation mmr JOIN vod_vodcategory c ON mmr.category_id = c.id WHERE c.name = %s)"
-                        where_conditions[1] = "1=0"  # Exclude series
-                        movie_params.append(cat_name)
-                        series_params = []  # no params needed for "1=0"
-                    elif cat_type == 'series':
-                        where_conditions[1] += " AND series.id IN (SELECT series_id FROM vod_m3useriesrelation msr JOIN vod_vodcategory c ON msr.category_id = c.id WHERE c.name = %s)"
-                        where_conditions[0] = "1=0"  # Exclude movies
-                        series_params.append(cat_name)
-                        movie_params = []  # no params needed for "1=0"
-                else:
-                    where_conditions[0] += " AND movies.id IN (SELECT movie_id FROM vod_m3umovierelation mmr JOIN vod_vodcategory c ON mmr.category_id = c.id WHERE c.name = %s)"
-                    where_conditions[1] += " AND series.id IN (SELECT series_id FROM vod_m3useriesrelation msr JOIN vod_vodcategory c ON msr.category_id = c.id WHERE c.name = %s)"
-                    movie_params.append(category)
-                    series_params.append(category)
+            category_name = category
+            category_type = None
+            if category and '|' in category:
+                category_name, category_type = category.rsplit('|', 1)
+
+            movie_enabled = category_type != 'series'
+            series_enabled = category_type != 'movie'
+            if category and movie_enabled:
+                movie_source_conditions.append("c.name = %s")
+                movie_params.append(category_name)
+            if category and series_enabled:
+                series_source_conditions.append("c.name = %s")
+                series_params.append(category_name)
+
+            where_conditions = [
+                "EXISTS ("
+                "SELECT 1 FROM vod_m3umovierelation mmr "
+                "JOIN m3u_m3uaccount ma ON mmr.m3u_account_id = ma.id "
+                "LEFT JOIN vod_vodcategory c ON mmr.category_id = c.id "
+                f"WHERE {' AND '.join(movie_source_conditions)}"
+                ")"
+                if movie_enabled else "1=0",
+                "EXISTS ("
+                "SELECT 1 FROM vod_m3useriesrelation msr "
+                "JOIN m3u_m3uaccount ma ON msr.m3u_account_id = ma.id "
+                "LEFT JOIN vod_vodcategory c ON msr.category_id = c.id "
+                f"WHERE {' AND '.join(series_source_conditions)}"
+                ")"
+                if series_enabled else "1=0",
+            ]
+            if not movie_enabled:
+                movie_params = []
+            if not series_enabled:
+                series_params = []
+
+            if search:
+                search_param = f"%{search.lower()}%"
+                if movie_enabled:
+                    where_conditions[0] += " AND LOWER(movies.name) LIKE %s"
+                    movie_params.append(search_param)
+                if series_enabled:
+                    where_conditions[1] += " AND LOWER(series.name) LIKE %s"
+                    series_params.append(search_param)
 
             params = movie_params + series_params
 
