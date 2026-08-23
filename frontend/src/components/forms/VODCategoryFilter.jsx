@@ -8,6 +8,7 @@ import {
   SegmentedControl,
   Select,
   Stack,
+  Switch,
   Table,
   TableTbody,
   TableTd,
@@ -17,10 +18,17 @@ import {
   TagsInput,
   Text,
   TextInput,
+  Tooltip,
 } from '@mantine/core';
+import { Info } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
+import M3UGroupRules from './M3UGroupRules.jsx';
+import {
+  languageCodeError,
+  normalizeLanguageCodes,
+} from '../../utils/languageCodes.js';
 
 const VODCategoryFilter = ({
   playlist = null,
@@ -29,6 +37,8 @@ const VODCategoryFilter = ({
   type,
   autoEnableNewGroups,
   setAutoEnableNewGroups,
+  useGroupRules,
+  setUseGroupRules,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
@@ -36,6 +46,12 @@ const VODCategoryFilter = ({
   const [selected, setSelected] = useState(new Set());
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [metadataModes, setMetadataModes] = useState({
+    audio_languages: 'keep',
+    subtitle_languages: 'keep',
+    resolution: 'keep',
+  });
   const [metadata, setMetadata] = useState({
     audio_languages: [],
     subtitle_languages: [],
@@ -113,11 +129,18 @@ const VODCategoryFilter = ({
   };
 
   const saveBulkMetadata = async () => {
-    const values = Object.fromEntries(
-      Object.entries(metadata).filter(
-        ([, value]) => value !== '' && (!Array.isArray(value) || value.length)
-      )
-    );
+    const values = {};
+    for (const field of Object.keys(metadataModes)) {
+      if (metadataModes[field] === 'keep') continue;
+      if (metadataModes[field] === 'clear') {
+        values[field] = field === 'resolution' ? '' : [];
+      } else {
+        values[field] =
+          field === 'resolution'
+            ? metadata[field]
+            : normalizeLanguageCodes(metadata[field]);
+      }
+    }
     const targets = categoryStates.filter((category) =>
       selected.has(category.id)
     );
@@ -151,6 +174,29 @@ const VODCategoryFilter = ({
     }
   };
 
+  const openMetadataEditor = () => {
+    setMetadata({
+      audio_languages: [],
+      subtitle_languages: [],
+      resolution: '',
+    });
+    setMetadataModes({
+      audio_languages: 'keep',
+      subtitle_languages: 'keep',
+      resolution: 'keep',
+    });
+    setEditorOpen(true);
+  };
+
+  const languageError = [
+    metadataModes.audio_languages === 'set'
+      ? languageCodeError(metadata.audio_languages)
+      : null,
+    metadataModes.subtitle_languages === 'set'
+      ? languageCodeError(metadata.subtitle_languages)
+      : null,
+  ].find(Boolean);
+
   const allVisibleSelected =
     visible.length > 0 &&
     visible.every((category) => selected.has(category.id));
@@ -158,15 +204,33 @@ const VODCategoryFilter = ({
   return (
     <>
       <Stack pt="sm">
-        <Checkbox
-          label={`Automatically enable new ${type === 'movie' ? 'movie' : 'series'} categories discovered on future scans`}
-          checked={autoEnableNewGroups}
-          onChange={(event) =>
-            setAutoEnableNewGroups(event.currentTarget.checked)
-          }
-          size="sm"
-          description="Discovery rules in the account Filters dialog can override this default for matching new categories."
-        />
+        <Group justify="space-between" align="center">
+          <Group>
+            <Switch
+              label="Use discovery rules"
+              checked={useGroupRules}
+              onChange={(event) =>
+                setUseGroupRules(event.currentTarget.checked)
+              }
+              size="sm"
+            />
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => setRulesOpen(true)}
+            >
+              Rules
+            </Button>
+          </Group>
+          <Switch
+            label={`Enable unmatched new ${type === 'movie' ? 'movie' : 'series'} categories`}
+            checked={autoEnableNewGroups}
+            onChange={(event) =>
+              setAutoEnableNewGroups(event.currentTarget.checked)
+            }
+            size="sm"
+          />
+        </Group>
 
         <Flex gap="sm" align="end" wrap="wrap">
           <TextInput
@@ -207,7 +271,7 @@ const VODCategoryFilter = ({
             variant="default"
             size="xs"
             disabled={!selected.size}
-            onClick={() => setEditorOpen(true)}
+            onClick={openMetadataEditor}
           >
             Edit metadata ({selected.size})
           </Button>
@@ -227,9 +291,30 @@ const VODCategoryFilter = ({
               </TableTh>
               <TableTh>Category</TableTh>
               <TableTh w={100}>Enabled</TableTh>
-              <TableTh>Default audio</TableTh>
-              <TableTh>Default subtitles</TableTh>
-              <TableTh w={110}>Resolution</TableTh>
+              <TableTh>
+                <Group gap={4} wrap="nowrap">
+                  DUB
+                  <Tooltip label="Approximate audio languages used only to seed newly imported sources. Manual and observed metadata has higher priority.">
+                    <Info size={13} aria-label="About DUB defaults" />
+                  </Tooltip>
+                </Group>
+              </TableTh>
+              <TableTh>
+                <Group gap={4} wrap="nowrap">
+                  SUB
+                  <Tooltip label="Approximate subtitle languages used only to seed newly imported sources. Manual and observed metadata has higher priority.">
+                    <Info size={13} aria-label="About SUB defaults" />
+                  </Tooltip>
+                </Group>
+              </TableTh>
+              <TableTh w={120}>
+                <Group gap={4} wrap="nowrap">
+                  Resolution
+                  <Tooltip label="Approximate maximum resolution used only to seed newly imported sources.">
+                    <Info size={13} aria-label="About resolution defaults" />
+                  </Tooltip>
+                </Group>
+              </TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -246,22 +331,27 @@ const VODCategoryFilter = ({
                 </TableTd>
                 <TableTd>{category.name}</TableTd>
                 <TableTd>
-                  <Checkbox
+                  <Button
+                    size="compact-xs"
+                    color={category.enabled ? 'green' : 'gray'}
+                    variant={category.enabled ? 'filled' : 'light'}
                     aria-label={`Enable ${category.name}`}
-                    checked={category.enabled}
-                    onChange={(event) =>
+                    aria-pressed={category.enabled}
+                    onClick={() =>
                       setCategoryStates((current) =>
                         current.map((item) =>
                           item.id === category.id
                             ? {
                                 ...item,
-                                enabled: event.currentTarget.checked,
+                                enabled: !item.enabled,
                               }
                             : item
                         )
                       )
                     }
-                  />
+                  >
+                    {category.enabled ? 'Active' : 'Inactive'}
+                  </Button>
                 </TableTd>
                 <TableTd>
                   {(category.metadata_defaults?.audio_languages || []).join(
@@ -289,31 +379,81 @@ const VODCategoryFilter = ({
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            Only filled fields are changed. Category defaults are initial
-            assumptions; manual source metadata remains authoritative.
+            Choose Keep, Set, or Clear for each field. These are approximate
+            import assumptions; manual and observed source metadata remains
+            authoritative.
           </Text>
+          <SegmentedControl
+            value={metadataModes.audio_languages}
+            onChange={(value) =>
+              setMetadataModes({ ...metadataModes, audio_languages: value })
+            }
+            data={['keep', 'set', 'clear'].map((value) => ({
+              value,
+              label: value[0].toUpperCase() + value.slice(1),
+            }))}
+          />
           <TagsInput
-            label="Audio languages"
+            label="DUB"
             description="English ISO 639-2/B codes"
             placeholder="ger, eng"
             value={metadata.audio_languages}
+            disabled={metadataModes.audio_languages !== 'set'}
+            error={
+              metadataModes.audio_languages === 'set'
+                ? languageCodeError(metadata.audio_languages)
+                : null
+            }
             onChange={(value) =>
-              setMetadata({ ...metadata, audio_languages: value })
+              setMetadata({
+                ...metadata,
+                audio_languages: normalizeLanguageCodes(value),
+              })
             }
           />
+          <SegmentedControl
+            value={metadataModes.subtitle_languages}
+            onChange={(value) =>
+              setMetadataModes({ ...metadataModes, subtitle_languages: value })
+            }
+            data={['keep', 'set', 'clear'].map((value) => ({
+              value,
+              label: value[0].toUpperCase() + value.slice(1),
+            }))}
+          />
           <TagsInput
-            label="Subtitle languages"
+            label="SUB"
             placeholder="ger, eng"
             value={metadata.subtitle_languages}
-            onChange={(value) =>
-              setMetadata({ ...metadata, subtitle_languages: value })
+            disabled={metadataModes.subtitle_languages !== 'set'}
+            error={
+              metadataModes.subtitle_languages === 'set'
+                ? languageCodeError(metadata.subtitle_languages)
+                : null
             }
+            onChange={(value) =>
+              setMetadata({
+                ...metadata,
+                subtitle_languages: normalizeLanguageCodes(value),
+              })
+            }
+          />
+          <SegmentedControl
+            value={metadataModes.resolution}
+            onChange={(value) =>
+              setMetadataModes({ ...metadataModes, resolution: value })
+            }
+            data={['keep', 'set', 'clear'].map((value) => ({
+              value,
+              label: value[0].toUpperCase() + value.slice(1),
+            }))}
           />
           <Select
             clearable
-            label="Expected maximum resolution"
+            label="Resolution"
             data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
             value={metadata.resolution || null}
+            disabled={metadataModes.resolution !== 'set'}
             onChange={(value) =>
               setMetadata({ ...metadata, resolution: value || '' })
             }
@@ -322,11 +462,25 @@ const VODCategoryFilter = ({
             <Button variant="default" onClick={() => setEditorOpen(false)}>
               Cancel
             </Button>
-            <Button loading={saving} onClick={saveBulkMetadata}>
+            <Button
+              loading={saving}
+              disabled={!!languageError}
+              onClick={saveBulkMetadata}
+            >
               Apply to selected
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal
+        opened={rulesOpen}
+        onClose={() => setRulesOpen(false)}
+        title={`${type === 'movie' ? 'Movie' : 'Series'} discovery rules`}
+        size="95vw"
+        scrollAreaComponent={Modal.NativeScrollArea}
+      >
+        <M3UGroupRules accountId={playlist.id} scope={type} />
       </Modal>
     </>
   );

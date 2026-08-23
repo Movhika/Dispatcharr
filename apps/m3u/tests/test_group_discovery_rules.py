@@ -6,15 +6,26 @@ from apps.m3u.group_rules import compile_group_rules, evaluate_group_rules
 from apps.m3u.models import M3UGroupRule
 
 
-def rule(rule_id, pattern, action, field="group_name", mode="any", order=0):
+def rule(
+    rule_id,
+    pattern,
+    action,
+    field="group_name",
+    mode="any",
+    order=0,
+    exclude="",
+    metadata_defaults=None,
+):
     return SimpleNamespace(
         id=rule_id,
         regex_pattern=pattern,
+        exclude_regex_pattern=exclude,
         action=action,
         match_field=field,
         match_mode=mode,
         case_sensitive=False,
         order=order,
+        metadata_defaults=metadata_defaults or {},
     )
 
 
@@ -75,3 +86,46 @@ class GroupDiscoveryRuleTests(SimpleTestCase):
         )
         self.assertTrue(decision.enabled)
         self.assertIsNone(decision.matched_rule_id)
+
+    def test_exclusion_expression_vetoes_matching_rule(self):
+        compiled = compile_group_rules([
+            rule(
+                5,
+                r"germany",
+                M3UGroupRule.Action.ENABLE,
+                exclude=r"4k|anime",
+            )
+        ])
+
+        decision = evaluate_group_rules(
+            compiled,
+            group_name="GERMANY 4K",
+            default_enabled=False,
+        )
+
+        self.assertFalse(decision.enabled)
+        self.assertIsNone(decision.matched_rule_id)
+
+    def test_rule_carries_initial_vod_metadata(self):
+        compiled = compile_group_rules([
+            rule(
+                6,
+                r"multi",
+                M3UGroupRule.Action.ENABLE,
+                metadata_defaults={
+                    "audio_languages": ["ger", "eng"],
+                    "resolution": "1080p",
+                },
+            )
+        ])
+
+        decision = evaluate_group_rules(
+            compiled,
+            group_name="|MULTI| Movies",
+            default_enabled=False,
+        )
+
+        self.assertEqual(
+            decision.metadata_defaults,
+            {"audio_languages": ["ger", "eng"], "resolution": "1080p"},
+        )

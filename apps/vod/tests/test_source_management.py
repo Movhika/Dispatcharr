@@ -5,6 +5,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
 from apps.vod.metadata import (
+    category_defaults_for_relation,
     ensure_source_asset,
     ensure_source_assets,
     normalize_language_list,
@@ -13,8 +14,12 @@ from apps.vod.playback import record_playback_selection
 from apps.vod.serializers import VODPlaybackSessionSerializer
 from apps.vod.models import (
     M3UMovieRelation,
+    M3UEpisodeRelation,
+    M3USeriesRelation,
     M3UVODCategoryRelation,
     Movie,
+    Episode,
+    Series,
     VODAccessPolicy,
     VODPlaybackSession,
     VODSourceAsset,
@@ -104,6 +109,32 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             normalize_language_list(["deu", "de", "Deutsch", "eng"]),
             ["ger", "eng"],
+        )
+
+    def test_episode_inherits_defaults_from_its_series_category(self):
+        series = Series.objects.create(name="Avatar Series")
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="avatar-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        episode_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="avatar-episode-1",
+        )
+
+        self.assertEqual(
+            category_defaults_for_relation(episode_relation)["audio_languages"],
+            ["deu"],
         )
 
     def test_language_preference_wins_over_account_and_category_priority(self):

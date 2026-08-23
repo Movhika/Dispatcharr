@@ -44,9 +44,11 @@ class M3UGroupRuleSerializer(serializers.ModelSerializer):
             "match_field",
             "match_mode",
             "regex_pattern",
+            "exclude_regex_pattern",
             "action",
             "case_sensitive",
             "enabled",
+            "metadata_defaults",
             "order",
             "created_at",
             "updated_at",
@@ -61,6 +63,26 @@ class M3UGroupRuleSerializer(serializers.ModelSerializer):
         except re.error as exc:
             raise serializers.ValidationError(f"Invalid regex: {exc}")
         return value
+
+    def validate_exclude_regex_pattern(self, value):
+        import re
+
+        try:
+            if value:
+                re.compile(value)
+        except re.error as exc:
+            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        return value
+
+    def validate_metadata_defaults(self, value):
+        from apps.vod.metadata import validate_source_metadata
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be an object")
+        try:
+            return validate_source_metadata(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
 
 
 class M3UAccountProfileSerializer(serializers.ModelSerializer):
@@ -182,6 +204,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     auto_enable_new_groups_live = serializers.BooleanField(required=False, write_only=True)
     auto_enable_new_groups_vod = serializers.BooleanField(required=False, write_only=True)
     auto_enable_new_groups_series = serializers.BooleanField(required=False, write_only=True)
+    use_group_rules_live = serializers.BooleanField(required=False, write_only=True)
+    use_group_rules_movie = serializers.BooleanField(required=False, write_only=True)
+    use_group_rules_series = serializers.BooleanField(required=False, write_only=True)
     cron_expression = serializers.CharField(required=False, allow_blank=True, default="")
 
     class Meta:
@@ -215,6 +240,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "auto_enable_new_groups_live",
             "auto_enable_new_groups_vod",
             "auto_enable_new_groups_series",
+            "use_group_rules_live",
+            "use_group_rules_movie",
+            "use_group_rules_series",
             "earliest_expiration",
             "all_expirations",
             "exp_date",
@@ -262,6 +290,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         data["auto_enable_new_groups_live"] = custom_props.get("auto_enable_new_groups_live", True)
         data["auto_enable_new_groups_vod"] = custom_props.get("auto_enable_new_groups_vod", True)
         data["auto_enable_new_groups_series"] = custom_props.get("auto_enable_new_groups_series", True)
+        data["use_group_rules_live"] = custom_props.get("use_group_rules_live", True)
+        data["use_group_rules_movie"] = custom_props.get("use_group_rules_movie", True)
+        data["use_group_rules_series"] = custom_props.get("use_group_rules_series", True)
 
         # Derive cron_expression from the linked PeriodicTask's crontab (single source of truth)
         # But first check if we have a transient _cron_expression (from create/update before signal runs)
@@ -306,6 +337,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         auto_enable_new_groups_live = validated_data.pop("auto_enable_new_groups_live", None)
         auto_enable_new_groups_vod = validated_data.pop("auto_enable_new_groups_vod", None)
         auto_enable_new_groups_series = validated_data.pop("auto_enable_new_groups_series", None)
+        use_group_rules_live = validated_data.pop("use_group_rules_live", None)
+        use_group_rules_movie = validated_data.pop("use_group_rules_movie", None)
+        use_group_rules_series = validated_data.pop("use_group_rules_series", None)
 
         # Merge client-supplied custom_properties over the existing blob
         # so unrelated keys persist. The dedicated preference fields below
@@ -330,6 +364,12 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             custom_props["auto_enable_new_groups_vod"] = auto_enable_new_groups_vod
         if auto_enable_new_groups_series is not None:
             custom_props["auto_enable_new_groups_series"] = auto_enable_new_groups_series
+        if use_group_rules_live is not None:
+            custom_props["use_group_rules_live"] = use_group_rules_live
+        if use_group_rules_movie is not None:
+            custom_props["use_group_rules_movie"] = use_group_rules_movie
+        if use_group_rules_series is not None:
+            custom_props["use_group_rules_series"] = use_group_rules_series
 
         validated_data["custom_properties"] = custom_props
 
@@ -390,6 +430,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         auto_enable_new_groups_live = validated_data.pop("auto_enable_new_groups_live", True)
         auto_enable_new_groups_vod = validated_data.pop("auto_enable_new_groups_vod", True)
         auto_enable_new_groups_series = validated_data.pop("auto_enable_new_groups_series", True)
+        use_group_rules_live = validated_data.pop("use_group_rules_live", True)
+        use_group_rules_movie = validated_data.pop("use_group_rules_movie", True)
+        use_group_rules_series = validated_data.pop("use_group_rules_series", True)
 
         # Parse existing custom_properties or create new
         custom_props = validated_data.get("custom_properties") or {}
@@ -401,6 +444,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         custom_props["auto_enable_new_groups_live"] = auto_enable_new_groups_live
         custom_props["auto_enable_new_groups_vod"] = auto_enable_new_groups_vod
         custom_props["auto_enable_new_groups_series"] = auto_enable_new_groups_series
+        custom_props["use_group_rules_live"] = use_group_rules_live
+        custom_props["use_group_rules_movie"] = use_group_rules_movie
+        custom_props["use_group_rules_series"] = use_group_rules_series
         validated_data["custom_properties"] = custom_props
 
         # Build instance manually so we can attach transient attr before save triggers signal

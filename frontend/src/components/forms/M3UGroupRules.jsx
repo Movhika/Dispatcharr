@@ -15,12 +15,17 @@ import {
   TableTh,
   TableThead,
   TableTr,
+  TagsInput,
   Text,
   TextInput,
 } from '@mantine/core';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
+import {
+  languageCodeError,
+  normalizeLanguageCodes,
+} from '../../utils/languageCodes.js';
 
 const M3UGroupRules = ({ accountId, scope }) => {
   const [rules, setRules] = useState([]);
@@ -52,30 +57,63 @@ const M3UGroupRules = ({ accountId, scope }) => {
       match_field: 'group_name',
       match_mode: 'any',
       regex_pattern: '.*',
+      exclude_regex_pattern: '',
       action: 'disable',
       case_sensitive: false,
       enabled: true,
       order: rules.length * 10,
+      metadata_defaults: {},
     });
     setRules((current) => [...current, created]);
   };
 
   const saveRule = async (rule) => {
+    const metadataDefaults = {
+      ...(rule.metadata_defaults || {}),
+      audio_languages: normalizeLanguageCodes(
+        rule.metadata_defaults?.audio_languages || []
+      ),
+      subtitle_languages: normalizeLanguageCodes(
+        rule.metadata_defaults?.subtitle_languages || []
+      ),
+    };
+    const invalid =
+      languageCodeError(metadataDefaults.audio_languages) ||
+      languageCodeError(metadataDefaults.subtitle_languages);
+    if (invalid) {
+      showNotification({
+        title: 'Invalid language code',
+        message: invalid,
+        color: 'red',
+      });
+      return;
+    }
     const saved = await API.updateM3UGroupRule(accountId, rule.id, {
       scope,
       match_field: rule.match_field,
       match_mode: rule.match_mode,
       regex_pattern: rule.regex_pattern,
+      exclude_regex_pattern: rule.exclude_regex_pattern || '',
       action: rule.action,
       case_sensitive: rule.case_sensitive,
       enabled: rule.enabled,
       order: rule.order,
+      metadata_defaults: scope === 'live' ? {} : metadataDefaults,
     });
     updateLocal(rule.id, saved);
     showNotification({
       title: 'Discovery rule saved',
       message: 'The rule applies to groups discovered by future scans.',
       color: 'green',
+    });
+  };
+
+  const updateMetadata = (rule, field, value) => {
+    updateLocal(rule.id, {
+      metadata_defaults: {
+        ...(rule.metadata_defaults || {}),
+        [field]: value,
+      },
     });
   };
 
@@ -92,7 +130,8 @@ const M3UGroupRules = ({ accountId, scope }) => {
             Rules for newly discovered groups
           </Text>
           <Text c="dimmed" size="xs">
-            First matching rule wins. Existing group choices are not changed.
+            First matching rule wins. The exclusion expression vetoes a match.
+            Existing choices and learned or manual metadata are not changed.
           </Text>
         </div>
         <Button
@@ -112,14 +151,23 @@ const M3UGroupRules = ({ accountId, scope }) => {
         </Alert>
       ) : (
         <ScrollArea type="auto">
-          <Table striped withTableBorder miw={900} verticalSpacing="xs">
+          <Table
+            striped
+            withTableBorder
+            miw={scope === 'live' ? 1150 : 1650}
+            verticalSpacing="xs"
+          >
             <TableThead>
               <TableTr>
                 <TableTh w={70}>Order</TableTh>
                 <TableTh w={145}>Match</TableTh>
                 <TableTh>Regular expression</TableTh>
+                <TableTh>Exclude expression</TableTh>
                 <TableTh w={120}>Item mode</TableTh>
                 <TableTh w={145}>Result</TableTh>
+                {scope !== 'live' && <TableTh w={175}>DUB</TableTh>}
+                {scope !== 'live' && <TableTh w={175}>SUB</TableTh>}
+                {scope !== 'live' && <TableTh w={120}>Resolution</TableTh>}
                 <TableTh w={75}>Case</TableTh>
                 <TableTh w={75}>Active</TableTh>
                 <TableTh w={80}>Actions</TableTh>
@@ -154,10 +202,24 @@ const M3UGroupRules = ({ accountId, scope }) => {
                   <TableTd>
                     <TextInput
                       size="xs"
+                      aria-label="Include regular expression"
                       value={rule.regex_pattern}
                       onChange={(event) =>
                         updateLocal(rule.id, {
                           regex_pattern: event.currentTarget.value,
+                        })
+                      }
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <TextInput
+                      size="xs"
+                      aria-label="Exclude regular expression"
+                      placeholder="Optional NOT regex"
+                      value={rule.exclude_regex_pattern || ''}
+                      onChange={(event) =>
+                        updateLocal(rule.id, {
+                          exclude_regex_pattern: event.currentTarget.value,
                         })
                       }
                     />
@@ -190,6 +252,64 @@ const M3UGroupRules = ({ accountId, scope }) => {
                       }
                     />
                   </TableTd>
+                  {scope !== 'live' && (
+                    <TableTd>
+                      <TagsInput
+                        size="xs"
+                        placeholder="ger, eng"
+                        value={rule.metadata_defaults?.audio_languages || []}
+                        error={languageCodeError(
+                          rule.metadata_defaults?.audio_languages || []
+                        )}
+                        onChange={(value) =>
+                          updateMetadata(
+                            rule,
+                            'audio_languages',
+                            normalizeLanguageCodes(value)
+                          )
+                        }
+                      />
+                    </TableTd>
+                  )}
+                  {scope !== 'live' && (
+                    <TableTd>
+                      <TagsInput
+                        size="xs"
+                        placeholder="ger, eng"
+                        value={rule.metadata_defaults?.subtitle_languages || []}
+                        error={languageCodeError(
+                          rule.metadata_defaults?.subtitle_languages || []
+                        )}
+                        onChange={(value) =>
+                          updateMetadata(
+                            rule,
+                            'subtitle_languages',
+                            normalizeLanguageCodes(value)
+                          )
+                        }
+                      />
+                    </TableTd>
+                  )}
+                  {scope !== 'live' && (
+                    <TableTd>
+                      <Select
+                        size="xs"
+                        clearable
+                        data={[
+                          '480p',
+                          '576p',
+                          '720p',
+                          '1080p',
+                          '1440p',
+                          '2160p',
+                        ]}
+                        value={rule.metadata_defaults?.resolution || null}
+                        onChange={(value) =>
+                          updateMetadata(rule, 'resolution', value || '')
+                        }
+                      />
+                    </TableTd>
+                  )}
                   <TableTd>
                     <Checkbox
                       aria-label="Case sensitive"

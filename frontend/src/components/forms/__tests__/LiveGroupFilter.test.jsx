@@ -35,6 +35,10 @@ vi.mock('../../ErrorBoundary.jsx', () => ({
   default: ({ children }) => <>{children}</>,
 }));
 
+vi.mock('../M3UGroupRules.jsx', () => ({
+  default: () => <div data-testid="discovery-rules" />,
+}));
+
 vi.mock('../AutoSyncAdvanced.jsx', () => ({
   default: ({
     group,
@@ -138,12 +142,13 @@ vi.mock('@mantine/core', async () => ({
   ),
   Alert: ({ children }) => <div data-testid="alert">{children}</div>,
   Box: ({ children, style }) => <div style={style}>{children}</div>,
-  Button: ({ children, onClick, disabled, variant, color }) => (
+  Button: ({ children, onClick, disabled, variant, color, ...props }) => (
     <button
       onClick={onClick}
       disabled={disabled}
       data-variant={variant}
       data-color={color}
+      {...props}
     >
       {children}
     </button>
@@ -206,6 +211,18 @@ vi.mock('@mantine/core', async () => ({
   ),
   SimpleGrid: ({ children }) => <div>{children}</div>,
   Stack: ({ children, style }) => <div style={style}>{children}</div>,
+  Switch: ({ label, checked, onChange, disabled }) => (
+    <label>
+      <input
+        type="checkbox"
+        checked={checked ?? false}
+        onChange={onChange}
+        disabled={disabled}
+        aria-label={typeof label === 'string' ? label : 'switch'}
+      />
+      {label}
+    </label>
+  ),
   Table: ({ children }) => <table>{children}</table>,
   TableTbody: ({ children }) => <tbody>{children}</tbody>,
   TableTd: ({ children }) => <td>{children}</td>,
@@ -677,8 +694,12 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(screen.getByLabelText('Select visible groups'));
       fireEvent.click(screen.getByText('Enable selected'));
-      expect(screen.getByLabelText('Enable Sports')).toBeChecked();
-      expect(screen.getByLabelText('Enable News')).toBeChecked();
+      expect(
+        screen.getByRole('button', { name: 'Enable Sports' })
+      ).toHaveAttribute('aria-pressed', 'true');
+      expect(
+        screen.getByRole('button', { name: 'Enable News' })
+      ).toHaveAttribute('aria-pressed', 'true');
     });
 
     it('disables all selected visible groups', () => {
@@ -690,8 +711,12 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(screen.getByLabelText('Select visible groups'));
       fireEvent.click(screen.getByText('Disable selected'));
-      expect(screen.getByLabelText('Enable Sports')).not.toBeChecked();
-      expect(screen.getByLabelText('Enable News')).not.toBeChecked();
+      expect(
+        screen.getByRole('button', { name: 'Enable Sports' })
+      ).toHaveAttribute('aria-pressed', 'false');
+      expect(
+        screen.getByRole('button', { name: 'Enable News' })
+      ).toHaveAttribute('aria-pressed', 'false');
     });
 
     it('bulk changes only apply to groups passing the current filter', () => {

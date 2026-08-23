@@ -30,12 +30,17 @@ import { useDisclosure } from '@mantine/hooks';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import useAuthStore from '../store/auth';
+import usePlaylistsStore from '../store/playlists';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
 import { showNotification } from '../utils/notificationUtils';
 import {
   filterCategoriesToEnabled,
   getCategoryOptions,
 } from '../utils/pages/VODsUtils.js';
+import {
+  languageCodeError,
+  normalizeLanguageCodes,
+} from '../utils/languageCodes.js';
 
 const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
 const VODModal = React.lazy(() => import('../components/VODModal'));
@@ -60,6 +65,8 @@ const VODsPage = () => {
   const fetchContent = useVODStore((s) => s.fetchContent);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
   const user = useAuthStore((state) => state.user);
+  const playlists = usePlaylistsStore((state) => state.playlists);
+  const fetchPlaylists = usePlaylistsStore((state) => state.fetchPlaylists);
 
   const [selectedSeries, setSelectedSeries] = useState(null);
   const [selectedVOD, setSelectedVOD] = useState(null);
@@ -113,6 +120,10 @@ const VODsPage = () => {
   }, [fetchCategories]);
 
   useEffect(() => {
+    if (!playlists.length) fetchPlaylists();
+  }, [fetchPlaylists, playlists.length]);
+
+  useEffect(() => {
     fetchContent().finally(() => setInitialLoad(false));
   }, [filters, currentPage, pageSize, fetchContent]);
 
@@ -121,7 +132,7 @@ const VODsPage = () => {
     // Explicit selections are cleared because their previous rows may no
     // longer be part of the visible filter universe.
     setSelected(new Set());
-  }, [filters.type, filters.search, filters.category]);
+  }, [filters.type, filters.search, filters.category, filters.m3u_account]);
 
   const toggleItem = (key, checked) => {
     setSelected((current) => {
@@ -161,6 +172,16 @@ const VODsPage = () => {
           value !== '' && (!Array.isArray(value) || value.length > 0)
       )
     );
+    if (metadata.audio_languages) {
+      metadata.audio_languages = normalizeLanguageCodes(
+        metadata.audio_languages
+      );
+    }
+    if (metadata.subtitle_languages) {
+      metadata.subtitle_languages = normalizeLanguageCodes(
+        metadata.subtitle_languages
+      );
+    }
     setBulkSaving(true);
     try {
       const result = selectAllMatching
@@ -184,6 +205,18 @@ const VODsPage = () => {
   };
 
   const categoryOptions = getCategoryOptions(categories, filters);
+  const bulkLanguageError =
+    languageCodeError(bulkMetadata.audio_languages) ||
+    languageCodeError(bulkMetadata.subtitle_languages);
+  const m3uOptions = playlists
+    .filter(
+      (playlist) =>
+        playlist.account_type === 'XC' &&
+        playlist.is_active &&
+        playlist.enable_vod
+    )
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((playlist) => ({ value: String(playlist.id), label: playlist.name }));
   const totalPages = Math.ceil(totalCount / pageSize);
 
   return (
@@ -231,6 +264,18 @@ const VODsPage = () => {
             value={filters.search}
             onChange={(event) => setFilters({ search: event.target.value })}
             miw={240}
+          />
+          <Select
+            placeholder="M3U account"
+            data={m3uOptions}
+            value={filters.m3u_account || null}
+            onChange={(value) => {
+              setFilters({ m3u_account: value || '', category: '' });
+              setPage(1);
+            }}
+            searchable
+            clearable
+            miw={180}
           />
           <Select
             placeholder="Category"
@@ -373,16 +418,24 @@ const VODsPage = () => {
             description="English ISO 639-2/B codes"
             placeholder="ger, eng"
             value={bulkMetadata.audio_languages}
+            error={languageCodeError(bulkMetadata.audio_languages)}
             onChange={(value) =>
-              setBulkMetadata({ ...bulkMetadata, audio_languages: value })
+              setBulkMetadata({
+                ...bulkMetadata,
+                audio_languages: normalizeLanguageCodes(value),
+              })
             }
           />
           <TagsInput
             label="Subtitle languages"
             placeholder="ger, eng"
             value={bulkMetadata.subtitle_languages}
+            error={languageCodeError(bulkMetadata.subtitle_languages)}
             onChange={(value) =>
-              setBulkMetadata({ ...bulkMetadata, subtitle_languages: value })
+              setBulkMetadata({
+                ...bulkMetadata,
+                subtitle_languages: normalizeLanguageCodes(value),
+              })
             }
           />
           <Select
@@ -398,7 +451,11 @@ const VODsPage = () => {
             <Button variant="default" onClick={bulkEditorHandlers.close}>
               Cancel
             </Button>
-            <Button loading={bulkSaving} onClick={saveBulkMetadata}>
+            <Button
+              loading={bulkSaving}
+              disabled={!!bulkLanguageError}
+              onClick={saveBulkMetadata}
+            >
               Apply and lock
             </Button>
           </Group>

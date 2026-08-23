@@ -13,6 +13,9 @@ const getFetchContentParams = (state) => {
   if (state.filters.category) {
     params.append('category', state.filters.category);
   }
+  if (state.filters.m3u_account) {
+    params.append('m3u_account', state.filters.m3u_account);
+  }
   return params;
 };
 
@@ -132,6 +135,7 @@ const useVODStore = create((set, get) => ({
     type: 'all', // 'all', 'movies', 'series'
     search: '',
     category: '',
+    m3u_account: '',
   },
   currentPage: 1,
   totalCount: 0,

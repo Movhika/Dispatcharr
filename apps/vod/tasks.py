@@ -13,8 +13,54 @@ from datetime import datetime
 import logging
 import json
 import re
+import time
 
 logger = logging.getLogger(__name__)
+
+
+def _send_vod_refresh_progress(
+    account_id,
+    *,
+    started_at,
+    phase,
+    progress,
+    items_processed=None,
+    items_total=None,
+):
+    """Persist and broadcast coarse VOD refresh progress without per-row writes."""
+    from apps.m3u.tasks import send_m3u_update
+
+    elapsed = max(time.monotonic() - started_at, 0)
+    progress = max(0, min(int(progress), 99))
+    remaining = None
+    if progress > 1 and elapsed > 0:
+        remaining = max((elapsed / progress) * (100 - progress), 0)
+
+    item_summary = ""
+    if items_processed is not None and items_total is not None:
+        item_summary = f" ({items_processed:,}/{items_total:,})"
+    remaining_summary = (
+        f" · approximately {max(round(remaining), 1)}s remaining"
+        if remaining is not None
+        else ""
+    )
+    message = f"VOD refresh: {phase}{item_summary}{remaining_summary}"
+    M3UAccount.objects.filter(id=account_id).update(
+        status=M3UAccount.Status.PARSING,
+        last_message=message,
+    )
+    send_m3u_update(
+        account_id,
+        "vod_refresh",
+        progress,
+        status="processing",
+        message=message,
+        phase=phase,
+        items_processed=items_processed,
+        items_total=items_total,
+        elapsed_time=elapsed,
+        time_remaining=remaining,
+    )
 
 
 def _provider_vod_identity(item, id_field):
@@ -81,9 +127,15 @@ def refresh_vod_content(account_id):
 
         logger.info(f"Starting batch VOD refresh for account {account.name}")
         start_time = timezone.now()
+        progress_started_at = time.monotonic()
 
         # Send start notification
-        send_m3u_update(account_id, "vod_refresh", 0, status="processing")
+        _send_vod_refresh_progress(
+            account_id,
+            started_at=progress_started_at,
+            phase="Fetching categories",
+            progress=1,
+        )
 
         with XtreamCodesClient(
             account.server_url,
@@ -99,11 +151,21 @@ def refresh_vod_content(account_id):
                     "aborting VOD refresh to preserve existing category selections"
                 )
                 logger.warning(message)
+                M3UAccount.objects.filter(id=account_id).update(
+                    status=M3UAccount.Status.ERROR,
+                    last_message=f"VOD refresh failed: {message}",
+                )
                 send_m3u_update(account_id, "vod_refresh", 100, status="error",
                                message=f"VOD refresh failed: {message}")
                 return f"VOD refresh failed: {message}"
 
             movie_categories, series_categories = category_maps
+            _send_vod_refresh_progress(
+                account_id,
+                started_at=progress_started_at,
+                phase="Categories loaded",
+                progress=8,
+            )
 
             logger.debug("Fetching relations for filtering category filtering")
             relations = { rel.category_id: rel for rel in M3UVODCategoryRelation.objects
@@ -112,18 +174,33 @@ def refresh_vod_content(account_id):
             }
 
             # Refresh movies with batch processing (pass scan start time)
-            refresh_movies(client, account, movie_categories, relations, scan_start_time=start_time)
+            refresh_movies(
+                client,
+                account,
+                movie_categories,
+                relations,
+                scan_start_time=start_time,
+                progress_started_at=progress_started_at,
+            )
 
             # Refresh series with batch processing (pass scan start time)
-            refresh_series(client, account, series_categories, relations, scan_start_time=start_time)
-
-        end_time = timezone.now()
-        duration = (end_time - start_time).total_seconds()
-
-        logger.info(f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds")
+            refresh_series(
+                client,
+                account,
+                series_categories,
+                relations,
+                scan_start_time=start_time,
+                progress_started_at=progress_started_at,
+            )
 
         # Cleanup orphaned VOD content after refresh (scoped to this account only)
         logger.info(f"Starting cleanup of orphaned VOD content for account {account.name}")
+        _send_vod_refresh_progress(
+            account_id,
+            started_at=progress_started_at,
+            phase="Cleaning up",
+            progress=97,
+        )
         cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
         logger.info(f"VOD cleanup completed: {cleanup_result}")
 
@@ -134,9 +211,22 @@ def refresh_vod_content(account_id):
 
         bump_catalog_generation()
 
+        end_time = timezone.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.info(
+            "Batch VOD refresh completed for account %s in %.2f seconds",
+            account.name,
+            duration,
+        )
+
         # Send completion notification
+        success_message = f"VOD refresh completed in {duration:.2f} seconds"
+        M3UAccount.objects.filter(id=account_id).update(
+            status=M3UAccount.Status.SUCCESS,
+            last_message=success_message,
+        )
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
-                       message=f"VOD refresh completed in {duration:.2f} seconds")
+                       message=success_message)
 
         return f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds"
 
@@ -146,8 +236,13 @@ def refresh_vod_content(account_id):
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
         # Send error notification
+        error_message = f"VOD refresh failed: {str(e)}"
+        M3UAccount.objects.filter(id=account_id).update(
+            status=M3UAccount.Status.ERROR,
+            last_message=error_message,
+        )
         send_m3u_update(account_id, "vod_refresh", 100, status="error",
-                       message=f"VOD refresh failed: {str(e)}")
+                       message=error_message)
 
         return f"VOD refresh failed: {str(e)}"
 
@@ -221,7 +316,14 @@ def refresh_categories(account_id, client=None):
 
     return movies_category_id_map, series_category_id_map
 
-def refresh_movies(client, account, categories_by_provider, relations, scan_start_time=None):
+def refresh_movies(
+    client,
+    account,
+    categories_by_provider,
+    relations,
+    scan_start_time=None,
+    progress_started_at=None,
+):
     """Refresh movie content using single API call for all movies"""
     logger.info(f"Refreshing movies for account {account.name}")
 
@@ -265,18 +367,46 @@ def refresh_movies(client, account, categories_by_provider, relations, scan_star
     total_movies = len(all_movies_data)
     total_chunks = (total_movies + chunk_size - 1) // chunk_size if total_movies > 0 else 0
 
+    if progress_started_at is not None:
+        _send_vod_refresh_progress(
+            account.id,
+            started_at=progress_started_at,
+            phase="Processing movies",
+            progress=10,
+            items_processed=0,
+            items_total=total_movies,
+        )
+
     for i in range(0, total_movies, chunk_size):
         chunk = all_movies_data[i:i + chunk_size]
         chunk_num = (i // chunk_size) + 1
 
         logger.info(f"Processing movie chunk {chunk_num}/{total_chunks} ({len(chunk)} movies)")
         process_movie_batch(account, chunk, categories_by_provider, relations, scan_start_time)
+        if progress_started_at is not None:
+            completed = min(i + len(chunk), total_movies)
+            progress = 10 + round((completed / max(total_movies, 1)) * 40)
+            _send_vod_refresh_progress(
+                account.id,
+                started_at=progress_started_at,
+                phase="Processing movies",
+                progress=progress,
+                items_processed=completed,
+                items_total=total_movies,
+            )
 
     del all_movies_data
     logger.info(f"Completed processing all {total_movies} movies in {total_chunks} chunks")
 
 
-def refresh_series(client, account, categories_by_provider, relations, scan_start_time=None):
+def refresh_series(
+    client,
+    account,
+    categories_by_provider,
+    relations,
+    scan_start_time=None,
+    progress_started_at=None,
+):
     """Refresh series content using single API call for all series"""
     logger.info(f"Refreshing series for account {account.name}")
 
@@ -320,12 +450,33 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
     total_series = len(all_series_data)
     total_chunks = (total_series + chunk_size - 1) // chunk_size if total_series > 0 else 0
 
+    if progress_started_at is not None:
+        _send_vod_refresh_progress(
+            account.id,
+            started_at=progress_started_at,
+            phase="Processing series",
+            progress=52,
+            items_processed=0,
+            items_total=total_series,
+        )
+
     for i in range(0, total_series, chunk_size):
         chunk = all_series_data[i:i + chunk_size]
         chunk_num = (i // chunk_size) + 1
 
         logger.info(f"Processing series chunk {chunk_num}/{total_chunks} ({len(chunk)} series)")
         process_series_batch(account, chunk, categories_by_provider, relations, scan_start_time)
+        if progress_started_at is not None:
+            completed = min(i + len(chunk), total_series)
+            progress = 52 + round((completed / max(total_series, 1)) * 43)
+            _send_vod_refresh_progress(
+                account.id,
+                started_at=progress_started_at,
+                phase="Processing series",
+                progress=progress,
+                items_processed=completed,
+                items_total=total_series,
+            )
 
     del all_series_data
     logger.info(f"Completed processing all {total_series} series in {total_chunks} chunks")
@@ -333,6 +484,10 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
 
 def _discovery_item_names(client, account, scope, categories_data):
     """Fetch contained names only when a content-aware rule needs them."""
+    if not (account.custom_properties or {}).get(
+        f"use_group_rules_{scope}", True
+    ):
+        return {}
     if not account.group_rules.filter(
         scope=scope,
         match_field="item_name",
@@ -436,14 +591,22 @@ def batch_create_categories(
         elif name not in existing_relation_names:
             # Existing category - create relationship with enabled based on auto_enable setting
             # (category exists globally but is new to this account)
-            relations_to_create.append(M3UVODCategoryRelation(
-                category=existing_categories[name],
-                m3u_account=account,
-                custom_properties={
-                    "discovery_rule_id": decisions[name].matched_rule_id
-                } if decisions.get(name) and decisions[name].matched_rule_id else {},
-                enabled=decisions.get(name).enabled if decisions.get(name) else auto_enable_new,
-            ))
+            decision = decisions.get(name)
+            relations_to_create.append(
+                M3UVODCategoryRelation(
+                    category=existing_categories[name],
+                    m3u_account=account,
+                    custom_properties={
+                        "discovery_rule_id": decision.matched_rule_id
+                    }
+                    if decision and decision.matched_rule_id
+                    else {},
+                    enabled=decisions.get(name).enabled if decisions.get(name) else auto_enable_new,
+                    metadata_defaults=(decision.metadata_defaults or {})
+                    if decision
+                    else {},
+                )
+            )
 
     logger.debug(f"{len(new_categories)} new categories found")
     logger.debug(f"{len(relations_to_create)} existing categories found for account")
@@ -467,6 +630,9 @@ def batch_create_categories(
                         "discovery_rule_id": decision.matched_rule_id
                     } if decision and decision.matched_rule_id else {},
                     enabled=enabled,
+                    metadata_defaults=(decision.metadata_defaults or {})
+                    if decision
+                    else {},
                 )
             )
 

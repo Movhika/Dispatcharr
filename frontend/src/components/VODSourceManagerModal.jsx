@@ -20,6 +20,10 @@ import {
 import { RefreshCw, Wrench } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
+import {
+  languageCodeError,
+  normalizeLanguageCodes,
+} from '../utils/languageCodes.js';
 
 const normalizeList = (response) => response?.results || response || [];
 const formatBytes = (value) =>
@@ -80,6 +84,16 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
           (!Array.isArray(value) || value.length > 0)
       )
     );
+    if (metadata.audio_languages) {
+      metadata.audio_languages = normalizeLanguageCodes(
+        metadata.audio_languages
+      );
+    }
+    if (metadata.subtitle_languages) {
+      metadata.subtitle_languages = normalizeLanguageCodes(
+        metadata.subtitle_languages
+      );
+    }
     await API.updateVODSourceManualMetadata(
       manualPlayback.source_asset,
       metadata,
@@ -93,6 +107,10 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     setManualPlayback(null);
     await load();
   };
+
+  const manualLanguageError =
+    languageCodeError(manualMetadata.audio_languages || []) ||
+    languageCodeError(manualMetadata.subtitle_languages || []);
 
   return (
     <>
@@ -194,18 +212,23 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             description="English ISO 639-2/B codes"
             placeholder="ger, eng"
             value={manualMetadata.audio_languages || []}
+            error={languageCodeError(manualMetadata.audio_languages || [])}
             onChange={(value) =>
-              setManualMetadata({ ...manualMetadata, audio_languages: value })
+              setManualMetadata({
+                ...manualMetadata,
+                audio_languages: normalizeLanguageCodes(value),
+              })
             }
           />
           <TagsInput
             label="Subtitle languages"
             placeholder="ger, eng"
             value={manualMetadata.subtitle_languages || []}
+            error={languageCodeError(manualMetadata.subtitle_languages || [])}
             onChange={(value) =>
               setManualMetadata({
                 ...manualMetadata,
-                subtitle_languages: value,
+                subtitle_languages: normalizeLanguageCodes(value),
               })
             }
           />
@@ -225,7 +248,12 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             <Button variant="default" onClick={() => setManualPlayback(null)}>
               Cancel
             </Button>
-            <Button onClick={saveManualMetadata}>Save and lock</Button>
+            <Button
+              disabled={!!manualLanguageError}
+              onClick={saveManualMetadata}
+            >
+              Save and lock
+            </Button>
           </Group>
         </Stack>
       </Modal>

@@ -252,7 +252,7 @@ def _select_vod_stream(
             "final_stream_url": final_stream_url,
             "relation": cand,
             "failover_chain": failover_chain,
-            "source_metadata": _build_vod_source_metadata(
+            "source_metadata": _build_vod_source_metadata_best_effort(
                 content_type,
                 content_obj,
                 cand,
@@ -637,6 +637,40 @@ def _build_vod_source_metadata(content_type, content_obj, relation):
             'values', {}
         ),
     }
+
+
+def _build_vod_source_metadata_best_effort(content_type, content_obj, relation):
+    """Never let optional stats/history metadata block media playback."""
+    try:
+        return _build_vod_source_metadata(content_type, content_obj, relation)
+    except Exception as exc:
+        logger.warning(
+            "[VOD-METADATA] Source metadata unavailable for relation %s: %s",
+            getattr(relation, "id", None),
+            exc,
+            exc_info=True,
+        )
+        category = (
+            getattr(relation, "category", None)
+            or getattr(getattr(relation, "series_relation", None), "category", None)
+        )
+        account_name = getattr(getattr(relation, "m3u_account", None), "name", "")
+        category_name = getattr(category, "name", "")
+        return {
+            "key": _vod_source_key(content_type, relation),
+            "relation_id": getattr(relation, "id", None),
+            "account_id": getattr(relation, "m3u_account_id", None),
+            "account_name": account_name,
+            "category_id": getattr(category, "id", None),
+            "category_name": category_name,
+            "label": (
+                f"{account_name} — {category_name}"
+                if category_name
+                else account_name
+            ),
+            "stream_id": str(getattr(relation, "stream_id", "")),
+            "technical_metadata": {},
+        }
 
 
 def _order_candidates(candidates, preferred_relation=None):

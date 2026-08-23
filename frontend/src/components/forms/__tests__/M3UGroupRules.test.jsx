@@ -66,12 +66,17 @@ vi.mock('@mantine/core', () => {
     TableThead: Wrapper,
     TableTr: Wrapper,
     Text: Wrapper,
-    TextInput: ({ value, onChange }) => (
+    TagsInput: ({ value = [], onChange }) => (
       <input
-        aria-label="Regular expression"
-        value={value}
-        onChange={onChange}
+        aria-label="Language codes"
+        value={value.join(',')}
+        onChange={(event) =>
+          onChange(event.target.value.split(',').filter(Boolean))
+        }
       />
+    ),
+    TextInput: ({ value, onChange, 'aria-label': ariaLabel }) => (
+      <input aria-label={ariaLabel} value={value} onChange={onChange} />
     ),
   };
 });
@@ -95,10 +100,12 @@ describe('M3UGroupRules', () => {
         match_field: 'group_name',
         match_mode: 'any',
         regex_pattern: '^GERMANY',
+        exclude_regex_pattern: '',
         action: 'enable',
         case_sensitive: false,
         enabled: true,
         order: 10,
+        metadata_defaults: {},
       },
     ]);
     API.updateM3UGroupRule.mockImplementation(
@@ -112,7 +119,7 @@ describe('M3UGroupRules', () => {
   it('loads and saves an edited future-discovery rule', async () => {
     render(<M3UGroupRules accountId={49} scope="movie" />);
 
-    const regex = await screen.findByLabelText('Regular expression');
+    const regex = await screen.findByLabelText('Include regular expression');
     fireEvent.change(regex, { target: { value: '^(GERMANY|DE)' } });
     fireEvent.click(screen.getByLabelText('Save rule'));
 

@@ -50,6 +50,41 @@ LANGUAGE_ALIASES = {
     "dutch": "dut",
 }
 
+# Dispatcharr exposes the bibliographic ISO-639-2 codes used by common IPTV
+# clients (for example ``ger`` rather than the terminology code ``deu``).
+# Keeping the allow-list here makes every write path validate the same values
+# instead of letting arbitrary free text leak into policy matching.
+ISO_639_2B_CODES = frozenset(
+    """
+    aar abk ace ach ada ady afa afh afr ain aka akk alb ale alg alt amh ang anp
+    apa ara arc arg arm arn arp art arw asm ast ath aus ava ave awa aym aze bad
+    bai bak bal bam ban baq bas bat bej bel bem ben ber bho bih bik bin bis bla
+    bnt bod bos bra bre btk bua bug bul bur byn cad cai car cat cau ceb cel cha
+    chb che chg chi chk chm chn cho chp chr chu chv chy cmc cnr cop cor cos cpe
+    cpf cpp cre crh crp csb cus cze dak dan dar day del den dgr din div doi dra
+    dsb dua dum dut dyu dzo efi egy eka elx eng enm epo est ewe ewo fan fao fat
+    fij fil fin fiu fon fre frm fro frr frs fry ful fur gaa gay gba gem geo ger
+    gez gil gla gle glg glv gmh goh gon gor got grb grc gre grn gsw guj gwi hai
+    hat hau haw heb her hil him hin hit hmn hmo hrv hsb hun hup iba ibo ice ido
+    iii ijo iku ile ilo ina inc ind ine inh ipk ira iro ita jav jbo jpn jpr jrb
+    kaa kab kac kal kam kan kar kas kau kaw kaz kbd kha khi khm kho kik kin kir
+    kmb kok kom kon kor kos kpe krc krl kro kru kua kum kur kut lad lah lam lao
+    lat lav lez lim lin lit lol loz ltz lua lub lug lui lun luo lus mac mad mag
+    mah mai mak mal man mao map mar mas may mdf mdr men mga mic min mis mkh mlg
+    mlt mnc mni mno moh mon mos mul mun mus mwl mwr myn myv nah nai nap nau nav
+    nbl nde ndo nds nep new nia nic niu nno nob nog non nor nqo nso nub nwc nya
+    nym nyn nyo nzi oci oji ori orm osa oss ota oto paa pag pal pam pan pap pau
+    peo per phi phn pli pol pon por pra pro pus que raj rap rar roa roh rom rum
+    run rup rus sad sag sah sai sal sam san sas sat scn sco sel sem sga sgn shn
+    sid sin sio sit sla slo slv sma sme smi smj smn smo sms sna snd snk sog som
+    son sot spa srd srn srp srr ssa ssw suk sun sus sux swa swe syc syr tah tai
+    tam tat tel tem ter tet tgk tgl tha tib tig tir tiv tkl tlh tli tmh tog ton
+    tpi tsi tsn tso tuk tum tup tur tut tvl twi tyv udm uga uig ukr umb und urd
+    uzb vai ven vie vol vot wak wal war was wel wen wln wol xal yao yap yid yor
+    ypk zap zbl zen zgh zha znd zul zun zxx
+    """.split()
+)
+
 
 def normalize_language_code(value):
     """Return Dispatcharr's English ISO-639-2/B language code."""
@@ -69,6 +104,31 @@ def normalize_language_list(value):
             if normalized
         )
     )
+
+
+def invalid_language_codes(value):
+    """Return normalized values which are not ISO-639-2/B codes."""
+    return [
+        code
+        for code in normalize_language_list(value)
+        if code not in ISO_639_2B_CODES
+    ]
+
+
+def validate_source_metadata(metadata):
+    """Normalize source metadata and reject invalid language identifiers."""
+    normalized = normalize_source_metadata(metadata)
+    invalid = {}
+    for field in ("audio_languages", "subtitle_languages", "languages"):
+        bad = invalid_language_codes(normalized.get(field, []))
+        if bad:
+            invalid[field] = bad
+    if invalid:
+        details = "; ".join(
+            f"{field}: {', '.join(values)}" for field, values in invalid.items()
+        )
+        raise ValueError(f"Use ISO-639-2/B language codes ({details})")
+    return normalized
 
 
 def normalize_source_metadata(metadata):
@@ -155,11 +215,15 @@ def ensure_source_assets(relations):
 
 
 def category_defaults_for_relation(relation):
-    if not relation.category_id:
+    category_id = getattr(relation, "category_id", None)
+    if category_id is None:
+        series_relation = getattr(relation, "series_relation", None)
+        category_id = getattr(series_relation, "category_id", None)
+    if not category_id:
         return {}
     category_relation = M3UVODCategoryRelation.objects.filter(
         m3u_account=relation.m3u_account,
-        category_id=relation.category_id,
+        category_id=category_id,
     ).only("metadata_defaults").first()
     return category_relation.metadata_defaults if category_relation else {}
 

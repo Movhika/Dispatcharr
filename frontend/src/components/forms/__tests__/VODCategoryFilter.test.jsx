@@ -13,8 +13,8 @@ vi.mock('../../../utils/notificationUtils', () => ({
 }));
 
 vi.mock('@mantine/core', () => ({
-  Button: ({ children, onClick, disabled }) => (
-    <button onClick={onClick} disabled={disabled}>
+  Button: ({ children, onClick, disabled, ...props }) => (
+    <button onClick={onClick} disabled={disabled} {...props}>
       {children}
     </button>
   ),
@@ -34,6 +34,20 @@ vi.mock('@mantine/core', () => ({
   ),
   Flex: ({ children }) => <div>{children}</div>,
   Group: ({ children }) => <div>{children}</div>,
+  Switch: ({ label, checked, onChange }) => (
+    <label>
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={checked ?? false}
+        onChange={(event) =>
+          onChange?.({ currentTarget: { checked: event.target.checked } })
+        }
+      />
+      {label}
+    </label>
+  ),
+  Tooltip: ({ children }) => <>{children}</>,
   Modal: ({ opened, children, title }) =>
     opened ? (
       <div role="dialog" aria-label={title}>
@@ -54,12 +68,13 @@ vi.mock('@mantine/core', () => ({
       ))}
     </div>
   ),
-  Select: ({ label, value, onChange, data = [] }) => (
+  Select: ({ label, value, onChange, data = [], disabled }) => (
     <label>
       {label}
       <select
         aria-label={label}
         value={value || ''}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
         <option value="" />
@@ -145,6 +160,7 @@ const categories = {
 const Wrapper = ({ initialAutoEnable = true }) => {
   const [categoryStates, setCategoryStates] = useState([]);
   const [autoEnable, setAutoEnable] = useState(initialAutoEnable);
+  const [useRules, setUseRules] = useState(true);
 
   return (
     <VODCategoryFilter
@@ -154,6 +170,8 @@ const Wrapper = ({ initialAutoEnable = true }) => {
       type="movie"
       autoEnableNewGroups={autoEnable}
       setAutoEnableNewGroups={setAutoEnable}
+      useGroupRules={useRules}
+      setUseGroupRules={setUseRules}
     />
   );
 };
@@ -173,7 +191,7 @@ describe('VODCategoryFilter', () => {
     expect(screen.getByText('Action')).toBeInTheDocument();
     expect(screen.getByText('Comedy')).toBeInTheDocument();
     expect(screen.queryByText('News')).not.toBeInTheDocument();
-    expect(screen.getByText('Default audio')).toBeInTheDocument();
+    expect(screen.getByText('DUB')).toBeInTheDocument();
     expect(screen.getByText('ger')).toBeInTheDocument();
   });
 
@@ -197,9 +215,15 @@ describe('VODCategoryFilter', () => {
   it('updates a single category through its enabled checkbox', () => {
     render(<Wrapper />);
 
-    expect(screen.getByLabelText('Enable Comedy')).not.toBeChecked();
+    expect(screen.getByLabelText('Enable Comedy')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
     fireEvent.click(screen.getByLabelText('Enable Comedy'));
-    expect(screen.getByLabelText('Enable Comedy')).toBeChecked();
+    expect(screen.getByLabelText('Enable Comedy')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   it('selects visible rows and applies bulk enable/disable changes', () => {
@@ -207,14 +231,32 @@ describe('VODCategoryFilter', () => {
 
     fireEvent.click(screen.getByLabelText('Select visible categories'));
     fireEvent.click(screen.getByText('Disable selected'));
-    expect(screen.getByLabelText('Enable Action')).not.toBeChecked();
-    expect(screen.getByLabelText('Enable Comedy')).not.toBeChecked();
-    expect(screen.getByLabelText('Enable Drama')).not.toBeChecked();
+    expect(screen.getByLabelText('Enable Action')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(screen.getByLabelText('Enable Comedy')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(screen.getByLabelText('Enable Drama')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
 
     fireEvent.click(screen.getByText('Enable selected'));
-    expect(screen.getByLabelText('Enable Action')).toBeChecked();
-    expect(screen.getByLabelText('Enable Comedy')).toBeChecked();
-    expect(screen.getByLabelText('Enable Drama')).toBeChecked();
+    expect(screen.getByLabelText('Enable Action')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByLabelText('Enable Comedy')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByLabelText('Enable Drama')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   it('bulk edits category metadata with one API request', async () => {
@@ -223,13 +265,15 @@ describe('VODCategoryFilter', () => {
     fireEvent.click(screen.getByLabelText('Select Action'));
     fireEvent.click(screen.getByLabelText('Select Comedy'));
     fireEvent.click(screen.getByText('Edit metadata (2)'));
-    fireEvent.change(screen.getByLabelText('Audio languages'), {
+    const setButtons = screen.getAllByTestId('segment-set');
+    setButtons.forEach((button) => fireEvent.click(button));
+    fireEvent.change(screen.getByLabelText('DUB'), {
       target: { value: 'ger,eng' },
     });
-    fireEvent.change(screen.getByLabelText('Subtitle languages'), {
+    fireEvent.change(screen.getByLabelText('SUB'), {
       target: { value: 'ger' },
     });
-    fireEvent.change(screen.getByLabelText('Expected maximum resolution'), {
+    fireEvent.change(screen.getByLabelText('Resolution'), {
       target: { value: '1080p' },
     });
     fireEvent.click(screen.getByText('Apply to selected'));
@@ -250,7 +294,7 @@ describe('VODCategoryFilter', () => {
     render(<Wrapper initialAutoEnable={false} />);
 
     const checkbox = screen.getByLabelText(
-      /automatically enable new movie categories/i
+      /enable unmatched new movie categories/i
     );
     expect(checkbox).not.toBeChecked();
     fireEvent.click(checkbox);

@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useCallback,
-} from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import usePlaylistsStore from '../../store/playlists';
 import M3UForm from '../forms/M3U';
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
@@ -66,14 +60,19 @@ const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
 const StatusRow = ({ label, value }) => (
   <Flex justify="space-between" align="center">
-    <Text size="xs" fw={500}>{label}{value ? ':' : ''}</Text>
+    <Text size="xs" fw={500}>
+      {label}
+      {value ? ':' : ''}
+    </Text>
     {value && <Text size="xs">{value}</Text>}
   </Flex>
 );
 
 const StatusBox = ({ children }) => (
   <Box>
-    <Flex direction="column" gap={2}>{children}</Flex>
+    <Flex direction="column" gap={2}>
+      {children}
+    </Flex>
   </Box>
 );
 
@@ -119,7 +118,6 @@ const RowActions = ({
     </>
   );
 };
-
 
 const M3UTable = () => {
   const [playlist, setPlaylist] = useState(null);
@@ -180,7 +178,9 @@ const M3UTable = () => {
     switch (content.type) {
       case 'initializing':
         return (
-          <StatusBox><StatusRow label="Initializing refresh..." /></StatusBox>
+          <StatusBox>
+            <StatusRow label="Initializing refresh..." />
+          </StatusBox>
         );
       case 'downloading':
         return (
@@ -193,24 +193,57 @@ const M3UTable = () => {
       case 'groups':
         return (
           <StatusBox>
-            <StatusRow label="Processing groups" value={`${content.progress}%`} />
-            {content.elapsedTime && <StatusRow label="Elapsed" value={content.elapsedTime} />}
-            {content.groupsProcessed && <StatusRow label="Groups" value={content.groupsProcessed} />}
+            <StatusRow
+              label="Processing groups"
+              value={`${content.progress}%`}
+            />
+            {content.elapsedTime && (
+              <StatusRow label="Elapsed" value={content.elapsedTime} />
+            )}
+            {content.groupsProcessed && (
+              <StatusRow label="Groups" value={content.groupsProcessed} />
+            )}
           </StatusBox>
         );
       case 'parsing':
         return (
           <StatusBox>
             <StatusRow label="Parsing" value={`${content.progress}%`} />
-            {content.elapsedTime && <StatusRow label="Elapsed" value={content.elapsedTime} />}
-            {content.timeRemaining && <StatusRow label="Remaining" value={content.timeRemaining} />}
-            {content.streamsProcessed && <StatusRow label="Streams" value={content.streamsProcessed} />}
+            {content.elapsedTime && (
+              <StatusRow label="Elapsed" value={content.elapsedTime} />
+            )}
+            {content.timeRemaining && (
+              <StatusRow label="Remaining" value={content.timeRemaining} />
+            )}
+            {content.streamsProcessed && (
+              <StatusRow label="Streams" value={content.streamsProcessed} />
+            )}
+          </StatusBox>
+        );
+      case 'vod':
+        return (
+          <StatusBox>
+            <StatusRow label={content.phase} value={`${content.progress}%`} />
+            {content.elapsedTime && (
+              <StatusRow label="Elapsed" value={content.elapsedTime} />
+            )}
+            {content.timeRemaining && (
+              <StatusRow label="Remaining" value={content.timeRemaining} />
+            )}
+            {content.itemsTotal != null && (
+              <StatusRow
+                label="Items"
+                value={`${content.itemsProcessed || 0} / ${content.itemsTotal}`}
+              />
+            )}
           </StatusBox>
         );
       case 'error':
         return (
           <StatusBox>
-            <Text size="xs" fw={500} color="red">Error:</Text>
+            <Text size="xs" fw={500} color="red">
+              Error:
+            </Text>
             <Text size="xs" color="red" style={{ lineHeight: 1.3 }}>
               {content.error || 'Unknown error occurred'}
             </Text>
@@ -532,10 +565,18 @@ const M3UTable = () => {
 
           const now = getNow();
           const daysLeft = diff(earliest, now, 'day');
-          const { color, label } = getExpirationInfo(daysLeft, earliest, fullDateFormat);
+          const { color, label } = getExpirationInfo(
+            daysLeft,
+            earliest,
+            fullDateFormat
+          );
 
           const allExpirations = data.all_expirations || [];
-          const tooltipContent = getExpirationTooltip(allExpirations, fullDateTimeFormat, label);
+          const tooltipContent = getExpirationTooltip(
+            allExpirations,
+            fullDateTimeFormat,
+            label
+          );
 
           return (
             <Tooltip
@@ -635,8 +676,10 @@ const M3UTable = () => {
     }
   }, [editPlaylistId, processedData, playlists, setEditPlaylistId]);
 
-  const onSortingChange = makeSortingChangeHandler(sorting, setSorting, (col, desc) =>
-    setData(getSortedPlaylists(playlists, col, desc))
+  const onSortingChange = makeSortingChangeHandler(
+    sorting,
+    setSorting,
+    (col, desc) => setData(getSortedPlaylists(playlists, col, desc))
   );
 
   const renderHeaderCell = makeHeaderCellRenderer(sorting, onSortingChange);
@@ -709,7 +752,7 @@ const M3UTable = () => {
       className: `table-size-${tableSize}`,
     },
     // Add custom cell styles to match CustomTable's sizing
-    tableCellProps: ({ cell }) => {
+    tableCellProps: () => {
       return {
         fontSize:
           tableSize === 'compact'
@@ -729,7 +772,12 @@ const M3UTable = () => {
 
   return (
     <Box
-      style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        height: '100%',
+      }}
     >
       <Flex
         style={{

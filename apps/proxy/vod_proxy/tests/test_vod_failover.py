@@ -38,6 +38,7 @@ from apps.proxy.vod_proxy.multi_worker_connection_manager import (
 )
 
 from apps.proxy.vod_proxy.views import (
+    _build_vod_source_metadata_best_effort,
     _category_scoped_candidates,
     _order_candidates,
     stream_vod,
@@ -111,6 +112,29 @@ class TestOrderCandidates(TestCase):
         result = _order_candidates(candidates, preferred_relation=None)
 
         self.assertEqual([r.id for r in result], [1, 2])
+
+
+class TestPlaybackMetadataIsolation(SimpleTestCase):
+    @patch(
+        'apps.proxy.vod_proxy.views._build_vod_source_metadata',
+        side_effect=RuntimeError('optional metadata failed'),
+    )
+    def test_optional_metadata_failure_does_not_abort_selection(self, _metadata):
+        relation = MagicMock()
+        relation.id = 7
+        relation.m3u_account_id = 3
+        relation.stream_id = '42'
+        relation.m3u_account.name = 'Provider'
+        relation.category.id = 9
+        relation.category.name = 'Movies'
+
+        result = _build_vod_source_metadata_best_effort(
+            'movie', MagicMock(), relation
+        )
+
+        self.assertEqual(result['relation_id'], 7)
+        self.assertEqual(result['label'], 'Provider — Movies')
+        self.assertEqual(result['technical_metadata'], {})
 
 
 class TestCategoryScopedCandidates(TestCase):

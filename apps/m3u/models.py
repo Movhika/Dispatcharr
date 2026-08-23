@@ -257,6 +257,12 @@ class M3UGroupRule(models.Model):
         help_text="Used only when matching contained item names.",
     )
     regex_pattern = models.CharField(max_length=500)
+    exclude_regex_pattern = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Optional regular expression which vetoes an otherwise matching rule.",
+    )
     action = models.CharField(
         max_length=10,
         choices=Action.choices,
@@ -264,6 +270,11 @@ class M3UGroupRule(models.Model):
     )
     case_sensitive = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
+    metadata_defaults = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Initial VOD DUB/SUB/resolution assumptions for newly discovered categories.",
+    )
     order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -278,10 +289,17 @@ class M3UGroupRule(models.Model):
         ]
 
     def clean(self):
-        try:
-            re.compile(self.regex_pattern)
-        except re.error as exc:
-            raise ValidationError({"regex_pattern": f"Invalid regex: {exc}"})
+        errors = {}
+        for field in ("regex_pattern", "exclude_regex_pattern"):
+            pattern = getattr(self, field)
+            if not pattern:
+                continue
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                errors[field] = f"Invalid regex: {exc}"
+        if errors:
+            raise ValidationError(errors)
 
     def __str__(self):
         return (

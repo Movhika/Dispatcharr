@@ -7,7 +7,11 @@ from .models import (
     VODSourceAsset, VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
 )
 from apps.m3u.serializers import M3UAccountSerializer
-from .metadata import normalize_language_list, normalize_source_metadata
+from .metadata import (
+    normalize_language_list,
+    normalize_source_metadata,
+    validate_source_metadata,
+)
 
 
 class VODLogoSerializer(serializers.ModelSerializer):
@@ -412,6 +416,16 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                     {field: "Must be a list of language codes"}
                 )
             normalized[field] = normalize_language_list(languages)
+            try:
+                validate_source_metadata(
+                    {
+                        "audio_languages"
+                        if field == "required_audio_languages"
+                        else "subtitle_languages": normalized[field]
+                    }
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError({field: str(exc)})
         resolutions = normalized.get("preferred_resolutions", [])
         if not isinstance(resolutions, list):
             raise serializers.ValidationError(

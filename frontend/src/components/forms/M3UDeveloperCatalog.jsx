@@ -58,7 +58,12 @@ const M3UDeveloperCatalog = ({ accountId }) => {
     <Stack pt="md">
       <Alert icon={<Info size={16} />} color="yellow" variant="light">
         This is a read-only view of the catalog stored after the last import.
-        Stream URLs may contain credentials.
+        Stream URLs may contain credentials.{' '}
+        <code>detailed_fetched: false</code>
+        means only the provider&apos;s fast catalog row has been stored; opening
+        VOD details can fetch the optional detail response. Providers do not
+        consistently supply DUB, SUB, or resolution there. The original
+        container is retained as <code>container_extension</code>.
       </Alert>
       <Group justify="space-between" align="end">
         <SegmentedControl

@@ -12,6 +12,7 @@ class GroupRuleDecision:
     action: str
     enabled: bool
     matched_rule_id: int | None = None
+    metadata_defaults: dict | None = None
 
     @property
     def ignored(self) -> bool:
@@ -22,11 +23,22 @@ def compile_group_rules(rules: Iterable[M3UGroupRule]):
     compiled = []
     for rule in rules:
         flags = 0 if rule.case_sensitive else re.IGNORECASE
-        compiled.append((rule, re.compile(rule.regex_pattern, flags)))
+        compiled.append(
+            (
+                rule,
+                re.compile(rule.regex_pattern, flags),
+                re.compile(rule.exclude_regex_pattern, flags)
+                if rule.exclude_regex_pattern
+                else None,
+            )
+        )
     return compiled
 
 
 def account_group_rules(account, scope: str):
+    custom_properties = account.custom_properties or {}
+    if not custom_properties.get(f"use_group_rules_{scope}", True):
+        return []
     return compile_group_rules(
         account.group_rules.filter(scope=scope, enabled=True).order_by("order", "id")
     )
@@ -47,7 +59,7 @@ def evaluate_group_rules(
     """
 
     item_names = [str(name or "") for name in (item_names or [])]
-    for rule, pattern in compiled_rules:
+    for rule, pattern, exclude_pattern in compiled_rules:
         if rule.match_field == M3UGroupRule.MatchField.GROUP_NAME:
             matched = bool(pattern.search(group_name or ""))
         elif not item_names:
@@ -60,10 +72,21 @@ def evaluate_group_rules(
         if not matched:
             continue
 
+        exclude_targets = (
+            [group_name or ""]
+            if rule.match_field == M3UGroupRule.MatchField.GROUP_NAME
+            else item_names
+        )
+        if exclude_pattern and any(
+            exclude_pattern.search(target) for target in exclude_targets
+        ):
+            continue
+
         return GroupRuleDecision(
             action=rule.action,
             enabled=rule.action == M3UGroupRule.Action.ENABLE,
             matched_rule_id=rule.id,
+            metadata_defaults=(rule.metadata_defaults or {}).copy(),
         )
 
     return GroupRuleDecision(

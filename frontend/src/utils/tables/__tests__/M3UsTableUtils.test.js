@@ -439,6 +439,31 @@ describe('M3UsTableUtils', () => {
       });
     });
 
+    describe('vod_refresh', () => {
+      it('returns phase, counts, and formatted ETA', () => {
+        formatDuration.mockImplementation((value) => `duration:${value}`);
+        expect(
+          M3UsTableUtils.getStatusContent({
+            action: 'vod_refresh',
+            progress: 52,
+            phase: 'Processing series',
+            elapsed_time: 30,
+            time_remaining: 12,
+            items_processed: 1000,
+            items_total: 2500,
+          })
+        ).toEqual({
+          type: 'vod',
+          progress: 52,
+          phase: 'Processing series',
+          elapsedTime: 'duration:30',
+          timeRemaining: 'duration:12',
+          itemsProcessed: 1000,
+          itemsTotal: 2500,
+        });
+      });
+    });
+
     describe('default / error', () => {
       it('returns error type when status is error', () => {
         const result = M3UsTableUtils.getStatusContent({

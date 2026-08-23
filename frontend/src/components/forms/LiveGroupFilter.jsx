@@ -20,6 +20,7 @@ import {
   Text,
   TextInput,
   Tooltip,
+  Switch,
 } from '@mantine/core';
 import { Info, Settings as Cog } from 'lucide-react';
 import GroupConfigureModal from './GroupConfigureModal';
@@ -28,6 +29,7 @@ import useStreamProfilesStore from '../../store/streamProfiles';
 import { useChannelLogoSelection } from '../../hooks/useSmartLogos';
 import AutoSyncBasic from './AutoSyncBasic.jsx';
 import ErrorBoundary from '../ErrorBoundary.jsx';
+import M3UGroupRules from './M3UGroupRules.jsx';
 const AutoSyncAdvanced = React.lazy(() => import('./AutoSyncAdvanced.jsx'));
 const LogoForm = React.lazy(() => import('./Logo.jsx'));
 import {
@@ -56,6 +58,8 @@ const LiveGroupFilter = ({
   setGroupStates,
   autoEnableNewGroupsLive,
   setAutoEnableNewGroupsLive,
+  useGroupRules,
+  setUseGroupRules,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const streamProfiles = useStreamProfilesStore((s) => s.profiles);
@@ -66,6 +70,7 @@ const LiveGroupFilter = ({
   const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
   const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
   const [epgSources, setEpgSources] = useState([]);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   const {
     logos: channelLogos,
@@ -565,15 +570,31 @@ const LiveGroupFilter = ({
 
   return (
     <Stack style={{ paddingTop: 10 }}>
-      <Checkbox
-        label="Automatically enable new groups discovered on future scans"
-        checked={autoEnableNewGroupsLive}
-        onChange={(event) =>
-          setAutoEnableNewGroupsLive(event.currentTarget.checked)
-        }
-        size="sm"
-        description="Discovery rules in the account Filters dialog can override this default for matching new groups."
-      />
+      <Group justify="space-between" align="center">
+        <Group>
+          <Switch
+            label="Use discovery rules"
+            checked={useGroupRules}
+            onChange={(event) => setUseGroupRules(event.currentTarget.checked)}
+            size="sm"
+          />
+          <Button
+            variant="default"
+            size="xs"
+            onClick={() => setRulesOpen(true)}
+          >
+            Rules
+          </Button>
+        </Group>
+        <Switch
+          label="Automatically enable new groups discovered on future scans"
+          checked={autoEnableNewGroupsLive}
+          onChange={(event) =>
+            setAutoEnableNewGroupsLive(event.currentTarget.checked)
+          }
+          size="sm"
+        />
+      </Group>
 
       <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
@@ -683,11 +704,16 @@ const LiveGroupFilter = ({
                   </Tooltip>
                 </TableTd>
                 <TableTd>
-                  <Checkbox
+                  <Button
+                    size="compact-xs"
+                    color={group.enabled ? 'green' : 'gray'}
+                    variant={group.enabled ? 'filled' : 'light'}
                     aria-label={`Enable ${group.name}`}
-                    checked={group.enabled}
-                    onChange={() => toggleGroupEnabled(group.channel_group)}
-                  />
+                    aria-pressed={group.enabled}
+                    onClick={() => toggleGroupEnabled(group.channel_group)}
+                  >
+                    {group.enabled ? 'Active' : 'Inactive'}
+                  </Button>
                 </TableTd>
                 <TableTd>
                   <Checkbox
@@ -732,6 +758,7 @@ const LiveGroupFilter = ({
                   <Tooltip label="Configure advanced options" withArrow>
                     <ActionIcon
                       variant="subtle"
+                      disabled={!group.enabled}
                       onClick={() => {
                         configureSnapshotRef.current = {
                           ...group,
@@ -752,6 +779,16 @@ const LiveGroupFilter = ({
           </TableTbody>
         </Table>
       </div>
+
+      <Modal
+        opened={rulesOpen}
+        onClose={() => setRulesOpen(false)}
+        title="Live discovery rules"
+        size="95vw"
+        scrollAreaComponent={Modal.NativeScrollArea}
+      >
+        <M3UGroupRules accountId={playlist.id} scope="live" />
+      </Modal>
 
       {/* Per-group settings stay out of the table so large provider catalogs
           render only lightweight summaries in each row. */}

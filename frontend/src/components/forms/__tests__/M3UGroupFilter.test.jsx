@@ -76,8 +76,17 @@ vi.mock('../M3UDeveloperCatalog', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  Button: ({ children, onClick, loading, disabled, variant, color }) => (
+  Button: ({
+    children,
+    onClick,
+    loading,
+    disabled,
+    variant,
+    color,
+    'aria-label': ariaLabel,
+  }) => (
     <button
+      aria-label={ariaLabel}
       onClick={onClick}
       disabled={disabled || loading}
       data-loading={loading}

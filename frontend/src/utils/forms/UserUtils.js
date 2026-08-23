@@ -1,6 +1,7 @@
 import { NETWORK_ACCESS_OPTIONS, USER_LEVELS } from '../../constants.js';
 import { IPV4_CIDR_REGEX, IPV6_CIDR_REGEX } from '../networkUtils.js';
 import API from '../../api.js';
+import { languageCodeError, normalizeLanguageCodes } from '../languageCodes.js';
 
 const isValidNetworkEntry = (entry) =>
   entry.match(IPV4_CIDR_REGEX) ||
@@ -112,8 +113,12 @@ export const formValuesToPayload = (values, existingUser) => {
   payload.vod_policy_settings = {
     export_mode: payload.vod_export_mode || 'compact',
     hard_constraints: {
-      required_audio_languages: payload.vod_audio_languages || [],
-      required_subtitle_languages: payload.vod_subtitle_languages || [],
+      required_audio_languages: normalizeLanguageCodes(
+        payload.vod_audio_languages
+      ),
+      required_subtitle_languages: normalizeLanguageCodes(
+        payload.vod_subtitle_languages
+      ),
       preferred_resolutions: payload.vod_preferred_resolutions || [],
       min_height: payload.vod_min_height || 0,
       max_height: payload.vod_max_height || 0,
@@ -186,5 +191,9 @@ export const getFormValidators = (user) => {
     allowed_ips: (values.allowed_ips || []).some((t) => !isValidNetworkEntry(t))
       ? 'Invalid IP address or CIDR range'
       : null,
+    vod_audio_languages: languageCodeError(values.vod_audio_languages || []),
+    vod_subtitle_languages: languageCodeError(
+      values.vod_subtitle_languages || []
+    ),
   });
 };

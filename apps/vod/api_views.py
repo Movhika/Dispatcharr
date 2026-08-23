@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Q
 import django_filters
@@ -50,6 +51,15 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 
+def _validated_source_metadata(value):
+    from .metadata import validate_source_metadata
+
+    try:
+        return validate_source_metadata(value)
+    except ValueError as exc:
+        raise DRFValidationError({"metadata": str(exc)})
+
+
 def _is_admin(user):
     return bool(user and getattr(user, "user_level", 0) >= 10)
 
@@ -60,6 +70,7 @@ def _filtered_vod_content(filters):
     content_type = filters.get("type") or "all"
     search = str(filters.get("search") or "").strip()
     category = str(filters.get("category") or "").strip()
+    m3u_account = str(filters.get("m3u_account") or "").strip()
 
     movies = Movie.objects.filter(
         m3u_relations__m3u_account__is_active=True
@@ -71,6 +82,10 @@ def _filtered_vod_content(filters):
         series = series.none()
     elif content_type == "series":
         movies = movies.none()
+
+    if m3u_account.isdigit():
+        movies = movies.filter(m3u_relations__m3u_account_id=int(m3u_account))
+        series = series.filter(m3u_relations__m3u_account_id=int(m3u_account))
 
     if search:
         # The unified "All" endpoint currently searches names only, while
@@ -142,9 +157,7 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "metadata must be an object and locked_fields a list"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from .metadata import normalize_source_metadata
-
-        asset.manual_metadata = normalize_source_metadata(metadata)
+        asset.manual_metadata = _validated_source_metadata(metadata)
         asset.locked_fields = sorted({str(field) for field in locked_fields})
         asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
         return Response(self.get_serializer(asset).data)
@@ -180,9 +193,9 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "Every selection must be an object"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from .metadata import ensure_source_assets, normalize_source_metadata
+        from .metadata import ensure_source_assets
 
-        metadata = normalize_source_metadata(metadata)
+        metadata = _validated_source_metadata(metadata)
         explicit_movie_ids = {
             int(item["id"])
             for item in selections
@@ -348,12 +361,10 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         if not _is_admin(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
         relation = self.get_object()
-        from .metadata import normalize_source_metadata
-
         serializer = self.get_serializer(
             relation,
             data={
-                "metadata_defaults": normalize_source_metadata(
+                "metadata_defaults": _validated_source_metadata(
                     request.data.get("metadata_defaults", {})
                 )
             },
@@ -381,9 +392,7 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "relation_ids must contain integers"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from .metadata import normalize_source_metadata
-
-        normalized = normalize_source_metadata(metadata)
+        normalized = _validated_source_metadata(metadata)
         relations = list(self.get_queryset().filter(pk__in=relation_ids))
         updated_at = timezone.now()
         for relation in relations:
@@ -1232,6 +1241,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
             search = request.query_params.get('search', '')
             category = request.query_params.get('category', '')
+            m3u_account = request.query_params.get('m3u_account', '')
 
             # Build WHERE clauses
             where_conditions = [
@@ -1249,6 +1259,13 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 search_param = f"%{search.lower()}%"
                 movie_params.append(search_param)
                 series_params.append(search_param)
+
+            if str(m3u_account).isdigit():
+                account_id = int(m3u_account)
+                where_conditions[0] += " AND movies.id IN (SELECT movie_id FROM vod_m3umovierelation WHERE m3u_account_id = %s)"
+                where_conditions[1] += " AND series.id IN (SELECT series_id FROM vod_m3useriesrelation WHERE m3u_account_id = %s)"
+                movie_params.append(account_id)
+                series_params.append(account_id)
 
             if category:
                 if '|' in category:
