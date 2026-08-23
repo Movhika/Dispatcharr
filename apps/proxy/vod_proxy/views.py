@@ -830,7 +830,7 @@ def _transform_url(original_url, m3u_profile):
         logger.error(f"Error transforming URL: {e}")
         return original_url
 
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @authentication_classes([JWTAuthentication, ApiKeyAuthentication, QueryParamJWTAuthentication])
 @permission_classes([AllowAny])
 def stream_vod(request, content_type, content_id, session_id=None, profile_id=None, user=None):
@@ -843,6 +843,15 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
         session_id: Optional session ID from URL path (for persistent connections)
         profile_id: Optional M3U profile ID for authentication
     """
+    if request.method == "HEAD":
+        return head_vod(
+            request._request,
+            content_type,
+            content_id,
+            session_id,
+            profile_id,
+            user,
+        )
     if not network_access_allowed(request, "STREAMS"):
         return JsonResponse({"error": "Forbidden"}, status=403)
     if user is None and hasattr(request, "user") and request.user.is_authenticated:
@@ -1118,7 +1127,14 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
 @api_view(["HEAD"])
 @authentication_classes([JWTAuthentication, ApiKeyAuthentication, QueryParamJWTAuthentication])
 @permission_classes([AllowAny])
-def head_vod(request, content_type, content_id, session_id=None, profile_id=None):
+def head_vod(
+    request,
+    content_type,
+    content_id,
+    session_id=None,
+    profile_id=None,
+    user=None,
+):
     """
     Handle HEAD requests for FUSE filesystem integration
 
@@ -1130,7 +1146,8 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
     logger.info(f"[VOD-HEAD] HEAD request: {content_type}/{content_id}, session: {session_id}, profile: {profile_id}")
 
     try:
-        user = request.user if request.user.is_authenticated else None
+        if user is None:
+            user = request.user if request.user.is_authenticated else None
         # Get client info for M3U profile selection
         client_ip, client_user_agent = get_client_info(request)
         logger.info(f"[VOD-HEAD] Client info - IP: {client_ip}, User-Agent: {client_user_agent[:50] if client_user_agent else 'None'}...")
@@ -1689,7 +1706,7 @@ def stop_vod_client(request):
         logger.error(f"Error stopping VOD client: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
 
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def stream_xc_movie(request, username, password, stream_id, extension):
     if not network_access_allowed(request, "STREAMS"):
@@ -1730,7 +1747,8 @@ def stream_xc_movie(request, username, password, stream_id, extension):
     raw_request.GET = raw_request.GET.copy()
     raw_request.GET['m3u_account_id'] = str(movie_relation.m3u_account_id)
     raw_request.GET['stream_id'] = str(movie_relation.stream_id)
-    return stream_vod(
+    handler = head_vod if request.method == "HEAD" else stream_vod
+    return handler(
         raw_request,
         'movie',
         movie_relation.movie.uuid,
@@ -1739,7 +1757,7 @@ def stream_xc_movie(request, username, password, stream_id, extension):
         user,
     )
 
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def stream_xc_episode(request, username, password, stream_id, extension):
     if not network_access_allowed(request, "STREAMS"):
@@ -1780,7 +1798,8 @@ def stream_xc_episode(request, username, password, stream_id, extension):
     raw_request.GET = raw_request.GET.copy()
     raw_request.GET['m3u_account_id'] = str(episode_relation.m3u_account_id)
     raw_request.GET['stream_id'] = str(episode_relation.stream_id)
-    return stream_vod(
+    handler = head_vod if request.method == "HEAD" else stream_vod
+    return handler(
         raw_request,
         'episode',
         episode_relation.episode.uuid,

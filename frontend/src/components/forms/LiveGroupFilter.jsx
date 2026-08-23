@@ -1,13 +1,14 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
-  Alert,
   Button,
   Checkbox,
   Divider,
   Flex,
   Group,
   Loader,
+  Modal,
+  Select,
   SegmentedControl,
   Stack,
   Table,
@@ -25,7 +26,6 @@ import GroupConfigureModal from './GroupConfigureModal';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
 import { useChannelLogoSelection } from '../../hooks/useSmartLogos';
-import OrphanCleanupControl from './AutoSyncOrphanCleanup.jsx';
 import AutoSyncBasic from './AutoSyncBasic.jsx';
 import ErrorBoundary from '../ErrorBoundary.jsx';
 const AutoSyncAdvanced = React.lazy(() => import('./AutoSyncAdvanced.jsx'));
@@ -43,6 +43,13 @@ import {
   rangeFor,
 } from '../../utils/forms/LiveGroupFilterUtils.js';
 
+const EMPTY_BULK_SETTINGS = {
+  enabled: 'keep',
+  autoSync: 'keep',
+  numberingMode: 'keep',
+  orphanCleanup: 'keep',
+};
+
 const LiveGroupFilter = ({
   playlist,
   groupStates,
@@ -56,6 +63,8 @@ const LiveGroupFilter = ({
   const [groupFilter, setGroupFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedGroupIds, setSelectedGroupIds] = useState(new Set());
+  const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
   const [epgSources, setEpgSources] = useState([]);
 
   const {
@@ -186,59 +195,44 @@ const LiveGroupFilter = ({
     };
   }, []);
 
-  // Sweep effect: recomputes form-overlap in-memory for every group
-  // (cheap). The HTTP-bound DB scan only runs for groups whose own
-  // range fields changed since the last sweep.
+  // Conflict checks are only needed while one group's settings are open.
+  // Avoiding one request/timer per row keeps large Live catalogs responsive.
   useEffect(() => {
+    if (!configuringGroup) return;
     const ranges = new Map();
     for (const g of groupStates) {
       const r = rangeFor(g);
       if (r) ranges.set(g.channel_group, r);
     }
-
-    for (const g of groupStates) {
-      const range = ranges.get(g.channel_group);
-      if (!range) {
-        // Group out of scope (disabled, mode flipped, or start blanked).
-        // Abort any in-flight scan so its late response cannot stamp a
-        // stale 'occupant' value onto the cleared state.
-        if (conflictTimersRef.current[g.channel_group]) {
-          clearTimeout(conflictTimersRef.current[g.channel_group]);
-          delete conflictTimersRef.current[g.channel_group];
-        }
-        if (conflictAbortRef.current[g.channel_group]) {
-          conflictAbortRef.current[g.channel_group].abort();
-          delete conflictAbortRef.current[g.channel_group];
-        }
-        setConflictSource(g.channel_group, 'form', false);
-        setConflictSource(g.channel_group, 'occupant', false);
-        delete lastConflictSigRef.current[g.channel_group];
-        continue;
-      }
-
-      let hasFormConflict = false;
-      for (const [otherId, otherRange] of ranges) {
-        if (otherId === g.channel_group) continue;
-        if (range.start <= otherRange.end && otherRange.start <= range.end) {
-          hasFormConflict = true;
-          break;
-        }
-      }
-      setConflictSource(g.channel_group, 'form', hasFormConflict);
-
-      const sig = `${range.start}|${range.end}`;
-      if (lastConflictSigRef.current[g.channel_group] !== sig) {
-        lastConflictSigRef.current[g.channel_group] = sig;
-        scheduleConflictScan(
-          g.channel_group,
-          range.startRaw,
-          g.auto_sync_channel_end,
-          effectiveSyncGroupId(g)
-        );
+    const groupId = configuringGroup.channel_group;
+    const range = ranges.get(groupId);
+    if (!range) {
+      setConflictSource(groupId, 'form', false);
+      setConflictSource(groupId, 'occupant', false);
+      delete lastConflictSigRef.current[groupId];
+      return;
+    }
+    let hasFormConflict = false;
+    for (const [otherId, otherRange] of ranges) {
+      if (otherId === groupId) continue;
+      if (range.start <= otherRange.end && otherRange.start <= range.end) {
+        hasFormConflict = true;
+        break;
       }
     }
+    setConflictSource(groupId, 'form', hasFormConflict);
+    const sig = `${range.start}|${range.end}`;
+    if (lastConflictSigRef.current[groupId] !== sig) {
+      lastConflictSigRef.current[groupId] = sig;
+      scheduleConflictScan(
+        groupId,
+        range.startRaw,
+        configuringGroup.auto_sync_channel_end,
+        effectiveSyncGroupId(configuringGroup)
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupStates]);
+  }, [groupStates, configuringGroupId]);
 
   // Debounced regex preview fetcher. Each call computes a cache key from
   // the group + pattern args; identical arg sets reuse the cached result
@@ -510,6 +504,37 @@ const LiveGroupFilter = ({
     );
   };
 
+  const applyBulkSettings = () => {
+    setGroupStates((current) =>
+      current.map((group) => {
+        if (!selectedGroupIds.has(group.channel_group)) return group;
+        const next = { ...group };
+        if (bulkSettings.enabled !== 'keep') {
+          next.enabled = bulkSettings.enabled === 'enabled';
+        }
+        if (bulkSettings.autoSync !== 'keep') {
+          next.auto_channel_sync = bulkSettings.autoSync === 'enabled';
+        }
+        const customProperties = { ...(group.custom_properties || {}) };
+        if (bulkSettings.numberingMode !== 'keep') {
+          customProperties.channel_numbering_mode = bulkSettings.numberingMode;
+        }
+        if (bulkSettings.orphanCleanup !== 'keep') {
+          customProperties.orphan_channel_cleanup = bulkSettings.orphanCleanup;
+        }
+        next.custom_properties = customProperties;
+        return next;
+      })
+    );
+    setBulkEditorOpen(false);
+    setBulkSettings(EMPTY_BULK_SETTINGS);
+  };
+
+  const closeBulkEditor = () => {
+    setBulkEditorOpen(false);
+    setBulkSettings(EMPTY_BULK_SETTINGS);
+  };
+
   const toggleSelectedGroup = (id, checked) => {
     setSelectedGroupIds((current) => {
       const next = new Set(current);
@@ -540,15 +565,6 @@ const LiveGroupFilter = ({
 
   return (
     <Stack style={{ paddingTop: 10 }}>
-      <Alert icon={<Info size={16} />} color="blue" variant="light">
-        <Text size="sm">
-          <strong>Auto Channel Sync:</strong> When enabled, channels will be
-          automatically created for all streams in the group during M3U updates,
-          and removed when streams are no longer present. Set a starting channel
-          number for each group to organize your channels.
-        </Text>
-      </Alert>
-
       <Checkbox
         label="Automatically enable new groups discovered on future scans"
         checked={autoEnableNewGroupsLive}
@@ -559,9 +575,7 @@ const LiveGroupFilter = ({
         description="Discovery rules in the account Filters dialog can override this default for matching new groups."
       />
 
-      <OrphanCleanupControl playlist={playlist} />
-
-      <Flex gap="sm" align="center">
+      <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
           placeholder="Filter groups..."
           value={groupFilter}
@@ -599,18 +613,19 @@ const LiveGroupFilter = ({
           variant="default"
           size="xs"
           disabled={!selectedGroupIds.size}
-          onClick={() =>
-            updateSelectedGroups({ enabled: true, auto_channel_sync: true })
-          }
+          onClick={() => {
+            setBulkSettings(EMPTY_BULK_SETTINGS);
+            setBulkEditorOpen(true);
+          }}
         >
-          Enable auto sync
+          Edit settings ({selectedGroupIds.size})
         </Button>
       </Flex>
 
       <Divider label="Groups & Auto Sync Settings" labelPosition="center" />
 
-      <div style={{ maxHeight: 'calc(50vh - 80px)', overflow: 'auto' }}>
-        <Table striped highlightOnHover withTableBorder stickyHeader miw={1050}>
+      <div style={{ maxHeight: 'calc(50vh - 80px)', overflowY: 'auto' }}>
+        <Table striped highlightOnHover withTableBorder stickyHeader>
           <TableThead>
             <TableTr>
               <TableTh w={44}>
@@ -624,9 +639,21 @@ const LiveGroupFilter = ({
               </TableTh>
               <TableTh>Group</TableTh>
               <TableTh w={100}>Enabled</TableTh>
-              <TableTh w={130}>Auto sync</TableTh>
-              <TableTh w={300}>Numbering mode</TableTh>
-              <TableTh w={330}>Channel range</TableTh>
+              <TableTh w={105}>
+                <Group gap={5} wrap="nowrap">
+                  Auto sync
+                  <Tooltip
+                    label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
+                    multiline
+                    w={300}
+                    withArrow
+                  >
+                    <Info size={14} aria-label="About Auto sync" />
+                  </Tooltip>
+                </Group>
+              </TableTh>
+              <TableTh w={120}>Numbering</TableTh>
+              <TableTh w={150}>Channel range</TableTh>
               <TableTh w={70}>Setup</TableTh>
             </TableTr>
           </TableThead>
@@ -671,43 +698,30 @@ const LiveGroupFilter = ({
                   />
                 </TableTd>
                 <TableTd>
-                  <SegmentedControl
-                    value={
+                  <Text size="sm">
+                    {{
+                      fixed: 'Fixed',
+                      provider: 'Provider',
+                      next_available: 'Next available',
+                    }[
                       group.custom_properties?.channel_numbering_mode || 'fixed'
-                    }
-                    disabled={!group.enabled || !group.auto_channel_sync}
-                    onChange={(value) =>
-                      setGroupStates((current) =>
-                        current.map((item) =>
-                          item.channel_group === group.channel_group
-                            ? {
-                                ...item,
-                                custom_properties: {
-                                  ...item.custom_properties,
-                                  channel_numbering_mode: value || 'fixed',
-                                },
-                              }
-                            : item
-                        )
-                      )
-                    }
-                    data={[
-                      { value: 'fixed', label: 'Fixed' },
-                      { value: 'provider', label: 'Provider' },
-                      { value: 'next_available', label: 'Next' },
-                    ]}
-                    size="xs"
-                    fullWidth
-                  />
+                    ] || 'Fixed'}
+                  </Text>
                 </TableTd>
                 <TableTd>
                   {group.auto_channel_sync && group.enabled ? (
-                    <AutoSyncBasic
-                      group={group}
-                      groupStates={groupStates}
-                      groupConflicts={groupConflicts}
-                      onApplyGroupChange={applyGroupChange}
-                    />
+                    <Text size="sm">
+                      {(group.custom_properties?.channel_numbering_mode ||
+                        'fixed') === 'next_available'
+                        ? 'From 1'
+                        : `${
+                            (group.custom_properties?.channel_numbering_mode ||
+                              'fixed') === 'provider'
+                              ? group.custom_properties
+                                  ?.channel_numbering_fallback || 1
+                              : group.auto_sync_channel_start || 1
+                          } – ${group.auto_sync_channel_end || 'unlimited'}`}
+                    </Text>
                   ) : (
                     <Text size="xs" c="dimmed">
                       Auto sync disabled
@@ -718,7 +732,6 @@ const LiveGroupFilter = ({
                   <Tooltip label="Configure advanced options" withArrow>
                     <ActionIcon
                       variant="subtle"
-                      disabled={!group.auto_channel_sync || !group.enabled}
                       onClick={() => {
                         configureSnapshotRef.current = {
                           ...group,
@@ -740,10 +753,8 @@ const LiveGroupFilter = ({
         </Table>
       </div>
 
-      {/* Per-group Configure modal. Holds the Advanced Options MultiSelect
-          and all its conditional fields so the inline row only renders the
-          core Sync toggle, Numbering Mode, and Start/End inputs regardless
-          of how many advanced options are active. */}
+      {/* Per-group settings stay out of the table so large provider catalogs
+          render only lightweight summaries in each row. */}
       <GroupConfigureModal
         opened={!!configuringGroup}
         onDone={() => {
@@ -763,29 +774,173 @@ const LiveGroupFilter = ({
         group={configuringGroup}
       >
         {configuringGroup && (
-          <ErrorBoundary>
-            <Suspense fallback={<Loader />}>
-              <AutoSyncAdvanced
+          <>
+            <Checkbox
+              label="Auto sync"
+              description="Create and maintain channels for streams in this group."
+              checked={!!configuringGroup.auto_channel_sync}
+              disabled={!configuringGroup.enabled}
+              onChange={() => toggleAutoSync(configuringGroup.channel_group)}
+            />
+            <SegmentedControl
+              value={
+                configuringGroup.custom_properties?.channel_numbering_mode ||
+                'fixed'
+              }
+              disabled={
+                !configuringGroup.enabled || !configuringGroup.auto_channel_sync
+              }
+              onChange={(value) =>
+                applyGroupChange({
+                  ...configuringGroup,
+                  custom_properties: {
+                    ...(configuringGroup.custom_properties || {}),
+                    channel_numbering_mode: value || 'fixed',
+                  },
+                })
+              }
+              data={[
+                { value: 'fixed', label: 'Fixed' },
+                { value: 'provider', label: 'Provider' },
+                { value: 'next_available', label: 'Next available' },
+              ]}
+              size="xs"
+              fullWidth
+            />
+            {configuringGroup.enabled && configuringGroup.auto_channel_sync && (
+              <AutoSyncBasic
                 group={configuringGroup}
-                epgSources={epgSources}
-                channelGroups={channelGroups}
-                streamProfiles={streamProfiles}
-                regexPreviewState={regexPreviewState}
+                groupStates={groupStates}
+                groupConflicts={groupConflicts}
                 onApplyGroupChange={applyGroupChange}
-                onScheduleRegexPreview={scheduleRegexPreview}
-                onOpenLogoUpload={(groupId) => {
-                  setCurrentEditingGroupId(groupId);
-                  setLogoModalOpen(true);
-                }}
-                channelLogos={channelLogos}
-                playlist={playlist}
-                logosLoading={logosLoading}
-                ensureLogosLoaded={ensureLogosLoaded}
               />
-            </Suspense>
-          </ErrorBoundary>
+            )}
+            <Select
+              label="Auto-sync orphan cleanup"
+              description="What to do with this group's auto-created channels when their source stream disappears."
+              value={
+                configuringGroup.custom_properties?.orphan_channel_cleanup ||
+                'always'
+              }
+              onChange={(value) =>
+                applyGroupChange({
+                  ...configuringGroup,
+                  custom_properties: {
+                    ...(configuringGroup.custom_properties || {}),
+                    orphan_channel_cleanup: value || 'always',
+                  },
+                })
+              }
+              data={[
+                { value: 'always', label: 'Always remove' },
+                {
+                  value: 'preserve_customized',
+                  label: 'Preserve customized',
+                },
+                { value: 'never', label: 'Never remove' },
+              ]}
+            />
+            <ErrorBoundary>
+              <Suspense fallback={<Loader />}>
+                <AutoSyncAdvanced
+                  group={configuringGroup}
+                  epgSources={epgSources}
+                  channelGroups={channelGroups}
+                  streamProfiles={streamProfiles}
+                  regexPreviewState={regexPreviewState}
+                  onApplyGroupChange={applyGroupChange}
+                  onScheduleRegexPreview={scheduleRegexPreview}
+                  onOpenLogoUpload={(groupId) => {
+                    setCurrentEditingGroupId(groupId);
+                    setLogoModalOpen(true);
+                  }}
+                  channelLogos={channelLogos}
+                  playlist={playlist}
+                  logosLoading={logosLoading}
+                  ensureLogosLoaded={ensureLogosLoaded}
+                />
+              </Suspense>
+            </ErrorBoundary>
+          </>
         )}
       </GroupConfigureModal>
+
+      <Modal
+        opened={bulkEditorOpen}
+        onClose={closeBulkEditor}
+        title={`Edit settings for ${selectedGroupIds.size} groups`}
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Keep unchanged leaves the current value of each group intact.
+          </Text>
+          <Select
+            label="Enabled"
+            value={bulkSettings.enabled}
+            onChange={(value) =>
+              setBulkSettings({ ...bulkSettings, enabled: value || 'keep' })
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+          />
+          <Select
+            label="Auto sync"
+            value={bulkSettings.autoSync}
+            onChange={(value) =>
+              setBulkSettings({ ...bulkSettings, autoSync: value || 'keep' })
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+          />
+          <Select
+            label="Numbering mode"
+            value={bulkSettings.numberingMode}
+            onChange={(value) =>
+              setBulkSettings({
+                ...bulkSettings,
+                numberingMode: value || 'keep',
+              })
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'fixed', label: 'Fixed' },
+              { value: 'provider', label: 'Provider' },
+              { value: 'next_available', label: 'Next available' },
+            ]}
+          />
+          <Select
+            label="Auto-sync orphan cleanup"
+            value={bulkSettings.orphanCleanup}
+            onChange={(value) =>
+              setBulkSettings({
+                ...bulkSettings,
+                orphanCleanup: value || 'keep',
+              })
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'always', label: 'Always remove' },
+              {
+                value: 'preserve_customized',
+                label: 'Preserve customized',
+              },
+              { value: 'never', label: 'Never remove' },
+            ]}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={closeBulkEditor}>
+              Cancel
+            </Button>
+            <Button onClick={applyBulkSettings}>Apply</Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {/* Logo Upload Modal */}
       {logoModalOpen && (

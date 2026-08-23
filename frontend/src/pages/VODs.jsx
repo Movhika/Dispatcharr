@@ -64,6 +64,7 @@ const VODsPage = () => {
   const [selectedSeries, setSelectedSeries] = useState(null);
   const [selectedVOD, setSelectedVOD] = useState(null);
   const [selected, setSelected] = useState(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
   const [bulkMetadata, setBulkMetadata] = useState({
     audio_languages: [],
     subtitle_languages: [],
@@ -87,7 +88,13 @@ const VODsPage = () => {
   );
   const visibleKeys = items.map(itemKey);
   const allVisibleSelected =
-    visibleKeys.length > 0 && visibleKeys.every((key) => selected.has(key));
+    visibleKeys.length > 0 &&
+    visibleKeys.every((key) =>
+      selectAllMatching ? !selected.has(key) : selected.has(key)
+    );
+  const selectedCount = selectAllMatching
+    ? Math.max(0, totalCount - selected.size)
+    : selected.size;
 
   useEffect(() => {
     const stored = localStorage.getItem('vodsPageSize');
@@ -109,23 +116,28 @@ const VODsPage = () => {
     fetchContent().finally(() => setInitialLoad(false));
   }, [filters, currentPage, pageSize, fetchContent]);
 
+  useEffect(() => {
+    // A global selection always tracks the current filtered result set.
+    // Explicit selections are cleared because their previous rows may no
+    // longer be part of the visible filter universe.
+    setSelected(new Set());
+  }, [filters.type, filters.search, filters.category]);
+
   const toggleItem = (key, checked) => {
     setSelected((current) => {
       const next = new Set(current);
-      if (checked) next.add(key);
+      if (selectAllMatching) {
+        if (checked) next.delete(key);
+        else next.add(key);
+      } else if (checked) next.add(key);
       else next.delete(key);
       return next;
     });
   };
 
-  const toggleVisible = (checked) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      visibleKeys.forEach((key) =>
-        checked ? next.add(key) : next.delete(key)
-      );
-      return next;
-    });
+  const toggleAllMatching = (checked) => {
+    setSelectAllMatching(checked);
+    setSelected(new Set());
   };
 
   const openItem = (item) => {
@@ -151,10 +163,13 @@ const VODsPage = () => {
     );
     setBulkSaving(true);
     try {
-      const result = await API.bulkUpdateVODSourceMetadata(
-        selections,
-        metadata
-      );
+      const result = selectAllMatching
+        ? await API.bulkUpdateVODSourceMetadata([], metadata, {
+            select_all: true,
+            filters,
+            exclude_selections: selections,
+          })
+        : await API.bulkUpdateVODSourceMetadata(selections, metadata);
       showNotification({
         title: 'Source metadata updated',
         message: `${result.updated_sources || 0} source editions were updated and locked.`,
@@ -162,6 +177,7 @@ const VODsPage = () => {
       });
       bulkEditorHandlers.close();
       setSelected(new Set());
+      setSelectAllMatching(false);
     } finally {
       setBulkSaving(false);
     }
@@ -180,10 +196,10 @@ const VODsPage = () => {
               <Button
                 variant="default"
                 leftSection={<Wrench size={16} />}
-                disabled={selected.size === 0}
+                disabled={selectedCount === 0}
                 onClick={bulkEditorHandlers.open}
               >
-                Edit selected ({selected.size})
+                Edit selected ({selectedCount})
               </Button>
               <Button
                 variant="default"
@@ -250,10 +266,16 @@ const VODsPage = () => {
                 {user?.user_level >= 10 && (
                   <TableTh w={44}>
                     <Checkbox
-                      aria-label="Select visible VODs"
+                      aria-label="Select all filtered VODs"
                       checked={allVisibleSelected}
+                      indeterminate={
+                        (selectAllMatching && selected.size > 0) ||
+                        (!selectAllMatching &&
+                          selected.size > 0 &&
+                          !allVisibleSelected)
+                      }
                       onChange={(event) =>
-                        toggleVisible(event.currentTarget.checked)
+                        toggleAllMatching(event.currentTarget.checked)
                       }
                     />
                   </TableTh>
@@ -273,7 +295,11 @@ const VODsPage = () => {
                     <TableTd>
                       <Checkbox
                         aria-label={`Select ${item.name}`}
-                        checked={selected.has(itemKey(item))}
+                        checked={
+                          selectAllMatching
+                            ? !selected.has(itemKey(item))
+                            : selected.has(itemKey(item))
+                        }
                         onChange={(event) =>
                           toggleItem(itemKey(item), event.currentTarget.checked)
                         }
@@ -324,12 +350,17 @@ const VODsPage = () => {
             />
           </Flex>
         )}
+        {selectAllMatching && selectedCount > 0 && (
+          <Text size="sm" c="blue" ta="center">
+            All {selectedCount} VODs matching the current filters are selected.
+          </Text>
+        )}
       </Stack>
 
       <Modal
         opened={bulkEditorOpened}
         onClose={bulkEditorHandlers.close}
-        title={`Edit metadata for ${selected.size} selected VODs`}
+        title={`Edit metadata for ${selectedCount} selected VODs`}
       >
         <Stack>
           <Text size="sm" c="dimmed">

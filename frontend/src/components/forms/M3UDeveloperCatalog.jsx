@@ -8,7 +8,6 @@ import {
   ScrollArea,
   SegmentedControl,
   Stack,
-  Switch,
   Table,
   TableTbody,
   TableTd,
@@ -22,7 +21,6 @@ import { Info, RefreshCw } from 'lucide-react';
 import API from '../../api';
 
 const M3UDeveloperCatalog = ({ accountId }) => {
-  const [enabled, setEnabled] = useState(false);
   const [scope, setScope] = useState('live');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -30,7 +28,7 @@ const M3UDeveloperCatalog = ({ accountId }) => {
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
-    if (!enabled || !accountId) return;
+    if (!accountId) return;
     setLoading(true);
     try {
       setResult(
@@ -45,32 +43,14 @@ const M3UDeveloperCatalog = ({ accountId }) => {
   };
 
   useEffect(() => {
-    if (!enabled) return;
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, accountId, scope, search, page]);
+  }, [accountId, scope, search, page]);
 
   useEffect(() => {
     setPage(1);
   }, [scope, search]);
-
-  if (!enabled) {
-    return (
-      <Stack pt="md">
-        <Alert icon={<Info size={16} />} color="yellow" variant="light">
-          Developer mode exposes parsed provider IDs, source properties and
-          complete stream URLs. URLs can contain M3U account credentials. Only
-          enable this view while diagnosing an import.
-        </Alert>
-        <Switch
-          label="Enable developer mode for this dialog"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.currentTarget.checked)}
-        />
-      </Stack>
-    );
-  }
 
   const totalPages = Math.max(1, Math.ceil((result.count || 0) / 100));
 
@@ -105,11 +85,6 @@ const M3UDeveloperCatalog = ({ accountId }) => {
         >
           Refresh
         </Button>
-        <Switch
-          label="Developer mode"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.currentTarget.checked)}
-        />
       </Group>
       <Text size="sm" c="dimmed">
         {result.count || 0} parsed entries

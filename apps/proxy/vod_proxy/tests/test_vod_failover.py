@@ -40,6 +40,7 @@ from apps.proxy.vod_proxy.multi_worker_connection_manager import (
 from apps.proxy.vod_proxy.views import (
     _category_scoped_candidates,
     _order_candidates,
+    stream_vod,
     stream_xc_episode,
     stream_xc_movie,
 )
@@ -272,3 +273,59 @@ class TestXCRelationPlayback(TestCase):
         self.assertEqual(content_uuid, episode.uuid)
         self.assertEqual(request.GET['m3u_account_id'], str(self.account.id))
         self.assertEqual(request.GET['stream_id'], 'upstream-episode-99')
+
+    @patch('apps.proxy.vod_proxy.views.head_vod')
+    @patch('apps.proxy.vod_proxy.views.network_access_allowed', return_value=True)
+    def test_movie_relation_supports_external_player_head_request(
+        self, _mock_access, mock_head_vod
+    ):
+        movie = Movie.objects.create(name='HEAD Movie')
+        relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account,
+            movie=movie,
+            stream_id='upstream-head-42',
+            container_extension='mkv',
+        )
+        mock_head_vod.return_value = HttpResponse(status=204)
+
+        response = stream_xc_movie(
+            self.factory.head('/movie/xc-variant-user/secret/1.mkv'),
+            username=self.user.username,
+            password='secret',
+            stream_id=str(relation.id),
+            extension='mkv',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        request, content_type, content_uuid = mock_head_vod.call_args.args[:3]
+        self.assertEqual(content_type, 'movie')
+        self.assertEqual(content_uuid, movie.uuid)
+        self.assertEqual(request.GET['stream_id'], 'upstream-head-42')
+
+
+class TestDirectProxyHeadPlayback(SimpleTestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+
+    @patch('apps.proxy.vod_proxy.views.head_vod')
+    def test_direct_proxy_url_delegates_head_without_losing_source_query(
+        self, mock_head_vod
+    ):
+        mock_head_vod.return_value = HttpResponse(status=204)
+        request = self.factory.head(
+            '/proxy/vod/movie/content-uuid'
+            '?stream_id=607419&m3u_account_id=50'
+        )
+
+        response = stream_vod(
+            request,
+            content_type='movie',
+            content_id='content-uuid',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        raw_request, content_type, content_id = mock_head_vod.call_args.args[:3]
+        self.assertEqual(content_type, 'movie')
+        self.assertEqual(content_id, 'content-uuid')
+        self.assertEqual(raw_request.GET['stream_id'], '607419')
+        self.assertEqual(raw_request.GET['m3u_account_id'], '50')

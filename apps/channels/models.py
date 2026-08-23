@@ -374,6 +374,14 @@ class Channel(models.Model):
         related_name="auto_created_channels",
         help_text="The M3U account that auto-created this channel"
     )
+    auto_created_from = models.ForeignKey(
+        "ChannelGroupM3UAccount",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="auto_created_channels",
+        help_text="The provider group membership that auto-created this channel",
+    )
 
     # Populated at import; rolled up via ChannelStream signal / m3u refresh.
     is_catchup = models.BooleanField(

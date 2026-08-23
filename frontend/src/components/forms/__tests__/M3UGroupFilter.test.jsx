@@ -88,6 +88,7 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Flex: ({ children }) => <div>{children}</div>,
+  Group: ({ children }) => <div>{children}</div>,
   LoadingOverlay: ({ visible }) =>
     visible ? <div data-testid="loading-overlay" /> : null,
   Modal: ({ children, opened, onClose, title }) =>
@@ -101,6 +102,17 @@ vi.mock('@mantine/core', () => ({
       </div>
     ) : null,
   Stack: ({ children }) => <div>{children}</div>,
+  Switch: ({ label, checked, onChange }) => (
+    <label>
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        onChange={onChange}
+      />
+      {label}
+    </label>
+  ),
   Tabs: ({ children, defaultValue, value }) => (
     <div data-testid="tabs" data-value={value ?? defaultValue}>
       {children}
@@ -110,8 +122,8 @@ vi.mock('@mantine/core', () => ({
   TabsPanel: ({ children, value }) => (
     <div data-testid={`tab-panel-${value}`}>{children}</div>
   ),
-  TabsTab: ({ children, value, onClick }) => (
-    <button data-testid={`tab-${value}`} onClick={onClick}>
+  TabsTab: ({ children, value, onClick, disabled }) => (
+    <button data-testid={`tab-${value}`} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   ),
@@ -202,7 +214,12 @@ describe('M3UGroupFilter', () => {
       expect(screen.getByTestId('tab-live')).toBeInTheDocument();
       expect(screen.getByTestId('tab-vod-movie')).toBeInTheDocument();
       expect(screen.getByTestId('tab-vod-series')).toBeInTheDocument();
-      expect(screen.getByTestId('tab-developer')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-raw-data')).toBeDisabled();
+      expect(
+        screen.queryByTestId('m3u-developer-catalog')
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Developer mode'));
+      expect(screen.getByTestId('tab-raw-data')).not.toBeDisabled();
       expect(screen.getByTestId('m3u-developer-catalog')).toBeInTheDocument();
     });
 

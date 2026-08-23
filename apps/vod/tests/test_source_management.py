@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
@@ -24,6 +25,7 @@ from apps.vod.policies import (
     select_relation_ids_for_policy,
     select_relations_for_policy,
 )
+from apps.vod.api_views import VODSourceAssetViewSet
 
 
 class VODSourceManagementTests(TestCase):
@@ -315,4 +317,48 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(effective["values"]["subtitle_languages"], ["ger"])
         self.assertEqual(
             effective["provenance"]["subtitle_languages"], "category"
+        )
+
+    def test_bulk_metadata_can_target_all_filtered_titles(self):
+        other_movie = Movie.objects.create(name="Unrelated title", year=2026)
+        other_relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account_a,
+            movie=other_movie,
+            category=self.german,
+            stream_id="other-43",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "select_all": True,
+                "filters": {
+                    "type": "movies",
+                    "search": "Avatar",
+                    "category": "",
+                },
+                "exclude_selections": [],
+                "metadata": {"resolution": "1080p"},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+        other_relation.refresh_from_db()
+        self.assertIsNotNone(self.german_relation.source_asset_id)
+        self.assertIsNotNone(self.english_relation.source_asset_id)
+        self.assertIsNone(other_relation.source_asset_id)
+        self.assertEqual(
+            self.german_relation.source_asset.manual_metadata["resolution"],
+            "1080p",
         )

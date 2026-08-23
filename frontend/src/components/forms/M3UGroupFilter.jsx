@@ -3,9 +3,11 @@ import React, { useEffect, useState } from 'react';
 import {
   Button,
   Flex,
+  Group,
   LoadingOverlay,
   Modal,
   Stack,
+  Switch,
   Tabs,
   TabsList,
   TabsPanel,
@@ -35,6 +37,13 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
   const [autoEnableNewGroupsVod, setAutoEnableNewGroupsVod] = useState(true);
   const [autoEnableNewGroupsSeries, setAutoEnableNewGroupsSeries] =
     useState(true);
+  const [activeTab, setActiveTab] = useState('live');
+  const [developerMode, setDeveloperMode] = useState(false);
+
+  const toggleDeveloperMode = (enabled) => {
+    setDeveloperMode(enabled);
+    if (!enabled && activeTab === 'raw-data') setActiveTab('live');
+  };
 
   useEffect(() => {
     if (!playlist) return;
@@ -46,6 +55,12 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
       playlist.auto_enable_new_groups_series ?? true
     );
   }, [playlist]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    setDeveloperMode(false);
+    setActiveTab('live');
+  }, [isOpen]);
 
   useEffect(() => {
     if (Object.keys(channelGroups).length === 0) return;
@@ -125,9 +140,24 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title="M3U Group Filter & Auto Channel Sync"
+      title={
+        <Group justify="space-between" wrap="nowrap" w="100%">
+          <span>M3U Group Filter & Auto Channel Sync</span>
+          <Switch
+            size="xs"
+            label="Developer mode"
+            checked={developerMode}
+            onChange={(event) =>
+              toggleDeveloperMode(event.currentTarget.checked)
+            }
+          />
+        </Group>
+      }
       size={1000}
-      styles={{ content: { '--mantine-color-body': '#27272A' } }}
+      styles={{
+        content: { '--mantine-color-body': '#27272A' },
+        title: { flex: 1 },
+      }}
       scrollAreaComponent={Modal.NativeScrollArea}
       lockScroll={false}
       withinPortal={true}
@@ -135,12 +165,14 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
       <Stack>
-        <Tabs defaultValue="live">
+        <Tabs value={activeTab} onChange={setActiveTab}>
           <TabsList>
             <TabsTab value="live">Live</TabsTab>
             <TabsTab value="vod-movie">VOD - Movies</TabsTab>
             <TabsTab value="vod-series">VOD - Series</TabsTab>
-            <TabsTab value="developer">Developer</TabsTab>
+            <TabsTab value="raw-data" disabled={!developerMode}>
+              Raw Data
+            </TabsTab>
           </TabsList>
 
           <TabsPanel value="live">
@@ -175,8 +207,8 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
             />
           </TabsPanel>
 
-          <TabsPanel value="developer">
-            <M3UDeveloperCatalog accountId={playlist.id} />
+          <TabsPanel value="raw-data">
+            {developerMode && <M3UDeveloperCatalog accountId={playlist.id} />}
           </TabsPanel>
         </Tabs>
 

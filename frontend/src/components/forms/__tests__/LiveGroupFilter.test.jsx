@@ -27,12 +27,6 @@ vi.mock('../GroupConfigureModal', () => ({
     ) : null,
 }));
 
-vi.mock('../AutoSyncOrphanCleanup.jsx', () => ({
-  default: ({ playlist }) => (
-    <div data-testid="orphan-cleanup" data-playlist-id={String(playlist?.id)} />
-  ),
-}));
-
 vi.mock('../AutoSyncBasic.jsx', () => ({
   default: () => <div data-testid="auto-sync-basic" />,
 }));
@@ -172,12 +166,31 @@ vi.mock('@mantine/core', async () => ({
   ),
   Divider: () => <hr />,
   Flex: ({ children }) => <div>{children}</div>,
-  Group: ({ children, style }) => (
-    <div data-testid="group-card" style={style}>
-      {children}
-    </div>
-  ),
+  Group: ({ children, style }) => <div style={style}>{children}</div>,
   Loader: () => <div data-testid="loader" />,
+  Modal: ({ opened, children, title }) =>
+    opened ? (
+      <div data-testid="bulk-modal">
+        <span>{title}</span>
+        {children}
+      </div>
+    ) : null,
+  Select: ({ label, value, onChange, data = [] }) => (
+    <label>
+      {label}
+      <select
+        aria-label={label}
+        value={value || ''}
+        onChange={(event) => onChange?.(event.target.value || null)}
+      >
+        {data.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  ),
   SegmentedControl: ({ onChange, data }) => (
     <div>
       {(data || []).map((item) => (
@@ -215,7 +228,7 @@ vi.mock('@mantine/core', async () => ({
 vi.mock('lucide-react', () => ({
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
-  Info: () => <svg data-testid="icon-info" />,
+  Info: (props) => <svg data-testid="icon-info" {...props} />,
   Settings: () => <svg data-testid="icon-cog" />,
 }));
 
@@ -337,10 +350,10 @@ describe('LiveGroupFilter', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    it('renders the info alert', () => {
+    it('shows Auto sync help beside the table heading', () => {
       renderWith();
-      expect(screen.getByTestId('alert')).toBeInTheDocument();
-      expect(screen.getByText(/Auto Channel Sync/i)).toBeInTheDocument();
+      expect(screen.getByText('Auto sync')).toBeInTheDocument();
+      expect(screen.getByLabelText('About Auto sync')).toBeInTheDocument();
     });
 
     it('renders the auto-enable new groups checkbox', () => {
@@ -370,14 +383,6 @@ describe('LiveGroupFilter', () => {
       ).not.toBeChecked();
     });
 
-    it('renders OrphanCleanupControl with the playlist', () => {
-      renderWith({ playlist: makePlaylist({ id: 7 }) });
-      expect(screen.getByTestId('orphan-cleanup')).toHaveAttribute(
-        'data-playlist-id',
-        '7'
-      );
-    });
-
     it('renders the group name filter input', () => {
       renderWith();
       expect(screen.getByTestId('group-filter-input')).toBeInTheDocument();
@@ -397,6 +402,7 @@ describe('LiveGroupFilter', () => {
       ).toBeInTheDocument();
       expect(screen.getByText('Enable selected')).toBeInTheDocument();
       expect(screen.getByText('Disable selected')).toBeInTheDocument();
+      expect(screen.getByText('Edit settings (0)')).toBeInTheDocument();
     });
 
     it('renders a card for each group in groupStates', () => {

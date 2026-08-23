@@ -1508,12 +1508,16 @@ export default class API {
     );
   }
 
-  static async bulkUpdateVODSourceMetadata(selections, metadata) {
+  static async bulkUpdateVODSourceMetadata(
+    selections,
+    metadata,
+    selectionOptions = {}
+  ) {
     return await request(
       `${host}/api/vod/source-assets/bulk-manual-metadata/`,
       {
         method: 'PATCH',
-        body: { selections, metadata },
+        body: { selections, metadata, ...selectionOptions },
       }
     );
   }

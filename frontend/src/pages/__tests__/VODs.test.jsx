@@ -233,4 +233,29 @@ describe('VODsPage list and bulk editing', () => {
     fireEvent.click(screen.getByTestId('pagination'));
     expect(setPage).toHaveBeenCalledWith(2);
   });
+
+  it('selects every VOD matching the active filters across pages', async () => {
+    render(<VODsPage />);
+    await screen.findByText('Movie A');
+    fireEvent.click(screen.getByLabelText('Select all filtered VODs'));
+    expect(
+      screen.getByRole('button', { name: 'Edit selected (30)' })
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit selected (30)' }));
+    fireEvent.change(screen.getByLabelText('Resolution'), {
+      target: { value: '1080p' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and lock' }));
+    await waitFor(() =>
+      expect(API.bulkUpdateVODSourceMetadata).toHaveBeenCalledWith(
+        [],
+        { resolution: '1080p' },
+        {
+          select_all: true,
+          filters: state.filters,
+          exclude_selections: [],
+        }
+      )
+    );
+  });
 });

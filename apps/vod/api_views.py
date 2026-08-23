@@ -54,6 +54,65 @@ def _is_admin(user):
     return bool(user and getattr(user, "user_level", 0) >= 10)
 
 
+def _filtered_vod_content(filters):
+    """Return Movie/Series querysets matching the VOD list controls."""
+    filters = filters if isinstance(filters, dict) else {}
+    content_type = filters.get("type") or "all"
+    search = str(filters.get("search") or "").strip()
+    category = str(filters.get("category") or "").strip()
+
+    movies = Movie.objects.filter(
+        m3u_relations__m3u_account__is_active=True
+    )
+    series = Series.objects.filter(
+        m3u_relations__m3u_account__is_active=True
+    )
+    if content_type == "movies":
+        series = series.none()
+    elif content_type == "series":
+        movies = movies.none()
+
+    if search:
+        # The unified "All" endpoint currently searches names only, while
+        # the dedicated movie and series endpoints also search description
+        # and genre. Mirror those list endpoints exactly so a bulk operation
+        # never reaches rows that were not included in the visible result set.
+        if content_type == "all":
+            movies = movies.filter(name__icontains=search)
+            series = series.filter(name__icontains=search)
+        else:
+            movies = movies.filter(
+                Q(name__icontains=search)
+                | Q(description__icontains=search)
+                | Q(genre__icontains=search)
+            )
+            series = series.filter(
+                Q(name__icontains=search)
+                | Q(description__icontains=search)
+                | Q(genre__icontains=search)
+            )
+
+    if category:
+        category_name = category
+        category_type = None
+        if "|" in category:
+            category_name, category_type = category.rsplit("|", 1)
+        if category_type == "series":
+            movies = movies.none()
+        else:
+            movies = movies.filter(
+                m3u_relations__category__name=category_name
+            )
+        if category_type == "movie":
+            series = series.none()
+        else:
+            series = series.filter(
+                m3u_relations__category__name=category_name
+            )
+
+    return movies.distinct(), series.distinct()
+
+
 class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VODSourceAsset.objects.annotate(
         movie_relation_count=Count("movie_relations", distinct=True),
@@ -96,13 +155,27 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         if not _is_admin(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
         selections = request.data.get("selections", [])
+        exclude_selections = request.data.get("exclude_selections", [])
+        select_all = request.data.get("select_all") is True
         metadata = request.data.get("metadata", {})
-        if not isinstance(selections, list) or not isinstance(metadata, dict):
+        if (
+            not isinstance(selections, list)
+            or not isinstance(exclude_selections, list)
+            or not isinstance(metadata, dict)
+        ):
             return Response(
-                {"detail": "selections must be a list and metadata an object"},
+                {
+                    "detail": (
+                        "selections and exclude_selections must be lists and "
+                        "metadata an object"
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if any(not isinstance(item, dict) for item in selections):
+        if any(
+            not isinstance(item, dict)
+            for item in selections + exclude_selections
+        ):
             return Response(
                 {"detail": "Every selection must be an object"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -110,52 +183,90 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .metadata import ensure_source_assets, normalize_source_metadata
 
         metadata = normalize_source_metadata(metadata)
-        movie_ids = {
+        explicit_movie_ids = {
             int(item["id"])
             for item in selections
             if item.get("content_type") == "movie" and str(item.get("id", "")).isdigit()
         }
-        series_ids = {
+        explicit_series_ids = {
             int(item["id"])
             for item in selections
             if item.get("content_type") == "series" and str(item.get("id", "")).isdigit()
         }
-        relations = list(
+        excluded_movie_ids = {
+            int(item["id"])
+            for item in exclude_selections
+            if item.get("content_type") == "movie"
+            and str(item.get("id", "")).isdigit()
+        }
+        excluded_series_ids = {
+            int(item["id"])
+            for item in exclude_selections
+            if item.get("content_type") == "series"
+            and str(item.get("id", "")).isdigit()
+        }
+
+        if select_all:
+            movies, series = _filtered_vod_content(request.data.get("filters"))
+            if excluded_movie_ids:
+                movies = movies.exclude(id__in=excluded_movie_ids)
+            if excluded_series_ids:
+                series = series.exclude(id__in=excluded_series_ids)
+            movie_ids = movies.values("id")
+            series_ids = series.values("id")
+        else:
+            movie_ids = explicit_movie_ids
+            series_ids = explicit_series_ids
+
+        relation_querysets = [
             M3UMovieRelation.objects.filter(movie_id__in=movie_ids).select_related(
                 "m3u_account__server_group"
-            )
-        )
-        relations.extend(
+            ),
             M3USeriesRelation.objects.filter(series_id__in=series_ids).select_related(
                 "m3u_account__server_group"
-            )
-        )
-        relations.extend(
+            ),
             M3UEpisodeRelation.objects.filter(
                 episode__series_id__in=series_ids
-            ).select_related("m3u_account__server_group")
-        )
-        asset_ids = ensure_source_assets(relations)
-        assets = list(VODSourceAsset.objects.filter(id__in=asset_ids))
+            ).select_related("m3u_account__server_group"),
+        ]
+        updated_asset_ids = set()
         updated_at = timezone.now()
-        for asset in assets:
-            asset.manual_metadata = {
-                **(asset.manual_metadata or {}),
-                **metadata,
-            }
-            asset.locked_fields = sorted(
-                set(asset.locked_fields or []) | set(metadata)
-            )
-            asset.updated_at = updated_at
-        VODSourceAsset.objects.bulk_update(
-            assets,
-            ["manual_metadata", "locked_fields", "updated_at"],
-            batch_size=1000,
-        )
+
+        def update_assets(asset_ids):
+            new_ids = set(asset_ids) - updated_asset_ids
+            if not new_ids:
+                return
+            assets = list(VODSourceAsset.objects.filter(id__in=new_ids))
+            for asset in assets:
+                asset.manual_metadata = {
+                    **(asset.manual_metadata or {}),
+                    **metadata,
+                }
+                asset.locked_fields = sorted(
+                    set(asset.locked_fields or []) | set(metadata)
+                )
+                asset.updated_at = updated_at
+            if assets:
+                VODSourceAsset.objects.bulk_update(
+                    assets,
+                    ["manual_metadata", "locked_fields", "updated_at"],
+                    batch_size=1000,
+                )
+                updated_asset_ids.update(asset.id for asset in assets)
+
+        for queryset in relation_querysets:
+            batch = []
+            for relation in queryset.iterator(chunk_size=1000):
+                batch.append(relation)
+                if len(batch) == 1000:
+                    update_assets(ensure_source_assets(batch))
+                    batch = []
+            if batch:
+                update_assets(ensure_source_assets(batch))
         from .catalog_cache import bump_catalog_generation
 
         bump_catalog_generation()
-        return Response({"updated_sources": len(assets)})
+        return Response({"updated_sources": len(updated_asset_ids)})
 
     @action(detail=True, methods=["post"], url_path="link-relations")
     def link_relations(self, request, pk=None):
