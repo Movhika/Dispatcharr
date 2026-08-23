@@ -282,6 +282,12 @@ class VODAccessPolicy(models.Model):
         COMPACT = "compact", "Compact"
         VARIANTS = "variants", "Source variants"
 
+    class SelectionStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        BUILDING = "building", "Building"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+
     name = models.CharField(max_length=255, unique=True)
     export_mode = models.CharField(
         max_length=10,
@@ -302,6 +308,21 @@ class VODAccessPolicy(models.Model):
         through="VODPolicyCategory",
         related_name="access_policies",
     )
+    selection_status = models.CharField(
+        max_length=10,
+        choices=SelectionStatus.choices,
+        default=SelectionStatus.PENDING,
+    )
+    active_selection_generation = models.CharField(
+        max_length=32,
+        blank=True,
+        db_index=True,
+    )
+    selection_catalog_generation = models.CharField(max_length=64, blank=True)
+    selection_counts = models.JSONField(default=dict, blank=True)
+    selection_started_at = models.DateTimeField(null=True, blank=True)
+    selection_completed_at = models.DateTimeField(null=True, blank=True)
+    selection_error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -512,6 +533,104 @@ class VODPolicyCategory(models.Model):
                 fields=("policy", "category_relation"),
                 name="unique_vod_policy_category",
             )
+        ]
+
+
+class VODMovieProfileSelection(models.Model):
+    """Prepared movie output rows for one policy generation."""
+
+    policy = models.ForeignKey(
+        VODAccessPolicy,
+        on_delete=models.CASCADE,
+        related_name="movie_selections",
+    )
+    generation = models.CharField(max_length=32)
+    movie = models.ForeignKey(Movie, on_delete=models.CASCADE)
+    relation = models.ForeignKey(M3UMovieRelation, on_delete=models.CASCADE)
+    category = models.ForeignKey(
+        VODCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    effective_metadata = models.JSONField(default=dict, blank=True)
+    audio_languages = models.JSONField(default=list, blank=True)
+    subtitle_languages = models.JSONField(default=list, blank=True)
+    resolution_height = models.PositiveIntegerField(default=0)
+    container_extension = models.CharField(max_length=10, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy", "generation", "relation"),
+                name="unique_vod_movie_profile_selection",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=("policy", "generation", "category"),
+                name="vod_mov_prof_cat_idx",
+            ),
+            models.Index(
+                fields=("policy", "generation", "movie"),
+                name="vod_mov_prof_movie_idx",
+            ),
+            models.Index(
+                fields=("policy", "generation", "resolution_height"),
+                name="vod_mov_prof_res_idx",
+            ),
+            GinIndex(fields=("audio_languages",), name="vod_mov_prof_audio_gin"),
+            GinIndex(fields=("subtitle_languages",), name="vod_mov_prof_sub_gin"),
+        ]
+
+
+class VODSeriesProfileSelection(models.Model):
+    """Prepared series output rows for one policy generation."""
+
+    policy = models.ForeignKey(
+        VODAccessPolicy,
+        on_delete=models.CASCADE,
+        related_name="series_selections",
+    )
+    generation = models.CharField(max_length=32)
+    series = models.ForeignKey(Series, on_delete=models.CASCADE)
+    relation = models.ForeignKey(M3USeriesRelation, on_delete=models.CASCADE)
+    category = models.ForeignKey(
+        VODCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    effective_metadata = models.JSONField(default=dict, blank=True)
+    audio_languages = models.JSONField(default=list, blank=True)
+    subtitle_languages = models.JSONField(default=list, blank=True)
+    resolution_height = models.PositiveIntegerField(default=0)
+    container_extension = models.CharField(max_length=10, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy", "generation", "relation"),
+                name="unique_vod_series_profile_selection",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=("policy", "generation", "category"),
+                name="vod_ser_prof_cat_idx",
+            ),
+            models.Index(
+                fields=("policy", "generation", "series"),
+                name="vod_ser_prof_series_idx",
+            ),
+            models.Index(
+                fields=("policy", "generation", "resolution_height"),
+                name="vod_ser_prof_res_idx",
+            ),
+            GinIndex(fields=("audio_languages",), name="vod_ser_prof_audio_gin"),
+            GinIndex(fields=("subtitle_languages",), name="vod_ser_prof_sub_gin"),
         ]
 
 

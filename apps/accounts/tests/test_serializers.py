@@ -163,3 +163,55 @@ class UserSerializerValidationTests(TestCase):
         self.assertEqual(
             personal.hard_constraints["required_audio_languages"], ["ger"]
         )
+
+    def test_user_can_be_assigned_to_a_reusable_vod_output_profile(self):
+        policy = VODAccessPolicy.objects.create(
+            name="German HD",
+            export_mode="compact",
+            hard_constraints={"required_audio_languages": ["ger"]},
+        )
+        serializer = UserSerializer(
+            data={
+                "username": "profile-user",
+                "password": "testpassword123",
+                "vod_policy_id": policy.id,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        user = serializer.save()
+        self.assertEqual(list(user.vod_access_policies.all()), [policy])
+
+    def test_user_rejects_an_inactive_vod_output_profile(self):
+        policy = VODAccessPolicy.objects.create(
+            name="Inactive profile",
+            is_active=False,
+        )
+        serializer = UserSerializer(
+            data={
+                "username": "inactive-profile-user",
+                "password": "testpassword123",
+                "vod_policy_id": policy.id,
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("vod_policy_id", serializer.errors)
+
+    def test_user_rejects_profile_id_and_legacy_inline_settings_together(self):
+        policy = VODAccessPolicy.objects.create(name="Reusable profile")
+        serializer = UserSerializer(
+            data={
+                "username": "ambiguous-profile-user",
+                "password": "testpassword123",
+                "vod_policy_id": policy.id,
+                "vod_policy_settings": {
+                    "export_mode": "compact",
+                    "hard_constraints": {},
+                    "ranking": [],
+                },
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("non_field_errors", serializer.errors)

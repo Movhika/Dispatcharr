@@ -1131,6 +1131,7 @@ def _xc_fetch_priority_distinct_relations(
     order_by_name_field,
     policy=None,
     canonical_field=None,
+    prepared_filters=None,
 ):
     """
     Return one row dict per selected source key.
@@ -1169,8 +1170,18 @@ def _xc_fetch_priority_distinct_relations(
             allowed_category_query,
             select_relation_ids_for_policy,
         )
+        from apps.vod.profile_selection import prepared_relation_ids
 
         narrow_qs = narrow_qs.filter(allowed_category_query(policy))
+
+        selected_ids = prepared_relation_ids(
+            policy,
+            manager.model,
+            rel_filters,
+            selection_filters=prepared_filters,
+        )
+        if selected_ids is not None:
+            return _fetch_by_ids(selected_ids)
 
         candidate_iterator = (
             narrow_qs.select_related(
@@ -1301,6 +1312,9 @@ def xc_get_vod_streams(request, user, category_id=None):
         order_by_name_field='movie__name',
         policy=policy,
         canonical_field="movie_id",
+        prepared_filters={"category_id": category_id}
+        if category_id and compact_policy
+        else None,
     )
     if category_id and compact_policy:
         relations = [
@@ -1431,6 +1445,9 @@ def xc_get_series(request, user, category_id=None):
         order_by_name_field='series__name',
         policy=policy,
         canonical_field="series_id",
+        prepared_filters={"category_id": category_id}
+        if category_id and compact_policy
+        else None,
     )
     if category_id and compact_policy:
         relations = [

@@ -381,15 +381,32 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     category_rules = VODPolicyCategorySerializer(
         source="vodpolicycategory_set", many=True, required=False
     )
+    selection_current = serializers.SerializerMethodField()
 
     class Meta:
         model = VODAccessPolicy
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
             "hard_constraints", "ranking", "users", "category_rules",
+            "selection_status", "selection_current", "selection_counts",
+            "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "selection_status", "selection_current", "selection_counts",
+            "selection_started_at", "selection_completed_at", "selection_error",
+            "created_at", "updated_at",
+        ]
+
+    def get_selection_current(self, obj):
+        from .catalog_cache import selection_catalog_generation
+
+        return bool(
+            obj.selection_status == VODAccessPolicy.SelectionStatus.READY
+            and obj.active_selection_generation
+            and obj.selection_catalog_generation
+            == str(selection_catalog_generation())
+        )
 
     def _replace_category_rules(self, policy, rules):
         if rules is None:
@@ -498,6 +515,9 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         self._assign_users(policy, users)
         self._normalize_default(policy)
         self._replace_category_rules(policy, rules)
+        from .profile_selection import enqueue_profile_selection_rebuild
+
+        enqueue_profile_selection_rebuild(policy.pk)
         return policy
 
     @transaction.atomic
@@ -508,6 +528,9 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         self._assign_users(instance, users)
         self._normalize_default(instance)
         self._replace_category_rules(instance, rules)
+        from .profile_selection import enqueue_profile_selection_rebuild
+
+        enqueue_profile_selection_rebuild(instance.pk)
         return instance
 
 

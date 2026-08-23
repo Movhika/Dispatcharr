@@ -7,8 +7,10 @@ import time
 from django.core.cache import cache
 
 GENERATION_KEY = "xc_vod_catalog:generation"
+SELECTION_GENERATION_KEY = "xc_vod_selection:generation"
 logger = logging.getLogger(__name__)
 _fallback_generation = str(time.time_ns())
+_fallback_selection_generation = _fallback_generation
 
 
 def safe_cache_get(key, default=None):
@@ -40,11 +42,51 @@ def catalog_generation():
     return generation
 
 
-def bump_catalog_generation():
+def selection_catalog_generation():
+    """Version only source/metadata changes that affect prepared profiles."""
+    generation = safe_cache_get(SELECTION_GENERATION_KEY)
+    if generation is None:
+        # Redis/cache may be empty after a restart while the materialized
+        # profile rows in PostgreSQL are still valid. Recover the latest
+        # activated source generation when the schema is available.
+        generation = None
+        try:
+            from .models import VODAccessPolicy
+
+            generation = (
+                VODAccessPolicy.objects.exclude(selection_catalog_generation="")
+                .order_by("-selection_completed_at")
+                .values_list("selection_catalog_generation", flat=True)
+                .first()
+            )
+        except Exception:
+            # App startup and migrations can call this before the table or new
+            # columns exist. A fresh value is correct for that case.
+            pass
+        generation = str(generation or time.time_ns())
+        try:
+            cache.add(SELECTION_GENERATION_KEY, generation, timeout=None)
+        except Exception:
+            return _fallback_selection_generation
+        generation = safe_cache_get(SELECTION_GENERATION_KEY, generation)
+    return generation
+
+
+def bump_selection_catalog_generation():
+    global _fallback_selection_generation
+    generation = str(time.time_ns())
+    _fallback_selection_generation = generation
+    safe_cache_set(SELECTION_GENERATION_KEY, generation, timeout=None)
+    return generation
+
+
+def bump_catalog_generation(*, invalidate_selections=True):
     global _fallback_generation
     generation = str(time.time_ns())
     _fallback_generation = generation
     safe_cache_set(GENERATION_KEY, generation, timeout=None)
+    if invalidate_selections:
+        bump_selection_catalog_generation()
     return generation
 
 

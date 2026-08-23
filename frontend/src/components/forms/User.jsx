@@ -37,23 +37,20 @@ import {
   updateUser,
   userToFormValues,
 } from '../../utils/forms/UserUtils.js';
-import VODUserCategorySelector from './VODUserCategorySelector.jsx';
 
 const User = ({ user = null, isOpen, onClose }) => {
   const profiles = useChannelsStore((s) => s.profiles);
   const outputProfiles = useOutputProfilesStore((s) => s.profiles);
   const authUser = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
-  const vodCategories = useVODStore((s) => s.categories);
-  const fetchVODCategories = useVODStore((s) => s.fetchCategories);
+  const vodProfiles = useVODStore((s) => s.accessPolicies);
+  const fetchVODProfiles = useVODStore((s) => s.fetchAccessPolicies);
 
   const [, setEnableXC] = useState(false);
   const [selectedProfiles, setSelectedProfiles] = useState(new Set());
   const [generating, setGenerating] = useState(false);
   const [_generatedKey, setGeneratedKey] = useState(null);
   const [userAPIKey, setUserAPIKey] = useState(user?.api_key || null);
-  const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
-  const [vodCategorySelection, setVODCategorySelection] = useState([]);
 
   const theme = useMantineTheme();
 
@@ -100,7 +97,6 @@ const User = ({ user = null, isOpen, onClose }) => {
     if (user?.id) {
       const values = userToFormValues(user);
       form.setValues(values);
-      setVODCategorySelection(values.vod_category_relation_ids || []);
 
       if (user.custom_properties?.xc_password) {
         setEnableXC(true);
@@ -109,13 +105,12 @@ const User = ({ user = null, isOpen, onClose }) => {
       setUserAPIKey(user.api_key || null);
     } else {
       form.reset();
-      setVODCategorySelection([]);
     }
   }, [user]);
 
   useEffect(() => {
-    if (isOpen) fetchVODCategories();
-  }, [fetchVODCategories, isOpen]);
+    if (isOpen) fetchVODProfiles();
+  }, [fetchVODProfiles, isOpen]);
 
   const generateXCPassword = () => {
     form.setValues({
@@ -436,110 +431,24 @@ const User = ({ user = null, isOpen, onClose }) => {
           <TabsPanel value="vod">
             <Stack gap="sm">
               <Text size="sm" c="dimmed">
-                These preferences control both the XC catalog output and VOD
-                failover. Sources are ranked only by audio language, subtitle
-                language, and resolution. Category and M3U priorities are not
-                used.
+                Assign one reusable VOD output profile. The profile controls XC
+                visibility, source selection and failover for every user that
+                uses it.
               </Text>
               <Select
-                label="XC VOD output"
-                description="Compact exports one preferred edition per title. Variants exports every source edition."
-                data={[
-                  { value: 'compact', label: 'Compact — one preferred source' },
-                  {
-                    value: 'variants',
-                    label: 'Variants — all source editions',
-                  },
-                ]}
-                {...form.getInputProps('vod_export_mode')}
-                key={form.key('vod_export_mode')}
-              />
-              <TagsInput
-                label="Preferred and allowed audio languages"
-                description="Ordered ISO 639-2/B codes. Earlier values are preferred; for example ger, eng."
-                placeholder="ger, eng"
-                {...form.getInputProps('vod_audio_languages')}
-                key={form.key('vod_audio_languages')}
-              />
-              <TagsInput
-                label="Preferred and allowed subtitle languages"
-                description="Ordered ISO 639-2/B codes. Leave empty if subtitles are not required."
-                placeholder="ger, eng"
-                {...form.getInputProps('vod_subtitle_languages')}
-                key={form.key('vod_subtitle_languages')}
-              />
-              <Select
-                label="Language matching"
-                description="Require every configured language field, or allow a source when either its audio or subtitles match."
-                data={[
-                  {
-                    value: 'all',
-                    label: 'Audio and subtitles must match',
-                  },
-                  {
-                    value: 'any',
-                    label: 'Audio or subtitles may match',
-                  },
-                ]}
-                {...form.getInputProps('vod_language_match_mode')}
-                key={form.key('vod_language_match_mode')}
-              />
-              <Stack gap={4}>
-                <Text size="sm" fw={500}>
-                  Allowed source categories
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Optional hard boundary before language and resolution rules.
-                  An empty selection uses every enabled source category.
-                </Text>
-                <Group justify="space-between">
-                  <Text size="sm">
-                    {vodCategorySelection.length
-                      ? `${vodCategorySelection.length} categories allowed`
-                      : 'All enabled categories allowed'}
-                  </Text>
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="default"
-                    onClick={() => setCategorySelectorOpen(true)}
-                  >
-                    Manage categories
-                  </Button>
-                </Group>
-              </Stack>
-              <TagsInput
-                label="Preferred resolutions"
-                description="Ordered from most to least preferred, for example 1080p, 720p."
-                placeholder="1080p, 720p"
-                {...form.getInputProps('vod_preferred_resolutions')}
-                key={form.key('vod_preferred_resolutions')}
-              />
-              <Group grow align="flex-start">
-                <NumberInput
-                  label="Minimum video resolution"
-                  description="Vertical pixels; for example 1080 means 1920×1080. Use 0 for no minimum."
-                  min={0}
-                  step={120}
-                  {...form.getInputProps('vod_min_resolution')}
-                  key={form.key('vod_min_resolution')}
-                />
-                <NumberInput
-                  label="Maximum video resolution"
-                  description="Vertical pixels; for example 2160 means 3840×2160. Use 0 for no maximum."
-                  min={0}
-                  step={120}
-                  {...form.getInputProps('vod_max_resolution')}
-                  key={form.key('vod_max_resolution')}
-                />
-              </Group>
-              <Switch
-                label="Allow sources with unknown technical metadata"
-                description="Disable only after the relevant sources have been identified manually or through playback."
-                {...form.getInputProps('vod_allow_unknown', {
-                  type: 'checkbox',
-                })}
-                key={form.key('vod_allow_unknown')}
+                label="VOD output profile"
+                description="Leave empty to inherit the default profile. Profiles are managed from the VOD page."
+                placeholder="Use default profile"
+                clearable
+                searchable
+                data={(vodProfiles || [])
+                  .filter((profile) => profile.is_active)
+                  .map((profile) => ({
+                    value: String(profile.id),
+                    label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
+                  }))}
+                {...form.getInputProps('vod_policy_id')}
+                key={form.key('vod_policy_id')}
               />
             </Stack>
           </TabsPanel>
@@ -556,16 +465,6 @@ const User = ({ user = null, isOpen, onClose }) => {
           </Button>
         </Group>
       </form>
-      <VODUserCategorySelector
-        opened={categorySelectorOpen}
-        onClose={() => setCategorySelectorOpen(false)}
-        categories={vodCategories}
-        selectedIds={vodCategorySelection}
-        onChange={(ids) => {
-          setVODCategorySelection(ids);
-          form.setFieldValue('vod_category_relation_ids', ids);
-        }}
-      />
     </Modal>
   );
 };

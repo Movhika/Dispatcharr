@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
+from unittest.mock import patch
 
 from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
@@ -22,6 +24,7 @@ from apps.vod.models import (
     Episode,
     Series,
     VODAccessPolicy,
+    VODMovieProfileSelection,
     VODPlaybackSession,
     VODPolicyCategory,
     VODSourceAsset,
@@ -38,6 +41,17 @@ from apps.vod.api_views import (
     MovieViewSet,
     UnifiedContentViewSet,
     VODSourceAssetViewSet,
+    VODAccessPolicyViewSet,
+)
+from apps.vod.catalog_cache import (
+    SELECTION_GENERATION_KEY,
+    bump_catalog_generation,
+    selection_catalog_generation,
+)
+from apps.vod.profile_selection import (
+    ProfileBuildAlreadyRunning,
+    build_vod_profile_selection,
+    prepared_relation_ids,
 )
 
 
@@ -277,6 +291,136 @@ class VODSourceManagementTests(TestCase):
         )
 
         self.assertEqual(ids, [self.german_relation.id])
+
+    def test_profile_build_materializes_compact_output_and_normalizes_metadata(self):
+        counts = build_vod_profile_selection(self.policy.id)
+
+        self.policy.refresh_from_db()
+        rows = VODMovieProfileSelection.objects.filter(
+            policy=self.policy,
+            generation=self.policy.active_selection_generation,
+        )
+        self.assertEqual(self.policy.selection_status, "ready")
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.get().relation_id, self.german_relation.id)
+        self.assertEqual(rows.get().audio_languages, ["ger"])
+        self.assertEqual(counts["movies"]["candidate_sources"], 2)
+        self.assertEqual(counts["movies"]["eligible_sources"], 1)
+        self.assertEqual(counts["movies"]["output_entries"], 1)
+
+    def test_profile_build_does_not_overlap_an_active_build(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_started_at=timezone.now(),
+        )
+
+        with self.assertRaises(ProfileBuildAlreadyRunning):
+            build_vod_profile_selection(self.policy.id)
+
+    def test_xc_uses_current_prepared_profile_without_cold_python_selection(self):
+        user = get_user_model().objects.create_user(
+            username="prepared-profile-user",
+            password="test-password",
+        )
+        self.policy.users.add(user)
+        build_vod_profile_selection(self.policy.id)
+        request = RequestFactory().get("/player_api.php")
+
+        with patch(
+            "apps.vod.policies.select_relation_ids_for_policy",
+            side_effect=AssertionError("cold selector should not run"),
+        ):
+            rows = xc_get_vod_streams(request, user)
+
+        self.assertEqual(
+            [row["stream_id"] for row in rows],
+            [self.german_relation.id],
+        )
+
+    def test_catalog_change_makes_prepared_profile_stale(self):
+        build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        self.assertIsNotNone(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            )
+        )
+
+        bump_catalog_generation()
+
+        self.assertIsNone(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            )
+        )
+
+    def test_user_assignment_keeps_prepared_profile_current(self):
+        build_vod_profile_selection(self.policy.id)
+        user = get_user_model().objects.create_user(
+            username="profile-assignment-user",
+            password="test-password",
+        )
+
+        self.policy.users.add(user)
+        self.policy.refresh_from_db()
+
+        self.assertEqual(self.policy.selection_status, "ready")
+        self.assertEqual(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            ),
+            [self.german_relation.id],
+        )
+
+    def test_prepared_generation_survives_an_empty_runtime_cache(self):
+        from django.core.cache import cache
+
+        build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        expected = self.policy.selection_catalog_generation
+
+        cache.delete(SELECTION_GENERATION_KEY)
+
+        self.assertEqual(str(selection_catalog_generation()), expected)
+
+    def test_profile_preview_filters_prepared_rows(self):
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="profile-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {
+                "type": "movie",
+                "audio_language": "deu",
+                "resolution": "1080p",
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["relation_id"],
+            self.german_relation.id,
+        )
+        self.assertEqual(
+            response.data["results"][0]["metadata"]["audio_languages"],
+            ["ger"],
+        )
 
     def test_compact_xc_category_requests_do_not_duplicate_the_title(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}

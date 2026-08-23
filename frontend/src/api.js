@@ -1508,6 +1508,19 @@ export default class API {
     });
   }
 
+  static async rebuildVODAccessPolicy(id) {
+    return await request(`${host}/api/vod/access-policies/${id}/rebuild/`, {
+      method: 'POST',
+    });
+  }
+
+  static async getVODAccessPolicySelections(id, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/access-policies/${id}/selections/${query ? `?${query}` : ''}`
+    );
+  }
+
   static async getVODPlaybackSessions() {
     return await request(`${host}/api/vod/playback-sessions/`);
   }

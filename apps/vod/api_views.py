@@ -6,6 +6,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import connection
 from django.db.models import Count, Prefetch, Q
 from django.db.models.expressions import RawSQL
 import django_filters
@@ -19,6 +20,7 @@ from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
     VODSourceAsset, VODAccessPolicy, VODPlaybackSession,
+    VODMovieProfileSelection, VODSeriesProfileSelection,
 )
 from .serializers import (
     MovieSerializer,
@@ -520,8 +522,10 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             if batch:
                 update_assets(ensure_source_assets(batch))
         from .catalog_cache import bump_catalog_generation
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
 
         bump_catalog_generation()
+        enqueue_all_profile_selection_rebuilds()
         return Response({"updated_sources": len(updated_asset_ids)})
 
     @action(detail=True, methods=["post"], url_path="link-relations")
@@ -579,8 +583,10 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             )
         model.objects.filter(id__in=relation_ids).update(source_asset=asset)
         from .catalog_cache import bump_catalog_generation
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
 
         bump_catalog_generation()
+        enqueue_all_profile_selection_rebuilds()
         return Response(self.get_serializer(asset).data)
 
 
@@ -615,6 +621,9 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+        enqueue_all_profile_selection_rebuilds()
         return Response(serializer.data)
 
     @action(detail=False, methods=["patch"], url_path="bulk-metadata-defaults")
@@ -648,8 +657,10 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
             relations, ["metadata_defaults", "updated_at"], batch_size=1000
         )
         from .catalog_cache import bump_catalog_generation
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
 
         bump_catalog_generation()
+        enqueue_all_profile_selection_rebuilds()
         return Response({"updated_categories": len(relations)})
 
 
@@ -700,6 +711,164 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         if denied is not None:
             return denied
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="rebuild")
+    def rebuild(self, request, pk=None):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        policy = self.get_object()
+        from .profile_selection import enqueue_profile_selection_rebuild
+
+        if not enqueue_profile_selection_rebuild(policy.pk):
+            return Response(
+                {"detail": "Activate the profile before rebuilding it"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        policy.refresh_from_db()
+        return Response(self.get_serializer(policy).data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["get"], url_path="selections")
+    def selections(self, request, pk=None):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        policy = self.get_object()
+        content_type = request.query_params.get("type", "movie")
+        if content_type not in {"movie", "series"}:
+            return Response(
+                {"detail": "type must be movie or series"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        current = VODAccessPolicySerializer(policy).data["selection_current"]
+        if not current:
+            return Response(
+                {
+                    "status": policy.selection_status,
+                    "current": False,
+                    "counts": policy.selection_counts or {},
+                    "results": [],
+                    "count": 0,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        is_movie = content_type == "movie"
+        selection_model = (
+            VODMovieProfileSelection if is_movie else VODSeriesProfileSelection
+        )
+        canonical = "movie" if is_movie else "series"
+        queryset = selection_model.objects.filter(
+            policy=policy,
+            generation=policy.active_selection_generation,
+        ).select_related(
+            canonical,
+            "relation__m3u_account",
+            "category",
+        )
+        search = request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(**{f"{canonical}__name__icontains": search})
+        if request.query_params.get("m3u_account"):
+            queryset = queryset.filter(
+                relation__m3u_account_id=request.query_params["m3u_account"]
+            )
+        if request.query_params.get("category"):
+            queryset = queryset.filter(category_id=request.query_params["category"])
+        if request.query_params.get("container_extension"):
+            queryset = queryset.filter(
+                container_extension__iexact=request.query_params[
+                    "container_extension"
+                ]
+            )
+        resolution = request.query_params.get("resolution", "").lower().rstrip("p")
+        if resolution:
+            try:
+                queryset = queryset.filter(resolution_height=int(resolution))
+            except ValueError:
+                return Response(
+                    {"detail": "resolution must be a vertical pixel count"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        audio = normalize_language_code(
+            request.query_params.get("audio_language", "")
+        )
+        subtitles = normalize_language_code(
+            request.query_params.get("subtitle_language", "")
+        )
+        python_language_filter = connection.vendor != "postgresql" and (
+            audio or subtitles
+        )
+        if not python_language_filter:
+            if audio:
+                queryset = queryset.filter(audio_languages__contains=[audio])
+            if subtitles:
+                queryset = queryset.filter(subtitle_languages__contains=[subtitles])
+
+        queryset = queryset.order_by(f"{canonical}__name", "id")
+        try:
+            page = max(int(request.query_params.get("page", 1)), 1)
+            page_size = min(
+                max(int(request.query_params.get("page_size", 50)), 1), 200
+            )
+        except ValueError:
+            return Response(
+                {"detail": "page and page_size must be integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if python_language_filter:
+            matching = [
+                row
+                for row in queryset
+                if (not audio or audio in (row.audio_languages or []))
+                and (
+                    not subtitles
+                    or subtitles in (row.subtitle_languages or [])
+                )
+            ]
+            matching_count = len(matching)
+            rows = matching[(page - 1) * page_size : page * page_size]
+        else:
+            matching_count = queryset.count()
+            rows = list(queryset[(page - 1) * page_size : page * page_size])
+
+        from .utils import get_vod_source_name
+
+        results = []
+        for row in rows:
+            content = getattr(row, canonical)
+            relation = row.relation
+            results.append(
+                {
+                    "id": row.id,
+                    "content_type": content_type,
+                    "canonical_id": content.id,
+                    "name": content.name,
+                    "year": content.year,
+                    "relation_id": relation.id,
+                    "source_name": get_vod_source_name(relation, content.name),
+                    "m3u_account_id": relation.m3u_account_id,
+                    "m3u_account_name": relation.m3u_account.name,
+                    "category_id": row.category_id,
+                    "category_name": row.category.name if row.category else "",
+                    "metadata": row.effective_metadata,
+                    "resolution": row.resolution_height,
+                    "container_extension": row.container_extension,
+                }
+            )
+        return Response(
+            {
+                "status": policy.selection_status,
+                "current": True,
+                "counts": policy.selection_counts or {},
+                "count": matching_count,
+                "page": page,
+                "page_size": page_size,
+                "results": results,
+            }
+        )
 
 
 class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):

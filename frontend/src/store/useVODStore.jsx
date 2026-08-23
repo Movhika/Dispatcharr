@@ -138,6 +138,7 @@ const useVODStore = create((set, get) => ({
   currentPageContent: [], // Store the current page's results
   episodes: {},
   categories: {},
+  accessPolicies: [],
   loading: false,
   error: null,
   filters: {
@@ -289,6 +290,19 @@ const useVODStore = create((set, get) => ({
     } catch (error) {
       console.error('Failed to fetch VOD categories:', error);
       set({ error: 'Failed to load categories.' });
+    }
+  },
+
+  fetchAccessPolicies: async () => {
+    try {
+      const response = await api.getVODAccessPolicies();
+      const results = response.results || response;
+      set({ accessPolicies: Array.isArray(results) ? results : [] });
+      return results;
+    } catch (error) {
+      console.error('Failed to fetch VOD output profiles:', error);
+      set({ error: 'Failed to load VOD output profiles.' });
+      return [];
     }
   },
 

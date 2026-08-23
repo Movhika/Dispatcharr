@@ -310,7 +310,12 @@ def _relation_selection_key(relation, policy, canonical_field):
     return ("relation", relation.id)
 
 
-def select_relation_ids_for_policy(relations, policy, canonical_field):
+def select_relation_ids_for_policy(
+    relations,
+    policy,
+    canonical_field,
+    stats=None,
+):
     """Stream relations and retain only the winning ID for each output entry.
 
     This is the cold-cache XC path. Keeping compact winner tuples instead of a
@@ -318,20 +323,38 @@ def select_relation_ids_for_policy(relations, policy, canonical_field):
     in memory while policy constraints and ranking are evaluated.
     """
     if not policy:
-        return [relation.id for relation in relations]
+        relation_ids = [relation.id for relation in relations]
+        if stats is not None:
+            stats.update(
+                candidates=len(relation_ids),
+                eligible=len(relation_ids),
+                selected=len(relation_ids),
+            )
+        return relation_ids
 
     category_mapping = policy_category_map(policy)
     selected = {}
+    candidate_count = 0
+    eligible_count = 0
     for relation in relations:
+        candidate_count += 1
         if not relation_allowed(relation, policy, category_mapping):
             continue
+        eligible_count += 1
         key = _relation_selection_key(relation, policy, canonical_field)
         rank = relation_rank(relation, category_mapping, policy)
         current = selected.get(key)
         if current is None or rank > current[0]:
             selected[key] = (rank, relation.id)
 
-    return [entry[1] for entry in selected.values()]
+    relation_ids = [entry[1] for entry in selected.values()]
+    if stats is not None:
+        stats.update(
+            candidates=candidate_count,
+            eligible=eligible_count,
+            selected=len(relation_ids),
+        )
+    return relation_ids
 
 
 def ordered_failover_candidates(candidates, policy):

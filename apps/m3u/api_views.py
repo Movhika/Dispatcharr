@@ -682,8 +682,13 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             # Invalidate the versioned XC catalog explicitly so category
             # enable/disable changes take effect immediately.
             from apps.vod.catalog_cache import bump_catalog_generation
+            from apps.vod.profile_selection import (
+                enqueue_all_profile_selection_rebuilds,
+            )
 
             bump_catalog_generation()
+            if category_objects:
+                enqueue_all_profile_selection_rebuilds()
 
             return Response({"message": "Group settings updated successfully"})
 
@@ -909,8 +914,12 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
                 batch_size=1000,
             )
             from apps.vod.catalog_cache import bump_catalog_generation
+            from apps.vod.profile_selection import (
+                enqueue_all_profile_selection_rebuilds,
+            )
 
             bump_catalog_generation()
+            enqueue_all_profile_selection_rebuilds()
         return Response({"updated": len(relation_ids)})
 
 

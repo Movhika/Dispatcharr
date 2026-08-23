@@ -30,10 +30,15 @@ vi.mock('../../components/VODSourceManagerModal', () => ({
   default: ({ opened }) =>
     opened ? <div data-testid="history-modal">History</div> : null,
 }));
+vi.mock('../../components/VODOutputProfilesModal', () => ({
+  default: ({ opened }) =>
+    opened ? <div data-testid="profiles-modal">Profiles</div> : null,
+}));
 vi.mock('lucide-react', () => ({
   History: () => null,
   Play: () => null,
   Search: () => null,
+  SlidersHorizontal: () => null,
   Wrench: () => null,
 }));
 vi.mock('@mantine/hooks', () => ({

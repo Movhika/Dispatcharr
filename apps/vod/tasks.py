@@ -18,6 +18,60 @@ import time
 logger = logging.getLogger(__name__)
 
 
+@shared_task(bind=True, max_retries=3)
+def rebuild_vod_profile_selection(self, policy_id):
+    """Prepare one reusable VOD output profile outside request handling."""
+    from .profile_selection import (
+        CatalogChangedDuringBuild,
+        ProfileBuildAlreadyRunning,
+        build_vod_profile_selection,
+    )
+
+    try:
+        return build_vod_profile_selection(policy_id)
+    except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
+        raise self.retry(exc=exc, countdown=5)
+
+
+@shared_task(bind=True, max_retries=3)
+def rebuild_all_vod_profile_selections(self):
+    """Refresh all active VOD profiles after a completed catalog import."""
+    from .models import VODAccessPolicy
+    from django.core.cache import cache
+    from .profile_selection import (
+        CatalogChangedDuringBuild,
+        PROFILE_REBUILD_ENQUEUE_KEY,
+        ProfileBuildAlreadyRunning,
+        build_vod_profile_selection,
+    )
+
+    results = {}
+    retry_exc = None
+    try:
+        for policy_id in VODAccessPolicy.objects.filter(is_active=True).values_list(
+            "id", flat=True
+        ):
+            try:
+                results[str(policy_id)] = build_vod_profile_selection(policy_id)
+            except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
+                retry_exc = exc
+                results[str(policy_id)] = {"error": str(exc)}
+                break
+            except Exception as exc:
+                logger.warning(
+                    "VOD profile %s could not be prepared: %s", policy_id, exc
+                )
+                results[str(policy_id)] = {"error": str(exc)}
+    finally:
+        try:
+            cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+        except Exception:
+            pass
+    if retry_exc is not None:
+        raise self.retry(exc=retry_exc, countdown=5)
+    return results
+
+
 def _send_vod_refresh_progress(
     account_id,
     *,
@@ -281,6 +335,13 @@ def refresh_vod_content(account_id):
         from apps.vod.catalog_cache import bump_catalog_generation
 
         bump_catalog_generation()
+
+        # The import itself remains fast and commits first. Shared user output
+        # profiles are then rebuilt once in the background and atomically
+        # replace their previous generation when ready.
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+        enqueue_all_profile_selection_rebuilds()
 
         end_time = timezone.now()
         duration = (end_time - start_time).total_seconds()

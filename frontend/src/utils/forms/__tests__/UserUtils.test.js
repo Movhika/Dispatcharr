@@ -384,15 +384,7 @@ describe('UserUtils', () => {
         epg_days: 0,
         epg_prev_days: 0,
         allowed_ips: [],
-        vod_export_mode: 'compact',
-        vod_audio_languages: [],
-        vod_subtitle_languages: [],
-        vod_language_match_mode: 'all',
-        vod_preferred_resolutions: [],
-        vod_min_resolution: 0,
-        vod_max_resolution: 0,
-        vod_allow_unknown: true,
-        vod_category_relation_ids: [],
+        vod_policy_id: '',
       });
     });
 

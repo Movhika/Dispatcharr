@@ -16,15 +16,6 @@ vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
 // ── Utility mocks ──────────────────────────────────────────────────────────────
 vi.mock('../../../utils', () => ({ copyToClipboard: vi.fn() }));
 
-vi.mock('../VODUserCategorySelector.jsx', () => ({
-  default: ({ opened, onChange }) =>
-    opened ? (
-      <button onClick={() => onChange(['101', '102'])}>
-        Apply category selector
-      </button>
-    ) : null,
-}));
-
 vi.mock('../../../utils/forms/UserUtils.js', () => ({
   createUser: vi.fn(),
   updateUser: vi.fn(),
@@ -200,7 +191,7 @@ const setupMocks = ({
     sel({ user: authUser, setUser: mockSetUser })
   );
   vi.mocked(useVODStore).mockImplementation((sel) =>
-    sel({ categories: {}, fetchCategories: vi.fn() })
+    sel({ accessPolicies: [], fetchAccessPolicies: vi.fn() })
   );
 
   // Reset form state
@@ -290,17 +281,10 @@ describe('User', () => {
       expect(screen.queryByTestId('tab-permissions')).not.toBeInTheDocument();
     });
 
-    it('opens the category manager and stores its mass selection', () => {
+    it('shows the reusable VOD output profile selector', () => {
       setupMocks({ authUser: makeAdminUser() });
       render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
-
-      fireEvent.click(screen.getByText('Manage categories'));
-      fireEvent.click(screen.getByText('Apply category selector'));
-
-      expect(mockForm.setFieldValue).toHaveBeenCalledWith(
-        'vod_category_relation_ids',
-        ['101', '102']
-      );
+      expect(screen.getByText('VOD output profile')).toBeInTheDocument();
     });
   });
 

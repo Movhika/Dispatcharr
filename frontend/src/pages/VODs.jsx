@@ -25,7 +25,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { History, Play, Search, Wrench } from 'lucide-react';
+import { History, Play, Search, SlidersHorizontal, Wrench } from 'lucide-react';
 import { useDisclosure } from '@mantine/hooks';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
@@ -47,6 +47,9 @@ const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
 const VODModal = React.lazy(() => import('../components/VODModal'));
 const VODSourceManagerModal = React.lazy(
   () => import('../components/VODSourceManagerModal')
+);
+const VODOutputProfilesModal = React.lazy(
+  () => import('../components/VODOutputProfilesModal')
 );
 
 const itemKey = (item) => `${item.contentType}:${item.id}`;
@@ -89,6 +92,7 @@ const VODsPage = () => {
   const [seriesModalOpened, seriesModalHandlers] = useDisclosure(false);
   const [vodModalOpened, vodModalHandlers] = useDisclosure(false);
   const [sourceManagerOpened, sourceManagerHandlers] = useDisclosure(false);
+  const [profilesOpened, profilesHandlers] = useDisclosure(false);
   const [bulkEditorOpened, bulkEditorHandlers] = useDisclosure(false);
 
   const items = useMemo(
@@ -246,9 +250,21 @@ const VODsPage = () => {
     <Box p="md" id="vods-container">
       <Stack gap="md">
         <Group justify="space-between">
-          <Title order={2}>Video on Demand</Title>
+          <Group gap="md">
+            <Title order={2}>Video on Demand</Title>
+            <Text c="dimmed">
+              {selectedCount} selected · {totalCount} matching
+            </Text>
+          </Group>
           {user?.user_level >= 10 && (
             <Group>
+              <Button
+                variant="default"
+                leftSection={<SlidersHorizontal size={16} />}
+                onClick={profilesHandlers.open}
+              >
+                Output profiles
+              </Button>
               <Button
                 variant="default"
                 leftSection={<Wrench size={16} />}
@@ -581,6 +597,14 @@ const VODsPage = () => {
             series={selectedSeries}
             opened={seriesModalOpened}
             onClose={seriesModalHandlers.close}
+          />
+        </Suspense>
+      </ErrorBoundary>
+      <ErrorBoundary>
+        <Suspense fallback={<LoadingOverlay />}>
+          <VODOutputProfilesModal
+            opened={profilesOpened}
+            onClose={profilesHandlers.close}
           />
         </Suspense>
       </ErrorBoundary>
