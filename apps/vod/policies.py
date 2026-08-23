@@ -23,6 +23,16 @@ def policy_for_user(user):
     policy = VODAccessPolicy.objects.filter(
         is_active=True, is_default=True
     ).order_by("id").first()
+    if policy and not M3UVODCategoryRelation.objects.filter(
+        enabled=True,
+        m3u_account__is_active=True,
+    ).exists():
+        # The source-management migration can precede the first provider
+        # refresh that creates category inventory. Keep unassigned users on
+        # the original narrow DISTINCT ON output until the default profile has
+        # real source boundaries to work with. Explicit assignments above are
+        # intentional and therefore take effect immediately.
+        policy = None
     safe_cache_set(cache_key, policy or 0, timeout=3600)
     return policy
 
@@ -271,6 +281,7 @@ def relation_rank(relation, category_mapping, policy=None):
     )
     return (
         *(dimensions[key] for key in order),
+        relation.m3u_account.priority,
         -relation.id,
     )
 
