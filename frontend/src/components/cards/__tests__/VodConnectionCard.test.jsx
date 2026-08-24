@@ -149,6 +149,7 @@ vi.mock('lucide-react', () => ({
 // ── Imports after mocks ───────────────────────────────────────────────────────
 import {
   formatDuration,
+  fromNow,
   useDateTimeFormat,
 } from '../../../utils/dateTimeUtils.js';
 import {
@@ -773,6 +774,45 @@ describe('VodConnectionCard', () => {
         .closest('[data-testid="group"]');
       fireEvent.click(header);
       expect(screen.queryByText('Watch Duration:')).not.toBeInTheDocument();
+    });
+
+    it('formats the Unix seek timestamp as seconds converted to milliseconds', () => {
+      const vodContent = makeMovieContent({
+        individual_connection: makeConnection({
+          last_seek_percentage: 25,
+          last_seek_byte: 1024,
+          last_seek_timestamp: 1_787_580_000,
+        }),
+      });
+      render(
+        <VodConnectionCard vodContent={vodContent} stopVODClient={vi.fn()} />
+      );
+      fireEvent.click(
+        screen.getByText('Show Details').closest('[data-testid="group"]')
+      );
+
+      expect(fromNow).toHaveBeenCalledWith(1_787_580_000_000);
+    });
+
+    it('shows VOD pass-through delivery and container details', () => {
+      const vodContent = makeMovieContent({
+        individual_connection: makeConnection({
+          delivery_mode: 'proxy_passthrough',
+          source_container: 'mkv',
+          delivered_container: 'mkv',
+          delivered_content_type: 'video/x-matroska',
+        }),
+      });
+      render(
+        <VodConnectionCard vodContent={vodContent} stopVODClient={vi.fn()} />
+      );
+      fireEvent.click(
+        screen.getByText('Show Details').closest('[data-testid="group"]')
+      );
+
+      expect(screen.getByText('Byte proxy (pass-through)')).toBeInTheDocument();
+      expect(screen.getByText('Source Format:')).toBeInTheDocument();
+      expect(screen.getByText('MKV (video/x-matroska)')).toBeInTheDocument();
     });
   });
 

@@ -171,7 +171,7 @@ const StreamSettingsForm = React.memo(({ active }) => {
           id="default_stream_profile"
           name="default_stream_profile"
           label="Default Stream Profile"
-          description="Stream profile used when a channel has no profile assigned. If set to Redirect, VOD and catchup are redirected as well."
+          description="Stream profile used when a live channel has no profile assigned. Redirect also sends VOD and catchup clients to the provider; every non-Redirect profile keeps VOD on Dispatcharr's byte proxy without running ffmpeg."
           data={streamProfiles.map((option) => ({
             value: `${option.id}`,
             label: option.name,
@@ -182,7 +182,7 @@ const StreamSettingsForm = React.memo(({ active }) => {
           id="default_output_format"
           name="default_output_format"
           label="Default Output Format"
-          description="Container format used when proxying streams. MPEG-TS is broadly compatible with media players and devices; fMP4 has better support for modern codecs like AV1 and is preferred by some newer clients."
+          description="Container format used by the live proxy. VOD byte-proxy playback retains the provider's original container. MPEG-TS is broadly compatible; fMP4 better supports modern codecs such as AV1."
           data={[
             { value: 'mpegts', label: 'MPEG-TS' },
             { value: 'fmp4', label: 'fMP4 (fragmented MP4)' },

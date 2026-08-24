@@ -26,7 +26,7 @@ from .policies import (
 )
 
 logger = logging.getLogger(__name__)
-BUILD_CHUNK_SIZE = 2000
+BUILD_CHUNK_SIZE = 5000
 PROGRESS_SCAN_INTERVAL = 5000
 PROFILE_REBUILD_ENQUEUE_KEY = "vod_profile_selection:rebuild-all-enqueued"
 

@@ -15,7 +15,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
-  convertToSec,
   formatDuration,
   fromNow,
   toFriendlyDuration,
@@ -123,7 +122,7 @@ const ClientDetails = ({ connection, connectionStartTime }) => {
                 Seek Time:
               </Text>
               <Text size="xs">
-                {fromNow(convertToSec(Number(connection.last_seek_timestamp)))}
+                {fromNow(Number(connection.last_seek_timestamp) * 1000)}
               </Text>
             </Group>
           )}
@@ -137,6 +136,49 @@ const ClientDetails = ({ connection, connectionStartTime }) => {
           </Text>
           <Text size="xs">
             {(connection.bytes_sent / (1024 * 1024)).toFixed(1)} MB
+          </Text>
+        </Group>
+      )}
+
+      {connection.delivery_mode && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Delivery:
+          </Text>
+          <Text size="xs">
+            {connection.delivery_mode === 'proxy_passthrough'
+              ? 'Byte proxy (pass-through)'
+              : connection.delivery_mode}
+          </Text>
+        </Group>
+      )}
+
+      {(connection.source_container || technical.container_extension) && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Source Format:
+          </Text>
+          <Text size="xs">
+            {(
+              connection.source_container || technical.container_extension
+            ).toUpperCase()}
+          </Text>
+        </Group>
+      )}
+
+      {(connection.delivered_container ||
+        connection.delivered_content_type) && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Delivered Format:
+          </Text>
+          <Text size="xs">
+            {connection.delivered_container
+              ? connection.delivered_container.toUpperCase()
+              : connection.delivered_content_type}
+            {connection.delivered_content_type &&
+              connection.delivered_container &&
+              ` (${connection.delivered_content_type})`}
           </Text>
         </Group>
       )}

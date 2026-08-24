@@ -70,6 +70,11 @@ const relationIds = (profile) =>
 const formatDuration = (seconds) => {
   const rounded = Math.max(Math.round(seconds || 0), 0);
   if (rounded < 60) return `${rounded}s`;
+  if (rounded >= 3600) {
+    const hours = Math.floor(rounded / 3600);
+    const minutes = Math.floor((rounded % 3600) / 60);
+    return `${hours}h ${minutes}m`;
+  }
   const minutes = Math.floor(rounded / 60);
   const remainder = rounded % 60;
   return `${minutes}m ${remainder}s`;
@@ -88,6 +93,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -133,7 +139,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
   useEffect(() => {
     if (!opened) return;
-    Promise.all([fetchCategories(), fetchProfiles()]);
+    let active = true;
+    setProfilesLoaded(false);
+    Promise.all([fetchCategories(), fetchProfiles()]).finally(() => {
+      if (active) setProfilesLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
   }, [fetchCategories, fetchProfiles, opened]);
 
   useEffect(() => {
@@ -141,6 +154,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     setCreating(false);
     setProfileId('');
     setActiveTab('settings');
+    setProfilesLoaded(false);
   }, [opened]);
 
   useEffect(() => {
@@ -370,6 +384,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     selectedProfile?.selection_status === 'building' && buildPercent > 1
       ? (buildElapsedSeconds / buildPercent) * (100 - buildPercent)
       : null;
+  const lastBuildSeconds = (() => {
+    const started = new Date(
+      selectedProfile?.selection_started_at || ''
+    ).getTime();
+    const completed = new Date(
+      selectedProfile?.selection_completed_at || ''
+    ).getTime();
+    if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
+    return Math.max((completed - started) / 1000, 0);
+  })();
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
@@ -508,42 +532,51 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </Text>
           </Group>
 
-          {['pending', 'building'].includes(
-            selectedProfile?.selection_status
-          ) && (
-            <Stack gap={5}>
-              <Group justify="space-between" gap="sm">
-                <Text size="sm" fw={500}>
-                  {buildProgress.phase ||
-                    (selectedProfile.selection_status === 'pending'
-                      ? 'Waiting for worker'
-                      : 'Preparing catalog')}
-                  {Number.isFinite(Number(buildProgress.processed)) &&
-                    Number(buildProgress.total) > 0 &&
-                    ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {selectedProfile.selection_status === 'pending'
-                    ? `Queued for ${formatDuration(buildElapsedSeconds)}`
-                    : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
-                        buildRemainingSeconds !== null
-                          ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
-                          : ''
-                      }`}
-                </Text>
-              </Group>
-              <Progress
-                value={buildPercent}
-                animated
-                color={
-                  selectedProfile.selection_status === 'pending'
-                    ? 'yellow'
-                    : 'blue'
-                }
-                aria-label="Catalog preparation progress"
-              />
-            </Stack>
-          )}
+          {profilesLoaded &&
+            ['pending', 'building'].includes(
+              selectedProfile?.selection_status
+            ) && (
+              <Stack gap={5}>
+                <Group justify="space-between" gap="sm">
+                  <Text size="sm" fw={500}>
+                    {buildProgress.phase ||
+                      (selectedProfile.selection_status === 'pending'
+                        ? 'Waiting for worker'
+                        : 'Preparing catalog')}
+                    {Number.isFinite(Number(buildProgress.processed)) &&
+                      Number(buildProgress.total) > 0 &&
+                      ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    {selectedProfile.selection_status === 'pending'
+                      ? `Queued for ${formatDuration(buildElapsedSeconds)}`
+                      : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
+                          buildRemainingSeconds !== null
+                            ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
+                            : ''
+                        }`}
+                  </Text>
+                </Group>
+                <Progress
+                  value={buildPercent}
+                  animated
+                  color={
+                    selectedProfile.selection_status === 'pending'
+                      ? 'yellow'
+                      : 'blue'
+                  }
+                  aria-label="Catalog preparation progress"
+                />
+              </Stack>
+            )}
+
+          {profilesLoaded &&
+            selectedProfile?.selection_status === 'ready' &&
+            lastBuildSeconds !== null && (
+              <Text size="sm" c="dimmed">
+                Catalog prepared in {formatDuration(lastBuildSeconds)}.
+              </Text>
+            )}
 
           {selectedProfile?.selection_error && (
             <Alert color="red">{selectedProfile.selection_error}</Alert>

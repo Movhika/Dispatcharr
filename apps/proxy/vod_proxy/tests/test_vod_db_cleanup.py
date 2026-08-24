@@ -84,9 +84,11 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
             "connected_at": "1000.0",
             "last_activity": "1001.0",
             "active_streams": "1",
+            "content_type": "video/x-matroska",
             "source_metadata": (
                 '{"label":"Account — Movies DE",'
-                '"display_name":"Clean Movie","stream_id":"123"}'
+                '"display_name":"Clean Movie","stream_id":"123",'
+                '"technical_metadata":{"container_extension":"mkv"}}'
             ),
         }
 
@@ -117,6 +119,12 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
         self.assertEqual(stats["vod_connections"][0]["content_name"], "Clean Movie")
         self.assertEqual(connection["source"]["label"], "Account — Movies DE")
         self.assertEqual(connection["source"]["stream_id"], "123")
+        self.assertEqual(connection["delivery_mode"], "proxy_passthrough")
+        self.assertEqual(connection["source_container"], "mkv")
+        self.assertEqual(connection["delivered_container"], "mkv")
+        self.assertEqual(
+            connection["delivered_content_type"], "video/x-matroska"
+        )
         mock_close.assert_called_once()
 
     @patch("apps.proxy.vod_proxy.views.close_old_connections")

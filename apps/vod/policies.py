@@ -153,7 +153,15 @@ def relation_metadata(relation, category_relation=None):
     return {**(defaults or {}), **declared}
 
 
-def relation_allowed(relation, policy, category_mapping=None):
+_METADATA_NOT_PROVIDED = object()
+
+
+def relation_allowed(
+    relation,
+    policy,
+    category_mapping=None,
+    metadata=_METADATA_NOT_PROVIDED,
+):
     if not policy:
         return True
     category_mapping = category_mapping or policy_category_map(policy)
@@ -163,7 +171,8 @@ def relation_allowed(relation, policy, category_mapping=None):
     if category_relation is None and category_mapping:
         return False
 
-    metadata = relation_metadata(relation, category_relation)
+    if metadata is _METADATA_NOT_PROVIDED:
+        metadata = relation_metadata(relation, category_relation)
     constraints = policy.hard_constraints or {}
     allow_unknown = constraints.get("allow_unknown_metadata", True)
 
@@ -231,14 +240,20 @@ def _preference_score(observed, preferred):
     return 0
 
 
-def relation_rank(relation, category_mapping, policy=None):
+def relation_rank(
+    relation,
+    category_mapping,
+    policy=None,
+    metadata=_METADATA_NOT_PROVIDED,
+):
     category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
     )
-    metadata = relation_metadata(
-        relation,
-        category_relation,
-    )
+    if metadata is _METADATA_NOT_PROVIDED:
+        metadata = relation_metadata(
+            relation,
+            category_relation,
+        )
     constraints = (policy.hard_constraints if policy else None) or {}
     dimensions = {
         "audio_language": _preference_score(
@@ -272,10 +287,24 @@ def select_relations_for_policy(relations, policy, canonical_field):
     category_mapping = policy_category_map(policy)
     selected = {}
     for relation in relations:
-        if not relation_allowed(relation, policy, category_mapping):
+        category_relation = category_mapping.get(
+            (relation.m3u_account_id, relation_category_id(relation))
+        )
+        metadata = relation_metadata(relation, category_relation)
+        if not relation_allowed(
+            relation,
+            policy,
+            category_mapping,
+            metadata=metadata,
+        ):
             continue
         key = _relation_selection_key(relation, policy, canonical_field)
-        rank = relation_rank(relation, category_mapping, policy)
+        rank = relation_rank(
+            relation,
+            category_mapping,
+            policy,
+            metadata=metadata,
+        )
         current = selected.get(key)
         if current is None or rank > current[0]:
             selected[key] = (rank, relation)
@@ -341,11 +370,25 @@ def select_relation_ids_for_policy(
             and candidate_count % max(int(progress_interval or 1), 1) == 0
         ):
             progress_callback(candidate_count)
-        if not relation_allowed(relation, policy, category_mapping):
+        category_relation = category_mapping.get(
+            (relation.m3u_account_id, relation_category_id(relation))
+        )
+        metadata = relation_metadata(relation, category_relation)
+        if not relation_allowed(
+            relation,
+            policy,
+            category_mapping,
+            metadata=metadata,
+        ):
             continue
         eligible_count += 1
         key = _relation_selection_key(relation, policy, canonical_field)
-        rank = relation_rank(relation, category_mapping, policy)
+        rank = relation_rank(
+            relation,
+            category_mapping,
+            policy,
+            metadata=metadata,
+        )
         current = selected.get(key)
         if current is None or rank > current[0]:
             selected[key] = (rank, relation.id)
@@ -365,16 +408,32 @@ def ordered_failover_candidates(candidates, policy):
     if not policy:
         return list(candidates)
     category_mapping = policy_category_map(policy)
-    eligible = [
-        relation
-        for relation in candidates
-        if relation_allowed(relation, policy, category_mapping)
-    ]
-    return sorted(
-        eligible,
-        key=lambda relation: relation_rank(relation, category_mapping, policy),
-        reverse=True,
-    )
+    ranked = []
+    for relation in candidates:
+        category_relation = category_mapping.get(
+            (relation.m3u_account_id, relation_category_id(relation))
+        )
+        metadata = relation_metadata(relation, category_relation)
+        if not relation_allowed(
+            relation,
+            policy,
+            category_mapping,
+            metadata=metadata,
+        ):
+            continue
+        ranked.append(
+            (
+                relation_rank(
+                    relation,
+                    category_mapping,
+                    policy,
+                    metadata=metadata,
+                ),
+                relation,
+            )
+        )
+    ranked.sort(key=lambda entry: entry[0], reverse=True)
+    return [entry[1] for entry in ranked]
 
 
 def ordered_candidates(candidates, policy, preferred_relation=None):

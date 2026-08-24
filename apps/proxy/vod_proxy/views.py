@@ -1632,6 +1632,28 @@ def build_vod_stats_data(redis_client):
                             'technical_metadata': source_metadata.get(
                                 'technical_metadata', {}
                             ),
+                            # The VOD proxy forwards provider bytes unchanged.
+                            # Keep source and delivery details separate from
+                            # live-TV output profiles, which may run ffmpeg.
+                            'delivery_mode': 'proxy_passthrough',
+                            'source_container': str(
+                                source_metadata.get('technical_metadata', {}).get(
+                                    'container_extension',
+                                    '',
+                                )
+                                or ''
+                            ).lower(),
+                            'delivered_container': str(
+                                source_metadata.get('technical_metadata', {}).get(
+                                    'container_extension',
+                                    '',
+                                )
+                                or ''
+                            ).lower(),
+                            'delivered_content_type': combined_data.get(
+                                'content_type',
+                                '',
+                            ),
                             'm3u_profile': m3u_profile_info,
                             'client_id': client_id,
                             'client_ip': combined_data.get('client_ip', 'Unknown'),
