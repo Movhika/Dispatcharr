@@ -382,18 +382,21 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         source="vodpolicycategory_set", many=True, required=False
     )
     selection_current = serializers.SerializerMethodField()
+    selection_available = serializers.SerializerMethodField()
 
     class Meta:
         model = VODAccessPolicy
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
             "hard_constraints", "ranking", "users", "category_rules",
-            "selection_status", "selection_current", "selection_counts",
+            "selection_status", "selection_current", "selection_available",
+            "selection_counts", "selection_progress",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "selection_status", "selection_current", "selection_counts",
+            "id", "selection_status", "selection_current",
+            "selection_available", "selection_counts", "selection_progress",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
@@ -407,6 +410,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             and obj.selection_catalog_generation
             == str(selection_catalog_generation())
         )
+
+    def get_selection_available(self, obj):
+        """Whether a completed generation can still be served or previewed."""
+        return bool(obj.active_selection_generation)
 
     def _replace_category_rules(self, policy, rules):
         if rules is None:

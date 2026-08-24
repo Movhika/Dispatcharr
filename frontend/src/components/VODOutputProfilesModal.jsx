@@ -6,6 +6,7 @@ import {
   Group,
   Modal,
   Pagination,
+  Progress,
   ScrollArea,
   SegmentedControl,
   Select,
@@ -66,6 +67,14 @@ const relationIds = (profile) =>
     .filter((rule) => rule.enabled !== false)
     .map((rule) => String(rule.category_relation));
 
+const formatDuration = (seconds) => {
+  const rounded = Math.max(Math.round(seconds || 0), 0);
+  if (rounded < 60) return `${rounded}s`;
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return `${minutes}m ${remainder}s`;
+};
+
 const VODOutputProfilesModal = ({ opened, onClose }) => {
   const categories = useVODStore((state) => state.categories);
   const profiles = useVODStore((state) => state.accessPolicies);
@@ -99,6 +108,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const selectedProfileId = selectedProfile?.id;
   const selectedSelectionStatus = selectedProfile?.selection_status;
+  const selectionAvailable =
+    selectedProfile?.selection_available ??
+    selectedProfile?.selection_current ??
+    false;
 
   const resetDraft = (profile = null) => {
     const source = profile || EMPTY_PROFILE;
@@ -190,7 +203,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
 
   const loadPreview = async () => {
-    if (!selectedProfile?.selection_current) {
+    if (!selectionAvailable) {
       setPreview({ count: 0, results: [] });
       return;
     }
@@ -216,7 +229,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     const timer = window.setTimeout(loadPreview, 250);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, filters, opened, page, selectedProfile?.selection_current]);
+  }, [
+    activeTab,
+    filters,
+    opened,
+    page,
+    selectionAvailable,
+    selectedProfile?.selection_completed_at,
+  ]);
 
   const updateConstraint = (field, value) =>
     setDraft((current) => ({
@@ -334,6 +354,22 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
   const selectedCategoryIds = relationIds(draft);
   const counts = selectedProfile?.selection_counts || {};
+  const buildProgress = selectedProfile?.selection_progress || {};
+  const buildPercent = Math.max(
+    0,
+    Math.min(Number(buildProgress.percent) || 0, 100)
+  );
+  const buildStartedAt =
+    selectedProfile?.selection_status === 'building'
+      ? selectedProfile.selection_started_at
+      : buildProgress.updated_at;
+  const buildElapsedSeconds = buildStartedAt
+    ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
+    : 0;
+  const buildRemainingSeconds =
+    selectedProfile?.selection_status === 'building' && buildPercent > 1
+      ? (buildElapsedSeconds / buildPercent) * (100 - buildPercent)
+      : null;
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
@@ -471,6 +507,43 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               Unknown metadata: {counts.unknown_metadata || 0}
             </Text>
           </Group>
+
+          {['pending', 'building'].includes(
+            selectedProfile?.selection_status
+          ) && (
+            <Stack gap={5}>
+              <Group justify="space-between" gap="sm">
+                <Text size="sm" fw={500}>
+                  {buildProgress.phase ||
+                    (selectedProfile.selection_status === 'pending'
+                      ? 'Waiting for worker'
+                      : 'Preparing catalog')}
+                  {Number.isFinite(Number(buildProgress.processed)) &&
+                    Number(buildProgress.total) > 0 &&
+                    ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {selectedProfile.selection_status === 'pending'
+                    ? `Queued for ${formatDuration(buildElapsedSeconds)}`
+                    : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
+                        buildRemainingSeconds !== null
+                          ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
+                          : ''
+                      }`}
+                </Text>
+              </Group>
+              <Progress
+                value={buildPercent}
+                animated
+                color={
+                  selectedProfile.selection_status === 'pending'
+                    ? 'yellow'
+                    : 'blue'
+                }
+                aria-label="Catalog preparation progress"
+              />
+            </Stack>
+          )}
 
           {selectedProfile?.selection_error && (
             <Alert color="red">{selectedProfile.selection_error}</Alert>
@@ -621,11 +694,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
             <TabsPanel value="preview" pt="md">
               <Stack>
-                {!selectedProfile?.selection_current && (
+                {!selectionAvailable && (
                   <Alert color="yellow">
-                    Build this profile before its output can be previewed. The
-                    previous generation remains active until the new one is
-                    ready.
+                    This profile has no completed catalog yet. Its content can
+                    be previewed as soon as the first preparation finishes.
+                  </Alert>
+                )}
+                {selectionAvailable && !selectedProfile?.selection_current && (
+                  <Alert color="blue">
+                    Showing the last completed catalog while the updated one is
+                    prepared in the background.
                   </Alert>
                 )}
                 <Group align="flex-end" wrap="wrap">

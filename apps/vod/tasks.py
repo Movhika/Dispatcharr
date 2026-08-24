@@ -48,9 +48,10 @@ def rebuild_all_vod_profile_selections(self):
     results = {}
     retry_exc = None
     try:
-        for policy_id in VODAccessPolicy.objects.filter(is_active=True).values_list(
-            "id", flat=True
-        ):
+        for policy_id in VODAccessPolicy.objects.filter(
+            is_active=True,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        ).values_list("id", flat=True):
             try:
                 results[str(policy_id)] = build_vod_profile_selection(policy_id)
             except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
@@ -69,6 +70,23 @@ def rebuild_all_vod_profile_selections(self):
             pass
     if retry_exc is not None:
         raise self.retry(exc=retry_exc, countdown=5)
+    # An invalidation can arrive after this task has already prepared an early
+    # profile. The debounce lock intentionally suppresses another task while we
+    # are running, so schedule one follow-up pass for any profile left pending.
+    if VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+    ).exists():
+        try:
+            acquired = cache.add(
+                PROFILE_REBUILD_ENQUEUE_KEY,
+                "1",
+                timeout=60,
+            )
+        except Exception:
+            acquired = True
+        if acquired:
+            self.apply_async(countdown=1)
     return results
 
 

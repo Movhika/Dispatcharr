@@ -27,6 +27,7 @@ from .policies import (
 
 logger = logging.getLogger(__name__)
 BUILD_CHUNK_SIZE = 2000
+PROGRESS_SCAN_INTERVAL = 5000
 PROFILE_REBUILD_ENQUEUE_KEY = "vod_profile_selection:rebuild-all-enqueued"
 
 
@@ -36,6 +37,22 @@ class CatalogChangedDuringBuild(RuntimeError):
 
 class ProfileBuildAlreadyRunning(RuntimeError):
     pass
+
+
+def _progress_payload(phase, percent, **details):
+    return {
+        "phase": phase,
+        "percent": max(0, min(int(percent), 100)),
+        "updated_at": timezone.now().isoformat(),
+        **{key: value for key, value in details.items() if value is not None},
+    }
+
+
+def _set_profile_progress(policy_id, phase, percent, **details):
+    """Persist coarse build progress without firing policy invalidation signals."""
+    VODAccessPolicy.objects.filter(pk=policy_id).update(
+        selection_progress=_progress_payload(phase, percent, **details)
+    )
 
 
 def enqueue_profile_selection_rebuild(policy_id):
@@ -48,6 +65,7 @@ def enqueue_profile_selection_rebuild(policy_id):
     ).update(
         selection_status=VODAccessPolicy.SelectionStatus.PENDING,
         selection_error="",
+        selection_progress=_progress_payload("Waiting for worker", 0),
     )
     if not updated:
         return False
@@ -68,11 +86,13 @@ def enqueue_profile_selection_rebuild(policy_id):
 
 def enqueue_all_profile_selection_rebuilds():
     """Mark active profiles stale and enqueue one debounced rebuild task."""
+    queued_progress = _progress_payload("Waiting for worker", 0)
     VODAccessPolicy.objects.filter(is_active=True).exclude(
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
     ).update(
         selection_status=VODAccessPolicy.SelectionStatus.PENDING,
         selection_error="",
+        selection_progress=queued_progress,
     )
 
     def enqueue():
@@ -133,7 +153,17 @@ def _metadata_columns(metadata, relation):
     }
 
 
-def _build_type(policy, generation, relation_model, selection_model, canonical):
+def _build_type(
+    policy,
+    generation,
+    relation_model,
+    selection_model,
+    canonical,
+    *,
+    scan_progress_range,
+    store_progress_range,
+    content_label,
+):
     category_mapping = policy_category_map(policy)
     candidates = (
         relation_model.objects.filter(
@@ -142,20 +172,47 @@ def _build_type(policy, generation, relation_model, selection_model, canonical):
         .filter(allowed_category_query(policy))
         .select_related("m3u_account", "source_asset")
         .order_by("pk")
-        .iterator(chunk_size=BUILD_CHUNK_SIZE)
     )
+    candidate_total = candidates.count()
+    scan_start, scan_end = scan_progress_range
+
+    def report_scan(processed):
+        ratio = processed / candidate_total if candidate_total else 1
+        _set_profile_progress(
+            policy.pk,
+            f"Selecting {content_label}",
+            scan_start + ((scan_end - scan_start) * ratio),
+            processed=processed,
+            total=candidate_total,
+            content_type=content_label,
+        )
+
+    report_scan(0)
     stats = {}
     selected_ids = select_relation_ids_for_policy(
-        candidates,
+        candidates.iterator(chunk_size=BUILD_CHUNK_SIZE),
         policy,
         canonical,
         stats=stats,
+        progress_callback=report_scan,
+        progress_interval=PROGRESS_SCAN_INTERVAL,
     )
+    report_scan(candidate_total)
     canonical_ids = set()
     unknown_metadata = 0
     created = 0
 
-    for offset in range(0, len(selected_ids), BUILD_CHUNK_SIZE):
+    store_start, store_end = store_progress_range
+    selected_total = len(selected_ids)
+    _set_profile_progress(
+        policy.pk,
+        f"Preparing {content_label}",
+        store_start,
+        processed=0,
+        total=selected_total,
+        content_type=content_label,
+    )
+    for offset in range(0, selected_total, BUILD_CHUNK_SIZE):
         relation_chunk = list(
             relation_model.objects.filter(
                 pk__in=selected_ids[offset : offset + BUILD_CHUNK_SIZE]
@@ -189,6 +246,26 @@ def _build_type(policy, generation, relation_model, selection_model, canonical):
             rows.append(selection_model(**values))
         selection_model.objects.bulk_create(rows, batch_size=1000)
         created += len(rows)
+        processed = min(offset + BUILD_CHUNK_SIZE, selected_total)
+        ratio = processed / selected_total if selected_total else 1
+        _set_profile_progress(
+            policy.pk,
+            f"Preparing {content_label}",
+            store_start + ((store_end - store_start) * ratio),
+            processed=processed,
+            total=selected_total,
+            content_type=content_label,
+        )
+
+    if not selected_total:
+        _set_profile_progress(
+            policy.pk,
+            f"Preparing {content_label}",
+            store_end,
+            processed=0,
+            total=0,
+            content_type=content_label,
+        )
 
     return {
         "candidate_sources": stats.get("candidates", 0),
@@ -217,6 +294,7 @@ def build_vod_profile_selection(policy_id):
         selection_started_at=now,
         selection_completed_at=None,
         selection_error="",
+        selection_progress=_progress_payload("Starting", 1),
     )
     if not acquired:
         if VODAccessPolicy.objects.filter(pk=policy_id, is_active=True).exists():
@@ -234,6 +312,9 @@ def build_vod_profile_selection(policy_id):
             M3UMovieRelation,
             VODMovieProfileSelection,
             "movie_id",
+            scan_progress_range=(2, 36),
+            store_progress_range=(36, 50),
+            content_label="movies",
         )
         series_counts = _build_type(
             policy,
@@ -241,7 +322,11 @@ def build_vod_profile_selection(policy_id):
             M3USeriesRelation,
             VODSeriesProfileSelection,
             "series_id",
+            scan_progress_range=(50, 84),
+            store_progress_range=(84, 98),
+            content_label="series",
         )
+        _set_profile_progress(policy.pk, "Activating catalog", 99)
         if str(selection_catalog_generation()) != source_generation:
             raise CatalogChangedDuringBuild(
                 "The VOD catalog changed while the profile was being built"
@@ -289,6 +374,7 @@ def build_vod_profile_selection(policy_id):
                 selection_status=VODAccessPolicy.SelectionStatus.READY,
                 selection_completed_at=timezone.now(),
                 selection_error="",
+                selection_progress=_progress_payload("Ready", 100),
             )
         VODMovieProfileSelection.objects.filter(policy=policy).exclude(
             generation=generation
@@ -307,6 +393,9 @@ def build_vod_profile_selection(policy_id):
         VODAccessPolicy.objects.filter(pk=policy.pk).update(
             selection_status=VODAccessPolicy.SelectionStatus.PENDING,
             selection_error=str(exc),
+            selection_progress=_progress_payload(
+                "Catalog changed; retrying", 0
+            ),
         )
         raise
     except Exception as exc:
@@ -321,6 +410,7 @@ def build_vod_profile_selection(policy_id):
             selection_status=VODAccessPolicy.SelectionStatus.FAILED,
             selection_error=str(exc)[:2000],
             selection_completed_at=timezone.now(),
+            selection_progress=_progress_payload("Failed", 100),
         )
         raise
 
@@ -339,12 +429,10 @@ def prepared_relation_ids(
     ).first()
     if not state:
         return None
-    if (
-        state["selection_status"] != VODAccessPolicy.SelectionStatus.READY
-        or not state["active_selection_generation"]
-        or state["selection_catalog_generation"]
-        != str(selection_catalog_generation())
-    ):
+    # Keep serving the last atomically activated generation while a newer
+    # generation is queued or building. Deleted source relations disappear via
+    # FK cascades, and the new generation replaces this one only when complete.
+    if not state["active_selection_generation"]:
         return None
 
     if relation_model is M3UMovieRelation:

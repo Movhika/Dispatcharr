@@ -311,6 +311,8 @@ def select_relation_ids_for_policy(
     policy,
     canonical_field,
     stats=None,
+    progress_callback=None,
+    progress_interval=5000,
 ):
     """Stream relations and retain only the winning ID for each output entry.
 
@@ -334,6 +336,11 @@ def select_relation_ids_for_policy(
     eligible_count = 0
     for relation in relations:
         candidate_count += 1
+        if (
+            progress_callback
+            and candidate_count % max(int(progress_interval or 1), 1) == 0
+        ):
+            progress_callback(candidate_count)
         if not relation_allowed(relation, policy, category_mapping):
             continue
         eligible_count += 1

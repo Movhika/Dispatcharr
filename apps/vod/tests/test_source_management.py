@@ -53,6 +53,7 @@ from apps.vod.profile_selection import (
     build_vod_profile_selection,
     prepared_relation_ids,
 )
+from apps.vod.tasks import rebuild_all_vod_profile_selections
 
 
 class VODSourceManagementTests(TestCase):
@@ -308,6 +309,8 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(counts["movies"]["candidate_sources"], 2)
         self.assertEqual(counts["movies"]["eligible_sources"], 1)
         self.assertEqual(counts["movies"]["output_entries"], 1)
+        self.assertEqual(self.policy.selection_progress["phase"], "Ready")
+        self.assertEqual(self.policy.selection_progress["percent"], 100)
 
     def test_profile_build_does_not_overlap_an_active_build(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
@@ -399,6 +402,52 @@ class VODSourceManagementTests(TestCase):
             )
         )
 
+    def test_account_runtime_full_save_keeps_prepared_profile_current(self):
+        build_vod_profile_selection(self.policy.id)
+
+        self.account_a.status = M3UAccount.Status.PARSING
+        self.account_a.last_message = "Refreshing VOD metadata"
+        self.account_a.save()
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+
+    def test_episode_inventory_change_keeps_prepared_profile_current(self):
+        build_vod_profile_selection(self.policy.id)
+        series = Series.objects.create(name="Progress series")
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="progress-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            season_number=1,
+            episode_number=1,
+            name="Pilot",
+        )
+
+        # The series relation itself changes selectable output and therefore
+        # queues a rebuild. Complete that rebuild before testing the episode-only
+        # inventory change.
+        build_vod_profile_selection(self.policy.id)
+        M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            series_relation=series_relation,
+            episode=episode,
+            stream_id="progress-episode",
+        )
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+
     def test_canonical_metadata_refresh_keeps_prepared_profile_current(self):
         build_vod_profile_selection(self.policy.id)
 
@@ -473,6 +522,85 @@ class VODSourceManagementTests(TestCase):
             response.data["results"][0]["metadata"]["audio_languages"],
             ["ger"],
         )
+
+    def test_pending_profile_previews_and_serves_last_completed_generation(self):
+        build_vod_profile_selection(self.policy.id)
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_progress={"phase": "Waiting for worker", "percent": 0},
+        )
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            ),
+            [self.german_relation.id],
+        )
+
+        admin = get_user_model().objects.create_user(
+            username="stale-profile-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["current"])
+        self.assertTrue(response.data["available"])
+        self.assertEqual(response.data["count"], 1)
+
+    def test_global_rebuild_schedules_a_followup_for_late_invalidation(self):
+        second_policy = VODAccessPolicy.objects.create(
+            name="Second profile",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            is_active=True,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        VODAccessPolicy.objects.exclude(
+            pk__in=[self.policy.pk, second_policy.pk]
+        ).update(is_active=False)
+        VODAccessPolicy.objects.filter(
+            pk__in=[self.policy.pk, second_policy.pk]
+        ).update(selection_status=VODAccessPolicy.SelectionStatus.PENDING)
+        built = []
+
+        def complete_build(policy_id):
+            VODAccessPolicy.objects.filter(pk=policy_id).update(
+                selection_status=VODAccessPolicy.SelectionStatus.READY
+            )
+            built.append(policy_id)
+            if len(built) == 2:
+                VODAccessPolicy.objects.filter(pk=built[0]).update(
+                    selection_status=VODAccessPolicy.SelectionStatus.PENDING
+                )
+            return {}
+
+        with (
+            patch(
+                "apps.vod.profile_selection.build_vod_profile_selection",
+                side_effect=complete_build,
+            ),
+            patch.object(
+                rebuild_all_vod_profile_selections,
+                "apply_async",
+            ) as apply_async,
+        ):
+            rebuild_all_vod_profile_selections.run()
+
+        self.assertEqual(len(built), 2)
+        apply_async.assert_called_once_with(countdown=1)
 
     def test_admin_can_create_a_reusable_vod_output_profile(self):
         admin = get_user_model().objects.create_user(

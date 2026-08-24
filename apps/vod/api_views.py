@@ -740,12 +740,13 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 {"detail": "type must be movie or series"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        current = VODAccessPolicySerializer(policy).data["selection_current"]
-        if not current:
+        selection_state = VODAccessPolicySerializer(policy).data
+        if not selection_state["selection_available"]:
             return Response(
                 {
                     "status": policy.selection_status,
                     "current": False,
+                    "available": False,
                     "counts": policy.selection_counts or {},
                     "results": [],
                     "count": 0,
@@ -861,7 +862,8 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         return Response(
             {
                 "status": policy.selection_status,
-                "current": True,
+                "current": selection_state["selection_current"],
+                "available": True,
                 "counts": policy.selection_counts or {},
                 "count": matching_count,
                 "page": page,

@@ -79,6 +79,9 @@ vi.mock('@mantine/core', () => {
     Modal,
     NumberInput: Input,
     Pagination: () => null,
+    Progress: ({ value }) => (
+      <div aria-label="Catalog preparation progress">{value}</div>
+    ),
     ScrollArea: Wrapper,
     SegmentedControl: () => null,
     Select,
@@ -148,6 +151,8 @@ describe('VODOutputProfilesModal', () => {
     category_rules: [],
     selection_status: 'ready',
     selection_current: true,
+    selection_available: true,
+    selection_progress: { phase: 'Ready', percent: 100 },
     selection_counts: {
       output_entries: 123,
       canonical_titles: 120,
@@ -260,5 +265,33 @@ describe('VODOutputProfilesModal', () => {
     view.rerender(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(screen.getByLabelText('Profile name')).toHaveValue('Unsaved edit');
+  });
+
+  it('shows catalog build progress while a previous generation stays available', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'building',
+        selection_current: false,
+        selection_available: true,
+        selection_started_at: new Date().toISOString(),
+        selection_progress: {
+          phase: 'Selecting movies',
+          percent: 36,
+          processed: 5000,
+          total: 10000,
+        },
+      },
+    ];
+
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByText(/Selecting movies/)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Catalog preparation progress')
+    ).toHaveTextContent('36');
+    expect(
+      screen.getByText(/Showing the last completed catalog/)
+    ).toBeInTheDocument();
   });
 });

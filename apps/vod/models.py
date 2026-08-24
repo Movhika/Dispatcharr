@@ -320,6 +320,7 @@ class VODAccessPolicy(models.Model):
     )
     selection_catalog_generation = models.CharField(max_length=64, blank=True)
     selection_counts = models.JSONField(default=dict, blank=True)
+    selection_progress = models.JSONField(default=dict, blank=True)
     selection_started_at = models.DateTimeField(null=True, blank=True)
     selection_completed_at = models.DateTimeField(null=True, blank=True)
     selection_error = models.TextField(blank=True)
