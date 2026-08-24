@@ -37,9 +37,8 @@ import {
   getCategoryOptions,
 } from '../utils/pages/VODsUtils.js';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
-import LanguagePicker, {
-  LanguageSelect,
-} from '../components/LanguagePicker.jsx';
+import { LanguageSelect } from '../components/LanguagePicker.jsx';
+import VODMetadataFields from '../components/VODMetadataFields.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
@@ -503,49 +502,13 @@ const VODsPage = () => {
             titles, including episode sources for selected series. Manual values
             are locked and are never replaced by playback observations.
           </Text>
-          <LanguagePicker
-            label="Audio languages"
-            value={bulkMetadata.audio_languages}
-            onChange={(value) =>
-              setBulkMetadata({
-                ...bulkMetadata,
-                audio_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <LanguagePicker
-            label="Subtitle languages"
-            value={bulkMetadata.subtitle_languages}
-            onChange={(value) =>
-              setBulkMetadata({
-                ...bulkMetadata,
-                subtitle_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <Select
-            label="Resolution"
-            description="Leave empty to keep existing values"
-            clearable
-            data={RESOLUTION_VALUES}
-            value={bulkMetadata.resolution || null}
-            onChange={(value) =>
-              setBulkMetadata({ ...bulkMetadata, resolution: value || '' })
-            }
-          />
-          <Select
-            label="Format"
-            description="Leave empty to keep existing values"
-            clearable
-            searchable
-            data={CONTAINER_EXTENSION_OPTIONS}
-            value={bulkMetadata.container_extension || null}
-            onChange={(value) =>
-              setBulkMetadata({
-                ...bulkMetadata,
-                container_extension: value || '',
-              })
-            }
+          <VODMetadataFields
+            value={bulkMetadata}
+            onChange={setBulkMetadata}
+            descriptions={{
+              resolution: 'Leave empty to keep existing values',
+              container_extension: 'Leave empty to keep existing values',
+            }}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={bulkEditorHandlers.close}>

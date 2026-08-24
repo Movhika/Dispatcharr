@@ -262,7 +262,7 @@ describe('VODsPage list and bulk editing', () => {
     await screen.findByText('Movie A');
     fireEvent.click(screen.getByLabelText('Select Movie A'));
     fireEvent.click(screen.getByRole('button', { name: /Edit selected/ }));
-    fireEvent.change(screen.getByLabelText('Audio languages'), {
+    fireEvent.change(screen.getByLabelText('DUB languages'), {
       target: { value: 'ger,eng' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply and lock' }));

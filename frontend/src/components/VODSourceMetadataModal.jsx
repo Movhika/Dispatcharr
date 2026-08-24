@@ -1,13 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Group, Modal, Select, Stack, Text } from '@mantine/core';
+import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import API from '../api';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
-import {
-  CONTAINER_EXTENSION_OPTIONS,
-  RESOLUTION_VALUES,
-} from '../utils/vodMetadataOptions.js';
 import { showNotification } from '../utils/notificationUtils';
-import LanguagePicker from './LanguagePicker.jsx';
+import VODMetadataFields from './VODMetadataFields.jsx';
 
 const manualValues = (provider) => {
   const sourceMetadata = provider?.source_metadata || {};
@@ -118,39 +114,7 @@ const VODSourceMetadataModal = ({
           Only values saved here become manual locks. Empty fields keep using
           category, provider, or playback metadata.
         </Text>
-        <LanguagePicker
-          label="DUB languages"
-          value={metadata.audio_languages || []}
-          onChange={(value) =>
-            setMetadata({ ...metadata, audio_languages: value })
-          }
-        />
-        <LanguagePicker
-          label="SUB languages"
-          value={metadata.subtitle_languages || []}
-          onChange={(value) =>
-            setMetadata({ ...metadata, subtitle_languages: value })
-          }
-        />
-        <Select
-          clearable
-          label="Resolution"
-          data={RESOLUTION_VALUES}
-          value={metadata.resolution || null}
-          onChange={(value) =>
-            setMetadata({ ...metadata, resolution: value || '' })
-          }
-        />
-        <Select
-          clearable
-          searchable
-          label="Format"
-          data={CONTAINER_EXTENSION_OPTIONS}
-          value={metadata.container_extension || null}
-          onChange={(value) =>
-            setMetadata({ ...metadata, container_extension: value || '' })
-          }
-        />
+        <VODMetadataFields value={metadata} onChange={setMetadata} />
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose} disabled={saving}>
             Cancel

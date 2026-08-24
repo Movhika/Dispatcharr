@@ -4,13 +4,18 @@ from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import (
+    PermissionDenied,
+    ValidationError as DRFValidationError,
+)
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import Count, Prefetch, Q
 from django.db.models.expressions import RawSQL
+from django.utils.dateparse import parse_date, parse_datetime
 import django_filters
 import logging
+from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from apps.accounts.permissions import (
     Authenticated,
@@ -50,7 +55,6 @@ from .tasks import refresh_series_episodes, refresh_movie_advanced_data
 from .utils import get_series_display_name
 from .metadata import normalize_language_code
 from django.utils import timezone
-from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -944,13 +948,193 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_permissions(self):
         return [Authenticated()]
 
-    def get_queryset(self):
+    def _base_queryset(self):
         queryset = self.queryset
         if getattr(self, "swagger_fake_view", False):
             return queryset.none()
         if not _is_admin(self.request.user):
             queryset = queryset.filter(user=self.request.user)
         return queryset
+
+    @staticmethod
+    def _datetime_bound(value, *, end=False):
+        if not value:
+            return None
+        parsed = parse_datetime(str(value))
+        if parsed is None:
+            parsed_date = parse_date(str(value))
+            if parsed_date is not None:
+                parsed = datetime.combine(
+                    parsed_date,
+                    time.max if end else time.min,
+                )
+        if parsed is None:
+            raise DRFValidationError(
+                {"detail": f"Invalid date/time value: {value}"}
+            )
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed)
+        return parsed
+
+    def _apply_history_filters(self, queryset, filters):
+        search = str(filters.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(content_name__icontains=search)
+                | Q(provider_asset_id__icontains=search)
+                | Q(m3u_account__name__icontains=search)
+                | Q(category__name__icontains=search)
+            )
+
+        username = str(filters.get("username") or "").strip()
+        if username:
+            queryset = queryset.filter(user__username__icontains=username)
+
+        for field in ("status", "mode", "content_type"):
+            value = str(filters.get(field) or "").strip()
+            if value:
+                queryset = queryset.filter(**{field: value})
+
+        started_after = self._datetime_bound(filters.get("started_after"))
+        started_before = self._datetime_bound(
+            filters.get("started_before"), end=True
+        )
+        if started_after:
+            queryset = queryset.filter(started_at__gte=started_after)
+        if started_before:
+            queryset = queryset.filter(started_at__lte=started_before)
+        return queryset.order_by("-started_at", "-id")
+
+    def get_queryset(self):
+        return self._apply_history_filters(
+            self._base_queryset(), self.request.query_params
+        )
+
+    def _selected_history(self, request):
+        if not _is_admin(request.user):
+            raise PermissionDenied(
+                "Only administrators can modify playback history."
+            )
+        filters = request.data.get("filters")
+        filters = filters if isinstance(filters, dict) else {}
+        queryset = self._apply_history_filters(self._base_queryset(), filters)
+
+        selected_ids = request.data.get("ids", [])
+        excluded_ids = request.data.get("exclude_ids", [])
+        if not isinstance(selected_ids, list) or not isinstance(excluded_ids, list):
+            raise DRFValidationError(
+                {"detail": "ids and exclude_ids must be arrays"}
+            )
+        try:
+            selected_ids = [int(value) for value in selected_ids]
+            excluded_ids = [int(value) for value in excluded_ids]
+        except (TypeError, ValueError):
+            raise DRFValidationError(
+                {"detail": "ids and exclude_ids must contain integers"}
+            )
+
+        if request.data.get("select_all") is True:
+            if excluded_ids:
+                queryset = queryset.exclude(pk__in=excluded_ids)
+            return queryset
+        if not selected_ids:
+            return queryset.none()
+        return queryset.filter(pk__in=selected_ids)
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        queryset = self._selected_history(request)
+        selected_count = queryset.count()
+        queryset.delete()
+        return Response({"deleted_sessions": selected_count})
+
+    @action(detail=False, methods=["patch"], url_path="bulk-metadata")
+    def bulk_metadata(self, request):
+        queryset = self._selected_history(request).exclude(source_asset_id=None)
+        selected_count = queryset.count()
+        updates = request.data.get("updates", {})
+        if not isinstance(updates, dict):
+            return Response(
+                {"detail": "updates must be an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed_fields = {
+            "audio_languages",
+            "subtitle_languages",
+            "resolution",
+            "container_extension",
+        }
+        normalized_updates = {}
+        values_to_validate = {}
+        for field, spec in updates.items():
+            if field not in allowed_fields or not isinstance(spec, dict):
+                return Response(
+                    {"detail": f"Unsupported metadata update: {field}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            mode = spec.get("mode")
+            if mode not in {"set", "clear"}:
+                return Response(
+                    {"detail": f"{field} mode must be set or clear"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized_updates[field] = {"mode": mode}
+            if mode == "set":
+                values_to_validate[field] = spec.get("value")
+
+        if not normalized_updates:
+            return Response(
+                {"detail": "At least one metadata field must change"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        validated_values = _validated_source_metadata(values_to_validate)
+        for field, value in validated_values.items():
+            normalized_updates[field]["value"] = value
+
+        asset_ids = queryset.order_by().values_list(
+            "source_asset_id", flat=True
+        ).distinct()
+        assets = VODSourceAsset.objects.filter(pk__in=asset_ids).only(
+            "id", "manual_metadata", "locked_fields"
+        )
+        updated_assets = []
+        updated_count = 0
+        with transaction.atomic():
+            for asset in assets.iterator(chunk_size=500):
+                manual = dict(asset.manual_metadata or {})
+                locked = set(asset.locked_fields or [])
+                for field, spec in normalized_updates.items():
+                    if spec["mode"] == "clear":
+                        manual.pop(field, None)
+                        locked.discard(field)
+                    else:
+                        manual[field] = spec.get("value")
+                        locked.add(field)
+                asset.manual_metadata = manual
+                asset.locked_fields = sorted(locked)
+                updated_assets.append(asset)
+                updated_count += 1
+                if len(updated_assets) >= 500:
+                    VODSourceAsset.objects.bulk_update(
+                        updated_assets,
+                        ["manual_metadata", "locked_fields"],
+                        batch_size=500,
+                    )
+                    updated_assets.clear()
+            if updated_assets:
+                VODSourceAsset.objects.bulk_update(
+                    updated_assets,
+                    ["manual_metadata", "locked_fields"],
+                    batch_size=500,
+                )
+
+        return Response(
+            {
+                "selected_sessions": selected_count,
+                "updated_sources": updated_count,
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="telemetry")
     def telemetry(self, request, pk=None):

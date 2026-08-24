@@ -6,7 +6,6 @@ import {
   Group,
   Modal,
   SegmentedControl,
-  Select,
   Stack,
   Table,
   TableTbody,
@@ -22,8 +21,7 @@ import { Info } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
-import LanguagePicker from '../LanguagePicker.jsx';
-import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
+import VODMetadataFields from '../VODMetadataFields.jsx';
 import M3UGroupRules from './M3UGroupRules.jsx';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 
@@ -352,67 +350,16 @@ const VODCategoryFilter = ({
             import assumptions; manual and observed source metadata remains
             authoritative.
           </Text>
-          <SegmentedControl
-            value={metadataModes.audio_languages}
-            onChange={(value) =>
-              setMetadataModes({ ...metadataModes, audio_languages: value })
-            }
-            data={['keep', 'set', 'clear'].map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-            }))}
-          />
-          <LanguagePicker
-            label="DUB"
-            value={metadata.audio_languages}
-            disabled={metadataModes.audio_languages !== 'set'}
-            onChange={(value) =>
-              setMetadata({
-                ...metadata,
-                audio_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <SegmentedControl
-            value={metadataModes.subtitle_languages}
-            onChange={(value) =>
-              setMetadataModes({ ...metadataModes, subtitle_languages: value })
-            }
-            data={['keep', 'set', 'clear'].map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-            }))}
-          />
-          <LanguagePicker
-            label="SUB"
-            value={metadata.subtitle_languages}
-            disabled={metadataModes.subtitle_languages !== 'set'}
-            onChange={(value) =>
-              setMetadata({
-                ...metadata,
-                subtitle_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <SegmentedControl
-            value={metadataModes.resolution}
-            onChange={(value) =>
-              setMetadataModes({ ...metadataModes, resolution: value })
-            }
-            data={['keep', 'set', 'clear'].map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-            }))}
-          />
-          <Select
-            clearable
-            label="Resolution"
-            data={RESOLUTION_VALUES}
-            value={metadata.resolution || null}
-            disabled={metadataModes.resolution !== 'set'}
-            onChange={(value) =>
-              setMetadata({ ...metadata, resolution: value || '' })
-            }
+          <VODMetadataFields
+            fields={['audio_languages', 'subtitle_languages', 'resolution']}
+            labels={{
+              audio_languages: 'DUB',
+              subtitle_languages: 'SUB',
+            }}
+            value={metadata}
+            onChange={setMetadata}
+            modes={metadataModes}
+            onModesChange={setMetadataModes}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setEditorOpen(false)}>

@@ -1,8 +1,10 @@
+from datetime import timedelta
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
-from unittest.mock import patch
 
 from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
@@ -40,6 +42,7 @@ from apps.vod.api_views import (
     _vod_relation_sql,
     MovieViewSet,
     UnifiedContentViewSet,
+    VODPlaybackSessionViewSet,
     VODSourceAssetViewSet,
     VODAccessPolicyViewSet,
 )
@@ -805,6 +808,166 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(metadata["values"]["audio_languages"], ["ger"])
         self.assertEqual(metadata["values"]["resolution"], "1080p")
         self.assertEqual(metadata["provenance"]["resolution"], "playback")
+
+    def test_playback_history_filters_by_user_title_and_time_on_the_server(self):
+        admin = get_user_model().objects.create_user(
+            username="history-admin",
+            password="test-password",
+            user_level=10,
+        )
+        maria = get_user_model().objects.create_user(
+            username="Maria",
+            password="test-password",
+        )
+        playback = record_playback_selection(
+            session_id="history-filter-match",
+            user=maria,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        old = record_playback_selection(
+            session_id="history-filter-old",
+            user=maria,
+            relation=self.english_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        VODPlaybackSession.objects.filter(pk=old.pk).update(
+            started_at=timezone.now() - timedelta(days=10)
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/playback-sessions/",
+            {
+                "username": "mari",
+                "search": "Avatar",
+                "status": "completed",
+                "started_after": (
+                    timezone.now() - timedelta(days=1)
+                ).isoformat(),
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODPlaybackSessionViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], playback.id)
+
+    def test_playback_history_bulk_delete_honors_filtered_select_all(self):
+        admin = get_user_model().objects.create_user(
+            username="history-delete-admin",
+            password="test-password",
+            user_level=10,
+        )
+        matching = record_playback_selection(
+            session_id="history-delete-match",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.FAILED,
+        )
+        retained = record_playback_selection(
+            session_id="history-delete-retain",
+            user=admin,
+            relation=self.english_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/playback-sessions/bulk-delete/",
+            {
+                "select_all": True,
+                "exclude_ids": [],
+                "filters": {"status": "failed"},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODPlaybackSessionViewSet.as_view(
+            {"post": "bulk_delete"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted_sessions"], 1)
+        self.assertFalse(VODPlaybackSession.objects.filter(pk=matching.pk).exists())
+        self.assertTrue(VODPlaybackSession.objects.filter(pk=retained.pk).exists())
+
+    def test_non_admin_cannot_delete_playback_history(self):
+        user = get_user_model().objects.create_user(
+            username="history-viewer",
+            password="test-password",
+        )
+        playback = record_playback_selection(
+            session_id="history-delete-forbidden",
+            user=user,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/playback-sessions/bulk-delete/",
+            {"ids": [playback.id]},
+            format="json",
+        )
+        force_authenticate(request, user=user)
+
+        response = VODPlaybackSessionViewSet.as_view(
+            {"post": "bulk_delete"}
+        )(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(VODPlaybackSession.objects.filter(pk=playback.pk).exists())
+
+    def test_playback_history_bulk_metadata_updates_each_source_once(self):
+        admin = get_user_model().objects.create_user(
+            username="history-metadata-admin",
+            password="test-password",
+            user_level=10,
+        )
+        first = record_playback_selection(
+            session_id="history-metadata-first",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        second = record_playback_selection(
+            session_id="history-metadata-second",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/playback-sessions/bulk-metadata/",
+            {
+                "ids": [first.id, second.id],
+                "updates": {
+                    "resolution": {"mode": "set", "value": "1080p"},
+                    "subtitle_languages": {
+                        "mode": "set",
+                        "value": ["deu"],
+                    },
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODPlaybackSessionViewSet.as_view(
+            {"patch": "bulk_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["selected_sessions"], 2)
+        self.assertEqual(response.data["updated_sources"], 1)
+        asset = VODSourceAsset.objects.get(pk=first.source_asset_id)
+        self.assertEqual(asset.manual_metadata["resolution"], "1080p")
+        self.assertEqual(asset.manual_metadata["subtitle_languages"], ["ger"])
+        self.assertIn("resolution", asset.locked_fields)
 
     def test_metadata_precedence_is_category_provider_observed_manual(self):
         asset = VODSourceAsset.objects.create(

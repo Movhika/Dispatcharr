@@ -701,4 +701,5 @@ class VODPlaybackSession(models.Model):
         indexes = [
             models.Index(fields=("user", "-started_at"), name="vod_playback_user_idx"),
             models.Index(fields=("source_asset", "-started_at"), name="vod_playback_asset_idx"),
+            models.Index(fields=("-started_at",), name="vod_playback_started_idx"),
         ]

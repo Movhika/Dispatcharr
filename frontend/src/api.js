@@ -1521,8 +1521,25 @@ export default class API {
     );
   }
 
-  static async getVODPlaybackSessions() {
-    return await request(`${host}/api/vod/playback-sessions/`);
+  static async getVODPlaybackSessions(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/playback-sessions/${query ? `?${query}` : ''}`
+    );
+  }
+
+  static async deleteVODPlaybackSessions(selection) {
+    return await request(`${host}/api/vod/playback-sessions/bulk-delete/`, {
+      method: 'POST',
+      body: selection,
+    });
+  }
+
+  static async bulkUpdateVODPlaybackMetadata(selection, updates) {
+    return await request(`${host}/api/vod/playback-sessions/bulk-metadata/`, {
+      method: 'PATCH',
+      body: { ...selection, updates },
+    });
   }
 
   static async updateVODSourceManualMetadata(id, metadata, lockedFields) {

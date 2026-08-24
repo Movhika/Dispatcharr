@@ -1,10 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActionIcon,
   Alert,
   Button,
+  Checkbox,
   Group,
   Modal,
+  Pagination,
   ScrollArea,
   Select,
   Stack,
@@ -15,18 +23,36 @@ import {
   TableThead,
   TableTr,
   Text,
+  TextInput,
 } from '@mantine/core';
-import { RefreshCw, Wrench } from 'lucide-react';
+import { useDebouncedValue } from '@mantine/hooks';
+import { RefreshCw, Trash2, Wrench } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
-import LanguagePicker from './LanguagePicker.jsx';
-import {
-  CONTAINER_EXTENSION_OPTIONS,
-  RESOLUTION_VALUES,
-} from '../utils/vodMetadataOptions.js';
+import { VOD_METADATA_FIELDS } from '../utils/vodMetadataOptions.js';
+import ConfirmationDialog from './ConfirmationDialog.jsx';
+import VODMetadataFields from './VODMetadataFields.jsx';
 
-const normalizeList = (response) => response?.results || response || [];
+const EMPTY_FILTERS = {
+  search: '',
+  username: '',
+  status: '',
+  mode: '',
+  content_type: '',
+  started_after: '',
+  started_before: '',
+};
+const EMPTY_METADATA = {
+  audio_languages: [],
+  subtitle_languages: [],
+  resolution: '',
+  container_extension: '',
+};
+const EMPTY_MODES = Object.fromEntries(
+  VOD_METADATA_FIELDS.map((field) => [field, 'keep'])
+);
+
 const formatBytes = (value) =>
   `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
 const metadataSummary = (playback) => {
@@ -46,42 +72,141 @@ const metadataSummary = (playback) => {
     .filter(Boolean)
     .join(' • ');
 };
+const apiDate = (value) => (value ? new Date(value).toISOString() : '');
 
 const VODSourceManagerModal = ({ opened, onClose }) => {
   const [playbacks, setPlaybacks] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [debouncedSearch] = useDebouncedValue(filters.search, 350);
+  const [debouncedUsername] = useDebouncedValue(filters.username, 350);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [manualPlayback, setManualPlayback] = useState(null);
-  const [manualMetadata, setManualMetadata] = useState({});
+  const [manualMetadata, setManualMetadata] = useState(EMPTY_METADATA);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkMetadata, setBulkMetadata] = useState(EMPTY_METADATA);
+  const [bulkModes, setBulkModes] = useState(EMPTY_MODES);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  const [excludedIds, setExcludedIds] = useState(new Set());
+  const [deleteRequest, setDeleteRequest] = useState(null);
+  const requestSequence = useRef(0);
 
-  const load = async () => {
+  const queryFilters = useMemo(
+    () => ({
+      search: debouncedSearch,
+      username: debouncedUsername,
+      status: filters.status,
+      mode: filters.mode,
+      content_type: filters.content_type,
+      started_after: apiDate(filters.started_after),
+      started_before: apiDate(filters.started_before),
+    }),
+    [debouncedSearch, debouncedUsername, filters]
+  );
+  const activeQueryFilters = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(queryFilters).filter(([, value]) => Boolean(value))
+      ),
+    [queryFilters]
+  );
+  const hasFilters = Object.keys(activeQueryFilters).length > 0;
+  const selectedCount = selectAllMatching
+    ? Math.max(0, totalCount - excludedIds.size)
+    : selectedIds.size;
+  const pageCount = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setExcludedIds(new Set());
+    setSelectAllMatching(false);
+  };
+
+  const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
-      setPlaybacks(normalizeList(await API.getVODPlaybackSessions()));
+      const response = await API.getVODPlaybackSessions({
+        ...activeQueryFilters,
+        page,
+        page_size: pageSize,
+      });
+      if (sequence !== requestSequence.current) return;
+      const rows =
+        response?.results || (Array.isArray(response) ? response : []);
+      setPlaybacks(rows);
+      setTotalCount(response?.count ?? rows.length);
     } catch (error) {
+      if (sequence !== requestSequence.current) return;
       setPlaybacks([]);
+      setTotalCount(0);
       showNotification({
         title: 'Playback history unavailable',
         message: error?.message || 'The playback history could not be loaded.',
         color: 'red',
       });
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  };
+  }, [activeQueryFilters, page, pageSize]);
 
   useEffect(() => {
     if (opened) load();
-  }, [opened]);
+  }, [opened, load]);
+
+  useEffect(() => {
+    clearSelection();
+  }, [activeQueryFilters, pageSize]);
+
+  const updateFilter = (field, value) => {
+    setFilters((current) => ({ ...current, [field]: value }));
+    setPage(1);
+  };
+
+  const selectionPayload = (override = null) => {
+    if (override) return { ids: override, filters: activeQueryFilters };
+    return {
+      ids: [...selectedIds],
+      select_all: selectAllMatching,
+      exclude_ids: [...excludedIds],
+      filters: activeQueryFilters,
+    };
+  };
+
+  const isSelected = (id) =>
+    selectAllMatching ? !excludedIds.has(id) : selectedIds.has(id);
+  const toggleRow = (id, checked) => {
+    if (selectAllMatching) {
+      setExcludedIds((current) => {
+        const next = new Set(current);
+        if (checked) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      return;
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   const openManualEditor = (playback) => {
     const effective = playback.source_effective_metadata || {};
     const values = effective.values || {};
     const provenance = effective.provenance || {};
-    setManualMetadata(
-      Object.fromEntries(
+    setManualMetadata({
+      ...EMPTY_METADATA,
+      ...Object.fromEntries(
         Object.entries(values).filter(([key]) => provenance[key] === 'manual')
-      )
-    );
+      ),
+    });
     setManualPlayback(playback);
   };
 
@@ -105,18 +230,90 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
         metadata.subtitle_languages
       );
     }
-    await API.updateVODSourceManualMetadata(
-      manualPlayback.source_asset,
-      metadata,
-      Object.keys(metadata)
+    setSaving(true);
+    try {
+      await API.updateVODSourceManualMetadata(
+        manualPlayback.source_asset,
+        metadata,
+        Object.keys(metadata)
+      );
+      showNotification({
+        title: 'Source metadata saved',
+        message: 'Manual values are locked against later observations.',
+        color: 'green',
+      });
+      setManualPlayback(null);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openBulkEditor = () => {
+    setBulkMetadata(EMPTY_METADATA);
+    setBulkModes(EMPTY_MODES);
+    setBulkOpen(true);
+  };
+  const saveBulkMetadata = async () => {
+    const updates = Object.fromEntries(
+      Object.entries(bulkModes)
+        .filter(([, mode]) => mode !== 'keep')
+        .map(([field, mode]) => [
+          field,
+          {
+            mode,
+            ...(mode === 'set'
+              ? {
+                  value:
+                    field === 'audio_languages' ||
+                    field === 'subtitle_languages'
+                      ? normalizeLanguageCodes(bulkMetadata[field] || [])
+                      : bulkMetadata[field] || '',
+                }
+              : {}),
+          },
+        ])
     );
-    showNotification({
-      title: 'Source metadata saved',
-      message: 'Manual values are locked against later observations.',
-      color: 'green',
-    });
-    setManualPlayback(null);
-    await load();
+    if (Object.keys(updates).length === 0) return;
+    setSaving(true);
+    try {
+      const result = await API.bulkUpdateVODPlaybackMetadata(
+        selectionPayload(),
+        updates
+      );
+      showNotification({
+        title: 'Source metadata updated',
+        message: `${result.updated_sources || 0} distinct sources updated from ${result.selected_sessions || 0} history entries.`,
+        color: 'green',
+      });
+      setBulkOpen(false);
+      clearSelection();
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const executeDelete = async () => {
+    if (!deleteRequest) return;
+    setSaving(true);
+    try {
+      const result = await API.deleteVODPlaybackSessions(deleteRequest.payload);
+      showNotification({
+        title: 'Playback history deleted',
+        message: `${result.deleted_sessions || 0} entries removed.`,
+        color: 'green',
+      });
+      setDeleteRequest(null);
+      clearSelection();
+      if (page > 1 && playbacks.length <= (result.deleted_sessions || 0)) {
+        setPage(page - 1);
+      } else {
+        await load();
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -125,16 +322,105 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
         opened={opened}
         onClose={onClose}
         title="VOD playback history"
-        size="95vw"
-        scrollAreaComponent={Modal.NativeScrollArea}
+        size="96vw"
+        styles={{
+          content: { height: '96vh' },
+          body: { height: 'calc(96vh - 60px)' },
+        }}
       >
-        <Stack>
-          <Group justify="space-between">
-            <Alert color="blue" variant="light" style={{ flex: 1 }}>
-              Proxy playback is recorded automatically with transferred bytes
-              and watch time. Redirect entries remain unconfirmed. Technical
-              values can be corrected manually and will then stay locked.
-            </Alert>
+        <Stack h="100%" gap="sm">
+          <Alert color="blue" variant="light">
+            History is filtered and paged on the server. Bulk metadata updates
+            each distinct source once, even when it appears in several sessions.
+          </Alert>
+          <Group align="flex-end" wrap="wrap">
+            <TextInput
+              label="Search"
+              placeholder="Title, source, category or provider ID"
+              value={filters.search}
+              onChange={(event) =>
+                updateFilter('search', event.currentTarget.value)
+              }
+              style={{ flex: '1 1 260px' }}
+            />
+            <TextInput
+              label="User"
+              placeholder="Search username"
+              value={filters.username}
+              onChange={(event) =>
+                updateFilter('username', event.currentTarget.value)
+              }
+              style={{ flex: '1 1 180px' }}
+            />
+            <Select
+              clearable
+              label="Status"
+              data={[
+                'requested',
+                'redirected',
+                'proxying',
+                'completed',
+                'stopped',
+                'failed',
+              ]}
+              value={filters.status || null}
+              onChange={(value) => updateFilter('status', value || '')}
+              w={150}
+            />
+            <Select
+              clearable
+              label="Mode"
+              data={['redirect', 'proxy', 'player']}
+              value={filters.mode || null}
+              onChange={(value) => updateFilter('mode', value || '')}
+              w={130}
+            />
+            <Select
+              clearable
+              label="Type"
+              data={['movie', 'series', 'episode']}
+              value={filters.content_type || null}
+              onChange={(value) => updateFilter('content_type', value || '')}
+              w={130}
+            />
+          </Group>
+          <Group align="flex-end" wrap="wrap">
+            <TextInput
+              type="datetime-local"
+              label="Started after"
+              value={filters.started_after}
+              onChange={(event) =>
+                updateFilter('started_after', event.currentTarget.value)
+              }
+            />
+            <TextInput
+              type="datetime-local"
+              label="Started before"
+              value={filters.started_before}
+              onChange={(event) =>
+                updateFilter('started_before', event.currentTarget.value)
+              }
+            />
+            <Select
+              label="Rows"
+              data={['25', '50', '100', '200']}
+              value={String(pageSize)}
+              onChange={(value) => {
+                setPageSize(Number(value || 50));
+                setPage(1);
+              }}
+              w={90}
+            />
+            <Button
+              variant="default"
+              onClick={() => {
+                setFilters(EMPTY_FILTERS);
+                setPage(1);
+              }}
+              disabled={!hasFilters}
+            >
+              Reset filters
+            </Button>
             <Button
               variant="default"
               leftSection={<RefreshCw size={15} />}
@@ -143,11 +429,81 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             >
               Refresh
             </Button>
+            <Button
+              variant="default"
+              leftSection={<Wrench size={15} />}
+              disabled={selectedCount === 0}
+              onClick={openBulkEditor}
+            >
+              Edit selected ({selectedCount})
+            </Button>
+            <Button
+              color="red"
+              variant="outline"
+              leftSection={<Trash2 size={15} />}
+              disabled={selectedCount === 0}
+              onClick={() =>
+                setDeleteRequest({
+                  title: 'Delete selected playback history',
+                  message: `Delete ${selectedCount} selected history entries?`,
+                  payload: selectionPayload(),
+                })
+              }
+            >
+              Delete selected
+            </Button>
+            <Button
+              color="red"
+              variant="subtle"
+              onClick={() =>
+                setDeleteRequest({
+                  title: hasFilters
+                    ? 'Clear filtered history'
+                    : 'Clear playback history',
+                  message: hasFilters
+                    ? `Delete all ${totalCount} entries matching the current filters?`
+                    : `Delete all ${totalCount} playback history entries?`,
+                  payload: {
+                    ids: [],
+                    select_all: true,
+                    exclude_ids: [],
+                    filters: activeQueryFilters,
+                  },
+                })
+              }
+              disabled={totalCount === 0}
+            >
+              {hasFilters ? 'Clear filtered' : 'Clear history'}
+            </Button>
           </Group>
-          <ScrollArea h="68vh">
+          <Group justify="space-between">
+            <Text size="sm">
+              {selectedCount} selected · {totalCount} matching
+            </Text>
+            {totalCount > 0 && (
+              <Pagination value={page} onChange={setPage} total={pageCount} />
+            )}
+          </Group>
+          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             <Table stickyHeader striped withTableBorder>
               <TableThead>
                 <TableTr>
+                  <TableTh w={42}>
+                    <Checkbox
+                      aria-label="Select all matching history"
+                      checked={selectAllMatching}
+                      indeterminate={selectedCount > 0 && !selectAllMatching}
+                      onChange={(event) => {
+                        if (event.currentTarget.checked) {
+                          setSelectAllMatching(true);
+                          setSelectedIds(new Set());
+                          setExcludedIds(new Set());
+                        } else {
+                          clearSelection();
+                        }
+                      }}
+                    />
+                  </TableTh>
                   <TableTh>Started</TableTh>
                   <TableTh>Title</TableTh>
                   <TableTh>Source</TableTh>
@@ -156,21 +512,30 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   <TableTh>Watch time</TableTh>
                   <TableTh>Data</TableTh>
                   <TableTh>Technical metadata</TableTh>
-                  <TableTh w={60}>Edit</TableTh>
+                  <TableTh w={90}>Actions</TableTh>
                 </TableTr>
               </TableThead>
               <TableTbody>
                 {!loading && playbacks.length === 0 && (
                   <TableTr>
-                    <TableTd colSpan={9}>
+                    <TableTd colSpan={10}>
                       <Text c="dimmed" ta="center" py="lg">
-                        No VOD playback has been recorded yet.
+                        No VOD playback matches the current filters.
                       </Text>
                     </TableTd>
                   </TableTr>
                 )}
                 {playbacks.map((playback) => (
                   <TableTr key={playback.id}>
+                    <TableTd>
+                      <Checkbox
+                        aria-label={`Select ${playback.content_name}`}
+                        checked={isSelected(playback.id)}
+                        onChange={(event) =>
+                          toggleRow(playback.id, event.currentTarget.checked)
+                        }
+                      />
+                    </TableTd>
                     <TableTd>
                       {new Date(playback.started_at).toLocaleString()}
                     </TableTd>
@@ -187,20 +552,41 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                     <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
                     <TableTd>{metadataSummary(playback) || 'Unknown'}</TableTd>
                     <TableTd>
-                      <ActionIcon
-                        aria-label="Edit source metadata"
-                        variant="subtle"
-                        disabled={!playback.source_asset}
-                        onClick={() => openManualEditor(playback)}
-                      >
-                        <Wrench size={16} />
-                      </ActionIcon>
+                      <Group gap={4} wrap="nowrap">
+                        <ActionIcon
+                          aria-label="Edit source metadata"
+                          variant="subtle"
+                          disabled={!playback.source_asset}
+                          onClick={() => openManualEditor(playback)}
+                        >
+                          <Wrench size={16} />
+                        </ActionIcon>
+                        <ActionIcon
+                          aria-label={`Delete ${playback.content_name}`}
+                          color="red"
+                          variant="subtle"
+                          onClick={() =>
+                            setDeleteRequest({
+                              title: 'Delete playback history entry',
+                              message: `Delete the history entry for ${playback.content_name}?`,
+                              payload: selectionPayload([playback.id]),
+                            })
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </ActionIcon>
+                      </Group>
                     </TableTd>
                   </TableTr>
                 ))}
               </TableTbody>
             </Table>
           </ScrollArea>
+          {totalCount > 0 && (
+            <Group justify="flex-end">
+              <Pagination value={page} onChange={setPage} total={pageCount} />
+            </Group>
+          )}
         </Stack>
       </Modal>
 
@@ -214,59 +600,63 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             Saved fields have the highest priority and are not overwritten by
             later playback observations.
           </Text>
-          <LanguagePicker
-            label="Audio languages"
-            value={manualMetadata.audio_languages || []}
-            onChange={(value) =>
-              setManualMetadata({
-                ...manualMetadata,
-                audio_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <LanguagePicker
-            label="Subtitle languages"
-            value={manualMetadata.subtitle_languages || []}
-            onChange={(value) =>
-              setManualMetadata({
-                ...manualMetadata,
-                subtitle_languages: normalizeLanguageCodes(value),
-              })
-            }
-          />
-          <Select
-            clearable
-            label="Resolution"
-            data={RESOLUTION_VALUES}
-            value={manualMetadata.resolution || null}
-            onChange={(value) =>
-              setManualMetadata({
-                ...manualMetadata,
-                resolution: value || '',
-              })
-            }
-          />
-          <Select
-            clearable
-            searchable
-            label="Format"
-            data={CONTAINER_EXTENSION_OPTIONS}
-            value={manualMetadata.container_extension || null}
-            onChange={(value) =>
-              setManualMetadata({
-                ...manualMetadata,
-                container_extension: value || '',
-              })
-            }
+          <VODMetadataFields
+            value={manualMetadata}
+            onChange={setManualMetadata}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setManualPlayback(null)}>
               Cancel
             </Button>
-            <Button onClick={saveManualMetadata}>Save and lock</Button>
+            <Button loading={saving} onClick={saveManualMetadata}>
+              Save and lock
+            </Button>
           </Group>
         </Stack>
       </Modal>
+
+      <Modal
+        opened={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Edit source metadata"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            The update applies once to every distinct source represented by the
+            {` ${selectedCount} selected history entries.`}
+          </Text>
+          <VODMetadataFields
+            value={bulkMetadata}
+            onChange={setBulkMetadata}
+            modes={bulkModes}
+            onModesChange={setBulkModes}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setBulkOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              loading={saving}
+              disabled={
+                !Object.values(bulkModes).some((mode) => mode !== 'keep')
+              }
+              onClick={saveBulkMetadata}
+            >
+              Apply metadata
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <ConfirmationDialog
+        opened={Boolean(deleteRequest)}
+        onClose={() => setDeleteRequest(null)}
+        onConfirm={executeDelete}
+        loading={saving}
+        title={deleteRequest?.title}
+        message={deleteRequest?.message}
+        confirmLabel="Delete"
+      />
     </>
   );
 };
