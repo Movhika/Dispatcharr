@@ -341,7 +341,7 @@ class VODSourceManagementTests(TestCase):
             [self.german_relation.id],
         )
 
-    def test_catalog_change_makes_prepared_profile_stale(self):
+    def test_catalog_change_keeps_last_prepared_generation_available(self):
         build_vod_profile_selection(self.policy.id)
         self.policy.refresh_from_db()
         self.assertIsNotNone(
@@ -354,12 +354,13 @@ class VODSourceManagementTests(TestCase):
 
         bump_catalog_generation()
 
-        self.assertIsNone(
+        self.assertEqual(
             prepared_relation_ids(
                 self.policy,
                 M3UMovieRelation,
                 {"m3u_account__is_active": True},
-            )
+            ),
+            [self.german_relation.id],
         )
 
     def test_user_assignment_keeps_prepared_profile_current(self):
