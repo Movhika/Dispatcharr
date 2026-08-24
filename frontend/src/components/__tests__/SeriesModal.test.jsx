@@ -35,6 +35,8 @@ vi.mock('lucide-react', () => ({
   ListOrdered: () => <div data-testid="icon-list-ordered" />,
   Play: () => <div data-testid="play-icon" />,
   Copy: () => <div data-testid="copy-icon" />,
+  Check: () => <div data-testid="check-icon" />,
+  Wrench: () => <div data-testid="wrench-icon" />,
 }));
 
 // Mock Mantine components
@@ -132,12 +134,14 @@ vi.mock('@mantine/core', async () => {
       <button
         onClick={onClick}
         disabled={disabled}
-        data-testid="action-icon"
+        data-testid={props['aria-label'] ? 'source-action-icon' : 'action-icon'}
         {...props}
       >
         {children}
       </button>
     ),
+    ScrollArea: ({ children }) => <div>{children}</div>,
+    Tooltip: ({ children }) => <>{children}</>,
     Tabs: ({ children, value, onChange, ...props }) => (
       <div data-testid="tabs" data-value={value} {...props}>
         <div
@@ -233,6 +237,7 @@ describe('SeriesModal', () => {
     {
       id: 1,
       stream_id: 100,
+      external_series_id: 100,
       account_id: 5,
       m3u_account: { id: 5, name: 'Provider 1' },
       category: { id: 10, name: 'NETFLIX ANIME' },
@@ -242,6 +247,7 @@ describe('SeriesModal', () => {
     {
       id: 2,
       stream_id: 101,
+      external_series_id: 101,
       account_id: 5,
       m3u_account: { id: 5, name: 'Provider 1' },
       category: { id: 11, name: 'GERMANY KINDER' },
@@ -446,15 +452,15 @@ describe('SeriesModal', () => {
   });
 
   describe('Provider Selection', () => {
-    it('should display separate account and category controls', async () => {
+    it('should display account and category columns', async () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
 
       await waitFor(() => {
         expect(screen.getByText('M3U account')).toBeInTheDocument();
-        expect(screen.getByText('Provider 1')).toBeInTheDocument();
-        expect(screen.getByLabelText('Category')).toBeInTheDocument();
+        expect(screen.getAllByText('Provider 1')).toHaveLength(2);
+        expect(screen.getByText('Category')).toBeInTheDocument();
       });
     });
 
@@ -479,14 +485,10 @@ describe('SeriesModal', () => {
       });
       const openFetchCount = mockVODStore.fetchSeriesInfo.mock.calls.length;
 
-      let select;
-      await waitFor(() => {
-        select = screen.getByLabelText('Category');
-        fireEvent.change(select, { target: { value: '11' } });
-      });
+      const source = await screen.findByText('Test Series 720p');
+      fireEvent.click(source.closest('tr'));
 
       await waitFor(() => {
-        expect(select.value).toBe('11');
         expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1, 2);
         // Open effect must not re-fire when selectedProvider changes.
         expect(mockVODStore.fetchSeriesInfo.mock.calls.length).toBe(
@@ -503,7 +505,7 @@ describe('SeriesModal', () => {
       );
 
       // Should show loading text and loader
-      expect(screen.getByText('Stream Selection')).toBeInTheDocument();
+      expect(screen.getByText('Sources (0)')).toBeInTheDocument();
       const loaders = screen.getAllByTestId('loader');
       expect(loaders.length).toBeGreaterThan(0);
     });
@@ -573,9 +575,12 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        const episodes = screen.getAllByTestId('table-tr');
-        expect(episodes[1]).toHaveTextContent('Pilot');
-        expect(episodes[2]).toHaveTextContent('Second Episode');
+        const pilot = screen.getByText('Pilot').closest('tr');
+        const second = screen.getByText('Second Episode').closest('tr');
+        expect(
+          pilot.compareDocumentPosition(second) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
       });
     });
   });
@@ -602,11 +607,6 @@ describe('SeriesModal', () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
       );
-
-      await waitFor(() => {
-        const select = screen.getByLabelText('Category');
-        fireEvent.change(select, { target: { value: '10' } });
-      });
 
       await waitFor(() => {
         const playButtons = screen.getAllByTestId('action-icon');
@@ -664,8 +664,7 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        const rows = screen.getAllByTestId('table-tr');
-        fireEvent.click(rows[1]);
+        fireEvent.click(screen.getByText('Pilot').closest('tr'));
       });
 
       await waitFor(() => {
@@ -679,8 +678,7 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        const rows = screen.getAllByTestId('table-tr');
-        fireEvent.click(rows[1]);
+        fireEvent.click(screen.getByText('Pilot').closest('tr'));
       });
 
       await waitFor(() => {
@@ -688,8 +686,7 @@ describe('SeriesModal', () => {
       });
 
       await waitFor(() => {
-        const rows = screen.getAllByTestId('table-tr');
-        fireEvent.click(rows[1]);
+        fireEvent.click(screen.getByText('Pilot').closest('tr'));
       });
 
       await waitFor(() => {
@@ -776,12 +773,14 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Source')).toBeInTheDocument();
+        expect(screen.getByLabelText('Exact VOD sources')).toBeInTheDocument();
+        expect(screen.getByText('Test Series 1080p')).toBeInTheDocument();
+        expect(screen.getByText('Test Series 720p')).toBeInTheDocument();
         expect(
-          screen.getByText('Test Series 1080p (Stream 100)')
+          screen.getByText(/Provider series ID:.*100/)
         ).toBeInTheDocument();
         expect(
-          screen.getByText('Test Series 720p (Stream 101)')
+          screen.getByText(/Provider series ID:.*101/)
         ).toBeInTheDocument();
       });
     });
@@ -863,7 +862,11 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Test Account')).toBeInTheDocument();
+        expect(
+          screen.getByText(
+            'No exact source relation is available for this series.'
+          )
+        ).toBeInTheDocument();
       });
     });
   });

@@ -836,6 +836,77 @@ class VODSourceManagementTests(TestCase):
             effective["provenance"]["subtitle_languages"], "category"
         )
 
+    def test_provider_list_exposes_metadata_for_each_exact_relation(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-provider-list-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/movies/{self.movie.id}/providers/"
+        )
+        force_authenticate(request, user=admin)
+
+        response = MovieViewSet.as_view({"get": "get_providers"})(
+            request, pk=self.movie.id
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sources = {row["id"]: row for row in response.data}
+        self.assertEqual(
+            sources[self.german_relation.id]["source_metadata"]["values"][
+                "audio_languages"
+            ],
+            ["ger"],
+        )
+        self.assertEqual(
+            sources[self.english_relation.id]["source_metadata"]["values"][
+                "resolution"
+            ],
+            "2160p",
+        )
+
+    def test_relation_manual_metadata_only_updates_the_selected_source(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-exact-source-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/relation-manual-metadata/",
+            {
+                "content_type": "movie",
+                "relation_id": self.german_relation.id,
+                "metadata": {
+                    "audio_languages": ["deu"],
+                    "resolution": "720p",
+                },
+                "locked_fields": ["audio_languages", "resolution"],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "relation_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.german_relation.refresh_from_db()
+        self.english_relation.refresh_from_db()
+        self.assertIsNotNone(self.german_relation.source_asset_id)
+        self.assertIsNone(self.english_relation.source_asset_id)
+        self.assertEqual(
+            self.german_relation.source_asset.manual_metadata[
+                "audio_languages"
+            ],
+            ["ger"],
+        )
+        self.assertEqual(
+            response.data["source_metadata"]["provenance"]["resolution"],
+            "manual",
+        )
+
     def test_bulk_metadata_can_target_all_filtered_titles(self):
         other_movie = Movie.objects.create(name="Unrelated title", year=2026)
         other_relation = M3UMovieRelation.objects.create(

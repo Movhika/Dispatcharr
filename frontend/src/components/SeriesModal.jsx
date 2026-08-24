@@ -42,7 +42,8 @@ import {
   tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
-import VODSourceSelectors from './VODSourceSelectors.jsx';
+import VODSourceList from './VODSourceList.jsx';
+import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 
 const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
@@ -353,6 +354,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
   const [trailerUrl, setTrailerUrl] = useState('');
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
+  const [editingProvider, setEditingProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const detailsRequestIdRef = useRef(0);
 
@@ -396,6 +398,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
       setLoadingDetails(false);
       setProviders([]);
       setSelectedProvider(null);
+      setEditingProvider(null);
       setLoadingProviders(false);
     }
   }, [opened]);
@@ -465,6 +468,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
   };
 
   const onChangeSelectedProvider = (provider) => {
+    if (!provider || provider.id === selectedProvider?.id) return;
     setSelectedProvider(provider);
     if (provider) {
       const requestId = ++detailsRequestIdRef.current;
@@ -487,6 +491,17 @@ const SeriesModal = ({ series, opened, onClose }) => {
     }
   };
 
+  const updateProvider = (updatedProvider) => {
+    setProviders((current) =>
+      current.map((provider) =>
+        provider.id === updatedProvider.id ? updatedProvider : provider
+      )
+    );
+    setSelectedProvider((current) =>
+      current?.id === updatedProvider.id ? updatedProvider : current
+    );
+  };
+
   if (!series) return null;
 
   // Use detailed data if available, otherwise use basic series data
@@ -500,17 +515,28 @@ const SeriesModal = ({ series, opened, onClose }) => {
         size="xl"
         centered
         styles={{
+          content: { backgroundColor: 'var(--mantine-color-body)' },
           header: {
             position: 'absolute',
-            top: 10,
-            right: 10,
+            top: 0,
+            right: 0,
             zIndex: 10,
             background: 'transparent',
+            padding: 'var(--mantine-spacing-md)',
           },
-          body: { padding: 'var(--mantine-spacing-md)' },
+          body: {
+            padding: 0,
+            backgroundColor: 'var(--mantine-color-body)',
+          },
         }}
       >
-        <Box style={{ position: 'relative', minHeight: 400 }}>
+        <Box
+          style={{
+            position: 'relative',
+            minHeight: 400,
+            backgroundColor: 'var(--mantine-color-body)',
+          }}
+        >
           {/* Backdrop image as background */}
           {displaySeries.backdrop_path &&
             displaySeries.backdrop_path.length > 0 && (
@@ -549,7 +575,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
             )}
 
           {/* Modal content above backdrop */}
-          <Box style={{ position: 'relative', zIndex: 2 }}>
+          <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
@@ -566,31 +592,24 @@ const SeriesModal = ({ series, opened, onClose }) => {
                 onClickYouTubeTrailer={onClickYouTubeTrailer}
               />
 
-              {/* Provider Information */}
-              <Box mt="md">
-                <Text size="sm" weight={500} mb={4}>
-                  Stream Selection
-                  {loadingProviders && (
-                    <Loader size="xs" style={{ marginLeft: 8 }} />
-                  )}
+              <Group gap="xs" mt="md">
+                <Title order={4}>Sources ({providers.length})</Title>
+                {loadingProviders && <Loader size="xs" />}
+              </Group>
+              {providers.length > 0 ? (
+                <VODSourceList
+                  providers={providers}
+                  selectedProvider={selectedProvider}
+                  contentType="series"
+                  disabled={loadingProviders || loadingDetails}
+                  onSelect={onChangeSelectedProvider}
+                  onEdit={setEditingProvider}
+                />
+              ) : !loadingProviders ? (
+                <Text c="dimmed" ta="center" py="md">
+                  No exact source relation is available for this series.
                 </Text>
-                {providers.length === 0 &&
-                !loadingProviders &&
-                displaySeries.m3u_account ? (
-                  <Group spacing="md">
-                    <Badge color="blue" variant="light">
-                      {displaySeries.m3u_account.name}
-                    </Badge>
-                  </Group>
-                ) : providers.length > 0 ? (
-                  <VODSourceSelectors
-                    providers={providers}
-                    selectedProvider={selectedProvider}
-                    onSelect={onChangeSelectedProvider}
-                    disabled={loadingProviders}
-                  />
-                ) : null}
-              </Box>
+              ) : null}
 
               <Divider />
 
@@ -599,7 +618,11 @@ const SeriesModal = ({ series, opened, onClose }) => {
                 {seriesEpisodes.length > 0 && <> ({seriesEpisodes.length})</>}
               </Title>
 
-              {loadingDetails ? (
+              {!selectedProvider ? (
+                <Text color="dimmed" align="center" py="xl">
+                  Select an exact source above to load its seasons and episodes.
+                </Text>
+              ) : loadingDetails ? (
                 <Flex justify="center" py="xl">
                   <Loader />
                 </Flex>
@@ -730,6 +753,13 @@ const SeriesModal = ({ series, opened, onClose }) => {
         opened={trailerModalOpened}
         onClose={() => setTrailerModalOpened(false)}
         trailerUrl={trailerUrl}
+      />
+      <VODSourceMetadataModal
+        provider={editingProvider}
+        contentType="series"
+        opened={Boolean(editingProvider)}
+        onClose={() => setEditingProvider(null)}
+        onSaved={updateProvider}
       />
     </>
   );

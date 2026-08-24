@@ -402,6 +402,61 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
         return Response(self.get_serializer(asset).data)
 
+    @action(
+        detail=False,
+        methods=["patch"],
+        url_path="relation-manual-metadata",
+    )
+    def relation_manual_metadata(self, request):
+        """Set locked metadata on exactly one provider relation."""
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        relation_type = str(request.data.get("content_type") or "").lower()
+        relation_model = {
+            "movie": M3UMovieRelation,
+            "series": M3USeriesRelation,
+        }.get(relation_type)
+        try:
+            relation_id = int(request.data.get("relation_id"))
+        except (TypeError, ValueError):
+            relation_id = None
+        if relation_model is None or relation_id is None:
+            return Response(
+                {"detail": "content_type and a numeric relation_id are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        relation = relation_model.objects.select_related(
+            "m3u_account", "category", "source_asset"
+        ).filter(pk=relation_id).first()
+        if relation is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        metadata = request.data.get("metadata", {})
+        locked_fields = request.data.get("locked_fields", list(metadata))
+        if not isinstance(metadata, dict) or not isinstance(locked_fields, list):
+            return Response(
+                {"detail": "metadata must be an object and locked_fields a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .metadata import ensure_source_asset, effective_relation_metadata
+
+        asset = relation.source_asset or ensure_source_asset(relation)
+        asset.manual_metadata = _validated_source_metadata(metadata)
+        asset.locked_fields = sorted({str(field) for field in locked_fields})
+        asset.save(
+            update_fields=["manual_metadata", "locked_fields", "updated_at"]
+        )
+        relation.source_asset = asset
+        return Response(
+            {
+                "source_asset": asset.pk,
+                "source_metadata": effective_relation_metadata(relation),
+            }
+        )
+
     @action(detail=False, methods=["patch"], url_path="bulk-manual-metadata")
     def bulk_manual_metadata(self, request):
         """Set locked metadata on source relations matching the list selection."""
@@ -1038,7 +1093,9 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         relations = M3UMovieRelation.objects.filter(
             movie=movie,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category')
+        ).select_related('m3u_account', 'category', 'source_asset').order_by(
+            '-m3u_account__priority', 'id'
+        )
 
         serializer = M3UMovieRelationSerializer(relations, many=True)
         return Response(serializer.data)
@@ -1292,7 +1349,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         relations = M3USeriesRelation.objects.filter(
             series=series,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category').order_by(
+        ).select_related('m3u_account', 'category', 'source_asset').order_by(
             '-m3u_account__priority', 'id'
         )
 

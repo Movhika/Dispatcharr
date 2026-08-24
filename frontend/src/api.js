@@ -1535,6 +1535,26 @@ export default class API {
     );
   }
 
+  static async updateVODRelationManualMetadata(
+    contentType,
+    relationId,
+    metadata,
+    lockedFields
+  ) {
+    return await request(
+      `${host}/api/vod/source-assets/relation-manual-metadata/`,
+      {
+        method: 'PATCH',
+        body: {
+          content_type: contentType,
+          relation_id: relationId,
+          metadata,
+          locked_fields: lockedFields,
+        },
+      }
+    );
+  }
+
   static async bulkUpdateVODSourceMetadata(
     selections,
     metadata,

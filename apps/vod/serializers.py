@@ -10,9 +10,11 @@ from apps.m3u.serializers import M3UAccountSerializer
 from .metadata import (
     normalize_language_list,
     normalize_source_metadata,
+    relation_declared_metadata,
     summarize_relation_metadata,
     validate_source_metadata,
 )
+from .policies import enabled_category_map
 
 
 class VODLogoSerializer(serializers.ModelSerializer):
@@ -161,21 +163,56 @@ class EpisodeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class M3USeriesRelationSerializer(serializers.ModelSerializer):
+class VODSourceRelationMetadataMixin:
+    source_metadata = serializers.SerializerMethodField()
+
+    def get_source_metadata(self, obj) -> dict:
+        if not hasattr(self, "_source_category_defaults"):
+            self._source_category_defaults = enabled_category_map()
+        defaults = self._source_category_defaults.get(
+            (obj.m3u_account_id, obj.category_id), {}
+        )
+        declared = relation_declared_metadata(obj)
+        if obj.source_asset_id:
+            return obj.source_asset.effective_metadata(
+                category_defaults=defaults,
+                relation_declared=declared,
+            )
+
+        values = {}
+        provenance = {}
+        for source, payload in (("category", defaults), ("relation", declared)):
+            for key, value in (payload or {}).items():
+                if value not in (None, "", [], {}):
+                    values[key] = value
+                    provenance[key] = source
+        return {
+            "values": normalize_source_metadata(values),
+            "provenance": provenance,
+        }
+
+
+class M3USeriesRelationSerializer(
+    VODSourceRelationMetadataMixin, serializers.ModelSerializer
+):
     series = SeriesSerializer(read_only=True)
     category = VODCategorySerializer(read_only=True)
     m3u_account = M3UAccountSerializer(read_only=True)
+    source_metadata = serializers.SerializerMethodField()
 
     class Meta:
         model = M3USeriesRelation
         fields = '__all__'
 
 
-class M3UMovieRelationSerializer(serializers.ModelSerializer):
+class M3UMovieRelationSerializer(
+    VODSourceRelationMetadataMixin, serializers.ModelSerializer
+):
     movie = MovieSerializer(read_only=True)
     category = VODCategorySerializer(read_only=True)
     m3u_account = M3UAccountSerializer(read_only=True)
     quality_info = serializers.SerializerMethodField()
+    source_metadata = serializers.SerializerMethodField()
 
     class Meta:
         model = M3UMovieRelation

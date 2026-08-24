@@ -12,7 +12,7 @@ import {
   Stack,
   Modal,
 } from '@mantine/core';
-import { Play, Copy } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { copyToClipboard } from '../utils';
 import useVODStore from '../store/useVODStore';
 import useVideoStore from '../store/useVideoStore';
@@ -24,7 +24,8 @@ import {
   tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
-import VODSourceSelectors from './VODSourceSelectors.jsx';
+import VODSourceList from './VODSourceList.jsx';
+import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import {
   formatAudioDetails,
   formatVideoDetails,
@@ -32,38 +33,8 @@ import {
   getTechnicalDetails,
 } from '../utils/components/VODModalUtils.js';
 
-const Movie = ({
-  onClickYouTubeTrailer,
-  hasMultipleProviders,
-  selectedProvider,
-  detailedVOD,
-  vod,
-}) => {
-  const showVideo = useVideoStore((s) => s.showVideo);
-  const env_mode = useSettingsStore((s) => s.environment.env_mode);
-
+const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
   const displayVOD = detailedVOD || vod;
-
-  const getStreamUrl = () => {
-    if (!displayVOD) return null;
-
-    return getMovieStreamUrl(vod, selectedProvider, env_mode);
-  };
-
-  const handlePlayVOD = () => {
-    const streamUrl = getStreamUrl();
-    if (!streamUrl) return;
-    showVideo(streamUrl, 'vod', displayVOD);
-  };
-
-  const handleCopyLink = async () => {
-    const streamUrl = getStreamUrl();
-    if (!streamUrl) return;
-    await copyToClipboard(streamUrl, {
-      successTitle: 'Link Copied!',
-      successMessage: 'Stream link copied to clipboard',
-    });
-  };
 
   return (
     <Stack spacing="md" flex={1}>
@@ -152,19 +123,8 @@ const Movie = ({
         </Box>
       )}
 
-      {/* Play and Watch Trailer buttons */}
+      {/* A concrete source is played from the exact source list below. */}
       <Group spacing="xs" mt="sm">
-        <Button
-          leftSection={<Play size={16} />}
-          variant="filled"
-          color="blue"
-          size="sm"
-          onClick={handlePlayVOD}
-          disabled={hasMultipleProviders && !selectedProvider}
-          style={{ alignSelf: 'flex-start' }}
-        >
-          Play Movie
-        </Button>
         {displayVOD.youtube_trailer && (
           <Button
             variant="outline"
@@ -176,16 +136,6 @@ const Movie = ({
             Watch Trailer
           </Button>
         )}
-        <Button
-          leftSection={<Copy size={16} />}
-          variant="outline"
-          color="gray"
-          size="sm"
-          onClick={handleCopyLink}
-          style={{ alignSelf: 'flex-start' }}
-        >
-          Copy Link
-        </Button>
       </Group>
     </Stack>
   );
@@ -245,10 +195,13 @@ const VODModal = ({ vod, opened, onClose }) => {
   const [trailerUrl, setTrailerUrl] = useState('');
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
+  const [editingProvider, setEditingProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const detailsRequestIdRef = useRef(0);
 
   const { fetchMovieDetailsFromProvider, fetchMovieProviders } = useVODStore();
+  const showVideo = useVideoStore((s) => s.showVideo);
+  const env_mode = useSettingsStore((s) => s.environment.env_mode);
 
   useEffect(() => {
     if (opened && vod) {
@@ -295,6 +248,7 @@ const VODModal = ({ vod, opened, onClose }) => {
       setTrailerUrl('');
       setProviders([]);
       setSelectedProvider(null);
+      setEditingProvider(null);
       setLoadingProviders(false);
     }
   }, [opened]);
@@ -305,23 +259,49 @@ const VODModal = ({ vod, opened, onClose }) => {
   };
 
   const onChangeSelectedProvider = (provider) => {
+    if (!provider || provider.id === selectedProvider?.id) return;
     setSelectedProvider(provider);
-    if (provider) {
-      const requestId = ++detailsRequestIdRef.current;
-      setLoadingDetails(true);
-      fetchMovieDetailsFromProvider(vod.id, provider.id)
-        .then((details) => {
-          if (detailsRequestIdRef.current === requestId) {
-            setDetailedVOD(details);
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (detailsRequestIdRef.current === requestId) {
-            setLoadingDetails(false);
-          }
-        });
-    }
+    const requestId = ++detailsRequestIdRef.current;
+    setLoadingDetails(true);
+    fetchMovieDetailsFromProvider(vod.id, provider.id)
+      .then((details) => {
+        if (detailsRequestIdRef.current === requestId) {
+          setDetailedVOD(details);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (detailsRequestIdRef.current === requestId) {
+          setLoadingDetails(false);
+        }
+      });
+  };
+
+  const playProvider = (provider) => {
+    const streamUrl = getMovieStreamUrl(vod, provider, env_mode);
+    if (!streamUrl) return;
+    onChangeSelectedProvider(provider);
+    showVideo(streamUrl, 'vod', detailedVOD || vod);
+  };
+
+  const copyProviderLink = async (provider) => {
+    const streamUrl = getMovieStreamUrl(vod, provider, env_mode);
+    if (!streamUrl) return;
+    await copyToClipboard(streamUrl, {
+      successTitle: 'Link Copied!',
+      successMessage: 'Exact source link copied to clipboard',
+    });
+  };
+
+  const updateProvider = (updatedProvider) => {
+    setProviders((current) =>
+      current.map((provider) =>
+        provider.id === updatedProvider.id ? updatedProvider : provider
+      )
+    );
+    setSelectedProvider((current) =>
+      current?.id === updatedProvider.id ? updatedProvider : current
+    );
   };
 
   if (!vod) return null;
@@ -337,17 +317,28 @@ const VODModal = ({ vod, opened, onClose }) => {
         size="xl"
         centered
         styles={{
+          content: { backgroundColor: 'var(--mantine-color-body)' },
           header: {
             position: 'absolute',
-            top: 10,
-            right: 10,
+            top: 0,
+            right: 0,
             zIndex: 10,
             background: 'transparent',
+            padding: 'var(--mantine-spacing-md)',
           },
-          body: { padding: 'var(--mantine-spacing-md)' },
+          body: {
+            padding: 0,
+            backgroundColor: 'var(--mantine-color-body)',
+          },
         }}
       >
-        <Box style={{ position: 'relative', minHeight: 400 }}>
+        <Box
+          style={{
+            position: 'relative',
+            minHeight: 400,
+            backgroundColor: 'var(--mantine-color-body)',
+          }}
+        >
           {/* Backdrop image as background */}
           {displayVOD.backdrop_path && displayVOD.backdrop_path.length > 0 && (
             <>
@@ -384,7 +375,7 @@ const VODModal = ({ vod, opened, onClose }) => {
             </>
           )}
           {/* Modal content above backdrop */}
-          <Box style={{ position: 'relative', zIndex: 2 }}>
+          <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
@@ -435,50 +426,30 @@ const VODModal = ({ vod, opened, onClose }) => {
                 <Movie
                   detailedVOD={detailedVOD}
                   vod={vod}
-                  hasMultipleProviders={providers.length > 0}
-                  selectedProvider={selectedProvider}
                   onClickYouTubeTrailer={onClickYouTubeTrailer}
                 />
               </Flex>
 
-              {/* Provider Information & Play Button Row */}
-              <Group spacing="md" align="flex-end" mt="md">
-                {/* Provider Selection */}
-                {providers.length > 0 && (
-                  <Box style={{ minWidth: 200 }}>
-                    <Text size="sm" weight={500} mb={8}>
-                      Stream Selection
-                      {loadingProviders && (
-                        <Loader size="xs" style={{ marginLeft: 8 }} />
-                      )}
-                    </Text>
-                    <VODSourceSelectors
-                      providers={providers}
-                      selectedProvider={selectedProvider}
-                      onSelect={onChangeSelectedProvider}
-                      disabled={loadingProviders}
-                    />
-                  </Box>
-                )}
-
-                {/* Fallback provider info if no providers loaded yet */}
-                {providers.length === 0 &&
-                  !loadingProviders &&
-                  vod?.m3u_account && (
-                    <Box>
-                      <Text size="sm" weight={500} mb={8}>
-                        Stream Selection
-                      </Text>
-                      <Group spacing="md">
-                        <Badge color="blue" variant="light">
-                          {vod.m3u_account.name}
-                        </Badge>
-                      </Group>
-                    </Box>
-                  )}
-
-                {/* Play button moved to top next to Watch Trailer */}
+              <Group gap="xs">
+                <Title order={4}>Sources ({providers.length})</Title>
+                {loadingProviders && <Loader size="xs" />}
               </Group>
+              {providers.length > 0 ? (
+                <VODSourceList
+                  providers={providers}
+                  selectedProvider={selectedProvider}
+                  contentType="movie"
+                  disabled={loadingProviders}
+                  onSelect={onChangeSelectedProvider}
+                  onPlay={playProvider}
+                  onCopy={copyProviderLink}
+                  onEdit={setEditingProvider}
+                />
+              ) : !loadingProviders ? (
+                <Text c="dimmed" ta="center" py="md">
+                  No exact source relation is available for this movie.
+                </Text>
+              ) : null}
 
               {/* Technical Details */}
               <MovieTechnicalDetails
@@ -495,6 +466,13 @@ const VODModal = ({ vod, opened, onClose }) => {
         opened={trailerModalOpened}
         onClose={() => setTrailerModalOpened(false)}
         trailerUrl={trailerUrl}
+      />
+      <VODSourceMetadataModal
+        provider={editingProvider}
+        contentType="movie"
+        opened={Boolean(editingProvider)}
+        onClose={() => setEditingProvider(null)}
+        onSaved={updateProvider}
       />
     </>
   );

@@ -24,7 +24,9 @@ vi.mock('../../utils/components/SeriesModalUtils.js', () => ({
 
 // Mock Mantine components
 vi.mock('@mantine/core', async () => {
+  const actual = await vi.importActual('@mantine/core');
   return {
+    ...actual,
     Modal: ({ children, opened, onClose, title }) =>
       opened ? (
         <div data-testid="modal">
@@ -73,6 +75,19 @@ vi.mock('@mantine/core', async () => {
       </select>
     ),
     Loader: () => <div data-testid="loader">Loading...</div>,
+    ActionIcon: ({ children, onClick, disabled, ...props }) => (
+      <button onClick={onClick} disabled={disabled} {...props}>
+        {children}
+      </button>
+    ),
+    ScrollArea: ({ children }) => <div>{children}</div>,
+    Tooltip: ({ children }) => <>{children}</>,
+    Table: ({ children, ...props }) => <table {...props}>{children}</table>,
+    TableThead: ({ children }) => <thead>{children}</thead>,
+    TableTbody: ({ children }) => <tbody>{children}</tbody>,
+    TableTr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
+    TableTh: ({ children, ...props }) => <th {...props}>{children}</th>,
+    TableTd: ({ children, ...props }) => <td {...props}>{children}</td>,
   };
 });
 
@@ -83,6 +98,7 @@ vi.mock('lucide-react', async (importOriginal) => {
     ...actual,
     Play: () => <span>Play Icon</span>,
     Copy: () => <span>Copy Icon</span>,
+    Wrench: () => <span>Wrench Icon</span>,
   };
 });
 
@@ -224,13 +240,13 @@ describe('VODModal', () => {
       expect(mockFetchMovieProviders).toHaveBeenCalled();
     });
 
-    const playButton = screen.getByText('Play Movie');
+    const playButton = screen.getByLabelText('Play exact source');
     fireEvent.click(playButton);
 
     expect(mockShowVideo).toHaveBeenCalled();
   });
 
-  it('should disable play button when multiple providers and none selected', async () => {
+  it('should render an exact play action for every provider', async () => {
     mockFetchMovieProviders.mockResolvedValue([
       mockProvider,
       { ...mockProvider, id: 2 },
@@ -239,7 +255,7 @@ describe('VODModal', () => {
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Play Movie')).toBeInTheDocument();
+      expect(screen.getAllByLabelText('Play exact source')).toHaveLength(2);
     });
 
     // Note: Testing for disabled state would require checking the button's disabled attribute
@@ -259,16 +275,10 @@ describe('VODModal', () => {
 
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
-    await waitFor(() => {
-      const select = screen.getByLabelText('Category');
-      expect(select).toBeInTheDocument();
-    });
-
-    const select = screen.getByLabelText('Category');
-    fireEvent.change(select, { target: { value: '11' } });
+    const source = await screen.findByText('Stream stream-456');
+    fireEvent.click(source.closest('tr'));
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Category')).toHaveValue('11');
       expect(mockFetchMovieDetailsFromProvider).toHaveBeenCalledWith(1, 2);
     });
   });
@@ -287,13 +297,12 @@ describe('VODModal', () => {
 
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
-    const select = await screen.findByLabelText('M3U account');
-    fireEvent.change(select, { target: { value: '2' } });
+    const account = await screen.findByText('Backup Provider');
+    fireEvent.click(account.closest('tr'));
 
     await waitFor(() => {
-      expect(select).toHaveValue('2');
       expect(mockFetchMovieDetailsFromProvider).toHaveBeenCalledWith(1, 2);
-      expect(screen.getByText('GERMANY MOVIES')).toBeInTheDocument();
+      expect(screen.getAllByText('GERMANY MOVIES')).toHaveLength(2);
     });
   });
 
@@ -387,7 +396,7 @@ describe('VODModal', () => {
       render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
       await waitFor(() => {
-        const copyButton = screen.getByText('Copy Link');
+        const copyButton = screen.getByLabelText('Copy exact source link');
         fireEvent.click(copyButton);
       });
 
@@ -416,13 +425,8 @@ describe('VODModal', () => {
       render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
       await waitFor(() => {
-        const select = screen.getByLabelText('Category');
-        fireEvent.change(select, { target: { value: '11' } });
-      });
-
-      await waitFor(() => {
-        const copyButton = screen.getByText('Copy Link');
-        fireEvent.click(copyButton);
+        const copyButtons = screen.getAllByLabelText('Copy exact source link');
+        fireEvent.click(copyButtons[1]);
       });
 
       expect(copyToClipboard).toHaveBeenCalledWith(
@@ -442,7 +446,7 @@ describe('VODModal', () => {
       render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
       await waitFor(() => {
-        const playButton = screen.getByText('Play Movie');
+        const playButton = screen.getByLabelText('Play exact source');
         fireEvent.click(playButton);
       });
 
@@ -457,7 +461,7 @@ describe('VODModal', () => {
       render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 
       await waitFor(() => {
-        const playButton = screen.getByText('Play Movie');
+        const playButton = screen.getByLabelText('Play exact source');
         fireEvent.click(playButton);
       });
 
