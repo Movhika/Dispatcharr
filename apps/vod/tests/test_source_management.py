@@ -379,6 +379,57 @@ class VODSourceManagementTests(TestCase):
             [self.german_relation.id],
         )
 
+    def test_account_runtime_status_keeps_prepared_profile_current(self):
+        build_vod_profile_selection(self.policy.id)
+
+        self.account_a.status = M3UAccount.Status.PARSING
+        self.account_a.last_message = "Refreshing VOD metadata"
+        self.account_a.save(update_fields=["status", "last_message"])
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        self.assertIsNotNone(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            )
+        )
+
+    def test_canonical_metadata_refresh_keeps_prepared_profile_current(self):
+        build_vod_profile_selection(self.policy.id)
+
+        self.movie.description = "Updated provider description"
+        self.movie.save(update_fields=["description"])
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        self.assertIsNotNone(
+            prepared_relation_ids(
+                self.policy,
+                M3UMovieRelation,
+                {"m3u_account__is_active": True},
+            )
+        )
+
+    def test_account_priority_change_marks_prepared_profile_pending(self):
+        build_vod_profile_selection(self.policy.id)
+
+        self.account_a.priority = 50
+        self.account_a.save(update_fields=["priority"])
+        self.policy.refresh_from_db()
+
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+
     def test_prepared_generation_survives_an_empty_runtime_cache(self):
         from django.core.cache import cache
 

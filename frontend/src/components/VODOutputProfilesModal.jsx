@@ -23,6 +23,7 @@ import {
   TabsTab,
   Text,
   TextInput,
+  Tooltip,
 } from '@mantine/core';
 import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import API from '../api';
@@ -70,12 +71,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const profiles = useVODStore((state) => state.accessPolicies);
   const fetchCategories = useVODStore((state) => state.fetchCategories);
   const fetchProfiles = useVODStore((state) => state.fetchAccessPolicies);
+  const removeAccessPolicy = useVODStore((state) => state.removeAccessPolicy);
   const [profileId, setProfileId] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -257,7 +260,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       setProfileId(String(saved.id));
       showNotification({
         title: 'VOD output profile saved',
-        message: 'Its prepared catalog is now being rebuilt in the background.',
+        message: 'Its XC catalog has been queued automatically.',
         color: 'green',
       });
     } catch (error) {
@@ -277,6 +280,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     try {
       await API.rebuildVODAccessPolicy(selectedProfile.id);
       await fetchProfiles();
+      showNotification({
+        title: 'XC catalog refresh queued',
+        message:
+          'The current catalog stays available until the new one is ready.',
+        color: 'blue',
+      });
+    } catch (error) {
+      showNotification({
+        title: 'XC catalog refresh was not queued',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
     } finally {
       setRebuilding(false);
     }
@@ -284,11 +299,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
   const remove = async () => {
     if (!selectedProfile || selectedProfile.is_default) return;
-    await API.deleteVODAccessPolicy(selectedProfile.id);
-    setCreating(false);
-    setProfileId('');
-    resetDraft();
-    await fetchProfiles();
+    const deletedProfile = selectedProfile;
+    setDeleting(true);
+    try {
+      await API.deleteVODAccessPolicy(deletedProfile.id);
+      setCreating(false);
+      setProfileId('');
+      resetDraft();
+      removeAccessPolicy(deletedProfile.id);
+      await fetchProfiles();
+      showNotification({
+        title: 'VOD output profile deleted',
+        message: `${deletedProfile.name} was removed.`,
+        color: 'green',
+      });
+    } catch (error) {
+      await fetchProfiles();
+      showNotification({
+        title: 'VOD output profile was not deleted',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const startNew = () => {
@@ -304,6 +338,53 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     value: String(profile.id),
     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
   }));
+  const selectionState = (() => {
+    if (!selectedProfile?.is_active) {
+      return {
+        label: 'Inactive',
+        color: 'gray',
+        description: 'This profile is saved but is not used for XC output.',
+      };
+    }
+    if (selectedProfile.selection_status === 'failed') {
+      return {
+        label: 'Failed',
+        color: 'red',
+        description:
+          'The latest XC catalog preparation failed. Review the error and refresh the catalog.',
+      };
+    }
+    if (selectedProfile.selection_status === 'building') {
+      return {
+        label: 'Preparing',
+        color: 'blue',
+        description:
+          'The source selection is being prepared in the background. The previous catalog remains active until this finishes.',
+      };
+    }
+    if (selectedProfile.selection_status === 'pending') {
+      return {
+        label: 'Queued',
+        color: 'yellow',
+        description:
+          'The source selection is waiting for background preparation. Saving a profile queues this automatically.',
+      };
+    }
+    if (selectedProfile.selection_current) {
+      return {
+        label: 'Ready',
+        color: 'green',
+        description:
+          'The prepared XC catalog is current and ready for clients.',
+      };
+    }
+    return {
+      label: 'Outdated',
+      color: 'yellow',
+      description:
+        'The prepared XC catalog no longer matches the source state.',
+    };
+  })();
 
   return (
     <>
@@ -335,20 +416,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               style={{ flex: 1, minWidth: 260 }}
             />
             {selectedProfile && (
-              <Badge
-                color={
-                  selectedProfile.selection_current
-                    ? 'green'
-                    : selectedProfile.selection_status === 'failed'
-                      ? 'red'
-                      : 'yellow'
-                }
-                size="lg"
-              >
-                {selectedProfile.selection_current
-                  ? 'Ready'
-                  : selectedProfile.selection_status || 'Pending'}
-              </Badge>
+              <Tooltip label={selectionState.description} multiline maw={360}>
+                <Badge color={selectionState.color} size="lg">
+                  {selectionState.label}
+                </Badge>
+              </Tooltip>
             )}
             <Button
               variant="default"
@@ -357,20 +429,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             >
               New
             </Button>
-            <Button
-              variant="default"
-              leftSection={<RefreshCw size={15} />}
-              disabled={!selectedProfile?.is_active}
-              loading={rebuilding}
-              onClick={rebuild}
+            <Tooltip
+              label="Saving queues catalog preparation automatically. Use this to retry or manually refresh the prepared XC selection."
+              multiline
+              maw={360}
             >
-              Rebuild
-            </Button>
+              <Button
+                variant="default"
+                leftSection={<RefreshCw size={15} />}
+                disabled={
+                  !selectedProfile?.is_active ||
+                  selectedProfile?.selection_status === 'building'
+                }
+                loading={rebuilding}
+                onClick={rebuild}
+              >
+                Refresh catalog
+              </Button>
+            </Tooltip>
             <Button
               color="red"
               variant="light"
               leftSection={<Trash2 size={15} />}
               disabled={!selectedProfile || selectedProfile.is_default}
+              loading={deleting}
               onClick={remove}
             >
               Delete

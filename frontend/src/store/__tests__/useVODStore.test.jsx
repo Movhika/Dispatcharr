@@ -13,6 +13,7 @@ describe('useVODStore', () => {
       currentPageContent: [],
       episodes: {},
       categories: {},
+      accessPolicies: [],
       loading: false,
       error: null,
       filters: {
@@ -96,6 +97,39 @@ describe('useVODStore', () => {
 
     expect(result.current.pageSize).toBe(50);
     expect(result.current.currentPage).toBe(1);
+  });
+
+  it('does not restore a deleted profile from an older polling response', async () => {
+    let resolveRequest;
+    api.getVODAccessPolicies.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+    useVODStore.setState({
+      accessPolicies: [
+        { id: 1, name: 'Default' },
+        { id: 2, name: 'Delete me' },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    let pendingFetch;
+    act(() => {
+      pendingFetch = result.current.fetchAccessPolicies();
+    });
+    act(() => {
+      result.current.removeAccessPolicy(2);
+    });
+    await act(async () => {
+      resolveRequest([
+        { id: 1, name: 'Default' },
+        { id: 2, name: 'Delete me' },
+      ]);
+      await pendingFetch;
+    });
+
+    expect(result.current.accessPolicies).toEqual([{ id: 1, name: 'Default' }]);
   });
 
   it('should fetch all content successfully', async () => {

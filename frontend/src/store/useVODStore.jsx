@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import api from '../api';
 
+let accessPolicyFetchSequence = 0;
+
 const getFetchContentParams = (state) => {
   const params = new URLSearchParams();
   params.append('page', state.currentPage);
@@ -294,16 +296,32 @@ const useVODStore = create((set, get) => ({
   },
 
   fetchAccessPolicies: async () => {
+    const requestSequence = ++accessPolicyFetchSequence;
     try {
       const response = await api.getVODAccessPolicies();
       const results = response.results || response;
-      set({ accessPolicies: Array.isArray(results) ? results : [] });
+      if (requestSequence === accessPolicyFetchSequence) {
+        set({ accessPolicies: Array.isArray(results) ? results : [] });
+      }
       return results;
     } catch (error) {
       console.error('Failed to fetch VOD output profiles:', error);
-      set({ error: 'Failed to load VOD output profiles.' });
+      if (requestSequence === accessPolicyFetchSequence) {
+        set({ error: 'Failed to load VOD output profiles.' });
+      }
       return [];
     }
+  },
+
+  removeAccessPolicy: (policyId) => {
+    // A polling response that started before deletion must not restore the
+    // deleted profile when it arrives later.
+    accessPolicyFetchSequence += 1;
+    set((state) => ({
+      accessPolicies: state.accessPolicies.filter(
+        (policy) => String(policy.id) !== String(policyId)
+      ),
+    }));
   },
 
   addMovie: (movie) =>

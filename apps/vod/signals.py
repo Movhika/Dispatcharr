@@ -17,19 +17,20 @@ from .models import (
 )
 
 
-CATALOG_MODELS = (
+CANONICAL_METADATA_MODELS = (
     Movie,
     Series,
     Episode,
+)
+
+SELECTION_CATALOG_MODELS = (
     M3UMovieRelation,
     M3USeriesRelation,
     M3UEpisodeRelation,
     M3UVODCategoryRelation,
-    VODAccessPolicy,
-    VODPolicyCategory,
-    VODSourceAsset,
-    M3UAccount,
 )
+
+M3U_SELECTION_FIELDS = {"is_active", "priority", "custom_properties"}
 
 
 @receiver(post_save)
@@ -56,6 +57,24 @@ def invalidate_vod_catalog(
         update_fields and set(update_fields) == {"source_asset"}
     ):
         return
+    if sender in CANONICAL_METADATA_MODELS:
+        # Names, artwork and provider detail enrichment affect the normal XC
+        # response cache, but never which source edition a profile selects.
+        # Keeping the prepared generation valid avoids an opened VOD detail
+        # dialog needlessly returning every profile to Pending.
+        bump_catalog_generation(invalidate_selections=False)
+        return
+    if sender is M3UAccount:
+        changed_fields = set(update_fields or [])
+        if changed_fields and changed_fields.isdisjoint(M3U_SELECTION_FIELDS):
+            # Playback counters and refresh status/last_message updates are
+            # frequent and do not change VOD visibility or ranking.
+            return
+        bump_catalog_generation()
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+        enqueue_all_profile_selection_rebuilds()
+        return
     if sender is VODAccessPolicy:
         # Policy semantics only invalidate this profile. User-output caches are
         # still globally versioned, but other prepared profiles remain valid.
@@ -79,14 +98,11 @@ def invalidate_vod_catalog(
             )
         bump_catalog_generation(invalidate_selections=False)
         return
-    if sender in CATALOG_MODELS:
+    if sender in SELECTION_CATALOG_MODELS:
         bump_catalog_generation()
-        VODAccessPolicy.objects.filter(is_active=True).exclude(
-            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
-        ).update(
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            selection_error="",
-        )
+        from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+        enqueue_all_profile_selection_rebuilds()
 
 
 @receiver(m2m_changed, sender=VODAccessPolicy.users.through)

@@ -279,93 +279,100 @@ const VODsPage = () => {
           )}
         </Group>
 
-        <Group gap="md" align="end">
-          <SegmentedControl
-            value={filters.type}
-            onChange={(value) => {
-              setFilters({ type: value, category: '' });
-              setPage(1);
-            }}
-            data={[
-              { label: 'All', value: 'all' },
-              { label: 'Movies', value: 'movies' },
-              { label: 'Series', value: 'series' },
-            ]}
-          />
-          <TextInput
-            placeholder="Search VODs..."
-            leftSection={<Search size={16} />}
-            value={filters.search}
-            onChange={(event) => setFilters({ search: event.target.value })}
-            miw={240}
-          />
-          <Select
-            placeholder="M3U account"
-            data={m3uOptions}
-            value={filters.m3u_account || null}
-            onChange={(value) => {
-              setFilters({ m3u_account: value || '', category: '' });
-              setPage(1);
-            }}
-            searchable
-            clearable
-            miw={180}
-          />
-          <Select
-            placeholder="Category"
-            data={categoryOptions}
-            value={filters.category}
-            onChange={(value) => {
-              setFilters({ category: value || '' });
-              setPage(1);
-            }}
-            clearable
-            miw={180}
-          />
-          <LanguageSelect
-            label="DUB"
-            value={filters.audio_language}
-            onChange={(value) => setFilters({ audio_language: value })}
-            w={155}
-          />
-          <LanguageSelect
-            label="SUB"
-            value={filters.subtitle_language}
-            onChange={(value) => setFilters({ subtitle_language: value })}
-            w={155}
-          />
-          <Select
-            label="Resolution"
-            placeholder="Any"
-            clearable
-            data={RESOLUTION_VALUES}
-            value={filters.resolution || null}
-            onChange={(value) => setFilters({ resolution: value || '' })}
-            w={130}
-          />
-          <Select
-            label="Format"
-            placeholder="Any"
-            clearable
-            searchable
-            data={CONTAINER_EXTENSION_OPTIONS}
-            value={filters.container_extension || null}
-            onChange={(value) =>
-              setFilters({ container_extension: value || '' })
-            }
-            w={115}
-          />
-          <Select
-            label="Rows"
-            value={String(pageSize)}
-            onChange={(value) => {
-              setPageSize(Number(value));
-              localStorage.setItem('vodsPageSize', value);
-            }}
-            data={['24', '48', '96'].map((value) => ({ value, label: value }))}
-            w={100}
-          />
-        </Group>
+        <Stack gap="xs">
+          <Group gap="md" align="end">
+            <SegmentedControl
+              value={filters.type}
+              onChange={(value) => {
+                setFilters({ type: value, category: '' });
+                setPage(1);
+              }}
+              data={[
+                { label: 'All', value: 'all' },
+                { label: 'Movies', value: 'movies' },
+                { label: 'Series', value: 'series' },
+              ]}
+            />
+            <TextInput
+              placeholder="Search VODs..."
+              leftSection={<Search size={16} />}
+              value={filters.search}
+              onChange={(event) => setFilters({ search: event.target.value })}
+              miw={240}
+            />
+            <Select
+              placeholder="M3U account"
+              data={m3uOptions}
+              value={filters.m3u_account || null}
+              onChange={(value) => {
+                setFilters({ m3u_account: value || '', category: '' });
+                setPage(1);
+              }}
+              searchable
+              clearable
+              miw={180}
+            />
+            <Select
+              placeholder="Category"
+              data={categoryOptions}
+              value={filters.category}
+              onChange={(value) => {
+                setFilters({ category: value || '' });
+                setPage(1);
+              }}
+              clearable
+              miw={180}
+            />
+            <Select
+              label="Rows"
+              value={String(pageSize)}
+              onChange={(value) => {
+                setPageSize(Number(value));
+                localStorage.setItem('vodsPageSize', value);
+              }}
+              data={['24', '48', '96'].map((value) => ({
+                value,
+                label: value,
+              }))}
+              w={100}
+            />
+          </Group>
+          <Group gap="md" align="end">
+            <LanguageSelect
+              label="DUB"
+              value={filters.audio_language}
+              onChange={(value) => setFilters({ audio_language: value })}
+              w={155}
+            />
+            <LanguageSelect
+              label="SUB"
+              value={filters.subtitle_language}
+              onChange={(value) => setFilters({ subtitle_language: value })}
+              w={155}
+            />
+            <Select
+              label="Resolution"
+              placeholder="Any"
+              clearable
+              data={RESOLUTION_VALUES}
+              value={filters.resolution || null}
+              onChange={(value) => setFilters({ resolution: value || '' })}
+              w={130}
+            />
+            <Select
+              label="Format"
+              placeholder="Any"
+              clearable
+              searchable
+              data={CONTAINER_EXTENSION_OPTIONS}
+              value={filters.container_extension || null}
+              onChange={(value) =>
+                setFilters({ container_extension: value || '' })
+              }
+              w={115}
+            />
+          </Group>
+        </Stack>
 
         {initialLoad ? (
           <Flex justify="center" py="xl">

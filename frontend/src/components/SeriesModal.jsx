@@ -507,7 +507,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
             zIndex: 10,
             background: 'transparent',
           },
-          body: { padding: 0 },
+          body: { padding: 'var(--mantine-spacing-md)' },
         }}
       >
         <Box style={{ position: 'relative', minHeight: 400 }}>

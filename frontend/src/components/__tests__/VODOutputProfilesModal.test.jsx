@@ -7,6 +7,7 @@ vi.mock('../../api', () => ({
   default: {
     createVODAccessPolicy: vi.fn(),
     updateVODAccessPolicy: vi.fn(),
+    deleteVODAccessPolicy: vi.fn(),
     rebuildVODAccessPolicy: vi.fn(),
     getVODAccessPolicySelections: vi.fn(),
   },
@@ -117,6 +118,7 @@ vi.mock('@mantine/core', () => {
     ),
     Text: Wrapper,
     TextInput: Input,
+    Tooltip: Wrapper,
   };
 });
 
@@ -127,6 +129,7 @@ import VODOutputProfilesModal from '../VODOutputProfilesModal.jsx';
 describe('VODOutputProfilesModal', () => {
   const fetchCategories = vi.fn().mockResolvedValue([]);
   const fetchAccessPolicies = vi.fn().mockResolvedValue([]);
+  const removeAccessPolicy = vi.fn();
   const profile = {
     id: 7,
     name: 'German HD',
@@ -163,6 +166,7 @@ describe('VODOutputProfilesModal', () => {
       name: 'New profile',
     });
     API.updateVODAccessPolicy.mockResolvedValue(profile);
+    API.deleteVODAccessPolicy.mockResolvedValue({});
     API.rebuildVODAccessPolicy.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
@@ -170,6 +174,7 @@ describe('VODOutputProfilesModal', () => {
         accessPolicies: storeProfiles,
         fetchCategories,
         fetchAccessPolicies,
+        removeAccessPolicy,
       })
     );
   });
@@ -181,11 +186,29 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText('Output entries: 123')).toBeInTheDocument();
     expect(screen.getByText('Canonical titles: 120')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rebuild' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh catalog' }));
 
     await waitFor(() =>
       expect(API.rebuildVODAccessPolicy).toHaveBeenCalledWith(7)
     );
+    expect(fetchAccessPolicies).toHaveBeenCalled();
+  });
+
+  it('removes a deleted profile from the local list before polling again', async () => {
+    storeProfiles = [
+      { ...profile, id: 9, name: 'Temporary', is_default: false },
+    ];
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Profile')).toHaveValue('9')
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() =>
+      expect(API.deleteVODAccessPolicy).toHaveBeenCalledWith(9)
+    );
+    expect(removeAccessPolicy).toHaveBeenCalledWith(9);
     expect(fetchAccessPolicies).toHaveBeenCalled();
   });
 
