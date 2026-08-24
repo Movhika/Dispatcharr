@@ -1485,7 +1485,9 @@ export default class API {
   }
 
   static async getVODAccessPolicies() {
-    return await request(`${host}/api/vod/access-policies/`);
+    return await request(`${host}/api/vod/access-policies/`, {
+      cache: 'no-store',
+    });
   }
 
   static async createVODAccessPolicy(values) {

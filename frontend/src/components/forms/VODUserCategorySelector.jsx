@@ -135,9 +135,11 @@ const VODUserCategorySelector = ({
   };
 
   const apply = () => {
-    const allEnabled =
-      rows.length > 0 && rows.every((row) => allowedIds.has(row.id));
-    onChange(allEnabled ? [] : [...allowedIds]);
+    // Persist the exact visible choice.  An empty rule list is retained only
+    // as a backwards-compatible meaning for profiles that have never saved a
+    // category allowlist; collapsing an explicit "all" choice back to [] made
+    // freshly added categories appear to disappear after reopening.
+    onChange([...allowedIds]);
     onClose();
   };
 
@@ -157,8 +159,10 @@ const VODUserCategorySelector = ({
     >
       <Stack h="100%" gap="sm">
         <Alert color="blue" variant="light">
-          An empty saved selection means all enabled source categories. Search
-          and filters also define the scope of “select all”.
+          Profiles without a saved category selection initially include every
+          enabled source category. Applying this dialog stores the exact
+          selection shown here. Search and filters also define the scope of
+          “select all”.
         </Alert>
 
         <Group align="flex-end" wrap="wrap">

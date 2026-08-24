@@ -133,6 +133,7 @@ describe('VODOutputProfilesModal', () => {
   const fetchCategories = vi.fn().mockResolvedValue([]);
   const fetchAccessPolicies = vi.fn().mockResolvedValue([]);
   const removeAccessPolicy = vi.fn();
+  const upsertAccessPolicy = vi.fn();
   const profile = {
     id: 7,
     name: 'German HD',
@@ -179,6 +180,7 @@ describe('VODOutputProfilesModal', () => {
         accessPolicies: storeProfiles,
         fetchCategories,
         fetchAccessPolicies,
+        upsertAccessPolicy,
         removeAccessPolicy,
       })
     );
@@ -196,6 +198,7 @@ describe('VODOutputProfilesModal', () => {
     await waitFor(() =>
       expect(API.rebuildVODAccessPolicy).toHaveBeenCalledWith(7)
     );
+    expect(upsertAccessPolicy).toHaveBeenCalled();
     expect(fetchAccessPolicies).toHaveBeenCalled();
   });
 
@@ -247,6 +250,9 @@ describe('VODOutputProfilesModal', () => {
           }),
         })
       )
+    );
+    expect(upsertAccessPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 8, name: 'New profile' })
     );
   });
 

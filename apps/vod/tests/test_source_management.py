@@ -660,6 +660,55 @@ class VODSourceManagementTests(TestCase):
             [self.german_category.id],
         )
 
+    def test_admin_can_replace_vod_output_profile_categories(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-update-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.german_category,
+            enabled=True,
+        )
+        request = APIRequestFactory().patch(
+            f"/api/vod/access-policies/{self.policy.pk}/",
+            {
+                "category_rules": [
+                    {
+                        "category_relation": self.english_category.id,
+                        "enabled": True,
+                        "priority": 0,
+                    }
+                ]
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=self.policy.pk,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["selection_status"],
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(
+            [rule["category_relation"] for rule in response.data["category_rules"]],
+            [self.english_category.id],
+        )
+        self.assertEqual(
+            list(
+                self.policy.vodpolicycategory_set.values_list(
+                    "category_relation_id", flat=True
+                )
+            ),
+            [self.english_category.id],
+        )
+
     def test_compact_xc_category_requests_do_not_duplicate_the_title(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.save(update_fields=["hard_constraints", "updated_at"])

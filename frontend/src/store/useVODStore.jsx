@@ -313,6 +313,28 @@ const useVODStore = create((set, get) => ({
     }
   },
 
+  upsertAccessPolicy: (policy) => {
+    if (!policy?.id) return;
+    // A response requested before this mutation must not restore stale status
+    // or category rules after the mutation response has been applied.
+    accessPolicyFetchSequence += 1;
+    set((state) => {
+      const exists = state.accessPolicies.some(
+        (current) => String(current.id) === String(policy.id)
+      );
+      const accessPolicies = exists
+        ? state.accessPolicies.map((current) =>
+            String(current.id) === String(policy.id) ? policy : current
+          )
+        : [...state.accessPolicies, policy];
+      return {
+        accessPolicies: accessPolicies.sort((left, right) =>
+          left.name.localeCompare(right.name)
+        ),
+      };
+    });
+  },
+
   removeAccessPolicy: (policyId) => {
     // A polling response that started before deletion must not restore the
     // deleted profile when it arrives later.

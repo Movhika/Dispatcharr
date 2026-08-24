@@ -132,6 +132,43 @@ describe('useVODStore', () => {
     expect(result.current.accessPolicies).toEqual([{ id: 1, name: 'Default' }]);
   });
 
+  it('does not overwrite a saved profile with an older polling response', async () => {
+    let resolveRequest;
+    api.getVODAccessPolicies.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+    useVODStore.setState({
+      accessPolicies: [{ id: 1, name: 'German', category_rules: [] }],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    let pendingFetch;
+    act(() => {
+      pendingFetch = result.current.fetchAccessPolicies();
+    });
+    act(() => {
+      result.current.upsertAccessPolicy({
+        id: 1,
+        name: 'German',
+        selection_status: 'pending',
+        category_rules: [{ category_relation: 12, enabled: true }],
+      });
+    });
+    await act(async () => {
+      resolveRequest([{ id: 1, name: 'German', category_rules: [] }]);
+      await pendingFetch;
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'pending',
+        category_rules: [{ category_relation: 12, enabled: true }],
+      })
+    );
+  });
+
   it('should fetch all content successfully', async () => {
     const mockResponse = {
       results: [

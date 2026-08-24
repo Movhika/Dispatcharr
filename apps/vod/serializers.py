@@ -459,6 +459,12 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         VODPolicyCategory.objects.bulk_create([
             VODPolicyCategory(policy=policy, **rule) for rule in rules
         ])
+        # ViewSet querysets prefetch the rules.  Without clearing that cache,
+        # the response to PATCH still contains the rules from before the
+        # replacement even though the database already contains the new set.
+        getattr(policy, "_prefetched_objects_cache", {}).pop(
+            "vodpolicycategory_set", None
+        )
 
     def validate_ranking(self, value):
         allowed = {"audio_language", "subtitle_language", "resolution"}
@@ -561,6 +567,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(instance.pk)
+        # enqueue_profile_selection_rebuild updates status/progress with a
+        # queryset update, so refresh both those fields and any prefetched
+        # category rules before DRF serializes the mutation response.
+        instance.refresh_from_db()
         return instance
 
 

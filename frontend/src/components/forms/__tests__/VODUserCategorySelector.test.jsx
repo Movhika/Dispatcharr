@@ -155,4 +155,33 @@ describe('VODUserCategorySelector', () => {
     expect(onChange).toHaveBeenCalledWith(['999']);
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('persists an explicit selection even when every category is allowed', () => {
+    const onChange = vi.fn();
+
+    render(
+      <VODUserCategorySelector
+        opened
+        onClose={vi.fn()}
+        categories={{
+          1: {
+            name: 'Movies',
+            category_type: 'movie',
+            m3u_accounts: [
+              relation(11, 'Provider A'),
+              relation(12, 'Provider B'),
+            ],
+          },
+        }}
+        selectedIds={[]}
+        onChange={onChange}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Apply category access' })
+    );
+
+    expect(onChange).toHaveBeenCalledWith(['11', '12']);
+  });
 });

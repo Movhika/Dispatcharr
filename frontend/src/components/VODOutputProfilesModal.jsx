@@ -85,6 +85,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const profiles = useVODStore((state) => state.accessPolicies);
   const fetchCategories = useVODStore((state) => state.fetchCategories);
   const fetchProfiles = useVODStore((state) => state.fetchAccessPolicies);
+  const upsertAccessPolicy = useVODStore((state) => state.upsertAccessPolicy);
   const removeAccessPolicy = useVODStore((state) => state.removeAccessPolicy);
   const [profileId, setProfileId] = useState('');
   const [creating, setCreating] = useState(false);
@@ -289,6 +290,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       const saved = profileId
         ? await API.updateVODAccessPolicy(profileId, payload)
         : await API.createVODAccessPolicy(payload);
+      upsertAccessPolicy(saved);
+      resetDraft(saved);
       await fetchProfiles();
       setCreating(false);
       setProfileId(String(saved.id));
@@ -312,7 +315,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     if (!selectedProfile) return;
     setRebuilding(true);
     try {
-      await API.rebuildVODAccessPolicy(selectedProfile.id);
+      const queued = await API.rebuildVODAccessPolicy(selectedProfile.id);
+      upsertAccessPolicy(queued);
       await fetchProfiles();
       showNotification({
         title: 'XC catalog refresh queued',
