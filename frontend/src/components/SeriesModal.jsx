@@ -607,6 +607,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
                 <VODSourceList
                   providers={providers}
                   selectedProvider={selectedProvider}
+                  selectedSourceMetadata={detailedSeries?.source_metadata}
                   contentType="series"
                   disabled={loadingProviders || loadingDetails}
                   onSelect={onChangeSelectedProvider}

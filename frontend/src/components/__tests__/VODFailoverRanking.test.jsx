@@ -8,6 +8,7 @@ describe('VODFailoverRanking', () => {
       'resolution_desc',
       'audio_language',
       'subtitle_language',
+      'bitrate_desc',
       'metadata_completeness',
     ]);
   });
@@ -24,6 +25,23 @@ describe('VODFailoverRanking', () => {
       'resolution_asc',
       'metadata_completeness',
       'subtitle_language',
+      'bitrate_desc',
+    ]);
+  });
+
+  it('keeps lowest first as the only bitrate direction', () => {
+    expect(
+      normalizeVODFailoverRanking([
+        'bitrate_asc',
+        'audio_language',
+        'metadata_completeness',
+      ])
+    ).toEqual([
+      'bitrate_asc',
+      'audio_language',
+      'metadata_completeness',
+      'subtitle_language',
+      'resolution_desc',
     ]);
   });
 });

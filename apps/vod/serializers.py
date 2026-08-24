@@ -469,7 +469,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def validate_ranking(self, value):
         allowed = {
             "audio_language", "subtitle_language", "resolution",
-            "resolution_desc", "resolution_asc", "metadata_completeness",
+            "resolution_desc", "resolution_asc", "bitrate_desc",
+            "bitrate_asc", "metadata_completeness",
         }
         if not isinstance(value, list) or set(value) - allowed:
             raise serializers.ValidationError(
@@ -486,6 +487,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         if len(resolution_directions) > 1:
             raise serializers.ValidationError(
                 "Choose only one resolution ranking direction"
+            )
+        bitrate_directions = {
+            item for item in normalized
+            if item in {"bitrate_desc", "bitrate_asc"}
+        }
+        if len(bitrate_directions) > 1:
+            raise serializers.ValidationError(
+                "Choose only one bitrate ranking direction"
             )
         return list(dict.fromkeys(normalized))
 

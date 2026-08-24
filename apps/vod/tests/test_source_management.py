@@ -288,6 +288,62 @@ class VODSourceManagementTests(TestCase):
             "mkv",
         )
 
+    def test_detailed_provider_metadata_exposes_known_technical_fields(self):
+        self.german_relation.custom_properties = {
+            "detailed_info": {
+                "video": {
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "avg_frame_rate": "24000/1001",
+                    "bit_rate": "8000000",
+                },
+                "audio": {
+                    "codec_name": "eac3",
+                    "tags": {"language": "deu"},
+                },
+                "subtitles": [{"tags": {"language": "eng"}}],
+            },
+            "movie_data": {"size": "1.5 GiB"},
+        }
+
+        metadata = relation_declared_metadata(self.german_relation)
+
+        self.assertEqual(metadata["video_codec"], "hevc")
+        self.assertEqual(metadata["audio_codec"], "eac3")
+        self.assertEqual(metadata["audio_languages"], ["ger"])
+        self.assertEqual(metadata["subtitle_languages"], ["eng"])
+        self.assertEqual(metadata["resolution"], "1080p")
+        self.assertEqual(metadata["bitrate_kbps"], 8000)
+        self.assertEqual(metadata["file_size_bytes"], 1610612736)
+
+    def test_failover_can_prefer_lower_known_bitrate(self):
+        self.german_relation.custom_properties = {
+            "detailed_info": {"bitrate": 3500}
+        }
+        self.english_relation.custom_properties = {
+            "detailed_info": {"bitrate": 9000}
+        }
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = [
+            "bitrate_asc",
+            "audio_language",
+            "subtitle_language",
+            "resolution_desc",
+            "metadata_completeness",
+        ]
+        self.policy.save(update_fields=["hard_constraints", "ranking", "updated_at"])
+
+        ordered = ordered_failover_candidates(
+            [self.english_relation, self.german_relation],
+            self.policy,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.german_relation.id, self.english_relation.id],
+        )
+
     def test_language_preference_wins_over_account_and_category_priority(self):
         self.policy.hard_constraints = {
             "required_audio_languages": ["ger", "eng"],
@@ -714,6 +770,17 @@ class VODSourceManagementTests(TestCase):
             data={
                 "name": "Conflicting resolution directions",
                 "ranking": ["resolution_desc", "resolution_asc"],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("ranking", serializer.errors)
+
+    def test_profile_rejects_conflicting_bitrate_ranking_directions(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Conflicting bitrate directions",
+                "ranking": ["bitrate_desc", "bitrate_asc"],
             }
         )
 

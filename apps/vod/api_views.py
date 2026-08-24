@@ -53,7 +53,7 @@ from .image_proxy import (
 )
 from .tasks import refresh_series_episodes, refresh_movie_advanced_data
 from .utils import get_series_display_name
-from .metadata import normalize_language_code
+from .metadata import effective_relation_metadata, normalize_language_code
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -1404,6 +1404,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             'direct_source': movie_data.get('direct_source', ''),
             'category_id': movie_data.get('category_id', ''),
             'added': movie_data.get('added', ''),
+            'source_metadata': effective_relation_metadata(relation),
             'm3u_account': {
                 'id': relation.m3u_account.id,
                 'name': relation.m3u_account.name,
@@ -1584,7 +1585,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         qs = M3USeriesRelation.objects.filter(
             series=series,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category')
+        ).select_related('m3u_account', 'category', 'source_asset')
 
         if relation_id is not None:
             relation = qs.filter(id=relation_id).first()
@@ -1693,7 +1694,8 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                     'account_type': relation.m3u_account.account_type
                 },
                 'episodes_fetched': custom_props.get('episodes_fetched', False),
-                'detailed_fetched': custom_props.get('detailed_fetched', False)
+                'detailed_fetched': custom_props.get('detailed_fetched', False),
+                'source_metadata': effective_relation_metadata(relation),
             }
 
             # Always include episodes for series info if they've been fetched

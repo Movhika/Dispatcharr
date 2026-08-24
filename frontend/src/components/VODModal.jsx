@@ -445,6 +445,7 @@ const VODModal = ({ vod, opened, onClose }) => {
                 <VODSourceList
                   providers={providers}
                   selectedProvider={selectedProvider}
+                  selectedSourceMetadata={detailedVOD?.source_metadata}
                   contentType="movie"
                   disabled={loadingProviders}
                   onSelect={onChangeSelectedProvider}

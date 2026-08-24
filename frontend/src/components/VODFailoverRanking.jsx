@@ -1,5 +1,13 @@
 import React, { useMemo } from 'react';
-import { ActionIcon, Group, Paper, Select, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Group,
+  Paper,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+} from '@mantine/core';
 import {
   closestCenter,
   DndContext,
@@ -13,10 +21,9 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { GripVertical } from 'lucide-react';
 import { normalizeVODFailoverRanking } from '../utils/vodFailoverRanking.js';
 
@@ -39,13 +46,20 @@ const criterionDetails = (criterion) => {
       description: 'Prefers sources with more known technical metadata.',
     };
   }
+  if (criterion === 'bitrate_desc' || criterion === 'bitrate_asc') {
+    return {
+      title: 'Bitrate',
+      description:
+        'Uses an existing provider or playback bitrate when available.',
+    };
+  }
   return {
     title: 'Resolution',
     description: 'Controls quality preference within the configured limits.',
   };
 };
 
-const SortableCriterion = ({ criterion, onResolutionDirectionChange }) => {
+const SortableCriterion = ({ criterion, onDirectionChange }) => {
   const {
     attributes,
     listeners,
@@ -67,10 +81,11 @@ const SortableCriterion = ({ criterion, onResolutionDirectionChange }) => {
         opacity: isDragging ? 0.65 : 1,
         position: 'relative',
         zIndex: isDragging ? 2 : 0,
+        height: '100%',
       }}
     >
-      <Group wrap="nowrap" justify="space-between">
-        <Group wrap="nowrap">
+      <Stack gap="sm" h="100%" justify="space-between">
+        <Group wrap="nowrap" align="flex-start">
           <ActionIcon
             variant="subtle"
             color="gray"
@@ -94,16 +109,28 @@ const SortableCriterion = ({ criterion, onResolutionDirectionChange }) => {
           criterion === 'resolution_asc') && (
           <Select
             aria-label="Resolution preference"
-            w={180}
+            w="100%"
             data={[
               { value: 'resolution_desc', label: 'Highest first' },
               { value: 'resolution_asc', label: 'Lowest first' },
             ]}
             value={criterion}
-            onChange={onResolutionDirectionChange}
+            onChange={onDirectionChange}
           />
         )}
-      </Group>
+        {(criterion === 'bitrate_desc' || criterion === 'bitrate_asc') && (
+          <Select
+            aria-label="Bitrate preference"
+            w="100%"
+            data={[
+              { value: 'bitrate_desc', label: 'Highest first' },
+              { value: 'bitrate_asc', label: 'Lowest first' },
+            ]}
+            value={criterion}
+            onChange={onDirectionChange}
+          />
+        )}
+      </Stack>
     </Paper>
   );
 };
@@ -123,7 +150,7 @@ const VODFailoverRanking = ({ value, onChange }) => {
     onChange(arrayMove(ranking, oldIndex, newIndex));
   };
 
-  const changeResolutionDirection = (current, next) => {
+  const changeDirection = (current, next) => {
     if (!next || current === next) return;
     onChange(
       ranking.map((criterion) => (criterion === current ? next : criterion))
@@ -142,21 +169,18 @@ const VODFailoverRanking = ({ value, onChange }) => {
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        modifiers={[restrictToVerticalAxis]}
         onDragEnd={moveCriterion}
       >
-        <SortableContext items={ranking} strategy={verticalListSortingStrategy}>
-          <Stack gap={6}>
+        <SortableContext items={ranking} strategy={rectSortingStrategy}>
+          <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="sm">
             {ranking.map((criterion) => (
               <SortableCriterion
                 key={criterion}
                 criterion={criterion}
-                onResolutionDirectionChange={(next) =>
-                  changeResolutionDirection(criterion, next)
-                }
+                onDirectionChange={(next) => changeDirection(criterion, next)}
               />
             ))}
-          </Stack>
+          </SimpleGrid>
         </SortableContext>
       </DndContext>
     </Stack>

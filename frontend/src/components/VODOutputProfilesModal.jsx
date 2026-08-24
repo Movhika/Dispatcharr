@@ -500,6 +500,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             >
               New
             </Button>
+            <Button
+              leftSection={<Save size={15} />}
+              loading={saving}
+              disabled={!draft.name.trim()}
+              onClick={save}
+            >
+              Save profile
+            </Button>
             <Tooltip
               label="Saving queues catalog preparation automatically. Use this to retry or manually refresh the prepared XC selection."
               multiline
@@ -600,6 +608,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           >
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
+              <TabsTab value="failover">Failover</TabsTab>
               <TabsTab value="preview">Content preview</TabsTab>
             </TabsList>
 
@@ -706,12 +715,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       )
                     }
                   />
-                  <VODFailoverRanking
-                    value={draft.ranking}
-                    onChange={(ranking) =>
-                      setDraft((current) => ({ ...current, ranking }))
-                    }
-                  />
                   <Group justify="space-between">
                     <Stack gap={0}>
                       <Text fw={500}>Allowed source categories</Text>
@@ -728,16 +731,25 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       Manage categories
                     </Button>
                   </Group>
-                  <Group justify="flex-end" py="md">
-                    <Button
-                      leftSection={<Save size={15} />}
-                      loading={saving}
-                      disabled={!draft.name.trim()}
-                      onClick={save}
-                    >
-                      Save profile
-                    </Button>
-                  </Group>
+                </Stack>
+              </ScrollArea>
+            </TabsPanel>
+
+            <TabsPanel value="failover" pt="md">
+              <ScrollArea h="calc(96vh - 270px)">
+                <Stack gap="lg">
+                  <Alert color="blue">
+                    Failover only compares sources that already passed this
+                    profile&apos;s category, language, subtitle, and resolution
+                    rules. Unknown values remain usable only when allowed in
+                    Settings.
+                  </Alert>
+                  <VODFailoverRanking
+                    value={draft.ranking}
+                    onChange={(ranking) =>
+                      setDraft((current) => ({ ...current, ranking }))
+                    }
+                  />
                 </Stack>
               </ScrollArea>
             </TabsPanel>

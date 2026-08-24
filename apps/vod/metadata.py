@@ -1,8 +1,8 @@
 """Source-asset identity and field-level metadata precedence helpers."""
 
-from urllib.parse import urlsplit
-
+import re
 from collections import defaultdict
+from urllib.parse import urlsplit
 
 from django.db import transaction
 
@@ -137,7 +137,68 @@ def normalize_source_metadata(metadata):
     for field in ("audio_languages", "subtitle_languages", "languages"):
         if field in normalized:
             normalized[field] = normalize_language_list(normalized[field])
+    bitrate = normalize_bitrate_kbps(
+        normalized.get("bitrate_kbps", normalized.get("bitrate"))
+    )
+    if bitrate:
+        normalized["bitrate_kbps"] = bitrate
+    file_size = normalize_file_size_bytes(
+        normalized.get("file_size_bytes", normalized.get("file_size"))
+    )
+    if file_size:
+        normalized["file_size_bytes"] = file_size
     return normalized
+
+
+def _positive_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+    if not match:
+        return None
+    number = float(match.group(0).replace(",", "."))
+    return number if number > 0 else None
+
+
+def normalize_bitrate_kbps(value, *, bits_per_second=False):
+    """Return a positive bitrate in kbps from common XC/ffprobe shapes."""
+    number = _positive_number(value)
+    if number is None:
+        return None
+    text = str(value or "").lower()
+    if "mbit" in text or "mbps" in text:
+        number *= 1000
+    elif bits_per_second or (
+        ("bit" in text or "bps" in text)
+        and "kbit" not in text
+        and "kbps" not in text
+    ):
+        number /= 1000
+    return round(number, 2)
+
+
+def normalize_file_size_bytes(value):
+    """Return a positive byte count when a provider exposes file size."""
+    number = _positive_number(value)
+    if number is None:
+        return None
+    text = str(value or "").strip().lower()
+    unit_match = re.search(r"(?:^|\d)\s*(kib|mib|gib|tib|kb|mb|gb|tb|b)\s*$", text)
+    unit = unit_match.group(1) if unit_match else "b"
+    multipliers = {
+        "b": 1,
+        "kb": 1000,
+        "mb": 1000 ** 2,
+        "gb": 1000 ** 3,
+        "tb": 1000 ** 4,
+        "kib": 1024,
+        "mib": 1024 ** 2,
+        "gib": 1024 ** 3,
+        "tib": 1024 ** 4,
+    }
+    return int(number * multipliers[unit])
 
 
 def provider_origin_key(account):
@@ -270,12 +331,25 @@ def relation_declared_metadata(relation):
             result["resolution"] = f"{height}p"
             if width:
                 result["width"] = width
+        codec = video.get("codec_name") or video.get("codec_long_name")
+        if codec:
+            result["video_codec"] = codec
+        frame_rate = video.get("avg_frame_rate") or video.get("r_frame_rate")
+        if frame_rate and str(frame_rate) != "0/0":
+            result["frame_rate"] = frame_rate
+        if not result.get("bitrate") and video.get("bit_rate"):
+            result["bitrate_kbps"] = normalize_bitrate_kbps(
+                video["bit_rate"], bits_per_second=True
+            )
     audio = result.get("audio")
     if isinstance(audio, dict):
         tags = audio.get("tags") if isinstance(audio.get("tags"), dict) else {}
         language = audio.get("language") or audio.get("lang") or tags.get("language")
         if language:
             result["audio_languages"] = [language]
+        codec = audio.get("codec_name") or audio.get("codec_long_name")
+        if codec:
+            result["audio_codec"] = codec
     subtitles = detailed.get("subtitles") or detailed.get("subtitle")
     if isinstance(subtitles, dict):
         subtitles = [subtitles]
@@ -294,6 +368,28 @@ def relation_declared_metadata(relation):
                 languages.append(language)
         if languages:
             result["subtitle_languages"] = languages
+    bitrate = normalize_bitrate_kbps(result.get("bitrate"))
+    if bitrate:
+        result["bitrate_kbps"] = bitrate
+    for payload in (
+        detailed,
+        props.get("movie_data") or {},
+        props.get("basic_data") or {},
+    ):
+        if not isinstance(payload, dict):
+            continue
+        raw_size = next(
+            (
+                payload.get(key)
+                for key in ("file_size_bytes", "file_size", "filesize", "size")
+                if payload.get(key) not in (None, "")
+            ),
+            None,
+        )
+        file_size = normalize_file_size_bytes(raw_size)
+        if file_size:
+            result["file_size_bytes"] = file_size
+            break
     return normalize_source_metadata(result)
 
 

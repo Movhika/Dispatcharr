@@ -16,11 +16,105 @@ import {
 } from '@mantine/core';
 import { Copy, Play, Wrench } from 'lucide-react';
 
-const valuesFor = (provider) => provider?.source_metadata?.values || {};
-const joinLanguages = (values, field) =>
-  (values[field] || [])
-    .map((value) => String(value).toUpperCase())
-    .join(', ') || '—';
+const valuesFor = (provider, selectedProvider, selectedSourceMetadata) => {
+  const stored = provider?.source_metadata?.values || {};
+  if (selectedProvider?.id === provider?.id && selectedSourceMetadata?.values) {
+    return { ...stored, ...selectedSourceMetadata.values };
+  }
+  return stored;
+};
+
+const metadataLanguages = (values, field) => {
+  const raw = values[field];
+  const languages = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return languages.map((value) => String(value).toUpperCase());
+};
+
+const positiveNumber = (value) => {
+  const number = Number.parseFloat(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(number) && number > 0 ? number : null;
+};
+
+const formatBitrate = (values) => {
+  const bitrate = positiveNumber(values.bitrate_kbps ?? values.bitrate);
+  if (!bitrate) return null;
+  if (bitrate >= 1000) {
+    const mbps = bitrate / 1000;
+    return `${mbps >= 10 ? mbps.toFixed(1) : mbps.toFixed(2)} Mbps`;
+  }
+  return `${Math.round(bitrate)} kbps`;
+};
+
+const formatFileSize = (value) => {
+  const bytes = positiveNumber(value);
+  if (!bytes) return null;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const unitIndex = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1000)),
+    units.length - 1
+  );
+  const amount = bytes / 1000 ** unitIndex;
+  return `${amount >= 10 || unitIndex === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const formatFrameRate = (value) => {
+  if (!value) return null;
+  const [numerator, denominator] = String(value).split('/').map(Number);
+  const fps = denominator ? numerator / denominator : Number(value);
+  if (!Number.isFinite(fps) || fps <= 0) return null;
+  return `${Number.isInteger(fps) ? fps : fps.toFixed(2)} FPS`;
+};
+
+const LanguageBadges = ({ values, field, color }) => {
+  const languages = metadataLanguages(values, field);
+  if (!languages.length) return <Text c="dimmed">—</Text>;
+  return (
+    <Group gap={4} wrap="wrap">
+      {languages.map((language) => (
+        <Badge key={language} color={color} variant="light">
+          {language}
+        </Badge>
+      ))}
+    </Group>
+  );
+};
+
+const MovieDetails = ({ values, provider }) => {
+  const details = [
+    {
+      value: values.container_extension || provider.container_extension,
+      uppercase: true,
+    },
+    { value: formatBitrate(values) },
+    { value: formatFileSize(values.file_size_bytes) },
+    {
+      value: values.video_codec || values.video?.codec_name,
+      uppercase: true,
+    },
+    {
+      value: values.audio_codec || values.audio?.codec_name,
+      uppercase: true,
+    },
+    {
+      value: formatFrameRate(
+        values.frame_rate ||
+          values.video?.avg_frame_rate ||
+          values.video?.r_frame_rate
+      ),
+    },
+  ];
+  const visibleDetails = details.filter(({ value }) => Boolean(value));
+  if (!visibleDetails.length) return <Text c="dimmed">—</Text>;
+  return (
+    <Group gap={4} wrap="wrap">
+      {visibleDetails.map(({ value, uppercase }, index) => (
+        <Badge key={`${value}-${index}`} color="gray" variant="light">
+          {uppercase ? String(value).toUpperCase() : value}
+        </Badge>
+      ))}
+    </Group>
+  );
+};
 
 const sourceName = (provider, contentType) => {
   const properties = provider?.custom_properties || {};
@@ -41,6 +135,7 @@ const sourceName = (provider, contentType) => {
 const VODSourceList = ({
   providers,
   selectedProvider,
+  selectedSourceMetadata,
   contentType,
   disabled = false,
   onSelect,
@@ -54,6 +149,7 @@ const VODSourceList = ({
       highlightOnHover
       withTableBorder
       layout="fixed"
+      miw={contentType === 'movie' ? 1120 : 820}
       aria-label="Exact VOD sources"
     >
       <TableThead>
@@ -79,13 +175,20 @@ const VODSourceList = ({
               </Group>
             </Stack>
           </TableTh>
-          <TableTh w="42%">Technical metadata</TableTh>
+          <TableTh w={140}>DUB</TableTh>
+          <TableTh w={140}>SUB</TableTh>
+          <TableTh w={110}>Resolution</TableTh>
+          {contentType === 'movie' && <TableTh w={320}>Details</TableTh>}
           <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
         </TableTr>
       </TableThead>
       <TableTbody>
         {providers.map((provider) => {
-          const values = valuesFor(provider);
+          const values = valuesFor(
+            provider,
+            selectedProvider,
+            selectedSourceMetadata
+          );
           const selected = selectedProvider?.id === provider.id;
           return (
             <TableTr
@@ -127,24 +230,30 @@ const VODSourceList = ({
                 </Stack>
               </TableTd>
               <TableTd>
-                <Group gap={5} wrap="wrap">
-                  <Badge color="blue" variant="light">
-                    DUB {joinLanguages(values, 'audio_languages')}
-                  </Badge>
-                  <Badge color="cyan" variant="light">
-                    SUB {joinLanguages(values, 'subtitle_languages')}
-                  </Badge>
-                  <Badge color="teal" variant="light">
-                    {values.resolution ||
-                      (values.height ? `${values.height}p` : '—')}
-                  </Badge>
-                  <Badge color="gray" variant="light">
-                    {values.container_extension ||
-                      provider.container_extension ||
-                      '—'}
-                  </Badge>
-                </Group>
+                <LanguageBadges
+                  values={values}
+                  field="audio_languages"
+                  color="blue"
+                />
               </TableTd>
+              <TableTd>
+                <LanguageBadges
+                  values={values}
+                  field="subtitle_languages"
+                  color="cyan"
+                />
+              </TableTd>
+              <TableTd>
+                <Badge color="teal" variant="light">
+                  {values.resolution ||
+                    (values.height ? `${values.height}p` : '—')}
+                </Badge>
+              </TableTd>
+              {contentType === 'movie' && (
+                <TableTd>
+                  <MovieDetails values={values} provider={provider} />
+                </TableTd>
+              )}
               <TableTd>
                 <Group gap={5} wrap="nowrap">
                   {contentType === 'movie' && (

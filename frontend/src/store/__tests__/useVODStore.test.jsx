@@ -365,6 +365,7 @@ describe('useVODStore', () => {
       plot: 'From provider',
       stream_url: 'http://provider.com/movie.mp4',
       backdrop_path: ['path1', 'path2'],
+      source_metadata: { values: { bitrate_kbps: 4200 } },
     };
 
     api.getMovieProviderInfo.mockResolvedValue(mockResponse);
@@ -380,6 +381,9 @@ describe('useVODStore', () => {
     expect(movieDetails.name).toBe('Provider Movie');
     expect(movieDetails.description).toBe('From provider');
     expect(movieDetails.backdrop_path).toEqual(['path1', 'path2']);
+    expect(movieDetails.source_metadata).toEqual({
+      values: { bitrate_kbps: 4200 },
+    });
     expect(result.current.content['movie_1']).toBeUndefined();
     expect(result.current.loading).toBe(false);
   });
@@ -507,6 +511,7 @@ describe('useVODStore', () => {
       description: 'A test series',
       year: 2023,
       cover: 'http://example.com/cover.jpg',
+      source_metadata: { values: { video_codec: 'hevc' } },
       episodes: {
         1: [
           {
@@ -538,6 +543,9 @@ describe('useVODStore', () => {
     expect(seriesInfo.id).toBe(1);
     expect(seriesInfo.name).toBe('Test Series');
     expect(seriesInfo.episodesList).toHaveLength(2);
+    expect(seriesInfo.source_metadata).toEqual({
+      values: { video_codec: 'hevc' },
+    });
     expect(result.current.content['series_1']).toBeDefined();
     expect(result.current.content['series_1'].contentType).toBe('series');
     expect(result.current.episodes[101]).toBeDefined();

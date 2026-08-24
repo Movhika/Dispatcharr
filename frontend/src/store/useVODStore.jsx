@@ -78,6 +78,7 @@ const getMovieDetailsWithProvider = (response, movieId) => {
     bitrate: response.bitrate || 0,
     video: response.video || {},
     audio: response.audio || {},
+    source_metadata: response.source_metadata || null,
   };
 };
 
@@ -105,6 +106,7 @@ const getSeriesDetails = (response, seriesId) => {
     age: response.age || '',
     m3u_account: response.m3u_account || '',
     youtube_trailer: response.custom_properties?.youtube_trailer || '',
+    source_metadata: response.source_metadata || null,
   };
 };
 
