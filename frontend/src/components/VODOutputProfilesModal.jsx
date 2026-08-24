@@ -38,6 +38,11 @@ import {
 } from '../utils/vodMetadataOptions.js';
 import LanguagePicker, { LanguageSelect } from './LanguagePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
+import VODFailoverRanking from './VODFailoverRanking.jsx';
+import {
+  DEFAULT_VOD_FAILOVER_RANKING,
+  normalizeVODFailoverRanking,
+} from '../utils/vodFailoverRanking.js';
 
 const EMPTY_PROFILE = {
   name: '',
@@ -52,7 +57,7 @@ const EMPTY_PROFILE = {
     max_resolution: 0,
     allow_unknown_metadata: true,
   },
-  ranking: ['audio_language', 'subtitle_language', 'resolution'],
+  ranking: DEFAULT_VOD_FAILOVER_RANKING,
   category_rules: [],
 };
 
@@ -133,7 +138,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         ...EMPTY_PROFILE.hard_constraints,
         ...sourceConstraints,
       },
-      ranking: source.ranking || EMPTY_PROFILE.ranking,
+      ranking: normalizeVODFailoverRanking(
+        source.ranking || EMPTY_PROFILE.ranking
+      ),
       category_rules: source.category_rules || [],
     });
   };
@@ -697,6 +704,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         'allow_unknown_metadata',
                         event.currentTarget.checked
                       )
+                    }
+                  />
+                  <VODFailoverRanking
+                    value={draft.ranking}
+                    onChange={(ranking) =>
+                      setDraft((current) => ({ ...current, ranking }))
                     }
                   />
                   <Group justify="space-between">

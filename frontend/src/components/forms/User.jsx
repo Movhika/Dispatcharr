@@ -51,6 +51,7 @@ const User = ({ user = null, isOpen, onClose }) => {
   const [generating, setGenerating] = useState(false);
   const [_generatedKey, setGeneratedKey] = useState(null);
   const [userAPIKey, setUserAPIKey] = useState(user?.api_key || null);
+  const [vodPolicyId, setVODPolicyId] = useState('');
 
   const theme = useMantineTheme();
 
@@ -97,6 +98,7 @@ const User = ({ user = null, isOpen, onClose }) => {
     if (user?.id) {
       const values = userToFormValues(user);
       form.setValues(values);
+      setVODPolicyId(values.vod_policy_id || '');
 
       if (user.custom_properties?.xc_password) {
         setEnableXC(true);
@@ -105,7 +107,11 @@ const User = ({ user = null, isOpen, onClose }) => {
       setUserAPIKey(user.api_key || null);
     } else {
       form.reset();
+      setVODPolicyId('');
     }
+    // The form object is intentionally excluded: this initialization must only
+    // run when the edited user changes, not when Mantine refreshes form state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -117,6 +123,12 @@ const User = ({ user = null, isOpen, onClose }) => {
       xc_password: Math.random().toString(36).slice(2),
     });
   };
+
+  const effectiveVODProfile = vodPolicyId
+    ? (vodProfiles || []).find(
+        (profile) => String(profile.id) === String(vodPolicyId)
+      )
+    : (vodProfiles || []).find((profile) => profile.is_default);
 
   if (!isOpen) {
     return <></>;
@@ -447,9 +459,20 @@ const User = ({ user = null, isOpen, onClose }) => {
                     value: String(profile.id),
                     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
                   }))}
-                {...form.getInputProps('vod_policy_id')}
-                key={form.key('vod_policy_id')}
+                value={vodPolicyId || null}
+                onChange={(value) => {
+                  const next = value || '';
+                  setVODPolicyId(next);
+                  form.setFieldValue('vod_policy_id', next);
+                }}
               />
+              <Text size="xs" c="dimmed">
+                {effectiveVODProfile
+                  ? `${Number(
+                      effectiveVODProfile.selection_counts?.output_entries || 0
+                    ).toLocaleString()} output entries are currently prepared for this profile.`
+                  : 'No active default VOD profile is available.'}
+              </Text>
             </Stack>
           </TabsPanel>
         </Tabs>

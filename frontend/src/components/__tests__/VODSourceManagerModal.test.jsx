@@ -187,6 +187,17 @@ describe('VODSourceManagerModal playback history', () => {
     expect(
       screen.getByText('1080p • Audio: ger • Subs: eng')
     ).toBeInTheDocument();
+    expect(screen.getByText(/Automatic cleanup: Off/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        new Date(playback.started_at).toLocaleDateString(undefined, {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        })
+      )
+    ).toBeInTheDocument();
   });
 
   it('saves manual metadata as locked source data', async () => {

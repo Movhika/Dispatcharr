@@ -73,6 +73,14 @@ const metadataSummary = (playback) => {
     .join(' • ');
 };
 const apiDate = (value) => (value ? new Date(value).toISOString() : '');
+const playbackDayKey = (value) => new Date(value).toLocaleDateString('en-CA');
+const playbackDayLabel = (value) =>
+  new Date(value).toLocaleDateString(undefined, {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 
 const VODSourceManagerModal = ({ opened, onClose }) => {
   const [playbacks, setPlaybacks] = useState([]);
@@ -332,6 +340,8 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
           <Alert color="blue" variant="light">
             History is filtered and paged on the server. Bulk metadata updates
             each distinct source once, even when it appears in several sessions.
+            Automatic cleanup: Off — entries are kept until an administrator
+            deletes them.
           </Alert>
           <Group align="flex-end" wrap="wrap">
             <TextInput
@@ -525,60 +535,90 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                     </TableTd>
                   </TableTr>
                 )}
-                {playbacks.map((playback) => (
-                  <TableTr key={playback.id}>
-                    <TableTd>
-                      <Checkbox
-                        aria-label={`Select ${playback.content_name}`}
-                        checked={isSelected(playback.id)}
-                        onChange={(event) =>
-                          toggleRow(playback.id, event.currentTarget.checked)
-                        }
-                      />
-                    </TableTd>
-                    <TableTd>
-                      {new Date(playback.started_at).toLocaleString()}
-                    </TableTd>
-                    <TableTd>{playback.content_name}</TableTd>
-                    <TableTd>
-                      {playback.account_name}
-                      {playback.category_name
-                        ? ` — ${playback.category_name}`
-                        : ''}
-                    </TableTd>
-                    <TableTd>{playback.username || '—'}</TableTd>
-                    <TableTd>{playback.status}</TableTd>
-                    <TableTd>{playback.watched_seconds || 0}s</TableTd>
-                    <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
-                    <TableTd>{metadataSummary(playback) || 'Unknown'}</TableTd>
-                    <TableTd>
-                      <Group gap={4} wrap="nowrap">
-                        <ActionIcon
-                          aria-label="Edit source metadata"
-                          variant="subtle"
-                          disabled={!playback.source_asset}
-                          onClick={() => openManualEditor(playback)}
-                        >
-                          <Wrench size={16} />
-                        </ActionIcon>
-                        <ActionIcon
-                          aria-label={`Delete ${playback.content_name}`}
-                          color="red"
-                          variant="subtle"
-                          onClick={() =>
-                            setDeleteRequest({
-                              title: 'Delete playback history entry',
-                              message: `Delete the history entry for ${playback.content_name}?`,
-                              payload: selectionPayload([playback.id]),
-                            })
-                          }
-                        >
-                          <Trash2 size={16} />
-                        </ActionIcon>
-                      </Group>
-                    </TableTd>
-                  </TableTr>
-                ))}
+                {playbacks.map((playback, index) => {
+                  const showDay =
+                    index === 0 ||
+                    playbackDayKey(playbacks[index - 1].started_at) !==
+                      playbackDayKey(playback.started_at);
+                  return (
+                    <React.Fragment key={playback.id}>
+                      {showDay && (
+                        <TableTr>
+                          <TableTd
+                            colSpan={10}
+                            py={5}
+                            style={{
+                              background: 'var(--mantine-color-dark-6)',
+                              borderBottom:
+                                '1px solid var(--mantine-color-dark-4)',
+                            }}
+                          >
+                            <Text size="xs" fw={700} c="dimmed">
+                              {playbackDayLabel(playback.started_at)}
+                            </Text>
+                          </TableTd>
+                        </TableTr>
+                      )}
+                      <TableTr>
+                        <TableTd>
+                          <Checkbox
+                            aria-label={`Select ${playback.content_name}`}
+                            checked={isSelected(playback.id)}
+                            onChange={(event) =>
+                              toggleRow(
+                                playback.id,
+                                event.currentTarget.checked
+                              )
+                            }
+                          />
+                        </TableTd>
+                        <TableTd>
+                          {new Date(playback.started_at).toLocaleString()}
+                        </TableTd>
+                        <TableTd>{playback.content_name}</TableTd>
+                        <TableTd>
+                          {playback.account_name}
+                          {playback.category_name
+                            ? ` — ${playback.category_name}`
+                            : ''}
+                        </TableTd>
+                        <TableTd>{playback.username || '—'}</TableTd>
+                        <TableTd>{playback.status}</TableTd>
+                        <TableTd>{playback.watched_seconds || 0}s</TableTd>
+                        <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
+                        <TableTd>
+                          {metadataSummary(playback) || 'Unknown'}
+                        </TableTd>
+                        <TableTd>
+                          <Group gap={4} wrap="nowrap">
+                            <ActionIcon
+                              aria-label="Edit source metadata"
+                              variant="subtle"
+                              disabled={!playback.source_asset}
+                              onClick={() => openManualEditor(playback)}
+                            >
+                              <Wrench size={16} />
+                            </ActionIcon>
+                            <ActionIcon
+                              aria-label={`Delete ${playback.content_name}`}
+                              color="red"
+                              variant="subtle"
+                              onClick={() =>
+                                setDeleteRequest({
+                                  title: 'Delete playback history entry',
+                                  message: `Delete the history entry for ${playback.content_name}?`,
+                                  payload: selectionPayload([playback.id]),
+                                })
+                              }
+                            >
+                              <Trash2 size={16} />
+                            </ActionIcon>
+                          </Group>
+                        </TableTd>
+                      </TableTr>
+                    </React.Fragment>
+                  );
+                })}
               </TableTbody>
             </Table>
           </ScrollArea>

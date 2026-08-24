@@ -6,7 +6,6 @@ import {
   Checkbox,
   Group,
   Modal,
-  NumberInput,
   ScrollArea,
   Select,
   Stack,
@@ -19,12 +18,66 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { Play, Plus, Save, Trash2 } from 'lucide-react';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { GripVertical, Play, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 import LanguagePicker from '../LanguagePicker.jsx';
 import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
+
+const SortableRuleRow = ({ ruleId, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: ruleId });
+  return (
+    <TableTr
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+        position: 'relative',
+        zIndex: isDragging ? 2 : 0,
+      }}
+    >
+      <TableTd>
+        <ActionIcon
+          aria-label="Move import rule"
+          variant="subtle"
+          color="gray"
+          style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={16} />
+        </ActionIcon>
+      </TableTd>
+      {children}
+    </TableTr>
+  );
+};
 
 const M3UGroupRules = ({ accountId, scope }) => {
   const [rules, setRules] = useState([]);
@@ -32,6 +85,10 @@ const M3UGroupRules = ({ accountId, scope }) => {
   const [preview, setPreview] = useState(null);
   const [previewRule, setPreviewRule] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const load = useCallback(async () => {
     if (!accountId) return;
@@ -153,6 +210,52 @@ const M3UGroupRules = ({ accountId, scope }) => {
     setRules((current) => current.filter((rule) => rule.id !== id));
   };
 
+  const reorderRules = async ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const oldIndex = rules.findIndex((rule) => rule.id === active.id);
+    const newIndex = rules.findIndex((rule) => rule.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const previous = rules;
+    const reordered = arrayMove(rules, oldIndex, newIndex).map(
+      (rule, index) => ({
+        ...rule,
+        order: index,
+      })
+    );
+    const changed = reordered.filter(
+      (rule) =>
+        previous.find((item) => item.id === rule.id)?.order !== rule.order
+    );
+    setRules(reordered);
+    setLoading(true);
+    try {
+      const saved = await Promise.all(
+        changed.map((rule) =>
+          API.updateM3UGroupRule(accountId, rule.id, rulePayload(rule))
+        )
+      );
+      const savedById = new Map(saved.map((rule) => [rule.id, rule]));
+      setRules((current) =>
+        current.map((rule) => savedById.get(rule.id) || rule)
+      );
+      showNotification({
+        title: 'Import rule order saved',
+        message: 'First matching rule continues to win during future scans.',
+        color: 'green',
+      });
+    } catch (error) {
+      setRules(previous);
+      showNotification({
+        title: 'Import rule order was not saved',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Stack gap="xs" mt="md">
       <Group justify="space-between">
@@ -191,7 +294,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
           >
             <TableThead>
               <TableTr>
-                <TableTh w={70}>Order</TableTh>
+                <TableTh w={48} aria-label="Rule order" />
                 <TableTh w={145}>Match</TableTh>
                 <TableTh>Regular expression</TableTh>
                 <TableTh>Exclude expression</TableTh>
@@ -205,181 +308,187 @@ const M3UGroupRules = ({ accountId, scope }) => {
                 <TableTh w={80}>Actions</TableTh>
               </TableTr>
             </TableThead>
-            <TableTbody>
-              {rules.map((rule) => (
-                <TableTr key={rule.id}>
-                  <TableTd>
-                    <NumberInput
-                      size="xs"
-                      min={0}
-                      value={rule.order}
-                      onChange={(value) =>
-                        updateLocal(rule.id, { order: value })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <Select
-                      size="xs"
-                      value={rule.match_field}
-                      data={[
-                        { value: 'group_name', label: 'Group name' },
-                        { value: 'item_name', label: 'Contained item' },
-                      ]}
-                      onChange={(value) =>
-                        updateLocal(rule.id, { match_field: value })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <TextInput
-                      size="xs"
-                      aria-label="Include regular expression"
-                      value={rule.regex_pattern}
-                      onChange={(event) =>
-                        updateLocal(rule.id, {
-                          regex_pattern: event.currentTarget.value,
-                        })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <TextInput
-                      size="xs"
-                      aria-label="Exclude regular expression"
-                      placeholder="Optional NOT regex"
-                      value={rule.exclude_regex_pattern || ''}
-                      onChange={(event) =>
-                        updateLocal(rule.id, {
-                          exclude_regex_pattern: event.currentTarget.value,
-                        })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <Select
-                      size="xs"
-                      disabled={rule.match_field !== 'item_name'}
-                      value={rule.match_mode}
-                      data={[
-                        { value: 'any', label: 'Any item' },
-                        { value: 'all', label: 'All items' },
-                      ]}
-                      onChange={(value) =>
-                        updateLocal(rule.id, { match_mode: value })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <Select
-                      size="xs"
-                      value={rule.action}
-                      data={[
-                        { value: 'enable', label: 'Import enabled' },
-                        { value: 'disable', label: 'Import disabled' },
-                        { value: 'ignore', label: 'Ignore group' },
-                      ]}
-                      onChange={(value) =>
-                        updateLocal(rule.id, { action: value })
-                      }
-                    />
-                  </TableTd>
-                  {scope !== 'live' && (
-                    <TableTd>
-                      <LanguagePicker
-                        size="xs"
-                        value={rule.metadata_defaults?.audio_languages || []}
-                        onChange={(value) =>
-                          updateMetadata(
-                            rule,
-                            'audio_languages',
-                            normalizeLanguageCodes(value)
-                          )
-                        }
-                      />
-                    </TableTd>
-                  )}
-                  {scope !== 'live' && (
-                    <TableTd>
-                      <LanguagePicker
-                        size="xs"
-                        value={rule.metadata_defaults?.subtitle_languages || []}
-                        onChange={(value) =>
-                          updateMetadata(
-                            rule,
-                            'subtitle_languages',
-                            normalizeLanguageCodes(value)
-                          )
-                        }
-                      />
-                    </TableTd>
-                  )}
-                  {scope !== 'live' && (
-                    <TableTd>
-                      <Select
-                        size="xs"
-                        clearable
-                        data={RESOLUTION_VALUES}
-                        value={rule.metadata_defaults?.resolution || null}
-                        onChange={(value) =>
-                          updateMetadata(rule, 'resolution', value || '')
-                        }
-                      />
-                    </TableTd>
-                  )}
-                  <TableTd>
-                    <Checkbox
-                      aria-label="Case sensitive"
-                      checked={rule.case_sensitive}
-                      onChange={(event) =>
-                        updateLocal(rule.id, {
-                          case_sensitive: event.currentTarget.checked,
-                        })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <Checkbox
-                      aria-label="Rule active"
-                      checked={rule.enabled}
-                      onChange={(event) =>
-                        updateLocal(rule.id, {
-                          enabled: event.currentTarget.checked,
-                        })
-                      }
-                    />
-                  </TableTd>
-                  <TableTd>
-                    <Group gap={4} wrap="nowrap">
-                      <ActionIcon
-                        aria-label="Save rule"
-                        color="blue"
-                        variant="subtle"
-                        onClick={() => saveRule(rule)}
-                      >
-                        <Save size={15} />
-                      </ActionIcon>
-                      <ActionIcon
-                        aria-label="Preview and apply rule"
-                        color="green"
-                        variant="subtle"
-                        onClick={() => openPreview(rule)}
-                      >
-                        <Play size={15} />
-                      </ActionIcon>
-                      <ActionIcon
-                        aria-label="Delete rule"
-                        color="red"
-                        variant="subtle"
-                        onClick={() => deleteRule(rule.id)}
-                      >
-                        <Trash2 size={15} />
-                      </ActionIcon>
-                    </Group>
-                  </TableTd>
-                </TableTr>
-              ))}
-            </TableTbody>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis]}
+              onDragEnd={reorderRules}
+            >
+              <SortableContext
+                items={rules.map((rule) => rule.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <TableTbody>
+                  {rules.map((rule) => (
+                    <SortableRuleRow key={rule.id} ruleId={rule.id}>
+                      <TableTd>
+                        <Select
+                          size="xs"
+                          value={rule.match_field}
+                          data={[
+                            { value: 'group_name', label: 'Group name' },
+                            { value: 'item_name', label: 'Contained item' },
+                          ]}
+                          onChange={(value) =>
+                            updateLocal(rule.id, { match_field: value })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <TextInput
+                          size="xs"
+                          aria-label="Include regular expression"
+                          value={rule.regex_pattern}
+                          onChange={(event) =>
+                            updateLocal(rule.id, {
+                              regex_pattern: event.currentTarget.value,
+                            })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <TextInput
+                          size="xs"
+                          aria-label="Exclude regular expression"
+                          placeholder="Optional NOT regex"
+                          value={rule.exclude_regex_pattern || ''}
+                          onChange={(event) =>
+                            updateLocal(rule.id, {
+                              exclude_regex_pattern: event.currentTarget.value,
+                            })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <Select
+                          size="xs"
+                          disabled={rule.match_field !== 'item_name'}
+                          value={rule.match_mode}
+                          data={[
+                            { value: 'any', label: 'Any item' },
+                            { value: 'all', label: 'All items' },
+                          ]}
+                          onChange={(value) =>
+                            updateLocal(rule.id, { match_mode: value })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <Select
+                          size="xs"
+                          value={rule.action}
+                          data={[
+                            { value: 'enable', label: 'Import enabled' },
+                            { value: 'disable', label: 'Import disabled' },
+                            { value: 'ignore', label: 'Ignore group' },
+                          ]}
+                          onChange={(value) =>
+                            updateLocal(rule.id, { action: value })
+                          }
+                        />
+                      </TableTd>
+                      {scope !== 'live' && (
+                        <TableTd>
+                          <LanguagePicker
+                            size="xs"
+                            value={
+                              rule.metadata_defaults?.audio_languages || []
+                            }
+                            onChange={(value) =>
+                              updateMetadata(
+                                rule,
+                                'audio_languages',
+                                normalizeLanguageCodes(value)
+                              )
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      {scope !== 'live' && (
+                        <TableTd>
+                          <LanguagePicker
+                            size="xs"
+                            value={
+                              rule.metadata_defaults?.subtitle_languages || []
+                            }
+                            onChange={(value) =>
+                              updateMetadata(
+                                rule,
+                                'subtitle_languages',
+                                normalizeLanguageCodes(value)
+                              )
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      {scope !== 'live' && (
+                        <TableTd>
+                          <Select
+                            size="xs"
+                            clearable
+                            data={RESOLUTION_VALUES}
+                            value={rule.metadata_defaults?.resolution || null}
+                            onChange={(value) =>
+                              updateMetadata(rule, 'resolution', value || '')
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      <TableTd>
+                        <Checkbox
+                          aria-label="Case sensitive"
+                          checked={rule.case_sensitive}
+                          onChange={(event) =>
+                            updateLocal(rule.id, {
+                              case_sensitive: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <Checkbox
+                          aria-label="Rule active"
+                          checked={rule.enabled}
+                          onChange={(event) =>
+                            updateLocal(rule.id, {
+                              enabled: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <Group gap={4} wrap="nowrap">
+                          <ActionIcon
+                            aria-label="Save rule"
+                            color="blue"
+                            variant="subtle"
+                            onClick={() => saveRule(rule)}
+                          >
+                            <Save size={15} />
+                          </ActionIcon>
+                          <ActionIcon
+                            aria-label="Preview and apply rule"
+                            color="green"
+                            variant="subtle"
+                            onClick={() => openPreview(rule)}
+                          >
+                            <Play size={15} />
+                          </ActionIcon>
+                          <ActionIcon
+                            aria-label="Delete rule"
+                            color="red"
+                            variant="subtle"
+                            onClick={() => deleteRule(rule.id)}
+                          >
+                            <Trash2 size={15} />
+                          </ActionIcon>
+                        </Group>
+                      </TableTd>
+                    </SortableRuleRow>
+                  ))}
+                </TableTbody>
+              </SortableContext>
+            </DndContext>
           </Table>
         </ScrollArea>
       )}

@@ -14,7 +14,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { Check, Copy, Play, Wrench } from 'lucide-react';
+import { Copy, Play, Wrench } from 'lucide-react';
 
 const valuesFor = (provider) => provider?.source_metadata?.values || {};
 const joinLanguages = (values, field) =>
@@ -53,18 +53,33 @@ const VODSourceList = ({
       striped
       highlightOnHover
       withTableBorder
-      miw={900}
+      layout="fixed"
       aria-label="Exact VOD sources"
     >
       <TableThead>
         <TableTr>
-          <TableTh>Source</TableTh>
-          <TableTh>M3U account</TableTh>
-          <TableTh>Category</TableTh>
-          <TableTh>DUB</TableTh>
-          <TableTh>SUB</TableTh>
-          <TableTh>Resolution</TableTh>
-          <TableTh>Format</TableTh>
+          <TableTh>
+            <Stack gap={0}>
+              <Text inherit fw={700}>
+                Source
+              </Text>
+              <Group gap={4} wrap="nowrap">
+                <Text size="xs" c="dimmed">
+                  M3U account
+                </Text>
+                <Text size="xs" c="dimmed">
+                  ·
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Category
+                </Text>
+                <Text size="xs" c="dimmed">
+                  · IDs
+                </Text>
+              </Group>
+            </Stack>
+          </TableTh>
+          <TableTh w="42%">Technical metadata</TableTh>
           <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
         </TableTr>
       </TableThead>
@@ -79,10 +94,12 @@ const VODSourceList = ({
               onClick={() => onSelect?.(provider)}
               style={{
                 cursor: 'pointer',
-                outline: selected
-                  ? '1px solid var(--mantine-color-blue-6)'
+                backgroundColor: selected
+                  ? 'var(--mantine-color-blue-light)'
                   : undefined,
-                outlineOffset: -1,
+                boxShadow: selected
+                  ? 'inset 3px 0 var(--mantine-color-blue-6)'
+                  : undefined,
               }}
             >
               <TableTd>
@@ -90,6 +107,17 @@ const VODSourceList = ({
                   <Text size="sm" fw={500} lineClamp={1}>
                     {sourceName(provider, contentType)}
                   </Text>
+                  <Group gap={4} wrap="wrap">
+                    <Text size="xs" c="dimmed">
+                      {provider.m3u_account?.name || 'Unknown'}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      ·
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {provider.category?.name || 'Uncategorized'}
+                    </Text>
+                  </Group>
                   <Text size="xs" c="dimmed">
                     {contentType === 'movie'
                       ? `Stream ID: ${provider.stream_id || '—'}`
@@ -98,45 +126,27 @@ const VODSourceList = ({
                   </Text>
                 </Stack>
               </TableTd>
-              <TableTd>{provider.m3u_account?.name || 'Unknown'}</TableTd>
               <TableTd>
-                <Badge color="blue" variant="light">
-                  {provider.category?.name || 'Uncategorized'}
-                </Badge>
-              </TableTd>
-              <TableTd>{joinLanguages(values, 'audio_languages')}</TableTd>
-              <TableTd>{joinLanguages(values, 'subtitle_languages')}</TableTd>
-              <TableTd>
-                {values.resolution ||
-                  (values.height ? `${values.height}p` : '—')}
-              </TableTd>
-              <TableTd>
-                {values.container_extension ||
-                  provider.container_extension ||
-                  '—'}
+                <Group gap={5} wrap="wrap">
+                  <Badge color="blue" variant="light">
+                    DUB {joinLanguages(values, 'audio_languages')}
+                  </Badge>
+                  <Badge color="cyan" variant="light">
+                    SUB {joinLanguages(values, 'subtitle_languages')}
+                  </Badge>
+                  <Badge color="teal" variant="light">
+                    {values.resolution ||
+                      (values.height ? `${values.height}p` : '—')}
+                  </Badge>
+                  <Badge color="gray" variant="light">
+                    {values.container_extension ||
+                      provider.container_extension ||
+                      '—'}
+                  </Badge>
+                </Group>
               </TableTd>
               <TableTd>
                 <Group gap={5} wrap="nowrap">
-                  {contentType === 'series' && (
-                    <Tooltip
-                      label={selected ? 'Selected source' : 'Show episodes'}
-                    >
-                      <ActionIcon
-                        aria-label={
-                          selected ? 'Selected source' : 'Select source'
-                        }
-                        variant={selected ? 'filled' : 'light'}
-                        color={selected ? 'green' : 'blue'}
-                        disabled={disabled}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSelect?.(provider);
-                        }}
-                      >
-                        <Check size={15} />
-                      </ActionIcon>
-                    </Tooltip>
-                  )}
                   {contentType === 'movie' && (
                     <>
                       <Tooltip label="Play this exact source">

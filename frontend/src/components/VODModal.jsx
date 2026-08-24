@@ -314,10 +314,17 @@ const VODModal = ({ vod, opened, onClose }) => {
       <Modal
         opened={opened}
         onClose={onClose}
-        size="xl"
+        size="96vw"
         centered
+        yOffset="2vh"
+        lockScroll={false}
+        scrollAreaComponent={Modal.NativeScrollArea}
         styles={{
-          content: { backgroundColor: 'var(--mantine-color-body)' },
+          content: {
+            maxWidth: 1400,
+            maxHeight: '96vh',
+            backgroundColor: 'var(--mantine-color-body)',
+          },
           header: {
             position: 'absolute',
             top: 0,
@@ -387,7 +394,7 @@ const VODModal = ({ vod, opened, onClose }) => {
               )}
 
               {/* Movie poster and basic info */}
-              <Flex gap="md">
+              <Flex gap="md" wrap="wrap">
                 {/* Use movie_image or logo */}
                 {displayVOD.movie_image ||
                 displayVOD.logo?.cache_url ||

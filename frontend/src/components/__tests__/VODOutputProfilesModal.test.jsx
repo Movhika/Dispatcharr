@@ -18,6 +18,9 @@ vi.mock('../../utils/notificationUtils', () => ({
 vi.mock('../forms/VODUserCategorySelector.jsx', () => ({
   default: () => null,
 }));
+vi.mock('../VODFailoverRanking.jsx', () => ({
+  default: () => <div>Failover priority</div>,
+}));
 vi.mock('lucide-react', () => ({
   Plus: () => null,
   RefreshCw: () => null,

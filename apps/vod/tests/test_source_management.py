@@ -16,7 +16,10 @@ from apps.vod.metadata import (
     relation_declared_metadata,
 )
 from apps.vod.playback import record_playback_selection
-from apps.vod.serializers import VODPlaybackSessionSerializer
+from apps.vod.serializers import (
+    VODAccessPolicySerializer,
+    VODPlaybackSessionSerializer,
+)
 from apps.vod.models import (
     M3UMovieRelation,
     M3UEpisodeRelation,
@@ -130,6 +133,48 @@ class VODSourceManagementTests(TestCase):
             self.policy,
         )
         self.assertEqual([relation.id for relation in ordered], [self.german_relation.id])
+
+    def test_failover_can_prefer_lower_resolution(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = [
+            "resolution_asc",
+            "audio_language",
+            "subtitle_language",
+            "metadata_completeness",
+        ]
+        self.policy.save(update_fields=["hard_constraints", "ranking", "updated_at"])
+
+        ordered = ordered_failover_candidates(
+            [self.english_relation, self.german_relation],
+            self.policy,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.german_relation.id, self.english_relation.id],
+        )
+
+    def test_failover_can_place_unknown_metadata_last(self):
+        self.german_category.metadata_defaults = {}
+        self.german_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = [
+            "metadata_completeness",
+            "audio_language",
+            "subtitle_language",
+            "resolution_desc",
+        ]
+        self.policy.save(update_fields=["hard_constraints", "ranking", "updated_at"])
+
+        ordered = ordered_failover_candidates(
+            [self.german_relation, self.english_relation],
+            self.policy,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.english_relation.id, self.german_relation.id],
+        )
 
     def test_language_aliases_use_english_iso_639_2_b_codes(self):
         self.assertEqual(
@@ -652,6 +697,10 @@ class VODSourceManagementTests(TestCase):
             created.hard_constraints["required_audio_languages"], ["ger"]
         )
         self.assertEqual(
+            created.ranking,
+            ["audio_language", "subtitle_language", "resolution_desc"],
+        )
+        self.assertEqual(
             list(
                 created.vodpolicycategory_set.values_list(
                     "category_relation_id", flat=True
@@ -659,6 +708,17 @@ class VODSourceManagementTests(TestCase):
             ),
             [self.german_category.id],
         )
+
+    def test_profile_rejects_conflicting_resolution_ranking_directions(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Conflicting resolution directions",
+                "ranking": ["resolution_desc", "resolution_asc"],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("ranking", serializer.errors)
 
     def test_admin_can_replace_vod_output_profile_categories(self):
         admin = get_user_model().objects.create_user(

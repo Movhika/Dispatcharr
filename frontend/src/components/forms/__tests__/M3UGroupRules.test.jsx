@@ -1,5 +1,13 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const dndState = vi.hoisted(() => ({ onDragEnd: null }));
 
 vi.mock('../../../api', () => ({
   default: {
@@ -15,6 +23,40 @@ vi.mock('../../../api', () => ({
 vi.mock('../../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+
+vi.mock('@dnd-kit/core', () => ({
+  closestCenter: vi.fn(),
+  DndContext: ({ children, onDragEnd }) => {
+    dndState.onDragEnd = onDragEnd;
+    return <>{children}</>;
+  },
+  KeyboardSensor: vi.fn(),
+  PointerSensor: vi.fn(),
+  useSensor: vi.fn(() => ({})),
+  useSensors: vi.fn(() => []),
+}));
+vi.mock('@dnd-kit/sortable', () => ({
+  arrayMove: vi.fn((items, from, to) => {
+    const next = [...items];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    return next;
+  }),
+  SortableContext: ({ children }) => <>{children}</>,
+  sortableKeyboardCoordinates: vi.fn(),
+  useSortable: vi.fn(() => ({
+    attributes: {},
+    listeners: {},
+    setNodeRef: vi.fn(),
+    transform: null,
+    transition: null,
+    isDragging: false,
+  })),
+  verticalListSortingStrategy: vi.fn(),
+}));
+vi.mock('@dnd-kit/utilities', () => ({
+  CSS: { Transform: { toString: vi.fn(() => '') } },
+}));
+vi.mock('@dnd-kit/modifiers', () => ({ restrictToVerticalAxis: vi.fn() }));
 
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
@@ -44,14 +86,6 @@ vi.mock('@mantine/core', () => {
           {children}
         </div>
       ) : null,
-    NumberInput: ({ value, onChange }) => (
-      <input
-        aria-label="Rule order"
-        type="number"
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    ),
     ScrollArea: Wrapper,
     Select: ({ value, onChange, data, disabled }) => (
       <select
@@ -91,6 +125,7 @@ vi.mock('@mantine/core', () => {
 });
 
 vi.mock('lucide-react', () => ({
+  GripVertical: () => null,
   Play: () => null,
   Plus: () => null,
   Save: () => null,
@@ -119,8 +154,8 @@ describe('M3UGroupRules', () => {
       },
     ]);
     API.updateM3UGroupRule.mockImplementation(
-      async (_account, _id, payload) => ({
-        id: 5,
+      async (_account, id, payload) => ({
+        id,
         ...payload,
       })
     );
@@ -176,5 +211,55 @@ describe('M3UGroupRules', () => {
     await waitFor(() =>
       expect(API.applyM3UGroupRule).toHaveBeenCalledWith(49, 5)
     );
+  });
+
+  it('persists drag-and-drop ordering without numeric order inputs', async () => {
+    API.getM3UGroupRules.mockResolvedValue([
+      {
+        id: 5,
+        scope: 'movie',
+        match_field: 'group_name',
+        match_mode: 'any',
+        regex_pattern: '^GERMANY',
+        exclude_regex_pattern: '',
+        action: 'enable',
+        case_sensitive: false,
+        enabled: true,
+        order: 0,
+        metadata_defaults: {},
+      },
+      {
+        id: 6,
+        scope: 'movie',
+        match_field: 'group_name',
+        match_mode: 'any',
+        regex_pattern: '^MULTI',
+        exclude_regex_pattern: '',
+        action: 'disable',
+        case_sensitive: false,
+        enabled: true,
+        order: 1,
+        metadata_defaults: {},
+      },
+    ]);
+    render(<M3UGroupRules accountId={49} scope="movie" />);
+    await screen.findByDisplayValue('^MULTI');
+
+    await act(async () => {
+      await dndState.onDragEnd({ active: { id: 6 }, over: { id: 5 } });
+    });
+
+    await waitFor(() => {
+      expect(API.updateM3UGroupRule).toHaveBeenCalledWith(
+        49,
+        6,
+        expect.objectContaining({ order: 0 })
+      );
+      expect(API.updateM3UGroupRule).toHaveBeenCalledWith(
+        49,
+        5,
+        expect.objectContaining({ order: 1 })
+      );
+    });
   });
 });

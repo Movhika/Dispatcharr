@@ -180,6 +180,7 @@ const setupMocks = ({
   authUser = makeAdminUser(),
   profiles = {},
   outputProfiles = [],
+  vodProfiles = [],
 } = {}) => {
   const mockSetUser = vi.fn();
 
@@ -191,7 +192,7 @@ const setupMocks = ({
     sel({ user: authUser, setUser: mockSetUser })
   );
   vi.mocked(useVODStore).mockImplementation((sel) =>
-    sel({ accessPolicies: [], fetchAccessPolicies: vi.fn() })
+    sel({ accessPolicies: vodProfiles, fetchAccessPolicies: vi.fn() })
   );
 
   // Reset form state
@@ -285,6 +286,27 @@ describe('User', () => {
       setupMocks({ authUser: makeAdminUser() });
       render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       expect(screen.getByText('VOD output profile')).toBeInTheDocument();
+    });
+
+    it('shows the prepared output count for the effective VOD profile', () => {
+      setupMocks({
+        authUser: makeAdminUser(),
+        vodProfiles: [
+          {
+            id: 7,
+            name: 'German',
+            is_default: true,
+            selection_counts: { output_entries: 47544 },
+          },
+        ],
+      });
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
+
+      expect(
+        screen.getByText(
+          `${Number(47544).toLocaleString()} output entries are currently prepared for this profile.`
+        )
+      ).toBeInTheDocument();
     });
   });
 

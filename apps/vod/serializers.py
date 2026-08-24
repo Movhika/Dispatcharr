@@ -467,12 +467,27 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         )
 
     def validate_ranking(self, value):
-        allowed = {"audio_language", "subtitle_language", "resolution"}
+        allowed = {
+            "audio_language", "subtitle_language", "resolution",
+            "resolution_desc", "resolution_asc", "metadata_completeness",
+        }
         if not isinstance(value, list) or set(value) - allowed:
             raise serializers.ValidationError(
-                "Use only audio_language, subtitle_language, and resolution"
+                "Use only supported metadata ranking criteria"
             )
-        return list(dict.fromkeys(value))
+        normalized = [
+            "resolution_desc" if item == "resolution" else item
+            for item in value
+        ]
+        resolution_directions = {
+            item for item in normalized
+            if item in {"resolution_desc", "resolution_asc"}
+        }
+        if len(resolution_directions) > 1:
+            raise serializers.ValidationError(
+                "Choose only one resolution ranking direction"
+            )
+        return list(dict.fromkeys(normalized))
 
     def validate_hard_constraints(self, value):
         if not isinstance(value, dict):

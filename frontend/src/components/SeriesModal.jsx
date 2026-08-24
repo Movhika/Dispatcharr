@@ -47,7 +47,7 @@ import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 
 const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
-    <Flex gap="md">
+    <Flex gap="md" wrap="wrap">
       {displaySeries.series_image ||
       displaySeries.logo?.cache_url ||
       displaySeries.logo?.url ? (
@@ -512,10 +512,17 @@ const SeriesModal = ({ series, opened, onClose }) => {
       <Modal
         opened={opened}
         onClose={onClose}
-        size="xl"
+        size="96vw"
         centered
+        yOffset="2vh"
+        lockScroll={false}
+        scrollAreaComponent={Modal.NativeScrollArea}
         styles={{
-          content: { backgroundColor: 'var(--mantine-color-body)' },
+          content: {
+            maxWidth: 1400,
+            maxHeight: '96vh',
+            backgroundColor: 'var(--mantine-color-body)',
+          },
           header: {
             position: 'absolute',
             top: 0,
@@ -647,6 +654,7 @@ const SeriesModal = ({ series, opened, onClose }) => {
                               Duration
                             </TableTh>
                             <TableTh style={{ width: '60px' }}>Date</TableTh>
+                            <TableTh style={{ width: '70px' }}>Format</TableTh>
                             <TableTh style={{ width: '80px' }}>Action</TableTh>
                           </TableTr>
                         </TableThead>
@@ -682,6 +690,11 @@ const SeriesModal = ({ series, opened, onClose }) => {
                                 <TableTd>
                                   <Text size="xs" color="dimmed">
                                     {getEpisodeAirdate(episode)}
+                                  </Text>
+                                </TableTd>
+                                <TableTd>
+                                  <Text size="xs" color="dimmed">
+                                    {episode.container_extension || '—'}
                                   </Text>
                                 </TableTd>
                                 <TableTd>

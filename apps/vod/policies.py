@@ -240,6 +240,18 @@ def _preference_score(observed, preferred):
     return 0
 
 
+def _metadata_completeness(metadata):
+    """Small, deterministic score used only after higher ranking criteria."""
+    return sum(
+        (
+            bool(metadata.get("audio_languages") or metadata.get("languages")),
+            bool(metadata.get("subtitle_languages")),
+            bool(_vertical_resolution(metadata)),
+            bool(metadata.get("container_extension")),
+        )
+    )
+
+
 def relation_rank(
     relation,
     category_mapping,
@@ -255,6 +267,7 @@ def relation_rank(
             category_relation,
         )
     constraints = (policy.hard_constraints if policy else None) or {}
+    resolution = _vertical_resolution(metadata)
     dimensions = {
         "audio_language": _preference_score(
             metadata.get("audio_languages") or metadata.get("languages"),
@@ -264,10 +277,36 @@ def relation_rank(
             metadata.get("subtitle_languages"),
             constraints.get("required_subtitle_languages"),
         ),
-        "resolution": _vertical_resolution(metadata),
+        # Existing policies used "resolution". Keep it as a high-first alias.
+        "resolution": resolution,
+        "resolution_desc": resolution,
+        # Ranking is sorted descending. Known low resolutions therefore get a
+        # higher inverted score, while unknown metadata remains last.
+        "resolution_asc": 10000 - resolution if resolution else -1,
+        "metadata_completeness": _metadata_completeness(metadata),
     }
-    requested = list((policy.ranking if policy else None) or [])
-    allowed_order = ["audio_language", "subtitle_language", "resolution"]
+    requested = [
+        "resolution_desc" if key == "resolution" else key
+        for key in list((policy.ranking if policy else None) or [])
+    ]
+    requested_resolution = next(
+        (
+            key for key in requested
+            if key in {"resolution_desc", "resolution_asc"}
+        ),
+        None,
+    )
+    requested = [
+        key for key in requested
+        if key not in {"resolution_desc", "resolution_asc"}
+        or key == requested_resolution
+    ]
+    allowed_order = [
+        "audio_language",
+        "subtitle_language",
+        requested_resolution or "resolution_desc",
+        "metadata_completeness",
+    ]
     order = list(
         dict.fromkeys(
             [key for key in requested + allowed_order if key in dimensions]
