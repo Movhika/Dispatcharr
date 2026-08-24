@@ -14,16 +14,17 @@ import {
   TableTh,
   TableThead,
   TableTr,
-  TagsInput,
   Text,
 } from '@mantine/core';
 import { RefreshCw, Wrench } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
+import { normalizeLanguageCodes } from '../utils/languageCodes.js';
+import LanguagePicker from './LanguagePicker.jsx';
 import {
-  languageCodeError,
-  normalizeLanguageCodes,
-} from '../utils/languageCodes.js';
+  CONTAINER_EXTENSION_OPTIONS,
+  RESOLUTION_VALUES,
+} from '../utils/vodMetadataOptions.js';
 
 const normalizeList = (response) => response?.results || response || [];
 const formatBytes = (value) =>
@@ -117,10 +118,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     setManualPlayback(null);
     await load();
   };
-
-  const manualLanguageError =
-    languageCodeError(manualMetadata.audio_languages || []) ||
-    languageCodeError(manualMetadata.subtitle_languages || []);
 
   return (
     <>
@@ -217,12 +214,9 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             Saved fields have the highest priority and are not overwritten by
             later playback observations.
           </Text>
-          <TagsInput
+          <LanguagePicker
             label="Audio languages"
-            description="English ISO 639-2/B codes"
-            placeholder="ger, eng"
             value={manualMetadata.audio_languages || []}
-            error={languageCodeError(manualMetadata.audio_languages || [])}
             onChange={(value) =>
               setManualMetadata({
                 ...manualMetadata,
@@ -230,11 +224,9 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               })
             }
           />
-          <TagsInput
+          <LanguagePicker
             label="Subtitle languages"
-            placeholder="ger, eng"
             value={manualMetadata.subtitle_languages || []}
-            error={languageCodeError(manualMetadata.subtitle_languages || [])}
             onChange={(value) =>
               setManualMetadata({
                 ...manualMetadata,
@@ -245,7 +237,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
           <Select
             clearable
             label="Resolution"
-            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            data={RESOLUTION_VALUES}
             value={manualMetadata.resolution || null}
             onChange={(value) =>
               setManualMetadata({
@@ -258,7 +250,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             clearable
             searchable
             label="Format"
-            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            data={CONTAINER_EXTENSION_OPTIONS}
             value={manualMetadata.container_extension || null}
             onChange={(value) =>
               setManualMetadata({
@@ -271,12 +263,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             <Button variant="default" onClick={() => setManualPlayback(null)}>
               Cancel
             </Button>
-            <Button
-              disabled={!!manualLanguageError}
-              onClick={saveManualMetadata}
-            >
-              Save and lock
-            </Button>
+            <Button onClick={saveManualMetadata}>Save and lock</Button>
           </Group>
         </Stack>
       </Modal>

@@ -209,12 +209,8 @@ def relation_allowed(relation, policy, category_mapping=None):
                 return False
 
     resolution = _vertical_resolution(metadata)
-    min_resolution = _constraint_int(
-        constraints, "min_resolution"
-    ) or _constraint_int(constraints, "min_height")
-    max_resolution = _constraint_int(
-        constraints, "max_resolution"
-    ) or _constraint_int(constraints, "max_height")
+    min_resolution = _constraint_int(constraints, "min_resolution")
+    max_resolution = _constraint_int(constraints, "max_resolution")
     if min_resolution and not resolution and not allow_unknown:
         return False
     if min_resolution and resolution and resolution < min_resolution:
@@ -235,20 +231,6 @@ def _preference_score(observed, preferred):
     return 0
 
 
-def _resolution_score(resolution, preferred):
-    values = []
-    for value in preferred or []:
-        parsed = _vertical_resolution({"resolution": value})
-        if parsed and parsed not in values:
-            values.append(parsed)
-    if not values:
-        return resolution
-    try:
-        return len(values) - values.index(resolution)
-    except ValueError:
-        return 0
-
-
 def relation_rank(relation, category_mapping, policy=None):
     category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
@@ -267,10 +249,7 @@ def relation_rank(relation, category_mapping, policy=None):
             metadata.get("subtitle_languages"),
             constraints.get("required_subtitle_languages"),
         ),
-        "resolution": _resolution_score(
-            _vertical_resolution(metadata),
-            constraints.get("preferred_resolutions"),
-        ),
+        "resolution": _vertical_resolution(metadata),
     }
     requested = list((policy.ranking if policy else None) or [])
     allowed_order = ["audio_language", "subtitle_language", "resolution"]

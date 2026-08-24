@@ -16,17 +16,15 @@ import {
   TableTh,
   TableThead,
   TableTr,
-  TagsInput,
   Text,
   TextInput,
 } from '@mantine/core';
 import { Play, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
-import {
-  languageCodeError,
-  normalizeLanguageCodes,
-} from '../../utils/languageCodes.js';
+import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
+import LanguagePicker from '../LanguagePicker.jsx';
+import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
 
 const M3UGroupRules = ({ accountId, scope }) => {
   const [rules, setRules] = useState([]);
@@ -81,17 +79,6 @@ const M3UGroupRules = ({ accountId, scope }) => {
         rule.metadata_defaults?.subtitle_languages || []
       ),
     };
-    const invalid =
-      languageCodeError(metadataDefaults.audio_languages) ||
-      languageCodeError(metadataDefaults.subtitle_languages);
-    if (invalid) {
-      showNotification({
-        title: 'Invalid language code',
-        message: invalid,
-        color: 'red',
-      });
-      return;
-    }
     return {
       scope,
       match_field: rule.match_field,
@@ -299,13 +286,9 @@ const M3UGroupRules = ({ accountId, scope }) => {
                   </TableTd>
                   {scope !== 'live' && (
                     <TableTd>
-                      <TagsInput
+                      <LanguagePicker
                         size="xs"
-                        placeholder="ger, eng"
                         value={rule.metadata_defaults?.audio_languages || []}
-                        error={languageCodeError(
-                          rule.metadata_defaults?.audio_languages || []
-                        )}
                         onChange={(value) =>
                           updateMetadata(
                             rule,
@@ -318,13 +301,9 @@ const M3UGroupRules = ({ accountId, scope }) => {
                   )}
                   {scope !== 'live' && (
                     <TableTd>
-                      <TagsInput
+                      <LanguagePicker
                         size="xs"
-                        placeholder="ger, eng"
                         value={rule.metadata_defaults?.subtitle_languages || []}
-                        error={languageCodeError(
-                          rule.metadata_defaults?.subtitle_languages || []
-                        )}
                         onChange={(value) =>
                           updateMetadata(
                             rule,
@@ -340,14 +319,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
                       <Select
                         size="xs"
                         clearable
-                        data={[
-                          '480p',
-                          '576p',
-                          '720p',
-                          '1080p',
-                          '1440p',
-                          '2160p',
-                        ]}
+                        data={RESOLUTION_VALUES}
                         value={rule.metadata_defaults?.resolution || null}
                         onChange={(value) =>
                           updateMetadata(rule, 'resolution', value || '')

@@ -5,7 +5,6 @@ import {
   Button,
   Group,
   Modal,
-  NumberInput,
   Pagination,
   ScrollArea,
   SegmentedControl,
@@ -22,7 +21,6 @@ import {
   TabsList,
   TabsPanel,
   TabsTab,
-  TagsInput,
   Text,
   TextInput,
 } from '@mantine/core';
@@ -30,11 +28,13 @@ import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
+import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import {
-  languageCodeError,
-  normalizeLanguageCode,
-  normalizeLanguageCodes,
-} from '../utils/languageCodes.js';
+  CONTAINER_EXTENSION_OPTIONS,
+  RESOLUTION_LIMIT_OPTIONS,
+  RESOLUTION_VALUES,
+} from '../utils/vodMetadataOptions.js';
+import LanguagePicker, { LanguageSelect } from './LanguagePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 
 const EMPTY_PROFILE = {
@@ -46,7 +46,6 @@ const EMPTY_PROFILE = {
     required_audio_languages: [],
     required_subtitle_languages: [],
     language_match_mode: 'any',
-    preferred_resolutions: [],
     min_resolution: 0,
     max_resolution: 0,
     allow_unknown_metadata: true,
@@ -95,15 +94,21 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const selectedProfile = profiles.find(
     (profile) => String(profile.id) === String(profileId)
   );
+  const selectedProfileId = selectedProfile?.id;
+  const selectedSelectionStatus = selectedProfile?.selection_status;
 
   const resetDraft = (profile = null) => {
     const source = profile || EMPTY_PROFILE;
+    const sourceConstraints = { ...(source.hard_constraints || {}) };
+    delete sourceConstraints.preferred_resolutions;
+    delete sourceConstraints.min_height;
+    delete sourceConstraints.max_height;
     setDraft({
       ...EMPTY_PROFILE,
       ...source,
       hard_constraints: {
         ...EMPTY_PROFILE.hard_constraints,
-        ...(source.hard_constraints || {}),
+        ...sourceConstraints,
       },
       ranking: source.ranking || EMPTY_PROFILE.ranking,
       category_rules: source.category_rules || [],
@@ -129,17 +134,21 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   }, [creating, opened, profileId, profiles]);
 
   useEffect(() => {
+    if (creating || !selectedProfile) return;
     resetDraft(selectedProfile);
-  }, [selectedProfile]);
+    // Polling replaces profile objects in the store. Only switching profiles
+    // may reset a local, possibly unsaved draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creating, selectedProfile?.id]);
 
   useEffect(() => {
-    if (!opened || !selectedProfile) return;
-    if (!['pending', 'building'].includes(selectedProfile.selection_status)) {
+    if (!opened || !selectedProfileId) return;
+    if (!['pending', 'building'].includes(selectedSelectionStatus)) {
       return;
     }
-    const timer = window.setTimeout(() => fetchProfiles(), 2000);
-    return () => window.clearTimeout(timer);
-  }, [fetchProfiles, opened, selectedProfile]);
+    const timer = window.setInterval(() => fetchProfiles(), 2000);
+    return () => window.clearInterval(timer);
+  }, [fetchProfiles, opened, selectedProfileId, selectedSelectionStatus]);
 
   const accountOptions = useMemo(
     () =>
@@ -216,10 +225,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     }));
 
   const save = async () => {
-    const languageError =
-      languageCodeError(draft.hard_constraints.required_audio_languages) ||
-      languageCodeError(draft.hard_constraints.required_subtitle_languages);
-    if (!draft.name.trim() || languageError) return;
+    if (!draft.name.trim()) return;
     setSaving(true);
     try {
       const payload = {
@@ -253,6 +259,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         title: 'VOD output profile saved',
         message: 'Its prepared catalog is now being rebuilt in the background.',
         color: 'green',
+      });
+    } catch (error) {
+      showNotification({
+        title: 'VOD output profile was not saved',
+        message: error?.message || 'Please check the values and retry.',
+        color: 'red',
       });
     } finally {
       setSaving(false);
@@ -442,24 +454,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       }
                     />
                   </Group>
-                  <TagsInput
+                  <LanguagePicker
                     label="Allowed and preferred DUB languages"
-                    description="Ordered ISO 639-2/B codes, for example ger, eng."
                     value={draft.hard_constraints.required_audio_languages}
-                    error={languageCodeError(
-                      draft.hard_constraints.required_audio_languages
-                    )}
                     onChange={(value) =>
                       updateConstraint('required_audio_languages', value)
                     }
                   />
-                  <TagsInput
+                  <LanguagePicker
                     label="Allowed and preferred SUB languages"
-                    description="Ordered ISO 639-2/B codes."
                     value={draft.hard_constraints.required_subtitle_languages}
-                    error={languageCodeError(
-                      draft.hard_constraints.required_subtitle_languages
-                    )}
                     onChange={(value) =>
                       updateConstraint('required_subtitle_languages', value)
                     }
@@ -476,35 +480,23 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }
                   />
                   <Group grow align="flex-start">
-                    <NumberInput
+                    <Select
                       label="Minimum resolution"
-                      description="Vertical pixels; 0 disables the limit."
-                      min={0}
-                      step={120}
-                      value={draft.hard_constraints.min_resolution}
+                      data={RESOLUTION_LIMIT_OPTIONS}
+                      value={String(draft.hard_constraints.min_resolution || 0)}
                       onChange={(value) =>
                         updateConstraint('min_resolution', Number(value) || 0)
                       }
                     />
-                    <NumberInput
+                    <Select
                       label="Maximum resolution"
-                      description="Vertical pixels; 0 disables the limit."
-                      min={0}
-                      step={120}
-                      value={draft.hard_constraints.max_resolution}
+                      data={RESOLUTION_LIMIT_OPTIONS}
+                      value={String(draft.hard_constraints.max_resolution || 0)}
                       onChange={(value) =>
                         updateConstraint('max_resolution', Number(value) || 0)
                       }
                     />
                   </Group>
-                  <TagsInput
-                    label="Preferred resolutions"
-                    placeholder="1080p, 720p"
-                    value={draft.hard_constraints.preferred_resolutions}
-                    onChange={(value) =>
-                      updateConstraint('preferred_resolutions', value)
-                    }
-                  />
                   <Switch
                     label="Allow unknown technical metadata"
                     checked={draft.hard_constraints.allow_unknown_metadata}
@@ -606,51 +598,32 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }}
                     miw={180}
                   />
-                  <TextInput
+                  <LanguageSelect
                     label="DUB"
-                    placeholder="ger"
                     value={filters.audio_language}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setFilters({
                         ...filters,
-                        audio_language: event.currentTarget.value.toLowerCase(),
+                        audio_language: value,
                       })
                     }
-                    onBlur={() =>
-                      setFilters({
-                        ...filters,
-                        audio_language: normalizeLanguageCode(
-                          filters.audio_language
-                        ),
-                      })
-                    }
-                    w={90}
+                    w={160}
                   />
-                  <TextInput
+                  <LanguageSelect
                     label="SUB"
-                    placeholder="ger"
                     value={filters.subtitle_language}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setFilters({
                         ...filters,
-                        subtitle_language:
-                          event.currentTarget.value.toLowerCase(),
+                        subtitle_language: value,
                       })
                     }
-                    onBlur={() =>
-                      setFilters({
-                        ...filters,
-                        subtitle_language: normalizeLanguageCode(
-                          filters.subtitle_language
-                        ),
-                      })
-                    }
-                    w={90}
+                    w={160}
                   />
                   <Select
                     label="Resolution"
                     clearable
-                    data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+                    data={RESOLUTION_VALUES}
                     value={filters.resolution || null}
                     onChange={(value) =>
                       setFilters({ ...filters, resolution: value || '' })
@@ -660,7 +633,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   <Select
                     label="Format"
                     clearable
-                    data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+                    data={CONTAINER_EXTENSION_OPTIONS}
                     value={filters.container_extension || null}
                     onChange={(value) =>
                       setFilters({

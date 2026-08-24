@@ -15,6 +15,35 @@ vi.mock('../../utils/pages/VODsUtils.js', () => ({
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('../../components/LanguagePicker.jsx', () => ({
+  default: ({ label, value = [], onChange, disabled }) => (
+    <label>
+      {label}
+      <input
+        aria-label={label}
+        value={value.join(',')}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(event.target.value.split(',').filter(Boolean))
+        }
+      />
+    </label>
+  ),
+  LanguageSelect: ({ label, value, onChange }) => (
+    <label>
+      {label}
+      <select
+        aria-label={label}
+        value={value || ''}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="" />
+        <option value="ger">GER — German</option>
+        <option value="eng">ENG — English</option>
+      </select>
+    </label>
+  ),
+}));
 vi.mock('../../components/ErrorBoundary.jsx', () => ({
   default: ({ children }) => children,
 }));
@@ -132,18 +161,6 @@ vi.mock('@mantine/core', () => {
     TableTh: Wrapper,
     TableThead: Wrapper,
     TableTr: Wrapper,
-    TagsInput: ({ label, value, onChange }) => (
-      <label>
-        {label}
-        <input
-          aria-label={label}
-          value={(value || []).join(',')}
-          onChange={(event) =>
-            onChange(event.target.value.split(',').filter(Boolean))
-          }
-        />
-      </label>
-    ),
     Text: Wrapper,
     TextInput: ({ value, onChange, placeholder }) => (
       <input value={value} onChange={onChange} placeholder={placeholder} />
@@ -166,8 +183,20 @@ describe('VODsPage list and bulk editing', () => {
   const setPageSize = vi.fn();
   const state = {
     currentPageContent: [
-      { id: 1, name: 'Movie A', contentType: 'movie', year: 2025 },
-      { id: 2, name: 'Series B', contentType: 'series', year: 2024 },
+      {
+        id: 1,
+        name: 'Movie A',
+        contentType: 'movie',
+        year: 2025,
+        source_count: 3,
+      },
+      {
+        id: 2,
+        name: 'Series B',
+        contentType: 'series',
+        year: 2024,
+        source_count: 2,
+      },
     ],
     categories: {},
     filters: {
@@ -208,6 +237,9 @@ describe('VODsPage list and bulk editing', () => {
     render(<VODsPage />);
     expect(await screen.findByText('Movie A')).toBeInTheDocument();
     expect(screen.getByText('Series B')).toBeInTheDocument();
+    expect(screen.getByText('Sources')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0);
     expect(fetchCategories).toHaveBeenCalled();
     expect(fetchContent).toHaveBeenCalled();
   });

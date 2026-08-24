@@ -157,7 +157,10 @@ describe('VODModal', () => {
   it('should render modal when opened with vod', () => {
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
     expect(screen.getByTestId('modal')).toBeInTheDocument();
-    expect(screen.getByTestId('modal-title')).toHaveTextContent('Test Movie');
+    expect(screen.getByTestId('modal-title')).toBeEmptyDOMElement();
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Test Movie' })
+    ).toBeInTheDocument();
   });
 
   it('should not render when closed', () => {
@@ -319,7 +322,9 @@ describe('VODModal', () => {
     });
 
     // Should still display basic VOD info
-    expect(screen.getByTestId('modal-title')).toHaveTextContent('Test Movie');
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Test Movie' })
+    ).toBeInTheDocument();
   });
 
   it('should handle fetch providers error gracefully', async () => {
@@ -498,9 +503,9 @@ describe('VODModal', () => {
       render(<VODModal vod={minimalVOD} opened={true} onClose={mockOnClose} />);
 
       await waitFor(() => {
-        expect(screen.getByTestId('modal-title')).toHaveTextContent(
-          'Test Movie'
-        );
+        expect(
+          screen.getByRole('heading', { level: 3, name: 'Test Movie' })
+        ).toBeInTheDocument();
       });
     });
   });

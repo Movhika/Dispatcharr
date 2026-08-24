@@ -14,7 +14,6 @@ import {
   TableTh,
   TableThead,
   TableTr,
-  TagsInput,
   Text,
   TextInput,
   Tooltip,
@@ -23,11 +22,10 @@ import { Info } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
+import LanguagePicker from '../LanguagePicker.jsx';
+import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
 import M3UGroupRules from './M3UGroupRules.jsx';
-import {
-  languageCodeError,
-  normalizeLanguageCodes,
-} from '../../utils/languageCodes.js';
+import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 
 const VODCategoryFilter = ({
   playlist = null,
@@ -182,15 +180,6 @@ const VODCategoryFilter = ({
     });
     setEditorOpen(true);
   };
-
-  const languageError = [
-    metadataModes.audio_languages === 'set'
-      ? languageCodeError(metadata.audio_languages)
-      : null,
-    metadataModes.subtitle_languages === 'set'
-      ? languageCodeError(metadata.subtitle_languages)
-      : null,
-  ].find(Boolean);
 
   const allVisibleSelected =
     visible.length > 0 &&
@@ -373,17 +362,10 @@ const VODCategoryFilter = ({
               label: value[0].toUpperCase() + value.slice(1),
             }))}
           />
-          <TagsInput
+          <LanguagePicker
             label="DUB"
-            description="English ISO 639-2/B codes"
-            placeholder="ger, eng"
             value={metadata.audio_languages}
             disabled={metadataModes.audio_languages !== 'set'}
-            error={
-              metadataModes.audio_languages === 'set'
-                ? languageCodeError(metadata.audio_languages)
-                : null
-            }
             onChange={(value) =>
               setMetadata({
                 ...metadata,
@@ -401,16 +383,10 @@ const VODCategoryFilter = ({
               label: value[0].toUpperCase() + value.slice(1),
             }))}
           />
-          <TagsInput
+          <LanguagePicker
             label="SUB"
-            placeholder="ger, eng"
             value={metadata.subtitle_languages}
             disabled={metadataModes.subtitle_languages !== 'set'}
-            error={
-              metadataModes.subtitle_languages === 'set'
-                ? languageCodeError(metadata.subtitle_languages)
-                : null
-            }
             onChange={(value) =>
               setMetadata({
                 ...metadata,
@@ -431,7 +407,7 @@ const VODCategoryFilter = ({
           <Select
             clearable
             label="Resolution"
-            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            data={RESOLUTION_VALUES}
             value={metadata.resolution || null}
             disabled={metadataModes.resolution !== 'set'}
             onChange={(value) =>
@@ -442,11 +418,7 @@ const VODCategoryFilter = ({
             <Button variant="default" onClick={() => setEditorOpen(false)}>
               Cancel
             </Button>
-            <Button
-              loading={saving}
-              disabled={!!languageError}
-              onClick={saveBulkMetadata}
-            >
+            <Button loading={saving} onClick={saveBulkMetadata}>
               Apply to selected
             </Button>
           </Group>

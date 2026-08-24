@@ -1853,6 +1853,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 if item["content_type"] == "series"
             ]
             relations_by_content = defaultdict(list)
+            edition_counts = defaultdict(int)
             if movie_ids:
                 for relation in M3UMovieRelation.objects.filter(
                     _filtered_vod_relation_query(list_filters, "movie"),
@@ -1861,6 +1862,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     relations_by_content[("movie", relation.movie_id)].append(
                         relation
                     )
+                    edition_counts[("movie", relation.movie_id)] += 1
             if series_ids:
                 for relation in M3USeriesRelation.objects.filter(
                     _filtered_vod_relation_query(list_filters, "series"),
@@ -1869,6 +1871,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     relations_by_content[("series", relation.series_id)].append(
                         relation
                     )
+                    edition_counts[("series", relation.series_id)] += 1
                 # Series container formats and learned technical metadata live
                 # on concrete episode sources. One page-bounded query folds
                 # those values into the series row without an N+1 lookup.
@@ -1881,10 +1884,15 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     ].append(relation)
             category_mapping = enabled_category_map()
             for item in results:
+                key = (item["content_type"], item["id"])
                 item["source_metadata"] = summarize_relation_metadata(
-                    relations_by_content[(item["content_type"], item["id"])],
+                    relations_by_content[key],
                     category_mapping,
                 )
+                # A series edition is one provider/category series relation,
+                # not every episode source used to summarize its formats.
+                item["source_count"] = edition_counts[key]
+                item["source_metadata"]["source_count"] = edition_counts[key]
 
             # Get total count estimate (for pagination info)
             # Use a separate efficient count query

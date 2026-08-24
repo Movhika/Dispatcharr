@@ -242,7 +242,8 @@ class VODSourceManagementTests(TestCase):
     def test_language_preference_wins_over_account_and_category_priority(self):
         self.policy.hard_constraints = {
             "required_audio_languages": ["ger", "eng"],
-            "preferred_resolutions": ["1080p", "2160p"],
+            "min_resolution": 720,
+            "max_resolution": 2160,
             "allow_unknown_metadata": False,
         }
         self.policy.save(update_fields=["hard_constraints", "updated_at"])
@@ -420,6 +421,60 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             response.data["results"][0]["metadata"]["audio_languages"],
             ["ger"],
+        )
+
+    def test_admin_can_create_a_reusable_vod_output_profile(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-create-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/access-policies/",
+            {
+                "name": "German 1080p",
+                "export_mode": "compact",
+                "is_active": True,
+                "is_default": False,
+                "hard_constraints": {
+                    "required_audio_languages": ["deu"],
+                    "required_subtitle_languages": ["ger"],
+                    "language_match_mode": "any",
+                    "min_resolution": 720,
+                    "max_resolution": 1080,
+                    "allow_unknown_metadata": False,
+                },
+                "ranking": [
+                    "audio_language",
+                    "subtitle_language",
+                    "resolution",
+                ],
+                "category_rules": [
+                    {
+                        "category_relation": self.german_category.id,
+                        "enabled": True,
+                        "priority": 0,
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        created = VODAccessPolicy.objects.get(name="German 1080p")
+        self.assertEqual(
+            created.hard_constraints["required_audio_languages"], ["ger"]
+        )
+        self.assertEqual(
+            list(
+                created.vodpolicycategory_set.values_list(
+                    "category_relation_id", flat=True
+                )
+            ),
+            [self.german_category.id],
         )
 
     def test_compact_xc_category_requests_do_not_duplicate_the_title(self):
@@ -700,6 +755,74 @@ class VODSourceManagementTests(TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.data["count"], 0)
             self.assertEqual(response.data["results"], [])
+
+    def test_unified_list_reports_movie_and_series_edition_counts(self):
+        series = Series.objects.create(name="Avatar Series", year=2005)
+        german_series = VODCategory.objects.create(
+            name="GERMANY SERIES", category_type="series"
+        )
+        english_series = VODCategory.objects.create(
+            name="NETFLIX SERIES", category_type="series"
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=german_series,
+            enabled=True,
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_b,
+            category=english_series,
+            enabled=True,
+        )
+        german_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=german_series,
+            external_series_id="series-a",
+        )
+        english_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_b,
+            series=series,
+            category=english_series,
+            external_series_id="series-b",
+        )
+        episode = Episode.objects.create(
+            name="The Boy in the Iceberg",
+            series=series,
+            season_number=1,
+            episode_number=1,
+        )
+        M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=german_relation,
+            stream_id="episode-a",
+        )
+        M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_b,
+            episode=episode,
+            series_relation=english_relation,
+            stream_id="episode-b",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-source-count-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/", {"page_size": 24}
+        )
+        force_authenticate(request, user=admin)
+
+        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        counts = {
+            (item["content_type"], item["name"]): item["source_count"]
+            for item in response.data["results"]
+        }
+        self.assertEqual(counts[("movie", "Avatar")], 2)
+        self.assertEqual(counts[("series", "Avatar Series")], 2)
 
     def test_select_all_does_not_cross_match_account_and_category(self):
         admin = get_user_model().objects.create_user(

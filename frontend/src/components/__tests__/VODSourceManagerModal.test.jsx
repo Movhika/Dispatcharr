@@ -10,6 +10,21 @@ vi.mock('../../api', () => ({
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('../LanguagePicker.jsx', () => ({
+  default: ({ label, value = [], onChange, disabled }) => (
+    <label>
+      {label}
+      <input
+        aria-label={label}
+        value={value.join(',')}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(event.target.value.split(',').filter(Boolean))
+        }
+      />
+    </label>
+  ),
+}));
 vi.mock('lucide-react', () => ({
   RefreshCw: () => null,
   Wrench: () => null,
@@ -65,18 +80,6 @@ vi.mock('@mantine/core', () => {
     TableTh: Wrapper,
     TableThead: Wrapper,
     TableTr: Wrapper,
-    TagsInput: ({ label, value, onChange }) => (
-      <label>
-        {label}
-        <input
-          aria-label={label}
-          value={(value || []).join(',')}
-          onChange={(event) =>
-            onChange(event.target.value.split(',').filter(Boolean))
-          }
-        />
-      </label>
-    ),
     Text: Wrapper,
   };
 });

@@ -11,6 +11,21 @@ vi.mock('../../../api', () => ({
 vi.mock('../../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('../../LanguagePicker.jsx', () => ({
+  default: ({ label, value = [], onChange, disabled }) => (
+    <label>
+      {label}
+      <input
+        aria-label={label}
+        value={value.join(',')}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(event.target.value.split(',').filter(Boolean))
+        }
+      />
+    </label>
+  ),
+}));
 
 vi.mock('@mantine/core', () => ({
   Button: ({ children, onClick, disabled, ...props }) => (
@@ -93,15 +108,6 @@ vi.mock('@mantine/core', () => ({
   TableTh: ({ children }) => <th>{children}</th>,
   TableThead: ({ children }) => <thead>{children}</thead>,
   TableTr: ({ children }) => <tr>{children}</tr>,
-  TagsInput: ({ label, value = [], onChange }) => (
-    <input
-      aria-label={label}
-      value={value.join(',')}
-      onChange={(event) =>
-        onChange(event.target.value.split(',').filter(Boolean))
-      }
-    />
-  ),
   Text: ({ children }) => <span>{children}</span>,
   TextInput: ({ label, value, onChange, placeholder }) => (
     <input

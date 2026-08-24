@@ -497,9 +497,18 @@ const SeriesModal = ({ series, opened, onClose }) => {
       <Modal
         opened={opened}
         onClose={onClose}
-        title={displaySeries.name}
         size="xl"
         centered
+        styles={{
+          header: {
+            position: 'absolute',
+            top: 10,
+            right: 10,
+            zIndex: 10,
+            background: 'transparent',
+          },
+          body: { padding: 0 },
+        }}
       >
         <Box style={{ position: 'relative', minHeight: 400 }}>
           {/* Backdrop image as background */}

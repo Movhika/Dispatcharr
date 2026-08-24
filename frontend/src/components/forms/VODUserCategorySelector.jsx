@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -47,9 +47,14 @@ const VODUserCategorySelector = ({
   const [type, setType] = useState('all');
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(1);
+  const initializedForOpen = useRef(false);
 
   useEffect(() => {
-    if (!opened) return;
+    if (!opened) {
+      initializedForOpen.current = false;
+      return;
+    }
+    if (initializedForOpen.current || rows.length === 0) return;
     const explicit = new Set((selectedIds || []).map(String));
     const availableExplicit = new Set(
       rows.filter((row) => explicit.has(row.id)).map((row) => row.id)
@@ -65,7 +70,10 @@ const VODUserCategorySelector = ({
     setType('all');
     setStatus('all');
     setPage(1);
-  }, [opened, rows, selectedIds]);
+    initializedForOpen.current = true;
+    // Changes from profile polling must not overwrite an open editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, rows]);
 
   const accountOptions = useMemo(
     () =>

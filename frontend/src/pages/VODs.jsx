@@ -20,7 +20,6 @@ import {
   TableTh,
   TableThead,
   TableTr,
-  TagsInput,
   Text,
   TextInput,
   Title,
@@ -37,11 +36,14 @@ import {
   filterCategoriesToEnabled,
   getCategoryOptions,
 } from '../utils/pages/VODsUtils.js';
+import { normalizeLanguageCodes } from '../utils/languageCodes.js';
+import LanguagePicker, {
+  LanguageSelect,
+} from '../components/LanguagePicker.jsx';
 import {
-  languageCodeError,
-  normalizeLanguageCode,
-  normalizeLanguageCodes,
-} from '../utils/languageCodes.js';
+  CONTAINER_EXTENSION_OPTIONS,
+  RESOLUTION_VALUES,
+} from '../utils/vodMetadataOptions.js';
 
 const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
 const VODModal = React.lazy(() => import('../components/VODModal'));
@@ -59,6 +61,8 @@ const sourceMetadataValue = (item, field) => {
   const values = item.source_metadata?.[field] || [];
   return Array.isArray(values) && values.length ? values.join(', ') : '—';
 };
+const sourceCount = (item) =>
+  item.source_count ?? item.source_metadata?.source_count ?? 0;
 
 const VODsPage = () => {
   const currentPageContent = useVODStore((s) => s.currentPageContent);
@@ -226,15 +230,6 @@ const VODsPage = () => {
   };
 
   const categoryOptions = getCategoryOptions(categories, filters);
-  const bulkLanguageError =
-    languageCodeError(bulkMetadata.audio_languages) ||
-    languageCodeError(bulkMetadata.subtitle_languages);
-  const audioFilterError = filters.audio_language
-    ? languageCodeError([filters.audio_language])
-    : null;
-  const subtitleFilterError = filters.subtitle_language
-    ? languageCodeError([filters.subtitle_language])
-    : null;
   const m3uOptions = playlists
     .filter(
       (playlist) =>
@@ -327,51 +322,23 @@ const VODsPage = () => {
             clearable
             miw={180}
           />
-          <TextInput
+          <LanguageSelect
             label="DUB"
-            description="ISO 639-2/B"
-            placeholder="ger"
             value={filters.audio_language}
-            onChange={(event) =>
-              setFilters({
-                audio_language: event.currentTarget.value.trim().toLowerCase(),
-              })
-            }
-            onBlur={() =>
-              setFilters({
-                audio_language: normalizeLanguageCode(filters.audio_language),
-              })
-            }
-            error={audioFilterError}
-            w={105}
+            onChange={(value) => setFilters({ audio_language: value })}
+            w={155}
           />
-          <TextInput
+          <LanguageSelect
             label="SUB"
-            description="ISO 639-2/B"
-            placeholder="ger"
             value={filters.subtitle_language}
-            onChange={(event) =>
-              setFilters({
-                subtitle_language: event.currentTarget.value
-                  .trim()
-                  .toLowerCase(),
-              })
-            }
-            onBlur={() =>
-              setFilters({
-                subtitle_language: normalizeLanguageCode(
-                  filters.subtitle_language
-                ),
-              })
-            }
-            error={subtitleFilterError}
-            w={105}
+            onChange={(value) => setFilters({ subtitle_language: value })}
+            w={155}
           />
           <Select
             label="Resolution"
             placeholder="Any"
             clearable
-            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            data={RESOLUTION_VALUES}
             value={filters.resolution || null}
             onChange={(value) => setFilters({ resolution: value || '' })}
             w={130}
@@ -381,7 +348,7 @@ const VODsPage = () => {
             placeholder="Any"
             clearable
             searchable
-            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            data={CONTAINER_EXTENSION_OPTIONS}
             value={filters.container_extension || null}
             onChange={(value) =>
               setFilters({ container_extension: value || '' })
@@ -429,6 +396,7 @@ const VODsPage = () => {
                 <TableTh>Title</TableTh>
                 <TableTh w={100}>Type</TableTh>
                 <TableTh w={90}>Year</TableTh>
+                <TableTh w={85}>Sources</TableTh>
                 <TableTh>Genre</TableTh>
                 <TableTh w={125}>DUB</TableTh>
                 <TableTh w={125}>SUB</TableTh>
@@ -474,6 +442,7 @@ const VODsPage = () => {
                     {item.contentType === 'series' ? 'Series' : 'Movie'}
                   </TableTd>
                   <TableTd>{item.year || '—'}</TableTd>
+                  <TableTd>{sourceCount(item)}</TableTd>
                   <TableTd>{item.genre || '—'}</TableTd>
                   <TableTd>
                     {sourceMetadataValue(item, 'audio_languages')}
@@ -527,12 +496,9 @@ const VODsPage = () => {
             titles, including episode sources for selected series. Manual values
             are locked and are never replaced by playback observations.
           </Text>
-          <TagsInput
+          <LanguagePicker
             label="Audio languages"
-            description="English ISO 639-2/B codes"
-            placeholder="ger, eng"
             value={bulkMetadata.audio_languages}
-            error={languageCodeError(bulkMetadata.audio_languages)}
             onChange={(value) =>
               setBulkMetadata({
                 ...bulkMetadata,
@@ -540,11 +506,9 @@ const VODsPage = () => {
               })
             }
           />
-          <TagsInput
+          <LanguagePicker
             label="Subtitle languages"
-            placeholder="ger, eng"
             value={bulkMetadata.subtitle_languages}
-            error={languageCodeError(bulkMetadata.subtitle_languages)}
             onChange={(value) =>
               setBulkMetadata({
                 ...bulkMetadata,
@@ -556,7 +520,7 @@ const VODsPage = () => {
             label="Resolution"
             description="Leave empty to keep existing values"
             clearable
-            data={['480p', '576p', '720p', '1080p', '1440p', '2160p']}
+            data={RESOLUTION_VALUES}
             value={bulkMetadata.resolution || null}
             onChange={(value) =>
               setBulkMetadata({ ...bulkMetadata, resolution: value || '' })
@@ -567,7 +531,7 @@ const VODsPage = () => {
             description="Leave empty to keep existing values"
             clearable
             searchable
-            data={['mkv', 'mp4', 'avi', 'mov', 'ts', 'm3u8']}
+            data={CONTAINER_EXTENSION_OPTIONS}
             value={bulkMetadata.container_extension || null}
             onChange={(value) =>
               setBulkMetadata({
@@ -580,11 +544,7 @@ const VODsPage = () => {
             <Button variant="default" onClick={bulkEditorHandlers.close}>
               Cancel
             </Button>
-            <Button
-              loading={bulkSaving}
-              disabled={!!bulkLanguageError}
-              onClick={saveBulkMetadata}
-            >
+            <Button loading={bulkSaving} onClick={saveBulkMetadata}>
               Apply and lock
             </Button>
           </Group>

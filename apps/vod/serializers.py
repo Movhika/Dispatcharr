@@ -430,9 +430,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
             "min_resolution", "max_resolution",
-            # Accept the former names when older clients edit a policy.
-            "min_height", "max_height", "allow_unknown_metadata",
-            "preferred_resolutions", "language_match_mode",
+            "allow_unknown_metadata", "language_match_mode",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
@@ -454,18 +452,6 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 )
             except ValueError as exc:
                 raise serializers.ValidationError({field: str(exc)})
-        resolutions = normalized.get("preferred_resolutions", [])
-        if not isinstance(resolutions, list):
-            raise serializers.ValidationError(
-                {"preferred_resolutions": "Must be a list of resolutions"}
-            )
-        normalized["preferred_resolutions"] = list(
-            dict.fromkeys(str(value).strip() for value in resolutions if str(value).strip())
-        )
-        if "min_resolution" not in normalized and "min_height" in normalized:
-            normalized["min_resolution"] = normalized.pop("min_height")
-        if "max_resolution" not in normalized and "max_height" in normalized:
-            normalized["max_resolution"] = normalized.pop("max_height")
         for field in ("min_resolution", "max_resolution"):
             try:
                 normalized[field] = max(0, int(normalized.get(field) or 0))

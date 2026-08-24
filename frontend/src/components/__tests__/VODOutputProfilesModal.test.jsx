@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../store/useVODStore', () => ({ default: vi.fn() }));
 vi.mock('../../api', () => ({
   default: {
+    createVODAccessPolicy: vi.fn(),
+    updateVODAccessPolicy: vi.fn(),
     rebuildVODAccessPolicy: vi.fn(),
     getVODAccessPolicySelections: vi.fn(),
   },
@@ -135,7 +137,6 @@ describe('VODOutputProfilesModal', () => {
       required_audio_languages: ['ger'],
       required_subtitle_languages: ['ger'],
       language_match_mode: 'any',
-      preferred_resolutions: ['1080p'],
       min_resolution: 720,
       max_resolution: 1080,
       allow_unknown_metadata: false,
@@ -151,14 +152,22 @@ describe('VODOutputProfilesModal', () => {
       unknown_metadata: 4,
     },
   };
+  let storeProfiles;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    storeProfiles = [profile];
+    API.createVODAccessPolicy.mockResolvedValue({
+      ...profile,
+      id: 8,
+      name: 'New profile',
+    });
+    API.updateVODAccessPolicy.mockResolvedValue(profile);
     API.rebuildVODAccessPolicy.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
         categories: {},
-        accessPolicies: [profile],
+        accessPolicies: storeProfiles,
         fetchCategories,
         fetchAccessPolicies,
       })
@@ -189,5 +198,44 @@ describe('VODOutputProfilesModal', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Profile name')).toHaveValue('')
     );
+  });
+
+  it('creates and saves a new reusable profile', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    await screen.findByDisplayValue('German HD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'New profile' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() =>
+      expect(API.createVODAccessPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'New profile',
+          hard_constraints: expect.not.objectContaining({
+            preferred_resolutions: expect.anything(),
+          }),
+        })
+      )
+    );
+  });
+
+  it('does not overwrite an edited draft when profile status is polled', async () => {
+    const view = render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    const name = await screen.findByLabelText('Profile name');
+    fireEvent.change(name, { target: { value: 'Unsaved edit' } });
+
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'building',
+        selection_current: false,
+      },
+    ];
+    view.rerender(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(screen.getByLabelText('Profile name')).toHaveValue('Unsaved edit');
   });
 });

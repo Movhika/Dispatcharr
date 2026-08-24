@@ -55,7 +55,6 @@ class UserSerializer(serializers.ModelSerializer):
     )
     api_key = serializers.CharField(read_only=True, allow_null=True)
     vod_policy = serializers.SerializerMethodField()
-    vod_policy_settings = serializers.JSONField(write_only=True, required=False)
     vod_policy_id = serializers.IntegerField(
         write_only=True,
         required=False,
@@ -82,7 +81,6 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "vod_policy",
-            "vod_policy_settings",
             "vod_policy_id",
         ]
 
@@ -94,13 +92,6 @@ class UserSerializer(serializers.ModelSerializer):
         if not VODAccessPolicy.objects.filter(pk=value, is_active=True).exists():
             raise serializers.ValidationError("Unknown or inactive VOD output profile")
         return value
-
-    def validate(self, attrs):
-        if "vod_policy_id" in attrs and "vod_policy_settings" in attrs:
-            raise serializers.ValidationError(
-                "Use either vod_policy_id or vod_policy_settings, not both"
-            )
-        return super().validate(attrs)
 
     def get_vod_policy(self, obj):
         from apps.vod.models import VODAccessPolicy
@@ -144,113 +135,6 @@ class UserSerializer(serializers.ModelSerializer):
             ),
             "inherited": inherited,
         }
-
-    def validate_vod_policy_settings(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("Must be an object")
-        from apps.vod.models import VODAccessPolicy
-        from apps.vod.serializers import VODAccessPolicySerializer
-
-        export_mode = value.get("export_mode", VODAccessPolicy.ExportMode.COMPACT)
-        if export_mode not in VODAccessPolicy.ExportMode.values:
-            raise serializers.ValidationError({"export_mode": "Unsupported mode"})
-        validator = VODAccessPolicySerializer()
-        constraints = validator.validate_hard_constraints(
-            value.get("hard_constraints", {})
-        )
-        ranking = validator.validate_ranking(
-            value.get(
-                "ranking",
-                ["audio_language", "subtitle_language", "resolution"],
-            )
-        )
-        category_relation_ids = value.get("category_relation_ids", [])
-        if not isinstance(category_relation_ids, list):
-            raise serializers.ValidationError(
-                {"category_relation_ids": "Must be a list"}
-            )
-        from apps.vod.models import M3UVODCategoryRelation
-
-        normalized_category_ids = []
-        for relation_id in category_relation_ids:
-            try:
-                normalized_category_ids.append(int(relation_id))
-            except (TypeError, ValueError):
-                raise serializers.ValidationError(
-                    {"category_relation_ids": "Must contain numeric IDs"}
-                )
-        normalized_category_ids = list(dict.fromkeys(normalized_category_ids))
-        existing = set(
-            M3UVODCategoryRelation.objects.filter(
-                id__in=normalized_category_ids,
-                enabled=True,
-                m3u_account__is_active=True,
-            ).values_list("id", flat=True)
-        )
-        missing = set(normalized_category_ids) - existing
-        if missing:
-            raise serializers.ValidationError(
-                {"category_relation_ids": "Contains unavailable categories"}
-            )
-        return {
-            "export_mode": export_mode,
-            "hard_constraints": constraints,
-            "ranking": ranking,
-            "category_relation_ids": normalized_category_ids,
-        }
-
-    def _save_vod_policy(self, user, settings):
-        if settings is None:
-            return
-        from apps.vod.models import VODAccessPolicy, VODPolicyCategory
-
-        assigned = (
-            user.vod_access_policies.filter(is_active=True).order_by("id").first()
-        )
-        shared = bool(
-            assigned
-            and (
-                assigned.is_default
-                or assigned.users.exclude(pk=user.pk).exists()
-            )
-        )
-        if assigned is None or shared:
-            assigned, _created = VODAccessPolicy.objects.get_or_create(
-                name=f"VOD preferences — user {user.pk}",
-                defaults={"is_active": True, "is_default": False},
-            )
-        for other in VODAccessPolicy.objects.exclude(pk=assigned.pk).filter(users=user):
-            other.users.remove(user)
-        assigned.export_mode = settings["export_mode"]
-        assigned.hard_constraints = settings["hard_constraints"]
-        assigned.ranking = settings["ranking"]
-        assigned.is_active = True
-        assigned.save(
-            update_fields=[
-                "export_mode", "hard_constraints", "ranking", "is_active", "updated_at"
-            ]
-        )
-        assigned.users.add(user)
-        assigned.vodpolicycategory_set.all().delete()
-        VODPolicyCategory.objects.bulk_create(
-            [
-                VODPolicyCategory(
-                    policy=assigned,
-                    category_relation_id=relation_id,
-                    enabled=True,
-                )
-                for relation_id in settings.get("category_relation_ids", [])
-            ]
-        )
-        # XC responses and policy_for_user are generation-cached. Invalidate
-        # them now so a saved category/language policy applies immediately.
-        from apps.vod.catalog_cache import bump_catalog_generation
-
-        bump_catalog_generation(invalidate_selections=False)
-
-        from apps.vod.profile_selection import enqueue_profile_selection_rebuild
-
-        enqueue_profile_selection_rebuild(assigned.pk)
 
     def _assign_vod_policy(self, user, policy_id):
         from apps.vod.models import VODAccessPolicy
@@ -302,7 +186,6 @@ class UserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         channel_profiles = validated_data.pop("channel_profiles", [])
-        vod_policy_settings = validated_data.pop("vod_policy_settings", None)
         vod_policy_id = validated_data.pop("vod_policy_id", serializers.empty)
 
         user = User(**validated_data)
@@ -312,15 +195,12 @@ class UserSerializer(serializers.ModelSerializer):
         user.channel_profiles.set(channel_profiles)
         if vod_policy_id is not serializers.empty:
             self._assign_vod_policy(user, vod_policy_id)
-        else:
-            self._save_vod_policy(user, vod_policy_settings)
 
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", None)
         channel_profiles = validated_data.pop("channel_profiles", None)
-        vod_policy_settings = validated_data.pop("vod_policy_settings", None)
         vod_policy_id = validated_data.pop("vod_policy_id", serializers.empty)
 
         # Merge custom_properties instead of replacing (prevents data loss)
@@ -356,7 +236,5 @@ class UserSerializer(serializers.ModelSerializer):
 
         if vod_policy_id is not serializers.empty:
             self._assign_vod_policy(instance, vod_policy_id)
-        else:
-            self._save_vod_policy(instance, vod_policy_settings)
 
         return instance

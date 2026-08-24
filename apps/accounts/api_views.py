@@ -290,7 +290,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 "last_name",
                 "email",
                 "password",
-                "vod_policy_settings",
             }
             disallowed = set(request.data.keys()) - ALLOWED_FIELDS
 
