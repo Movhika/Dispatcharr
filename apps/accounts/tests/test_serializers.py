@@ -64,6 +64,9 @@ class UserSerializerValidationTests(TestCase):
         )
 
     def test_user_without_profile_does_not_create_an_inline_vod_policy(self):
+        initial_policy_ids = set(
+            VODAccessPolicy.objects.values_list("id", flat=True)
+        )
         serializer = UserSerializer(
             data={
                 "username": "vod-user",
@@ -74,7 +77,10 @@ class UserSerializerValidationTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         user = serializer.save()
         self.assertFalse(user.vod_access_policies.exists())
-        self.assertEqual(VODAccessPolicy.objects.count(), 0)
+        self.assertSetEqual(
+            set(VODAccessPolicy.objects.values_list("id", flat=True)),
+            initial_policy_ids,
+        )
 
     def test_user_can_be_assigned_to_a_reusable_vod_output_profile(self):
         policy = VODAccessPolicy.objects.create(
