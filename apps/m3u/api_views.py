@@ -8,7 +8,7 @@ from apps.accounts.permissions import (
 )
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
@@ -28,6 +28,7 @@ from .models import (
     M3UGroupRule,
     ServerGroup,
     M3UAccountProfile,
+    M3UAccountTemplate,
 )
 from core.models import UserAgent
 from core.utils import safe_upload_path, ensure_custom_properties_dict
@@ -42,6 +43,7 @@ from .serializers import (
     M3UGroupRuleSerializer,
     ServerGroupSerializer,
     M3UAccountProfileSerializer,
+    M3UAccountTemplateSerializer,
 )
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
@@ -57,6 +59,8 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
     serializer_class = M3UAccountSerializer
 
     def get_permissions(self):
+        if self.action == "save_template":
+            return [perm() for perm in permission_classes_by_method["POST"]]
         try:
             return [perm() for perm in permission_classes_by_action[self.action]]
         except KeyError:
@@ -96,6 +100,33 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             context={**self.get_serializer_context(), "stream_counts": stream_counts},
         )
         return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="save-template")
+    def save_template(self, request, pk=None):
+        account = self.get_object()
+        name = str(request.data.get("name") or "").strip()
+        if not name:
+            return Response(
+                {"name": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from .account_templates import capture_account_template
+
+        try:
+            template = capture_account_template(
+                account,
+                name=name,
+                description=str(request.data.get("description") or "").strip(),
+            )
+        except IntegrityError:
+            return Response(
+                {"name": ["A template with this name already exists."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            M3UAccountTemplateSerializer(template).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["get"], url_path="developer-catalog")
     def developer_catalog(self, request, pk=None):
@@ -697,6 +728,29 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 {"error": f"Failed to update group settings: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class M3UAccountTemplateViewSet(viewsets.ModelViewSet):
+    queryset = M3UAccountTemplate.objects.all()
+    serializer_class = M3UAccountTemplateSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        if self.action == "apply":
+            return [perm() for perm in permission_classes_by_method["POST"]]
+        try:
+            return [perm() for perm in permission_classes_by_action[self.action]]
+        except KeyError:
+            return [Authenticated()]
+
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):
+        account_id = request.data.get("account_id")
+        account = get_object_or_404(M3UAccount, pk=account_id)
+        from .account_templates import apply_account_template
+
+        apply_account_template(account, self.get_object())
+        return Response(M3UAccountSerializer(account, context={"request": request}).data)
 
 
 class M3UFilterViewSet(viewsets.ModelViewSet):

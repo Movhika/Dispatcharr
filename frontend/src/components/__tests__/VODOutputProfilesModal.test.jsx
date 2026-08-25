@@ -78,8 +78,36 @@ vi.mock('@mantine/core', () => {
         {children}
       </button>
     ),
+    Checkbox: ({ label, checked, onChange }) => (
+      <label>
+        <input type="checkbox" checked={checked} onChange={onChange} />
+        {label}
+      </label>
+    ),
     Group: Wrapper,
     Modal,
+    MultiSelect: ({ label, value = [], onChange, data = [], disabled }) => (
+      <label>
+        {label}
+        <select
+          aria-label={label}
+          multiple
+          value={value}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange?.(
+              Array.from(event.target.selectedOptions, (option) => option.value)
+            )
+          }
+        >
+          {data.map((item) => (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
     NumberInput: Input,
     Pagination: () => null,
     Progress: ({ value }) => (
@@ -158,6 +186,14 @@ describe('VODOutputProfilesModal', () => {
     selection_available: true,
     selection_progress: { phase: 'Ready', percent: 100 },
     selection_counts: {
+      movies: {
+        output_entries: 80,
+        canonical_titles: 78,
+      },
+      series: {
+        output_entries: 43,
+        canonical_titles: 42,
+      },
       output_entries: 123,
       canonical_titles: 120,
       eligible_sources: 150,
@@ -193,8 +229,8 @@ describe('VODOutputProfilesModal', () => {
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
-    expect(screen.getByText('Output entries: 123')).toBeInTheDocument();
-    expect(screen.getByText('Canonical titles: 120')).toBeInTheDocument();
+    expect(screen.getByText(/Movies: 80 output entries/)).toBeInTheDocument();
+    expect(screen.getByText(/Series: 43 output entries/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh catalog' }));
 

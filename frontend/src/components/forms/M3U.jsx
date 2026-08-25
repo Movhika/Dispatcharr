@@ -9,6 +9,7 @@ import {
   Button,
   Divider,
   FileInput,
+  FileButton,
   Flex,
   Group,
   LoadingOverlay,
@@ -18,6 +19,8 @@ import {
   Select,
   Stack,
   Switch,
+  Text,
+  Textarea,
   TextInput,
 } from '@mantine/core';
 import M3UGroupFilter from './M3UGroupFilter';
@@ -38,6 +41,7 @@ import {
   updatePlaylist,
 } from '../../utils/forms/M3uUtils.js';
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
+import API from '../../api';
 
 const M3U = ({
   m3uAccount = null,
@@ -50,6 +54,7 @@ const M3U = ({
   const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
   const fetchEPGs = useEPGsStore((s) => s.fetchEPGs);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
+  const updatePlaylistInStore = usePlaylistsStore((s) => s.updatePlaylist);
 
   const [playlist, setPlaylist] = useState(null);
   const [file, setFile] = useState(null);
@@ -60,6 +65,12 @@ const M3U = ({
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [templateId, setTemplateId] = useState('');
+  const [templateSavingOpen, setTemplateSavingOpen] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  const [templateBusy, setTemplateBusy] = useState(false);
 
   // Keep expiration in sync when the default profile is edited (store refreshes).
   // Do not rebind the whole form to the live playlist or unsaved edits are wiped.
@@ -143,6 +154,126 @@ const M3U = ({
   }, [m3uAccount]);
 
   useEffect(() => {
+    if (!isOpen) return;
+    API.getM3UAccountTemplates().then((items) => setTemplates(items || []));
+  }, [isOpen]);
+
+  const selectedTemplate = templates.find(
+    (template) => String(template.id) === templateId
+  );
+
+  const applyTemplateValues = (template) => {
+    if (!template) return;
+    const settings = template.account_settings || {};
+    form.setValues({
+      account_type: template.account_type || form.getValues().account_type,
+      max_streams: settings.max_streams ?? form.getValues().max_streams,
+      refresh_interval:
+        settings.refresh_interval ?? form.getValues().refresh_interval,
+      stale_stream_days:
+        settings.stale_stream_days ?? form.getValues().stale_stream_days,
+      priority: settings.priority ?? form.getValues().priority,
+      enable_vod: settings.enable_vod ?? form.getValues().enable_vod,
+    });
+  };
+
+  const applyTemplate = async () => {
+    if (!selectedTemplate) return;
+    if (!playlist?.id) {
+      applyTemplateValues(selectedTemplate);
+      showNotification({
+        title: 'Template selected',
+        message:
+          'Settings and copied rules will be applied when the account is created.',
+        color: 'green',
+      });
+      return;
+    }
+    setTemplateBusy(true);
+    try {
+      const updated = await API.applyM3UAccountTemplate(
+        selectedTemplate.id,
+        playlist.id
+      );
+      setPlaylist(updated);
+      updatePlaylistInStore(updated);
+      applyTemplateValues(selectedTemplate);
+      showNotification({
+        title: 'Template applied',
+        message:
+          'Portable account settings, stream filters, and import rules were copied.',
+        color: 'green',
+      });
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const saveTemplate = async () => {
+    if (!playlist?.id || !templateName.trim()) return;
+    setTemplateBusy(true);
+    try {
+      const created = await API.saveM3UAccountAsTemplate(playlist.id, {
+        name: templateName.trim(),
+        description: templateDescription.trim(),
+      });
+      setTemplates((current) => [...current, created]);
+      setTemplateId(String(created.id));
+      setTemplateSavingOpen(false);
+      setTemplateName('');
+      setTemplateDescription('');
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const exportTemplate = () => {
+    if (!selectedTemplate) return;
+    const portable = {
+      name: selectedTemplate.name,
+      description: selectedTemplate.description || '',
+      account_type: selectedTemplate.account_type,
+      account_settings: selectedTemplate.account_settings || {},
+      filters: selectedTemplate.filters || [],
+      group_rules: selectedTemplate.group_rules || [],
+    };
+    const blob = new Blob([JSON.stringify(portable, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${selectedTemplate.name.replace(/[^a-z0-9_-]+/gi, '-')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importTemplate = async (file) => {
+    if (!file) return;
+    setTemplateBusy(true);
+    try {
+      const values = JSON.parse(await file.text());
+      const created = await API.createM3UAccountTemplate(values);
+      setTemplates((current) => [...current, created]);
+      setTemplateId(String(created.id));
+      showNotification({
+        title: 'Template imported',
+        message:
+          'No provider URL, username, or password is stored in templates.',
+        color: 'green',
+      });
+    } catch (error) {
+      showNotification({
+        title: 'Template could not be imported',
+        message: error?.message || 'The JSON file is invalid.',
+        color: 'red',
+      });
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  useEffect(() => {
     if (storeExpDate === undefined) return;
     const next = expDateFromPlaylist(storeExpDate);
     setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
@@ -184,6 +315,8 @@ const M3U = ({
   const onSubmit = async () => {
     const { create_epg, ...rawValues } = form.getValues();
     const values = prepareSubmitValues(rawValues, expDate);
+    if (!playlist?.id && templateId)
+      values.account_template = Number(templateId);
 
     if (playlist?.id) {
       await updatePlaylist(playlist, values, file);
@@ -239,6 +372,59 @@ const M3U = ({
         <LoadingOverlay visible={form.submitting} overlayBlur={2} />
 
         <form onSubmit={form.onSubmit(onSubmit)}>
+          <Stack gap={5} mb="md">
+            <Text fw={500} size="sm">
+              Account template
+            </Text>
+            <Group align="flex-end" wrap="wrap">
+              <Select
+                placeholder="No template"
+                searchable
+                clearable
+                data={templates.map((template) => ({
+                  value: String(template.id),
+                  label: template.name,
+                }))}
+                value={templateId || null}
+                onChange={(value) => setTemplateId(value || '')}
+                style={{ flex: 1, minWidth: 240 }}
+              />
+              <Button
+                variant="default"
+                disabled={!selectedTemplate}
+                loading={templateBusy}
+                onClick={applyTemplate}
+              >
+                Apply
+              </Button>
+              {playlist?.id && (
+                <Button
+                  variant="default"
+                  onClick={() => setTemplateSavingOpen(true)}
+                >
+                  Save current
+                </Button>
+              )}
+              <Button
+                variant="default"
+                disabled={!selectedTemplate}
+                onClick={exportTemplate}
+              >
+                Export
+              </Button>
+              <FileButton onChange={importTemplate} accept="application/json">
+                {(props) => (
+                  <Button variant="default" {...props}>
+                    Import
+                  </Button>
+                )}
+              </FileButton>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Templates contain portable settings, stream filters, and import
+              rules only. Provider URLs and credentials are never included.
+            </Text>
+          </Stack>
           <Group align="flex-start" gap="md" wrap="nowrap">
             <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
               <TextInput
@@ -513,6 +699,7 @@ const M3U = ({
 
               <Button
                 type="submit"
+                aria-label="Save M3U account"
                 variant="filled"
                 disabled={form.submitting}
                 size="sm"
@@ -552,6 +739,38 @@ const M3U = ({
           }
         }}
       />
+      <Modal
+        opened={templateSavingOpen}
+        onClose={() => setTemplateSavingOpen(false)}
+        title="Save M3U account template"
+      >
+        <Stack>
+          <TextInput
+            label="Template name"
+            required
+            value={templateName}
+            onChange={(event) => setTemplateName(event.currentTarget.value)}
+          />
+          <Textarea
+            label="Description"
+            value={templateDescription}
+            onChange={(event) =>
+              setTemplateDescription(event.currentTarget.value)
+            }
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => setTemplateSavingOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button loading={templateBusy} onClick={saveTemplate}>
+              Save template
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
   );
 };

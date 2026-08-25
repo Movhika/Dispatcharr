@@ -10,8 +10,10 @@ from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
 from apps.vod.metadata import (
     category_defaults_for_relation,
+    compatible_video_features,
     ensure_source_asset,
     ensure_source_assets,
+    detect_video_features,
     normalize_language_list,
     relation_declared_metadata,
 )
@@ -316,6 +318,28 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(metadata["resolution"], "1080p")
         self.assertEqual(metadata["bitrate_kbps"], 8000)
         self.assertEqual(metadata["file_size_bytes"], 1610612736)
+
+    def test_video_features_are_detected_and_can_bound_a_profile(self):
+        self.assertEqual(
+            detect_video_features("Movie.3D.HSBS.HDR10+.mkv"),
+            ["3d_sbs", "hdr10_plus"],
+        )
+        self.german_category.metadata_defaults = {
+            "video_features": ["3d_sbs", "hdr10_plus"]
+        }
+        self.german_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "required_video_features": ["3d"],
+            "allow_unknown_metadata": False,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+        self.assertEqual(
+            compatible_video_features("hdr"),
+            ["hdr", "hdr10", "hdr10_plus", "dolby_vision", "hlg"],
+        )
 
     def test_failover_can_prefer_lower_known_bitrate(self):
         self.german_relation.custom_properties = {

@@ -1,10 +1,11 @@
 import React from 'react';
-import { SegmentedControl, Select, Stack } from '@mantine/core';
+import { MultiSelect, SegmentedControl, Select, Stack } from '@mantine/core';
 import LanguagePicker from './LanguagePicker.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
   VOD_METADATA_FIELDS,
+  VIDEO_FEATURE_OPTIONS,
 } from '../utils/vodMetadataOptions.js';
 
 const FIELD_LABELS = {
@@ -12,6 +13,7 @@ const FIELD_LABELS = {
   subtitle_languages: 'SUB languages',
   resolution: 'Resolution',
   container_extension: 'Format',
+  video_features: 'Video features',
 };
 
 const MODE_OPTIONS = [
@@ -55,6 +57,20 @@ const VODMetadataFields = ({
           value={value[field] || null}
           disabled={disabled}
           onChange={(nextValue) => updateValue(field, nextValue || '')}
+        />
+      );
+    }
+    if (field === 'video_features') {
+      return (
+        <MultiSelect
+          clearable
+          searchable
+          label={label}
+          description={descriptions[field]}
+          data={VIDEO_FEATURE_OPTIONS}
+          value={value[field] || []}
+          disabled={disabled}
+          onChange={(nextValue) => updateValue(field, nextValue)}
         />
       );
     }

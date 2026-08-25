@@ -15,6 +15,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { Copy, Play, Wrench } from 'lucide-react';
+import { videoFeatureLabel } from '../utils/vodMetadataOptions.js';
 
 const valuesFor = (provider, selectedProvider, selectedSourceMetadata) => {
   const stored = provider?.source_metadata?.values || {};
@@ -102,6 +103,10 @@ const MovieDetails = ({ values, provider }) => {
           values.video?.r_frame_rate
       ),
     },
+    ...(values.video_features || []).map((value) => ({
+      value: videoFeatureLabel(value),
+      uppercase: true,
+    })),
   ];
   const visibleDetails = details.filter(({ value }) => Boolean(value));
   if (!visibleDetails.length) return <Text c="dimmed">—</Text>;

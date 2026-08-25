@@ -469,8 +469,12 @@ const User = ({ user = null, isOpen, onClose }) => {
               <Text size="xs" c="dimmed">
                 {effectiveVODProfile
                   ? `${Number(
-                      effectiveVODProfile.selection_counts?.output_entries || 0
-                    ).toLocaleString()} output entries are currently prepared for this profile.`
+                      effectiveVODProfile.selection_counts?.movies
+                        ?.output_entries || 0
+                    ).toLocaleString()} movies · ${Number(
+                      effectiveVODProfile.selection_counts?.series
+                        ?.output_entries || 0
+                    ).toLocaleString()} series are currently prepared for this profile.`
                   : 'No active default VOD profile is available.'}
               </Text>
             </Stack>

@@ -2,10 +2,27 @@ from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 
-from apps.vod.tasks import _retain_enabled_vod_rows
+from apps.vod.tasks import _provider_vod_fingerprint, _retain_enabled_vod_rows
 
 
 class EnabledCatalogFilterTests(SimpleTestCase):
+    def test_catalog_fingerprint_is_order_independent_and_change_sensitive(self):
+        first = [
+            {"stream_id": 1, "category_id": "10", "name": "Movie A"},
+            {"stream_id": 2, "category_id": "11", "name": "Movie B"},
+        ]
+
+        self.assertEqual(
+            _provider_vod_fingerprint(first),
+            _provider_vod_fingerprint(list(reversed(first))),
+        )
+        self.assertNotEqual(
+            _provider_vod_fingerprint(first),
+            _provider_vod_fingerprint(
+                [{**first[0], "name": "Movie A remastered"}, first[1]]
+            ),
+        )
+
     def test_retains_only_enabled_categories_and_enabled_uncategorized(self):
         enabled = SimpleNamespace(id=1)
         disabled = SimpleNamespace(id=2)

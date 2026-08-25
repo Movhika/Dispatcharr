@@ -10,12 +10,18 @@ from .api_views import (
     RefreshAccountInfoAPIView,
     UserAgentViewSet,
     M3UAccountProfileViewSet,
+    M3UAccountTemplateViewSet,
 )
 
 app_name = "m3u"
 
 router = DefaultRouter()
 router.register(r"accounts", M3UAccountViewSet, basename="m3u-account")
+router.register(
+    r"account-templates",
+    M3UAccountTemplateViewSet,
+    basename="m3u-account-template",
+)
 router.register(
     r"accounts/(?P<account_id>\d+)/profiles",
     M3UAccountProfileViewSet,

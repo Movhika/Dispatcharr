@@ -78,6 +78,22 @@ vi.mock('@mantine/core', () => {
     ),
     Group: Wrapper,
     Modal,
+    MultiSelect: ({ label, value = [], onChange, disabled }) => (
+      <label>
+        {label}
+        <select
+          multiple
+          aria-label={label}
+          value={value}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange(
+              Array.from(event.target.selectedOptions, (option) => option.value)
+            )
+          }
+        />
+      </label>
+    ),
     Pagination: ({ value, onChange }) => (
       <button aria-label="Next page" onClick={() => onChange(value + 1)} />
     ),

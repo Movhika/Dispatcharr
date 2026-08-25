@@ -364,8 +364,35 @@ const M3UTable = () => {
       {
         header: 'Name',
         accessorKey: 'name',
-        size: 200,
+        size: 280,
         sortable: true,
+        cell: ({ cell, row }) => {
+          const counts = row.original.catalog_counts || {};
+          const summary = ['live', 'movies', 'series']
+            .map((key) => {
+              const values = counts[key] || {};
+              const label =
+                key === 'live'
+                  ? 'Live'
+                  : key === 'movies'
+                    ? 'Movies'
+                    : 'Series';
+              return `${label} ${values.original || 0}/${values.selected || 0}`;
+            })
+            .join(' · ');
+          return (
+            <Box>
+              <Text size="sm">{cell.getValue()}</Text>
+              {row.original.account_type === 'XC' && (
+                <Tooltip label="Original provider entries / selected imported entries">
+                  <Text size="xs" c="dimmed" style={{ cursor: 'help' }}>
+                    {summary}
+                  </Text>
+                </Tooltip>
+              )}
+            </Box>
+          );
+        },
       },
       {
         header: 'Type',

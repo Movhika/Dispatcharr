@@ -39,6 +39,15 @@ vi.mock('../../../utils/notificationUtils.js', () => ({
   showNotification: vi.fn(),
 }));
 
+vi.mock('../../../api', () => ({
+  default: {
+    getM3UAccountTemplates: vi.fn().mockResolvedValue([]),
+    applyM3UAccountTemplate: vi.fn(),
+    saveM3UAccountAsTemplate: vi.fn(),
+    createM3UAccountTemplate: vi.fn(),
+  },
+}));
+
 // ── Sub-component mocks ────────────────────────────────────────────────────────
 vi.mock('../M3UProfiles', () => ({
   default: ({ onChange }) => (
@@ -134,9 +143,19 @@ vi.mock('@mantine/form', () => {
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
   Box: ({ children }) => <div>{children}</div>,
-  Button: ({ children, onClick, type, loading, disabled, variant, color }) => (
+  Button: ({
+    children,
+    onClick,
+    type,
+    loading,
+    disabled,
+    variant,
+    color,
+    'aria-label': ariaLabel,
+  }) => (
     <button
       type={type || 'button'}
+      aria-label={ariaLabel}
       onClick={onClick}
       disabled={disabled || loading}
       data-variant={variant}
@@ -173,6 +192,8 @@ vi.mock('@mantine/core', () => ({
       </label>
     </div>
   ),
+  FileButton: ({ children, onChange }) =>
+    children({ onChange: (event) => onChange?.(event?.target?.files?.[0]) }),
   Flex: ({ children }) => <div>{children}</div>,
   Group: ({ children }) => <div>{children}</div>,
   LoadingOverlay: ({ visible }) =>
@@ -276,6 +297,13 @@ vi.mock('@mantine/core', () => ({
         onChange={(e) => onChange?.(e)}
       />
       {label}
+    </label>
+  ),
+  Text: ({ children }) => <span>{children}</span>,
+  Textarea: ({ label, value, onChange }) => (
+    <label>
+      {label}
+      <textarea aria-label={label} value={value || ''} onChange={onChange} />
     </label>
   ),
   TextInput: ({
@@ -447,7 +475,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       expect(
-        screen.getByRole('button', { name: /add|create|save/i })
+        screen.getByRole('button', { name: 'Save M3U account' })
       ).toBeInTheDocument();
     });
 
@@ -455,7 +483,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       expect(
-        screen.getByRole('button', { name: /update|save/i })
+        screen.getByRole('button', { name: 'Save M3U account' })
       ).toBeInTheDocument();
     });
 
@@ -535,7 +563,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
       });
@@ -545,7 +573,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(M3uUtils.prepareSubmitValues).toHaveBeenCalled();
       });
@@ -563,7 +591,7 @@ describe('M3U', () => {
         />
       );
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(onClose).toHaveBeenCalled();
       });
@@ -576,7 +604,7 @@ describe('M3U', () => {
     it('calls updatePlaylist on submit', async () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      fireEvent.click(screen.getByRole('button', { name: /update|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(M3uUtils.updatePlaylist).toHaveBeenCalled();
       });
@@ -585,7 +613,7 @@ describe('M3U', () => {
     it('does not call addPlaylist when updating', async () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      fireEvent.click(screen.getByRole('button', { name: /update|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(M3uUtils.updatePlaylist).toHaveBeenCalled();
       });
@@ -598,7 +626,7 @@ describe('M3U', () => {
       render(
         <M3U {...defaultProps({ m3uAccount: makeM3uAccount(), onClose })} />
       );
-      fireEvent.click(screen.getByRole('button', { name: /update|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(onClose).toHaveBeenCalled();
       });
@@ -614,7 +642,7 @@ describe('M3U', () => {
       // Clear name if pre-filled, then submit
       const nameInput = screen.getByTestId('text-input-name');
       fireEvent.change(nameInput, { target: { value: '' } });
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await new Promise((r) => setTimeout(r, 50));
       expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
     });
@@ -705,7 +733,7 @@ describe('M3U', () => {
         });
       }
 
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save M3U account' }));
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
       });

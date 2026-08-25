@@ -53,7 +53,12 @@ from .image_proxy import (
 )
 from .tasks import refresh_series_episodes, refresh_movie_advanced_data
 from .utils import get_series_display_name
-from .metadata import effective_relation_metadata, normalize_language_code
+from .metadata import (
+    compatible_video_features,
+    effective_relation_metadata,
+    normalize_language_code,
+    normalize_video_features,
+)
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -184,6 +189,29 @@ def _vod_relation_sql(filters, relation_type):
                 )
                 episode_conditions.append(sql)
                 episode_params.extend(sql_params)
+
+    feature_values = normalize_video_features([filters.get("video_feature")])
+    if feature_values:
+        compatible_features = compatible_video_features(feature_values[0])
+        feature_clauses = []
+        feature_params = []
+        for feature in compatible_features:
+            sql, sql_params = _effective_json_array_match("video_features", feature)
+            feature_clauses.append(sql)
+            feature_params.extend(sql_params)
+        technical_conditions.append(f"({' OR '.join(feature_clauses)})")
+        technical_params.extend(feature_params)
+        if relation_type == "series":
+            feature_clauses = []
+            feature_params = []
+            for feature in compatible_features:
+                sql, sql_params = _effective_json_array_match(
+                    "video_features", feature, asset_alias="episode_asset"
+                )
+                feature_clauses.append(sql)
+                feature_params.extend(sql_params)
+            episode_conditions.append(f"({' OR '.join(feature_clauses)})")
+            episode_params.extend(feature_params)
 
     resolution = str(filters.get("resolution") or "").strip().lower()
     if resolution:
@@ -337,6 +365,7 @@ def _filtered_vod_relation_query(filters, relation_type):
             "subtitle_language",
             "resolution",
             "container_extension",
+            "video_feature",
         )
     )
     if not category and not technical_filters:
@@ -841,6 +870,11 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "container_extension"
                 ]
             )
+        video_features = normalize_video_features(
+            [request.query_params.get("video_feature", "")]
+        )
+        video_feature = video_features[0] if video_features else ""
+        compatible_features = compatible_video_features(video_feature)
         resolution = request.query_params.get("resolution", "").lower().rstrip("p")
         if resolution:
             try:
@@ -858,13 +892,20 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             request.query_params.get("subtitle_language", "")
         )
         python_language_filter = connection.vendor != "postgresql" and (
-            audio or subtitles
+            audio or subtitles or video_feature
         )
         if not python_language_filter:
             if audio:
                 queryset = queryset.filter(audio_languages__contains=[audio])
             if subtitles:
                 queryset = queryset.filter(subtitle_languages__contains=[subtitles])
+            if video_feature:
+                feature_query = Q()
+                for feature in compatible_features:
+                    feature_query |= Q(
+                        effective_metadata__video_features__contains=[feature]
+                    )
+                queryset = queryset.filter(feature_query)
 
         queryset = queryset.order_by(f"{canonical}__name", "id")
         try:
@@ -886,6 +927,14 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 and (
                     not subtitles
                     or subtitles in (row.subtitle_languages or [])
+                )
+                and (
+                    not video_feature
+                    or not set(compatible_features).isdisjoint(
+                        normalize_video_features(
+                            (row.effective_metadata or {}).get("video_features")
+                        )
+                    )
                 )
             ]
             matching_count = len(matching)
@@ -1064,6 +1113,7 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             "subtitle_languages",
             "resolution",
             "container_extension",
+            "video_features",
         }
         normalized_updates = {}
         values_to_validate = {}
@@ -1255,6 +1305,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             "container_extension": self.request.query_params.get(
                 "container_extension", ""
             ),
+            "video_feature": self.request.query_params.get("video_feature", ""),
         }
         movies, _ = _filtered_vod_content(filters)
         qs = movies.select_related('logo').prefetch_related(
@@ -1521,6 +1572,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             "container_extension": self.request.query_params.get(
                 "container_extension", ""
             ),
+            "video_feature": self.request.query_params.get("video_feature", ""),
         }
         _, series = _filtered_vod_content(filters)
         return series.select_related('logo').prefetch_related(
@@ -1930,6 +1982,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 "container_extension": request.query_params.get(
                     'container_extension', ''
                 ),
+                "video_feature": request.query_params.get('video_feature', ''),
             }
             (
                 movie_joins,

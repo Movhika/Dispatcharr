@@ -296,7 +296,10 @@ describe('User', () => {
             id: 7,
             name: 'German',
             is_default: true,
-            selection_counts: { output_entries: 47544 },
+            selection_counts: {
+              movies: { output_entries: 30000 },
+              series: { output_entries: 17544 },
+            },
           },
         ],
       });
@@ -304,7 +307,9 @@ describe('User', () => {
 
       expect(
         screen.getByText(
-          `${Number(47544).toLocaleString()} output entries are currently prepared for this profile.`
+          `${Number(30000).toLocaleString()} movies · ${Number(
+            17544
+          ).toLocaleString()} series are currently prepared for this profile.`
         )
       ).toBeInTheDocument();
     });

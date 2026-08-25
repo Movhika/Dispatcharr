@@ -1,13 +1,5 @@
 import React, { useMemo } from 'react';
-import {
-  ActionIcon,
-  Group,
-  Paper,
-  Select,
-  SimpleGrid,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Group, Paper, Select, Stack, Text } from '@mantine/core';
 import {
   closestCenter,
   DndContext,
@@ -21,9 +13,10 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
-  rectSortingStrategy,
+  verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { GripVertical } from 'lucide-react';
 import { normalizeVODFailoverRanking } from '../utils/vodFailoverRanking.js';
 
@@ -169,10 +162,11 @@ const VODFailoverRanking = ({ value, onChange }) => {
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        modifiers={[restrictToVerticalAxis]}
         onDragEnd={moveCriterion}
       >
-        <SortableContext items={ranking} strategy={rectSortingStrategy}>
-          <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="sm">
+        <SortableContext items={ranking} strategy={verticalListSortingStrategy}>
+          <Stack gap="sm">
             {ranking.map((criterion) => (
               <SortableCriterion
                 key={criterion}
@@ -180,7 +174,7 @@ const VODFailoverRanking = ({ value, onChange }) => {
                 onDirectionChange={(next) => changeDirection(criterion, next)}
               />
             ))}
-          </SimpleGrid>
+          </Stack>
         </SortableContext>
       </DndContext>
     </Stack>

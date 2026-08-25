@@ -9,6 +9,20 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Group: ({ children }) => <div>{children}</div>,
+  Checkbox: ({ label, checked, onChange }) => (
+    <label>
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      {label}
+    </label>
+  ),
+  Modal: ({ opened, children, title }) =>
+    opened ? (
+      <div>
+        <h2>{title}</h2>
+        {children}
+      </div>
+    ) : null,
+  ScrollArea: ({ children }) => <div>{children}</div>,
   Select: ({ data = [], value, onChange, 'aria-label': ariaLabel }) => (
     <select
       aria-label={ariaLabel}
@@ -25,20 +39,21 @@ vi.mock('@mantine/core', () => ({
   ),
   Stack: ({ children }) => <div>{children}</div>,
   Text: ({ children }) => <span>{children}</span>,
+  TextInput: ({ value, onChange, 'aria-label': ariaLabel }) => (
+    <input aria-label={ariaLabel} value={value} onChange={onChange} />
+  ),
 }));
 
 import LanguagePicker from '../LanguagePicker.jsx';
 
 describe('LanguagePicker', () => {
-  it('adds only a selected fixed language through the plus button', () => {
+  it('opens a fixed language chooser and applies the selection', () => {
     const onChange = vi.fn();
     render(<LanguagePicker label="DUB" value={['ger']} onChange={onChange} />);
 
-    expect(screen.getByRole('combobox')).not.toHaveTextContent('GER — German');
-    fireEvent.change(screen.getByRole('combobox'), {
-      target: { value: 'eng' },
-    });
     fireEvent.click(screen.getByLabelText('Add DUB language'));
+    fireEvent.click(screen.getByLabelText('ENG — English'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(onChange).toHaveBeenCalledWith(['ger', 'eng']);
   });

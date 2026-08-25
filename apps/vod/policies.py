@@ -3,7 +3,12 @@
 from django.db.models import Q
 
 from .catalog_cache import catalog_generation, safe_cache_get, safe_cache_set
-from .metadata import normalize_bitrate_kbps, normalize_language_list
+from .metadata import (
+    compatible_video_features,
+    normalize_bitrate_kbps,
+    normalize_language_list,
+    normalize_video_features,
+)
 from .models import M3UVODCategoryRelation, VODAccessPolicy
 
 
@@ -226,6 +231,21 @@ def relation_allowed(
         return False
     if max_resolution and resolution and resolution > max_resolution:
         return False
+    required_features = set(
+        normalize_video_features(constraints.get("required_video_features"))
+    )
+    observed_features = set(normalize_video_features(metadata.get("video_features")))
+    if required_features:
+        if not observed_features and not allow_unknown:
+            return False
+        compatible_required = {
+            compatible
+            for required in required_features
+            for compatible in compatible_video_features(required)
+        }
+        feature_match = not compatible_required.isdisjoint(observed_features)
+        if observed_features and not feature_match:
+            return False
     return True
 
 
@@ -250,6 +270,7 @@ def _metadata_completeness(metadata):
             bool(metadata.get("container_extension")),
             bool(_bitrate_kbps(metadata)),
             bool(metadata.get("file_size_bytes")),
+            bool(metadata.get("video_features")),
         )
     )
 

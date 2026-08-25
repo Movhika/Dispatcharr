@@ -25,6 +25,9 @@ const currentMetadata = (provider) => {
       ? `SUB: ${values.subtitle_languages.join(', ')}`
       : null,
     values.container_extension ? `Format: ${values.container_extension}` : null,
+    (values.video_features || []).length
+      ? `Features: ${values.video_features.join(', ')}`
+      : null,
   ]
     .filter(Boolean)
     .join(' • ');

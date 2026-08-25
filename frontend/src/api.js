@@ -1376,6 +1376,40 @@ export default class API {
     }
   }
 
+  static async getM3UAccountTemplates() {
+    return await request(`${host}/api/m3u/account-templates/`);
+  }
+
+  static async createM3UAccountTemplate(values) {
+    return await request(`${host}/api/m3u/account-templates/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async deleteM3UAccountTemplate(id) {
+    return await request(`${host}/api/m3u/account-templates/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async saveM3UAccountAsTemplate(accountId, values) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/save-template/`,
+      {
+        method: 'POST',
+        body: values,
+      }
+    );
+  }
+
+  static async applyM3UAccountTemplate(templateId, accountId) {
+    return await request(
+      `${host}/api/m3u/account-templates/${templateId}/apply/`,
+      { method: 'POST', body: { account_id: accountId } }
+    );
+  }
+
   static async updateM3UGroupSettings(
     playlistId,
     groupSettings = [],
@@ -2143,7 +2177,7 @@ export default class API {
     const { id, ...payload } = values;
 
     try {
-      await request(
+      return await request(
         `${host}/api/m3u/accounts/${accountId}/filters/${filterId}/`,
         {
           method: 'PUT',

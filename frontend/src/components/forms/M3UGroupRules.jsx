@@ -6,6 +6,7 @@ import {
   Checkbox,
   Group,
   Modal,
+  MultiSelect,
   ScrollArea,
   Select,
   Stack,
@@ -40,7 +41,10 @@ import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 import LanguagePicker from '../LanguagePicker.jsx';
-import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
+import {
+  RESOLUTION_VALUES,
+  VIDEO_FEATURE_OPTIONS,
+} from '../../utils/vodMetadataOptions.js';
 
 const SortableRuleRow = ({ ruleId, children }) => {
   const {
@@ -303,6 +307,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
                 {scope !== 'live' && <TableTh w={175}>DUB</TableTh>}
                 {scope !== 'live' && <TableTh w={175}>SUB</TableTh>}
                 {scope !== 'live' && <TableTh w={120}>Resolution</TableTh>}
+                {scope !== 'live' && <TableTh w={180}>Features</TableTh>}
                 <TableTh w={75}>Case</TableTh>
                 <TableTh w={75}>Active</TableTh>
                 <TableTh w={80}>Actions</TableTh>
@@ -430,6 +435,20 @@ const M3UGroupRules = ({ accountId, scope }) => {
                             value={rule.metadata_defaults?.resolution || null}
                             onChange={(value) =>
                               updateMetadata(rule, 'resolution', value || '')
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      {scope !== 'live' && (
+                        <TableTd>
+                          <MultiSelect
+                            size="xs"
+                            clearable
+                            searchable
+                            data={VIDEO_FEATURE_OPTIONS}
+                            value={rule.metadata_defaults?.video_features || []}
+                            onChange={(value) =>
+                              updateMetadata(rule, 'video_features', value)
                             }
                           />
                         </TableTd>

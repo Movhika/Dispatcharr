@@ -24,6 +24,7 @@ const getFetchContentParams = (state) => {
     'subtitle_language',
     'resolution',
     'container_extension',
+    'video_feature',
   ]) {
     if (state.filters[key]) params.append(key, state.filters[key]);
   }
@@ -154,6 +155,7 @@ const useVODStore = create((set, get) => ({
     subtitle_language: '',
     resolution: '',
     container_extension: '',
+    video_feature: '',
   },
   currentPage: 1,
   totalCount: 0,

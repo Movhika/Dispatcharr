@@ -86,6 +86,25 @@ vi.mock('@mantine/core', () => {
           {children}
         </div>
       ) : null,
+    MultiSelect: ({ value = [], onChange, data = [], disabled }) => (
+      <select
+        aria-label="Select video features"
+        multiple
+        value={value}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(
+            Array.from(event.target.selectedOptions, (option) => option.value)
+          )
+        }
+      >
+        {data.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    ),
     ScrollArea: Wrapper,
     Select: ({ value, onChange, data, disabled }) => (
       <select

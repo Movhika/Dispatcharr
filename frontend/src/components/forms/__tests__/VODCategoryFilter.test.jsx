@@ -69,6 +69,28 @@ vi.mock('@mantine/core', () => ({
         {children}
       </div>
     ) : null,
+  MultiSelect: ({ label, value = [], onChange, data = [], disabled }) => (
+    <label>
+      {label}
+      <select
+        aria-label={label}
+        multiple
+        value={value}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange?.(
+            Array.from(event.target.selectedOptions, (option) => option.value)
+          )
+        }
+      >
+        {data.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  ),
   SegmentedControl: ({ value, onChange, data }) => (
     <div>
       {data.map((item) => (
@@ -291,6 +313,7 @@ describe('VODCategoryFilter', () => {
           audio_languages: ['ger', 'eng'],
           subtitle_languages: ['ger'],
           resolution: '1080p',
+          video_features: [],
         }
       )
     );

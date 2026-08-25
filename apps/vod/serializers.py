@@ -13,6 +13,7 @@ from .metadata import (
     relation_declared_metadata,
     summarize_relation_metadata,
     validate_source_metadata,
+    normalize_video_features,
 )
 from .policies import enabled_category_map
 
@@ -104,6 +105,7 @@ class M3UVODCategoryRelationSerializer(serializers.ModelSerializer):
             "resolution",
             "height",
             "quality",
+            "video_features",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -503,6 +505,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be an object")
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
+            "required_video_features",
             "min_resolution", "max_resolution",
             "allow_unknown_metadata", "language_match_mode",
         }
@@ -526,6 +529,12 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 )
             except ValueError as exc:
                 raise serializers.ValidationError({field: str(exc)})
+        features = normalized.get("required_video_features", [])
+        if not isinstance(features, list):
+            raise serializers.ValidationError(
+                {"required_video_features": "Must be a list"}
+            )
+        normalized["required_video_features"] = normalize_video_features(features)
         for field in ("min_resolution", "max_resolution"):
             try:
                 normalized[field] = max(0, int(normalized.get(field) or 0))

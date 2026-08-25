@@ -369,8 +369,8 @@ describe('LiveGroupFilter', () => {
   describe('rendering', () => {
     it('shows Auto sync help beside the table heading', () => {
       renderWith();
-      expect(screen.getByText('Auto sync')).toBeInTheDocument();
-      expect(screen.getByLabelText('About Auto sync')).toBeInTheDocument();
+      expect(screen.getByText('Auto Sync')).toBeInTheDocument();
+      expect(screen.getByTestId('icon-info')).toBeInTheDocument();
     });
 
     it('shows import rules and stream filters instead of an auto-enable switch', () => {

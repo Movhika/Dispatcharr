@@ -42,11 +42,13 @@ const VODCategoryFilter = ({
     audio_languages: 'keep',
     subtitle_languages: 'keep',
     resolution: 'keep',
+    video_features: 'keep',
   });
   const [metadata, setMetadata] = useState({
     audio_languages: [],
     subtitle_languages: [],
     resolution: '',
+    video_features: [],
   });
 
   useEffect(() => {
@@ -129,7 +131,9 @@ const VODCategoryFilter = ({
         values[field] =
           field === 'resolution'
             ? metadata[field]
-            : normalizeLanguageCodes(metadata[field]);
+            : field === 'video_features'
+              ? metadata[field]
+              : normalizeLanguageCodes(metadata[field]);
       }
     }
     const targets = categoryStates.filter((category) =>
@@ -170,11 +174,13 @@ const VODCategoryFilter = ({
       audio_languages: [],
       subtitle_languages: [],
       resolution: '',
+      video_features: [],
     });
     setMetadataModes({
       audio_languages: 'keep',
       subtitle_languages: 'keep',
       resolution: 'keep',
+      video_features: 'keep',
     });
     setEditorOpen(true);
   };
@@ -282,6 +288,7 @@ const VODCategoryFilter = ({
                   </Tooltip>
                 </Group>
               </TableTh>
+              <TableTh w={180}>Features</TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -333,6 +340,11 @@ const VODCategoryFilter = ({
                 <TableTd>
                   {category.metadata_defaults?.resolution || '—'}
                 </TableTd>
+                <TableTd>
+                  {(category.metadata_defaults?.video_features || []).join(
+                    ', '
+                  ) || '—'}
+                </TableTd>
               </TableTr>
             ))}
           </TableTbody>
@@ -351,7 +363,12 @@ const VODCategoryFilter = ({
             authoritative.
           </Text>
           <VODMetadataFields
-            fields={['audio_languages', 'subtitle_languages', 'resolution']}
+            fields={[
+              'audio_languages',
+              'subtitle_languages',
+              'resolution',
+              'video_features',
+            ]}
             labels={{
               audio_languages: 'DUB',
               subtitle_languages: 'SUB',

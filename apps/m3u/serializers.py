@@ -7,6 +7,7 @@ from .models import (
     M3UGroupRule,
     ServerGroup,
     M3UAccountProfile,
+    M3UAccountTemplate,
 )
 from core.models import UserAgent
 from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
@@ -83,6 +84,56 @@ class M3UGroupRuleSerializer(serializers.ModelSerializer):
             return validate_source_metadata(value)
         except ValueError as exc:
             raise serializers.ValidationError(str(exc))
+
+
+class M3UAccountTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = M3UAccountTemplate
+        fields = [
+            "id",
+            "name",
+            "description",
+            "account_type",
+            "account_settings",
+            "filters",
+            "group_rules",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_account_settings(self, value):
+        allowed = {
+            "max_streams",
+            "refresh_interval",
+            "stale_stream_days",
+            "priority",
+            "enable_vod",
+            "use_group_rules_live",
+            "use_group_rules_movie",
+            "use_group_rules_series",
+        }
+        if not isinstance(value, dict) or set(value) - allowed:
+            raise serializers.ValidationError(
+                "Contains unsupported or non-portable account settings"
+            )
+        return value
+
+    def validate_filters(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list")
+        for item in value:
+            serializer = M3UFilterSerializer(data=item)
+            serializer.is_valid(raise_exception=True)
+        return value
+
+    def validate_group_rules(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list")
+        for item in value:
+            serializer = M3UGroupRuleSerializer(data=item)
+            serializer.is_valid(raise_exception=True)
+        return value
 
 
 class M3UAccountProfileSerializer(serializers.ModelSerializer):
@@ -178,6 +229,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     filters = serializers.SerializerMethodField()
     earliest_expiration = serializers.SerializerMethodField()
     all_expirations = serializers.SerializerMethodField()
+    catalog_counts = serializers.SerializerMethodField()
     exp_date = serializers.DateTimeField(
         required=False, allow_null=True, write_only=True,
         help_text="Expiration date for the default profile (write-through)",
@@ -208,6 +260,12 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     use_group_rules_movie = serializers.BooleanField(required=False, write_only=True)
     use_group_rules_series = serializers.BooleanField(required=False, write_only=True)
     cron_expression = serializers.CharField(required=False, allow_blank=True, default="")
+    account_template = serializers.PrimaryKeyRelatedField(
+        queryset=M3UAccountTemplate.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
     class Meta:
         model = M3UAccount
@@ -246,6 +304,8 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "earliest_expiration",
             "all_expirations",
             "exp_date",
+            "account_template",
+            "catalog_counts",
         ]
         extra_kwargs = {
             "password": {
@@ -316,6 +376,23 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             data["exp_date"] = None
 
         return data
+
+    def get_catalog_counts(self, obj):
+        custom = obj.custom_properties or {}
+        live = custom.get("live_catalog_counts") or {}
+        vod = custom.get("vod_catalog_counts") or {}
+
+        def counts(values):
+            return {
+                "original": int(values.get("provider_total") or 0),
+                "selected": int(values.get("selected_total") or 0),
+            }
+
+        return {
+            "live": counts(live),
+            "movies": counts(vod.get("movies") or {}),
+            "series": counts(vod.get("series") or {}),
+        }
 
     def update(self, instance, validated_data):
         # Pop exp_date — it's written to the default profile, not the account
@@ -419,6 +496,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         return instance
 
     def create(self, validated_data):
+        account_template = validated_data.pop("account_template", None)
         # Pop exp_date — it's written to the default profile after creation
         exp_date = validated_data.pop("exp_date", None)
 
@@ -452,7 +530,12 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # Build instance manually so we can attach transient attr before save triggers signal
         instance = M3UAccount(**validated_data)
         instance._cron_expression = cron_expr
-        instance.save()
+        with transaction.atomic():
+            instance.save()
+            if account_template:
+                from .account_templates import apply_account_template
+
+                apply_account_template(instance, account_template)
 
         # Write exp_date through to the default profile created by post_save signal
         if exp_date is not None:

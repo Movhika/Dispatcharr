@@ -135,6 +135,32 @@ vi.mock('@mantine/core', () => {
     Loader: () => <div data-testid="loader" />,
     LoadingOverlay: () => null,
     Modal,
+    MultiSelect: ({ label, value = [], onChange, data = [], disabled }) => (
+      <label>
+        {label}
+        <select
+          aria-label={label}
+          multiple
+          value={value}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange?.(
+              Array.from(event.target.selectedOptions, (option) => option.value)
+            )
+          }
+        >
+          {data.map((item) => {
+            const option =
+              typeof item === 'string' ? { value: item, label: item } : item;
+            return (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+    ),
     Pagination: ({ value, onChange, total }) => (
       <button data-testid="pagination" onClick={() => onChange(value + 1)}>
         {total}
@@ -208,6 +234,7 @@ describe('VODsPage list and bulk editing', () => {
       subtitle_language: '',
       resolution: '',
       container_extension: '',
+      video_feature: '',
     },
     currentPage: 1,
     totalCount: 30,

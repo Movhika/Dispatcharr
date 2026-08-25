@@ -10,12 +10,74 @@ from .models import (
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
 )
 from datetime import datetime
+import hashlib
 import logging
 import json
 import re
 import time
 
 logger = logging.getLogger(__name__)
+
+
+VOD_PROFILE_FINGERPRINT_FIELDS = (
+    "stream_id",
+    "series_id",
+    "category_id",
+    "name",
+    "title",
+    "tmdb",
+    "tmdb_id",
+    "imdb",
+    "imdb_id",
+    "year",
+    "releaseDate",
+    "release_date",
+    "container_extension",
+    "resolution",
+    "height",
+    "quality",
+    "audio_languages",
+    "subtitle_languages",
+    "language",
+    "bitrate",
+    "file_size",
+    "duration",
+    "duration_secs",
+    "plot",
+    "description",
+    "rating",
+    "genre",
+    "stream_icon",
+)
+
+
+def _provider_vod_fingerprint(rows):
+    """Return an order-independent digest of output-relevant provider rows.
+
+    XC providers do not guarantee row ordering. XORing fixed SHA-256 row
+    digests lets scheduled refreshes cheaply recognize an unchanged catalog
+    without retaining another copy of a potentially very large VOD response.
+    """
+    digest = bytearray(32)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = {
+            key: row.get(key)
+            for key in VOD_PROFILE_FINGERPRINT_FIELDS
+            if row.get(key) not in (None, "", [], {})
+        }
+        row_digest = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).digest()
+        for index, value in enumerate(row_digest):
+            digest[index] ^= value
+    return f"{len(rows)}:{bytes(digest).hex()}"
 
 
 @shared_task(bind=True, max_retries=3)
@@ -317,7 +379,7 @@ def refresh_vod_content(account_id):
             }
 
             # Refresh movies with batch processing (pass scan start time)
-            refresh_movies(
+            movie_catalog = refresh_movies(
                 client,
                 account,
                 movie_categories,
@@ -327,7 +389,7 @@ def refresh_vod_content(account_id):
             )
 
             # Refresh series with batch processing (pass scan start time)
-            refresh_series(
+            series_catalog = refresh_series(
                 client,
                 account,
                 series_categories,
@@ -347,19 +409,61 @@ def refresh_vod_content(account_id):
         cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
         logger.info(f"VOD cleanup completed: {cleanup_result}")
 
-        # Most import writes use bulk_create/bulk_update and intentionally skip
-        # model signals. Invalidate the versioned XC cache once per completed
-        # scan instead of once per relation.
-        from apps.vod.catalog_cache import bump_catalog_generation
+        # Provider rows are already in memory during import. Use their compact,
+        # order-independent signatures to avoid rebuilding every user profile
+        # after a scheduled scan that did not change selectable VOD content.
+        fingerprints_available = bool(movie_catalog and series_catalog)
+        current_fingerprint = (
+            hashlib.sha256(
+                (
+                    f"movie:{movie_catalog['fingerprint']}|"
+                    f"series:{series_catalog['fingerprint']}"
+                ).encode("utf-8")
+            ).hexdigest()
+            if fingerprints_available
+            else ""
+        )
+        latest_properties = (
+            M3UAccount.objects.filter(pk=account.pk)
+            .values_list("custom_properties", flat=True)
+            .first()
+            or {}
+        )
+        previous_fingerprint = latest_properties.get(
+            "vod_profile_catalog_fingerprint", ""
+        )
+        catalog_changed = (
+            not fingerprints_available
+            or not previous_fingerprint
+            or previous_fingerprint != current_fingerprint
+        )
 
-        bump_catalog_generation()
+        if current_fingerprint:
+            updated_properties = {
+                **latest_properties,
+                "vod_profile_catalog_fingerprint": current_fingerprint,
+                "vod_catalog_counts": {
+                    "movies": movie_catalog,
+                    "series": series_catalog,
+                },
+            }
+            M3UAccount.objects.filter(pk=account.pk).update(
+                custom_properties=updated_properties
+            )
 
-        # The import itself remains fast and commits first. Shared user output
-        # profiles are then rebuilt once in the background and atomically
-        # replace their previous generation when ready.
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        if catalog_changed:
+            # Most import writes use bulk_create/bulk_update and intentionally
+            # skip model signals. Invalidate once per changed completed scan.
+            from apps.vod.catalog_cache import bump_catalog_generation
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
 
-        enqueue_all_profile_selection_rebuilds()
+            bump_catalog_generation()
+            enqueue_all_profile_selection_rebuilds()
+        else:
+            logger.info(
+                "VOD output catalog for account %s is unchanged; profile rebuild skipped",
+                account.name,
+            )
 
         end_time = timezone.now()
         duration = (end_time - start_time).total_seconds()
@@ -572,6 +676,7 @@ def refresh_movies(
             provider_items_total=provider_total_movies,
         )
 
+    fingerprint = _provider_vod_fingerprint(all_movies_data)
     del all_movies_data
     logger.info(
         "Completed processing %d eligible movies in %d chunks (%d provider rows)",
@@ -579,6 +684,11 @@ def refresh_movies(
         total_chunks,
         provider_total_movies,
     )
+    return {
+        "provider_total": provider_total_movies,
+        "selected_total": total_movies,
+        "fingerprint": fingerprint,
+    }
 
 
 def refresh_series(
@@ -686,6 +796,7 @@ def refresh_series(
             provider_items_total=provider_total_series,
         )
 
+    fingerprint = _provider_vod_fingerprint(all_series_data)
     del all_series_data
     logger.info(
         "Completed processing %d eligible series in %d chunks (%d provider rows)",
@@ -693,6 +804,11 @@ def refresh_series(
         total_chunks,
         provider_total_series,
     )
+    return {
+        "provider_total": provider_total_series,
+        "selected_total": total_series,
+        "fingerprint": fingerprint,
+    }
 
 
 def _discovery_item_names(client, account, scope, categories_data):

@@ -642,18 +642,23 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
             </TableTh>
             <TableTh>Group</TableTh>
             <TableTh w={100}>Enabled</TableTh>
-            <TableTh w={105}>
-              <Group gap={5} wrap="nowrap">
-                Auto sync
-                <Tooltip
-                  label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
-                  multiline
-                  w={300}
-                  withArrow
+            <TableTh w={125}>
+              <Tooltip
+                label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
+                multiline
+                w={300}
+                withArrow
+              >
+                <Group
+                  gap={5}
+                  wrap="nowrap"
+                  aria-label="About Auto Sync"
+                  style={{ width: 'fit-content', cursor: 'help' }}
                 >
-                  <Info size={14} aria-label="About Auto sync" />
-                </Tooltip>
-              </Group>
+                  <Text inherit>Auto Sync</Text>
+                  <Info size={14} aria-hidden="true" />
+                </Group>
+              </Tooltip>
             </TableTh>
             <TableTh w={120}>Numbering</TableTh>
             <TableTh w={150}>Channel range</TableTh>

@@ -1,5 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Group, Select, Stack, Text } from '@mantine/core';
+import {
+  Button,
+  Checkbox,
+  Group,
+  Modal,
+  ScrollArea,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from '@mantine/core';
 import {
   LANGUAGE_OPTIONS,
   normalizeLanguageCodes,
@@ -28,17 +38,33 @@ const LanguagePicker = ({
   size,
 }) => {
   const normalized = normalizeLanguageCodes(value);
-  const [candidate, setCandidate] = useState('');
+  const [opened, setOpened] = useState(false);
+  const [query, setQuery] = useState('');
+  const [pending, setPending] = useState([]);
   const options = useMemo(
     () =>
-      LANGUAGE_OPTIONS.filter((option) => !normalized.includes(option.value)),
-    [normalized]
+      LANGUAGE_OPTIONS.filter((option) =>
+        option.label.toLowerCase().includes(query.trim().toLowerCase())
+      ),
+    [query]
   );
 
-  const add = () => {
-    if (!candidate || normalized.includes(candidate)) return;
-    onChange?.([...normalized, candidate]);
-    setCandidate('');
+  const openPicker = () => {
+    setPending(normalized);
+    setQuery('');
+    setOpened(true);
+  };
+
+  const toggle = (code) =>
+    setPending((current) =>
+      current.includes(code)
+        ? current.filter((item) => item !== code)
+        : [...current, code]
+    );
+
+  const apply = () => {
+    onChange?.(normalizeLanguageCodes(pending));
+    setOpened(false);
   };
 
   const remove = (code) =>
@@ -51,45 +77,74 @@ const LanguagePicker = ({
           {label}
         </Text>
       )}
-      <Group gap={5} wrap="nowrap">
-        <Select
-          aria-label={label ? `${label} language` : 'Language'}
-          placeholder="Select language"
-          searchable
-          disabled={disabled}
-          size={size}
-          data={options}
-          value={candidate || null}
-          onChange={(next) => setCandidate(next || '')}
-          style={{ flex: 1 }}
-        />
+      <Group gap={5} justify="space-between" align="flex-start">
+        <Group gap={5} style={{ flex: 1 }}>
+          {normalized.length ? (
+            normalized.map((code) => (
+              <Button
+                key={code}
+                aria-label={`Remove ${code}`}
+                variant="light"
+                color="gray"
+                size="compact-xs"
+                disabled={disabled}
+                onClick={() => remove(code)}
+              >
+                {labelForCode(code)} ×
+              </Button>
+            ))
+          ) : (
+            <Text size="sm" c="dimmed">
+              No languages selected
+            </Text>
+          )}
+        </Group>
         <Button
           aria-label={label ? `Add ${label} language` : 'Add language'}
-          disabled={disabled || !candidate}
+          disabled={disabled}
           size={size || 'sm'}
           px="sm"
-          onClick={add}
+          variant="default"
+          onClick={openPicker}
         >
           +
         </Button>
       </Group>
-      {normalized.length > 0 && (
-        <Group gap={5}>
-          {normalized.map((code) => (
-            <Button
-              key={code}
-              aria-label={`Remove ${code}`}
-              variant="light"
-              color="gray"
-              size="compact-xs"
-              disabled={disabled}
-              onClick={() => remove(code)}
-            >
-              {labelForCode(code)} ×
+
+      <Modal
+        opened={opened}
+        onClose={() => setOpened(false)}
+        title={label || 'Select languages'}
+        size="md"
+      >
+        <Stack>
+          <TextInput
+            aria-label="Search languages"
+            placeholder="Search by code or language name"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
+          <ScrollArea h={360} type="auto">
+            <Stack gap={2}>
+              {options.map((option) => (
+                <Checkbox
+                  key={option.value}
+                  label={option.label}
+                  checked={pending.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                  py={5}
+                />
+              ))}
+            </Stack>
+          </ScrollArea>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setOpened(false)}>
+              Cancel
             </Button>
-          ))}
-        </Group>
-      )}
+            <Button onClick={apply}>Apply</Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 };

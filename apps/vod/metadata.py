@@ -86,6 +86,33 @@ ISO_639_2B_CODES = frozenset(
 )
 
 
+VIDEO_FEATURE_ALIASES = {
+    "3d": "3d",
+    "sbs": "3d_sbs",
+    "hsbs": "3d_sbs",
+    "side-by-side": "3d_sbs",
+    "side by side": "3d_sbs",
+    "3d_sbs": "3d_sbs",
+    "tab": "3d_tab",
+    "hou": "3d_tab",
+    "over-under": "3d_tab",
+    "top-and-bottom": "3d_tab",
+    "top and bottom": "3d_tab",
+    "3d_tab": "3d_tab",
+    "hdr": "hdr",
+    "hdr10": "hdr10",
+    "hdr10+": "hdr10_plus",
+    "hdr10_plus": "hdr10_plus",
+    "dv": "dolby_vision",
+    "dovi": "dolby_vision",
+    "dolby vision": "dolby_vision",
+    "dolby_vision": "dolby_vision",
+    "hlg": "hlg",
+}
+
+VIDEO_FEATURES = frozenset(VIDEO_FEATURE_ALIASES.values())
+
+
 def normalize_language_code(value):
     """Return Dispatcharr's English ISO-639-2/B language code."""
     code = str(value or "").strip().lower()
@@ -115,6 +142,61 @@ def invalid_language_codes(value):
     ]
 
 
+def normalize_video_features(value):
+    """Return stable technical feature identifiers for policy matching."""
+    if isinstance(value, str):
+        value = [part.strip() for part in value.replace(";", ",").split(",")]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return list(
+        dict.fromkeys(
+            normalized
+            for normalized in (
+                VIDEO_FEATURE_ALIASES.get(str(item or "").strip().lower())
+                for item in value
+            )
+            if normalized
+        )
+    )
+
+
+def compatible_video_features(value):
+    """Return concrete stored values matched by one UI/profile feature."""
+    normalized = normalize_video_features([value])
+    if not normalized:
+        return []
+    feature = normalized[0]
+    if feature == "3d":
+        return ["3d", "3d_sbs", "3d_tab"]
+    if feature == "hdr":
+        return ["hdr", "hdr10", "hdr10_plus", "dolby_vision", "hlg"]
+    return [feature]
+
+
+def detect_video_features(*values):
+    """Infer conservative 3D/HDR flags from provider names and video details."""
+    text = " ".join(str(value or "") for value in values).lower()
+    detected = []
+    if re.search(r"(?:^|[\s._|\-])(?:h?sbs|side[\s._-]*by[\s._-]*side)(?:$|[\s._|\-])", text):
+        detected.append("3d_sbs")
+    elif re.search(r"(?:^|[\s._|\-])(?:h?ou|tab|top[\s._-]*and[\s._-]*bottom|over[\s._-]*under)(?:$|[\s._|\-])", text):
+        detected.append("3d_tab")
+    elif re.search(r"(?:^|[\s._|\-])3d(?:$|[\s._|\-])", text):
+        detected.append("3d")
+
+    if re.search(r"\b(?:dolby[\s._-]*vision|dovi|dvhe|dvh1)\b", text):
+        detected.append("dolby_vision")
+    elif re.search(r"\bhdr10(?:\+(?!\w)|[\s._-]*plus\b)", text):
+        detected.append("hdr10_plus")
+    elif re.search(r"\bhdr10\b", text):
+        detected.append("hdr10")
+    elif re.search(r"\b(?:hdr|smpte2084|smpte2086|pq)\b", text):
+        detected.append("hdr")
+    if re.search(r"\b(?:hlg|arib[\s._-]*std[\s._-]*b67)\b", text):
+        detected.append("hlg")
+    return list(dict.fromkeys(detected))
+
+
 def validate_source_metadata(metadata):
     """Normalize source metadata and reject invalid language identifiers."""
     normalized = normalize_source_metadata(metadata)
@@ -137,6 +219,10 @@ def normalize_source_metadata(metadata):
     for field in ("audio_languages", "subtitle_languages", "languages"):
         if field in normalized:
             normalized[field] = normalize_language_list(normalized[field])
+    if "video_features" in normalized:
+        normalized["video_features"] = normalize_video_features(
+            normalized["video_features"]
+        )
     bitrate = normalize_bitrate_kbps(
         normalized.get("bitrate_kbps", normalized.get("bitrate"))
     )
@@ -390,6 +476,20 @@ def relation_declared_metadata(relation):
         if file_size:
             result["file_size_bytes"] = file_size
             break
+    feature_inputs = [
+        result.get("video"),
+        detailed,
+        props.get("movie_data"),
+        props.get("basic_data"),
+    ]
+    for payload in (props.get("movie_data") or {}, props.get("basic_data") or {}):
+        if isinstance(payload, dict):
+            feature_inputs.extend(
+                payload.get(key) for key in ("name", "title", "stream_display_name")
+            )
+    detected_features = detect_video_features(*feature_inputs)
+    if detected_features:
+        result["video_features"] = detected_features
     return normalize_source_metadata(result)
 
 
@@ -428,6 +528,7 @@ def summarize_relation_metadata(relations, category_mapping=None):
     subtitle_languages = set()
     resolutions = set()
     containers = set()
+    video_features = set()
     source_count = 0
     for relation in relations:
         category_id = getattr(relation, "category_id", None)
@@ -461,6 +562,7 @@ def summarize_relation_metadata(relations, category_mapping=None):
         container = metadata.get("container_extension")
         if container:
             containers.add(str(container).lower())
+        video_features.update(normalize_video_features(metadata.get("video_features")))
         source_count += 1
 
     return {
@@ -468,5 +570,6 @@ def summarize_relation_metadata(relations, category_mapping=None):
         "subtitle_languages": sorted(subtitle_languages),
         "resolutions": sorted(resolutions),
         "container_extensions": sorted(containers),
+        "video_features": sorted(video_features),
         "source_count": source_count,
     }

@@ -42,6 +42,8 @@ import VODMetadataFields from '../components/VODMetadataFields.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
+  VIDEO_FEATURE_OPTIONS,
+  videoFeatureLabel,
 } from '../utils/vodMetadataOptions.js';
 
 const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
@@ -88,6 +90,7 @@ const VODsPage = () => {
     subtitle_languages: [],
     resolution: '',
     container_extension: '',
+    video_features: [],
   });
   const [bulkSaving, setBulkSaving] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
@@ -154,6 +157,7 @@ const VODsPage = () => {
     filters.subtitle_language,
     filters.resolution,
     filters.container_extension,
+    filters.video_feature,
   ]);
 
   const toggleItem = (key, checked) => {
@@ -370,6 +374,16 @@ const VODsPage = () => {
               }
               w={115}
             />
+            <Select
+              label="Feature"
+              placeholder="Any"
+              clearable
+              searchable
+              data={VIDEO_FEATURE_OPTIONS}
+              value={filters.video_feature || null}
+              onChange={(value) => setFilters({ video_feature: value || '' })}
+              w={170}
+            />
           </Group>
         </Stack>
 
@@ -408,6 +422,7 @@ const VODsPage = () => {
                 <TableTh w={125}>SUB</TableTh>
                 <TableTh w={130}>Resolution</TableTh>
                 <TableTh w={100}>Format</TableTh>
+                <TableTh w={160}>Features</TableTh>
                 <TableTh w={60}>Open</TableTh>
               </TableTr>
             </TableThead>
@@ -459,6 +474,13 @@ const VODsPage = () => {
                   <TableTd>{sourceMetadataValue(item, 'resolutions')}</TableTd>
                   <TableTd>
                     {sourceMetadataValue(item, 'container_extensions')}
+                  </TableTd>
+                  <TableTd>
+                    {(item.source_metadata?.video_features || []).length
+                      ? item.source_metadata.video_features
+                          .map(videoFeatureLabel)
+                          .join(', ')
+                      : '—'}
                   </TableTd>
                   <TableTd>
                     <ActionIcon

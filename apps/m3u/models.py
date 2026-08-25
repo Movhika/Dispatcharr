@@ -308,6 +308,29 @@ class M3UGroupRule(models.Model):
         )
 
 
+class M3UAccountTemplate(models.Model):
+    """Portable non-secret M3U settings plus copied filters/import rules."""
+
+    name = models.CharField(max_length=255, unique=True)
+    description = models.TextField(blank=True, default="")
+    account_type = models.CharField(
+        max_length=3,
+        choices=M3UAccount.Types.choices,
+        default=M3UAccount.Types.XC,
+    )
+    account_settings = models.JSONField(default=dict, blank=True)
+    filters = models.JSONField(default=list, blank=True)
+    group_rules = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name", "id")
+
+    def __str__(self):
+        return self.name
+
+
 class ServerGroup(models.Model):
     """
     Groups M3U accounts that share provider credentials.
