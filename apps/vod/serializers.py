@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.db import transaction
 from .image_proxy import vodlogo_cache_url
@@ -524,10 +526,16 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "required_video_features", "excluded_video_features",
             "min_resolution", "max_resolution",
             "allow_unknown_metadata", "language_match_mode",
+            "source_rules",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
         normalized = dict(value)
+        source_rules = normalized.pop("source_rules", [])
+        if not isinstance(source_rules, list):
+            raise serializers.ValidationError(
+                {"source_rules": "Must be an ordered list"}
+            )
         for field in (
             "required_audio_languages",
             "required_subtitle_languages",
@@ -582,6 +590,37 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 {"language_match_mode": "Use either all or any"}
             )
         normalized["language_match_mode"] = language_match_mode
+        normalized_rules = []
+        for index, rule in enumerate(source_rules):
+            if not isinstance(rule, dict):
+                raise serializers.ValidationError(
+                    {"source_rules": {index: "Must be an object"}}
+                )
+            category_regex = str(rule.get("category_regex") or ".*")
+            try:
+                re.compile(category_regex)
+            except re.error as exc:
+                raise serializers.ValidationError(
+                    {"source_rules": {index: {"category_regex": str(exc)}}}
+                )
+            nested = {
+                key: item
+                for key, item in rule.items()
+                if key in allowed and key != "source_rules"
+            }
+            nested_normalized = self.validate_hard_constraints(nested)
+            nested_normalized.pop("source_rules", None)
+            normalized_rules.append(
+                {
+                    "id": str(rule.get("id") or index),
+                    "name": str(rule.get("name") or f"Rule {index + 1}")[:120],
+                    "category_regex": category_regex,
+                    "case_sensitive": bool(rule.get("case_sensitive", False)),
+                    "enabled": bool(rule.get("enabled", True)),
+                    **nested_normalized,
+                }
+            )
+        normalized["source_rules"] = normalized_rules
         return normalized
 
     def _assign_users(self, policy, users):

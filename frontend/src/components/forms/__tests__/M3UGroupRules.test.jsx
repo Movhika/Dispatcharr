@@ -24,6 +24,12 @@ vi.mock('../../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
 
+vi.mock('../../VideoFeaturePicker.jsx', () => ({
+  default: ({ value = [] }) => (
+    <div aria-label="Video features">{value.join(',')}</div>
+  ),
+}));
+
 vi.mock('@dnd-kit/core', () => ({
   closestCenter: vi.fn(),
   DndContext: ({ children, onDragEnd }) => {

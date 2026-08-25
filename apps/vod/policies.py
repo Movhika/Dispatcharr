@@ -1,5 +1,7 @@
 """VOD visibility, compact selection and failover-compatible ranking."""
 
+import re
+
 from django.db.models import Q
 
 from .catalog_cache import catalog_generation, safe_cache_get, safe_cache_set
@@ -161,6 +163,50 @@ def relation_metadata(relation, category_relation=None):
 _METADATA_NOT_PROVIDED = object()
 
 
+def relation_constraints(relation, policy):
+    """Return global constraints with the first matching source rule applied."""
+    constraints = dict((policy.hard_constraints if policy else None) or {})
+    rules = constraints.pop("source_rules", [])
+    if not policy or not rules:
+        return constraints
+    category = relation_category(relation)
+    category_name = getattr(category, "name", "") or ""
+    cache_key = repr(rules)
+    compiled_cache = getattr(policy, "_compiled_source_rules", None)
+    if not compiled_cache or compiled_cache[0] != cache_key:
+        compiled_rules = []
+        for rule in rules if isinstance(rules, list) else []:
+            if not isinstance(rule, dict) or rule.get("enabled", True) is False:
+                continue
+            pattern = str(rule.get("category_regex") or ".*")
+            flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
+            try:
+                compiled_rules.append((re.compile(pattern, flags), rule))
+            except re.error:
+                continue
+        compiled_cache = (cache_key, compiled_rules)
+        setattr(policy, "_compiled_source_rules", compiled_cache)
+    for pattern, rule in compiled_cache[1]:
+        if pattern.search(category_name) is None:
+            continue
+        return {
+            **constraints,
+            **{
+                key: value
+                for key, value in rule.items()
+                if key
+                not in {
+                    "id",
+                    "name",
+                    "category_regex",
+                    "case_sensitive",
+                    "enabled",
+                }
+            },
+        }
+    return constraints
+
+
 def relation_allowed(
     relation,
     policy,
@@ -178,7 +224,7 @@ def relation_allowed(
 
     if metadata is _METADATA_NOT_PROVIDED:
         metadata = relation_metadata(relation, category_relation)
-    constraints = policy.hard_constraints or {}
+    constraints = relation_constraints(relation, policy)
     allow_unknown = constraints.get("allow_unknown_metadata", True)
 
     required_audio = _language_set(constraints.get("required_audio_languages"))
@@ -310,7 +356,7 @@ def relation_rank(
             relation,
             category_relation,
         )
-    constraints = (policy.hard_constraints if policy else None) or {}
+    constraints = relation_constraints(relation, policy)
     resolution = _vertical_resolution(metadata)
     bitrate = _bitrate_kbps(metadata)
     dimensions = {

@@ -7,6 +7,7 @@ import {
   Pagination,
   ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   TableTbody,
@@ -20,11 +21,22 @@ import {
 import { Info, RefreshCw } from 'lucide-react';
 import API from '../../api';
 
-const M3UDeveloperCatalog = ({ accountId }) => {
-  const [scope, setScope] = useState('live');
+const M3UDeveloperCatalog = ({
+  accountId,
+  initialScope = 'live',
+  lockedScope = false,
+  initialCategory = '',
+  nameTransform = null,
+}) => {
+  const [scope, setScope] = useState(initialScope);
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState(initialCategory);
   const [page, setPage] = useState(1);
-  const [result, setResult] = useState({ count: 0, results: [] });
+  const [result, setResult] = useState({
+    count: 0,
+    categories: [],
+    results: [],
+  });
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
@@ -32,8 +44,15 @@ const M3UDeveloperCatalog = ({ accountId }) => {
     setLoading(true);
     try {
       setResult(
-        (await API.getM3UDeveloperCatalog(accountId, scope, search, page)) || {
+        (await API.getM3UDeveloperCatalog(
+          accountId,
+          scope,
+          search,
+          page,
+          category
+        )) || {
           count: 0,
+          categories: [],
           results: [],
         }
       );
@@ -46,11 +65,11 @@ const M3UDeveloperCatalog = ({ accountId }) => {
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId, scope, search, page]);
+  }, [accountId, scope, search, page, category]);
 
   useEffect(() => {
     setPage(1);
-  }, [scope, search]);
+  }, [scope, search, category]);
 
   const totalPages = Math.max(1, Math.ceil((result.count || 0) / 100));
 
@@ -58,30 +77,41 @@ const M3UDeveloperCatalog = ({ accountId }) => {
     <Stack pt="md">
       <Alert icon={<Info size={16} />} color="yellow" variant="light">
         This is a read-only view of the catalog stored after the last import.
-        Stream URLs may contain credentials.{' '}
-        <code>detailed_fetched: false</code>
-        means only the provider&apos;s fast catalog row has been stored; opening
-        VOD details can fetch the optional detail response. Providers do not
-        consistently supply DUB, SUB, or resolution there. The original
-        container is retained as <code>container_extension</code>.
       </Alert>
       <Group justify="space-between" align="end">
-        <SegmentedControl
-          value={scope}
-          onChange={setScope}
-          data={[
-            { value: 'live', label: 'Live' },
-            { value: 'movie', label: 'Movies' },
-            { value: 'series', label: 'Series' },
-          ]}
-        />
+        {!lockedScope && (
+          <SegmentedControl
+            value={scope}
+            onChange={(value) => {
+              setScope(value);
+              setCategory('');
+            }}
+            data={[
+              { value: 'live', label: 'Live' },
+              { value: 'movie', label: 'Movies' },
+              { value: 'series', label: 'Series' },
+            ]}
+          />
+        )}
         <TextInput
-          label="Search parsed catalog"
+          label="Search name or provider ID"
           placeholder="Name or provider ID"
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
           style={{ flex: 1 }}
         />
+        {!initialCategory && (
+          <Select
+            label={scope === 'live' ? 'Group' : 'Category'}
+            placeholder={scope === 'live' ? 'All groups' : 'All categories'}
+            searchable
+            clearable
+            data={result.categories || []}
+            value={category || null}
+            onChange={(value) => setCategory(value || '')}
+            miw={240}
+          />
+        )}
         <Button
           variant="default"
           leftSection={<RefreshCw size={15} />}
@@ -94,40 +124,62 @@ const M3UDeveloperCatalog = ({ accountId }) => {
       <Text size="sm" c="dimmed">
         {result.count || 0} parsed entries
       </Text>
-      <ScrollArea h="55vh">
-        <Table striped highlightOnHover withTableBorder stickyHeader miw={1050}>
+      <ScrollArea h={lockedScope ? '62vh' : '55vh'}>
+        <Table striped highlightOnHover withTableBorder stickyHeader miw={760}>
           <TableThead>
             <TableTr>
-              <TableTh w={90}>Internal ID</TableTh>
-              <TableTh w={130}>Provider ID</TableTh>
               <TableTh>Name</TableTh>
-              <TableTh>Group / category</TableTh>
-              <TableTh>Source URL</TableTh>
-              <TableTh>Properties</TableTh>
+              {nameTransform && <TableTh>Output name</TableTh>}
+              <TableTh w="55%">Properties</TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
-            {(result.results || []).map((row) => (
-              <TableTr key={`${scope}:${row.id}`}>
-                <TableTd>{row.id}</TableTd>
-                <TableTd>{row.provider_id || '—'}</TableTd>
-                <TableTd>{row.name || '—'}</TableTd>
-                <TableTd>{row.group || '—'}</TableTd>
-                <TableTd>
-                  <Code style={{ wordBreak: 'break-all' }}>
-                    {row.url || '—'}
-                  </Code>
-                </TableTd>
-                <TableTd>
-                  <Code block>
-                    {JSON.stringify(row.properties || {}, null, 2)}
-                  </Code>
-                </TableTd>
-              </TableTr>
+            {(result.results || []).map((row, index, rows) => (
+              <React.Fragment key={`${scope}:${row.id}`}>
+                {(index === 0 || rows[index - 1]?.group !== row.group) && (
+                  <TableTr
+                    style={{
+                      position: 'sticky',
+                      top: 40,
+                      zIndex: 2,
+                      background: 'var(--mantine-color-dark-6)',
+                    }}
+                  >
+                    <TableTh colSpan={nameTransform ? 3 : 2}>
+                      {row.group || 'Uncategorized'}
+                    </TableTh>
+                  </TableTr>
+                )}
+                <TableTr>
+                  <TableTd>
+                    <Text fw={500}>{row.name || '—'}</Text>
+                    <Text size="xs" c="dimmed">
+                      Provider ID: {row.provider_id || '—'} · Internal ID:{' '}
+                      {row.id}
+                    </Text>
+                    {row.url && (
+                      <Code
+                        fz="xs"
+                        style={{ wordBreak: 'break-all', whiteSpace: 'normal' }}
+                      >
+                        {row.url}
+                      </Code>
+                    )}
+                  </TableTd>
+                  {nameTransform && (
+                    <TableTd>{nameTransform(row.name || '', row)}</TableTd>
+                  )}
+                  <TableTd>
+                    <Code block>
+                      {JSON.stringify(row.properties || {}, null, 2)}
+                    </Code>
+                  </TableTd>
+                </TableTr>
+              </React.Fragment>
             ))}
             {!loading && (result.results || []).length === 0 && (
               <TableTr>
-                <TableTd colSpan={6}>
+                <TableTd colSpan={nameTransform ? 3 : 2}>
                   <Text ta="center" c="dimmed" py="xl">
                     No parsed entries found.
                   </Text>

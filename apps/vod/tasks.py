@@ -507,9 +507,23 @@ def refresh_vod_content(account_id):
 
         # Send completion notification
         success_message = f"VOD refresh completed in {duration:.2f} seconds"
+        latest_properties = (
+            M3UAccount.objects.filter(pk=account_id)
+            .values_list("custom_properties", flat=True)
+            .first()
+            or {}
+        )
+        updated_properties = {
+            **latest_properties,
+            "refresh_timings": {
+                **(latest_properties.get("refresh_timings") or {}),
+                "vod_seconds": round(duration, 2),
+            },
+        }
         M3UAccount.objects.filter(id=account_id).update(
             status=M3UAccount.Status.SUCCESS,
             last_message=success_message,
+            custom_properties=updated_properties,
         )
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
                        message=success_message)

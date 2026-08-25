@@ -63,6 +63,9 @@ vi.mock('../../components/VODOutputProfilesModal', () => ({
   default: ({ opened }) =>
     opened ? <div data-testid="profiles-modal">Profiles</div> : null,
 }));
+vi.mock('../../components/VideoFeaturePicker.jsx', () => ({
+  default: ({ label }) => <div>{label}</div>,
+}));
 vi.mock('lucide-react', () => ({
   History: () => null,
   Play: () => null,

@@ -140,6 +140,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             return Response(status=status.HTTP_403_FORBIDDEN)
         scope = request.query_params.get("scope", "live")
         search = request.query_params.get("search", "").strip()
+        category_id = request.query_params.get("category", "").strip()
         try:
             page = max(1, int(request.query_params.get("page", 1)))
             page_size = min(
@@ -158,9 +159,17 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             queryset = Stream.objects.filter(m3u_account=account).select_related(
                 "channel_group"
             )
+            category_rows = list(
+                queryset.exclude(channel_group=None)
+                .values("channel_group_id", "channel_group__name")
+                .distinct()
+                .order_by("channel_group__name")
+            )
+            if category_id:
+                queryset = queryset.filter(channel_group_id=category_id)
             if search:
                 queryset = queryset.filter(
-                    Q(name__icontains=search) | Q(tvg_id__icontains=search)
+                    Q(name__icontains=search) | Q(stream_id__icontains=search)
                 )
             total = queryset.count()
             rows = [
@@ -168,6 +177,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                     "id": row.id,
                     "provider_id": row.stream_id,
                     "name": row.name,
+                    "group_id": row.channel_group_id,
                     "group": row.channel_group.name if row.channel_group else "",
                     "url": row.url,
                     "properties": row.custom_properties or {},
@@ -182,14 +192,26 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             queryset = M3UMovieRelation.objects.filter(
                 m3u_account=account
             ).select_related("movie", "category")
+            category_rows = list(
+                queryset.exclude(category=None)
+                .values("category_id", "category__name")
+                .distinct()
+                .order_by("category__name")
+            )
+            if category_id:
+                queryset = queryset.filter(category_id=category_id)
             if search:
-                queryset = queryset.filter(movie__name__icontains=search)
+                queryset = queryset.filter(
+                    Q(movie__name__icontains=search)
+                    | Q(stream_id__icontains=search)
+                )
             total = queryset.count()
             rows = [
                 {
                     "id": row.id,
                     "provider_id": row.stream_id,
                     "name": row.movie.name,
+                    "group_id": row.category_id,
                     "group": row.category.name if row.category else "",
                     "url": row.get_stream_url(),
                     "properties": row.custom_properties or {},
@@ -204,14 +226,26 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             queryset = M3USeriesRelation.objects.filter(
                 m3u_account=account
             ).select_related("series", "category")
+            category_rows = list(
+                queryset.exclude(category=None)
+                .values("category_id", "category__name")
+                .distinct()
+                .order_by("category__name")
+            )
+            if category_id:
+                queryset = queryset.filter(category_id=category_id)
             if search:
-                queryset = queryset.filter(series__name__icontains=search)
+                queryset = queryset.filter(
+                    Q(series__name__icontains=search)
+                    | Q(external_series_id__icontains=search)
+                )
             total = queryset.count()
             rows = [
                 {
                     "id": row.id,
                     "provider_id": row.external_series_id,
                     "name": row.series.name,
+                    "group_id": row.category_id,
                     "group": row.category.name if row.category else "",
                     "url": "",
                     "properties": row.custom_properties or {},
@@ -232,6 +266,17 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 "count": total,
                 "page": page,
                 "page_size": page_size,
+                "categories": [
+                    {
+                        "value": str(
+                            row.get("channel_group_id") or row.get("category_id")
+                        ),
+                        "label": row.get("channel_group__name")
+                        or row.get("category__name")
+                        or "Uncategorized",
+                    }
+                    for row in category_rows
+                ],
                 "results": rows,
             }
         )

@@ -385,7 +385,7 @@ const VODsPage = () => {
             />
             <Box w={190}>
               <VideoFeaturePicker
-                label="Feature"
+                label="Features"
                 emptyLabel="Any"
                 value={filters.video_feature ? [filters.video_feature] : []}
                 onChange={(value) =>

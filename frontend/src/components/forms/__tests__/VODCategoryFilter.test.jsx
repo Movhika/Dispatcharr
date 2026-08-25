@@ -26,8 +26,19 @@ vi.mock('../../LanguagePicker.jsx', () => ({
     </label>
   ),
 }));
+vi.mock('../M3UDeveloperCatalog.jsx', () => ({
+  default: () => <div data-testid="category-preview">Preview</div>,
+}));
+vi.mock('../../VideoFeaturePicker.jsx', () => ({
+  default: ({ label }) => <div>{label}</div>,
+}));
 
 vi.mock('@mantine/core', () => ({
+  ActionIcon: ({ children, onClick, disabled, ...props }) => (
+    <button onClick={onClick} disabled={disabled} {...props}>
+      {children}
+    </button>
+  ),
   Button: ({ children, onClick, disabled, ...props }) => (
     <button onClick={onClick} disabled={disabled} {...props}>
       {children}

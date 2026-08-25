@@ -42,6 +42,7 @@ import LanguagePicker, { LanguageSelect } from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
+import VODSourceRules from './VODSourceRules.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
   normalizeVODFailoverRanking,
@@ -63,6 +64,7 @@ const EMPTY_PROFILE = {
     min_resolution: 0,
     max_resolution: 0,
     allow_unknown_metadata: true,
+    source_rules: [],
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
   category_rules: [],
@@ -506,9 +508,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             />
             {selectedProfile && (
               <Tooltip label={selectionState.description} multiline maw={360}>
-                <Badge color={selectionState.color} size="lg">
-                  {selectionState.label}
-                </Badge>
+                <Box h={36} style={{ display: 'flex', alignItems: 'center' }}>
+                  <Badge color={selectionState.color} size="lg">
+                    {selectionState.label}
+                  </Badge>
+                </Box>
               </Tooltip>
             )}
             <Button
@@ -637,111 +641,146 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           >
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
+              <TabsTab value="sources">Sources</TabsTab>
+              <TabsTab value="failover">Failover</TabsTab>
               <TabsTab value="preview">Content preview</TabsTab>
             </TabsList>
 
             <TabsPanel value="settings" pt="md">
               <ScrollArea h="calc(96vh - 270px)">
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns:
-                      'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
-                    gap: 'var(--mantine-spacing-xl)',
-                    alignItems: 'start',
-                  }}
-                >
-                  <Paper withBorder p="md" radius="md">
-                    <Stack>
-                      <Stack gap={0}>
-                        <Text fw={700}>Access and metadata rules</Text>
-                        <Text size="sm" c="dimmed">
-                          Define which sources may enter this profile. Excluded
-                          values always win over allowed values.
-                        </Text>
-                      </Stack>
-                      <TextInput
-                        label="Profile name"
-                        required
-                        value={draft.name}
+                <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                  <Stack>
+                    <TextInput
+                      label="Profile name"
+                      required
+                      value={draft.name}
+                      onChange={(event) =>
+                        setDraft({ ...draft, name: event.currentTarget.value })
+                      }
+                    />
+                    <Select
+                      label="XC VOD output"
+                      data={[
+                        {
+                          value: 'compact',
+                          label: 'Compact — one preferred edition per title',
+                        },
+                        {
+                          value: 'variants',
+                          label: 'Variants — every distinct source edition',
+                        },
+                      ]}
+                      value={draft.export_mode}
+                      onChange={(value) =>
+                        setDraft({ ...draft, export_mode: value })
+                      }
+                    />
+                    <Group grow>
+                      <Switch
+                        label="Active"
+                        checked={draft.is_active}
                         onChange={(event) =>
                           setDraft({
                             ...draft,
-                            name: event.currentTarget.value,
+                            is_active: event.currentTarget.checked,
                           })
                         }
                       />
-                      <Select
-                        label="XC VOD output"
-                        data={[
-                          {
-                            value: 'compact',
-                            label: 'Compact — one preferred edition per title',
-                          },
-                          {
-                            value: 'variants',
-                            label: 'Variants — every distinct source edition',
-                          },
-                        ]}
-                        value={draft.export_mode}
-                        onChange={(value) =>
-                          setDraft({ ...draft, export_mode: value })
+                      <Switch
+                        label="Default profile"
+                        checked={draft.is_default}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            is_default: event.currentTarget.checked,
+                          })
                         }
                       />
-                      <Group grow>
-                        <Switch
-                          label="Active"
-                          checked={draft.is_active}
-                          onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              is_active: event.currentTarget.checked,
-                            })
+                    </Group>
+                  </Stack>
+                </Paper>
+              </ScrollArea>
+            </TabsPanel>
+
+            <TabsPanel value="sources" pt="md">
+              <ScrollArea h="calc(96vh - 270px)">
+                <Stack gap="lg">
+                  <Paper withBorder p="lg" radius="md">
+                    <Stack>
+                      <Group justify="space-between">
+                        <Stack gap={0}>
+                          <Text fw={700}>Allowed source categories</Text>
+                          <Text size="sm" c="dimmed">
+                            {selectedCategoryIds.length
+                              ? `${selectedCategoryIds.length} categories selected`
+                              : 'All enabled categories'}
+                          </Text>
+                        </Stack>
+                        <Button
+                          variant="default"
+                          onClick={() => setCategorySelectorOpen(true)}
+                        >
+                          Manage categories
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Paper>
+
+                  <Paper withBorder p="lg" radius="md">
+                    <Stack>
+                      <Stack gap={0}>
+                        <Text fw={700}>Default source rules</Text>
+                        <Text size="sm" c="dimmed">
+                          Used when no category-specific rule below matches.
+                          Excluded values always win.
+                        </Text>
+                      </Stack>
+                      <Group grow align="flex-start">
+                        <LanguagePicker
+                          label="Allowed and preferred DUB languages"
+                          value={
+                            draft.hard_constraints.required_audio_languages
+                          }
+                          onChange={(value) =>
+                            updateConstraint('required_audio_languages', value)
                           }
                         />
-                        <Switch
-                          label="Default profile"
-                          checked={draft.is_default}
-                          onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              is_default: event.currentTarget.checked,
-                            })
+                        <LanguagePicker
+                          label="Allowed and preferred SUB languages"
+                          value={
+                            draft.hard_constraints.required_subtitle_languages
+                          }
+                          onChange={(value) =>
+                            updateConstraint(
+                              'required_subtitle_languages',
+                              value
+                            )
                           }
                         />
                       </Group>
-                      <LanguagePicker
-                        label="Allowed and preferred DUB languages"
-                        value={draft.hard_constraints.required_audio_languages}
-                        onChange={(value) =>
-                          updateConstraint('required_audio_languages', value)
-                        }
-                      />
-                      <LanguagePicker
-                        label="Allowed and preferred SUB languages"
-                        value={
-                          draft.hard_constraints.required_subtitle_languages
-                        }
-                        onChange={(value) =>
-                          updateConstraint('required_subtitle_languages', value)
-                        }
-                      />
-                      <LanguagePicker
-                        label="Excluded DUB languages"
-                        value={draft.hard_constraints.excluded_audio_languages}
-                        onChange={(value) =>
-                          updateConstraint('excluded_audio_languages', value)
-                        }
-                      />
-                      <LanguagePicker
-                        label="Excluded SUB languages"
-                        value={
-                          draft.hard_constraints.excluded_subtitle_languages
-                        }
-                        onChange={(value) =>
-                          updateConstraint('excluded_subtitle_languages', value)
-                        }
-                      />
+                      <Group grow align="flex-start">
+                        <LanguagePicker
+                          label="Excluded DUB languages"
+                          value={
+                            draft.hard_constraints.excluded_audio_languages
+                          }
+                          onChange={(value) =>
+                            updateConstraint('excluded_audio_languages', value)
+                          }
+                        />
+                        <LanguagePicker
+                          label="Excluded SUB languages"
+                          value={
+                            draft.hard_constraints.excluded_subtitle_languages
+                          }
+                          onChange={(value) =>
+                            updateConstraint(
+                              'excluded_subtitle_languages',
+                              value
+                            )
+                          }
+                        />
+                      </Group>
                       <Select
                         label="Language matching"
                         data={[
@@ -781,26 +820,26 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           }
                         />
                       </Group>
-                      <VideoFeaturePicker
-                        label="Required video features"
-                        description="Any selected built-in or custom feature may match."
-                        value={
-                          draft.hard_constraints.required_video_features || []
-                        }
-                        onChange={(value) =>
-                          updateConstraint('required_video_features', value)
-                        }
-                      />
-                      <VideoFeaturePicker
-                        label="Excluded video features"
-                        description="Sources with any selected feature are rejected."
-                        value={
-                          draft.hard_constraints.excluded_video_features || []
-                        }
-                        onChange={(value) =>
-                          updateConstraint('excluded_video_features', value)
-                        }
-                      />
+                      <Group grow align="flex-start">
+                        <VideoFeaturePicker
+                          label="Required video features"
+                          value={
+                            draft.hard_constraints.required_video_features || []
+                          }
+                          onChange={(value) =>
+                            updateConstraint('required_video_features', value)
+                          }
+                        />
+                        <VideoFeaturePicker
+                          label="Excluded video features"
+                          value={
+                            draft.hard_constraints.excluded_video_features || []
+                          }
+                          onChange={(value) =>
+                            updateConstraint('excluded_video_features', value)
+                          }
+                        />
+                      </Group>
                       <Switch
                         label="Allow unknown technical metadata"
                         checked={draft.hard_constraints.allow_unknown_metadata}
@@ -811,50 +850,40 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           )
                         }
                       />
-                      <Group justify="space-between">
-                        <Stack gap={0}>
-                          <Text fw={500}>Allowed source categories</Text>
-                          <Text size="sm" c="dimmed">
-                            {selectedCategoryIds.length
-                              ? `${selectedCategoryIds.length} categories selected`
-                              : 'All enabled categories'}
-                          </Text>
-                        </Stack>
-                        <Button
-                          variant="default"
-                          onClick={() => setCategorySelectorOpen(true)}
-                        >
-                          Manage categories
-                        </Button>
-                      </Group>
                     </Stack>
                   </Paper>
 
-                  <Paper withBorder p="md" radius="md">
-                    <Stack gap="lg">
-                      <Stack gap={0}>
-                        <Text fw={700}>Failover priority</Text>
-                        <Text size="sm" c="dimmed">
-                          Reorder only the sources that passed the access rules.
-                          Unknown values are always ranked behind known values
-                          when they are allowed.
-                        </Text>
-                      </Stack>
-                      <Alert color="blue">
-                        Failover only compares sources that already passed this
-                        profile&apos;s category, language, subtitle, and
-                        resolution rules. Unknown values remain usable only when
-                        allowed.
-                      </Alert>
-                      <VODFailoverRanking
-                        value={draft.ranking}
-                        onChange={(ranking) =>
-                          setDraft((current) => ({ ...current, ranking }))
-                        }
-                      />
-                    </Stack>
+                  <Paper withBorder p="lg" radius="md">
+                    <VODSourceRules
+                      value={draft.hard_constraints.source_rules || []}
+                      onChange={(value) =>
+                        updateConstraint('source_rules', value)
+                      }
+                    />
                   </Paper>
-                </div>
+                </Stack>
+              </ScrollArea>
+            </TabsPanel>
+
+            <TabsPanel value="failover" pt="md">
+              <ScrollArea h="calc(96vh - 270px)">
+                <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                  <Stack>
+                    <Stack gap={0}>
+                      <Text fw={700}>Failover priority</Text>
+                      <Text size="sm" c="dimmed">
+                        Sources are compared only after they passed the Sources
+                        rules. Drag criteria into the desired order.
+                      </Text>
+                    </Stack>
+                    <VODFailoverRanking
+                      value={draft.ranking}
+                      onChange={(ranking) =>
+                        setDraft((current) => ({ ...current, ranking }))
+                      }
+                    />
+                  </Stack>
+                </Paper>
               </ScrollArea>
             </TabsPanel>
 
@@ -971,7 +1000,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   />
                   <Box w={190}>
                     <VideoFeaturePicker
-                      label="Feature"
+                      label="Features"
                       emptyLabel="Any"
                       value={
                         filters.video_feature ? [filters.video_feature] : []

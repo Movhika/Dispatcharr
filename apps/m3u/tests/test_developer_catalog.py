@@ -27,14 +27,14 @@ class M3UDeveloperCatalogTests(TestCase):
             username="xc-user",
             password="xc-password",
         )
-        category = VODCategory.objects.create(
+        self.category = VODCategory.objects.create(
             name="GERMANY MOVIES", category_type="movie"
         )
         movie = Movie.objects.create(name="Avatar", year=2025)
         self.relation = M3UMovieRelation.objects.create(
             m3u_account=self.account,
             movie=movie,
-            category=category,
+            category=self.category,
             stream_id="1234",
             container_extension="mkv",
         )
@@ -54,6 +54,40 @@ class M3UDeveloperCatalogTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["provider_id"], "1234")
         self.assertEqual(response.data["results"][0]["group"], "GERMANY MOVIES")
+
+    def test_movie_catalog_searches_provider_id_and_exposes_category_filter(self):
+        other_category = VODCategory.objects.create(
+            name="ENGLISH MOVIES", category_type="movie"
+        )
+        other_movie = Movie.objects.create(name="Unrelated title", year=2024)
+        M3UMovieRelation.objects.create(
+            m3u_account=self.account,
+            movie=other_movie,
+            category=other_category,
+            stream_id="provider-5678",
+        )
+        request = self.factory.get(
+            "/api/m3u/accounts/1/developer-catalog/",
+            {
+                "scope": "movie",
+                "search": "5678",
+                "category": str(other_category.pk),
+            },
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = self.view(request, pk=self.account.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["provider_id"], "provider-5678")
+        self.assertEqual(
+            response.data["categories"],
+            [
+                {"value": str(other_category.pk), "label": "ENGLISH MOVIES"},
+                {"value": str(self.category.pk), "label": "GERMANY MOVIES"},
+            ],
+        )
 
     def test_non_admin_cannot_open_the_developer_catalog(self):
         request = self.factory.get(

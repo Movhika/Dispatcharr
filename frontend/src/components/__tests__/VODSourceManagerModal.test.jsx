@@ -30,6 +30,11 @@ vi.mock('../LanguagePicker.jsx', () => ({
     </label>
   ),
 }));
+vi.mock('../VideoFeaturePicker.jsx', () => ({
+  default: ({ label, value = [] }) => (
+    <div aria-label={label || 'Video features'}>{value.join(',')}</div>
+  ),
+}));
 vi.mock('lucide-react', () => ({
   RefreshCw: () => null,
   Trash2: () => null,

@@ -844,6 +844,52 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
     def _admin_only(self, request):
         return None if _is_admin(request.user) else Response(status=status.HTTP_403_FORBIDDEN)
 
+    def _recover_finished_pending_tasks(self, request):
+        """Republish pending builds whose recorded Celery task already ended.
+
+        A catalog invalidation can land just after a batch task completed.  In
+        that narrow race the profile is correctly marked pending, but its
+        recorded task ID points at the already-successful batch.  Admin polling
+        performs a cheap terminal-state check and republishes at most once per
+        minute, keeping normal pending/running tasks untouched.
+        """
+        if not _is_admin(request.user):
+            return
+        try:
+            from celery.result import AsyncResult
+            from django.core.cache import cache
+            from .profile_selection import enqueue_profile_selection_rebuild
+
+            now = timezone.now()
+            pending = VODAccessPolicy.objects.filter(
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).values("id", "selection_progress", "selection_started_at")
+            for row in pending:
+                progress = row["selection_progress"] or {}
+                task_id = progress.get("task_id")
+                started = row["selection_started_at"]
+                age = (now - started).total_seconds() if started else 999
+                state = str(AsyncResult(task_id).state) if task_id else "UNPUBLISHED"
+                if not (
+                    state in {"SUCCESS", "FAILURE", "REVOKED"}
+                    or (state == "UNPUBLISHED" and age >= 10)
+                ):
+                    continue
+                key = f"vod_profile_selection:recover:{row['id']}:{task_id or 'none'}"
+                if cache.add(key, "1", timeout=60):
+                    enqueue_profile_selection_rebuild(row["id"])
+        except Exception:
+            logger.exception("Could not recover stalled VOD profile selections")
+
+    def list(self, request, *args, **kwargs):
+        self._recover_finished_pending_tasks(request)
+        return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        self._recover_finished_pending_tasks(request)
+        return super().retrieve(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         denied = self._admin_only(request)
         if denied is not None:

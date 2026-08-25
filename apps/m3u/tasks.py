@@ -4143,6 +4143,10 @@ def _refresh_single_m3u_account_impl(account_id):
             # filtered provider catalog.
             "selected_total": streams_processed,
         }
+        custom["refresh_timings"] = {
+            **(custom.get("refresh_timings") or {}),
+            "live_seconds": round(elapsed_time, 2),
+        }
         account.custom_properties = custom
         account.save(
             update_fields=["status", "last_message", "updated_at", "custom_properties"]

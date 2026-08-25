@@ -21,7 +21,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Info, Settings as Cog } from 'lucide-react';
+import { Eye, Info, Settings as Cog } from 'lucide-react';
 import GroupConfigureModal from './GroupConfigureModal';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
@@ -29,6 +29,7 @@ import { useChannelLogoSelection } from '../../hooks/useSmartLogos';
 import AutoSyncBasic from './AutoSyncBasic.jsx';
 import ErrorBoundary from '../ErrorBoundary.jsx';
 import M3UGroupRules from './M3UGroupRules.jsx';
+import M3UDeveloperCatalog from './M3UDeveloperCatalog.jsx';
 const AutoSyncAdvanced = React.lazy(() => import('./AutoSyncAdvanced.jsx'));
 const LogoForm = React.lazy(() => import('./Logo.jsx'));
 const M3UFilters = React.lazy(() => import('./M3UFilters.jsx'));
@@ -64,6 +65,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
   const [epgSources, setEpgSources] = useState([]);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [streamFiltersOpen, setStreamFiltersOpen] = useState(false);
+  const [previewGroupId, setPreviewGroupId] = useState(null);
 
   const {
     logos: channelLogos,
@@ -105,6 +107,23 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
   const configuringGroup = configuringGroupId
     ? groupStates.find((g) => g.channel_group === configuringGroupId)
     : null;
+  const previewGroup = previewGroupId
+    ? groupStates.find((group) => group.channel_group === previewGroupId)
+    : null;
+
+  const previewOutputName = (name) => {
+    const properties = previewGroup?.custom_properties || {};
+    const pattern = properties.name_regex_pattern || '';
+    if (!pattern) return name;
+    try {
+      return name.replace(
+        new RegExp(pattern, 'g'),
+        properties.name_replace_pattern ?? ''
+      );
+    } catch {
+      return name;
+    }
+  };
   const applyGroupChange = (nextGroupState) => {
     setGroupStates((prev) =>
       prev.map((state) =>
@@ -642,7 +661,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
             </TableTh>
             <TableTh>Group</TableTh>
             <TableTh w={100}>Enabled</TableTh>
-            <TableTh w={125}>
+            <TableTh w={125} ta="center">
               <Tooltip
                 label="Automatically creates channels for streams in this group during M3U updates. Cleanup behavior is configured per group."
                 multiline
@@ -662,13 +681,15 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
             </TableTh>
             <TableTh w={120}>Numbering</TableTh>
             <TableTh w={150}>Channel range</TableTh>
-            <TableTh w={70}>Setup</TableTh>
+            <TableTh w={95} ta="center">
+              Actions
+            </TableTh>
           </TableTr>
         </TableThead>
         <TableTbody>
           {visibleGroups.map((group) => (
             <TableTr key={group.channel_group}>
-              <TableTd>
+              <TableTd ta="center">
                 <Checkbox
                   aria-label={`Select ${group.name}`}
                   checked={selectedGroupIds.has(group.channel_group)}
@@ -702,7 +723,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
                   {group.enabled ? 'Active' : 'Inactive'}
                 </Button>
               </TableTd>
-              <TableTd>
+              <TableTd ta="center">
                 <Checkbox
                   aria-label={`Auto sync ${group.name}`}
                   checked={group.auto_channel_sync && group.enabled}
@@ -742,29 +763,57 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
                 )}
               </TableTd>
               <TableTd>
-                <Tooltip label="Configure advanced options" withArrow>
-                  <ActionIcon
-                    variant="subtle"
-                    disabled={!group.enabled}
-                    onClick={() => {
-                      configureSnapshotRef.current = {
-                        ...group,
-                        custom_properties: {
-                          ...(group.custom_properties || {}),
-                        },
-                      };
-                      setConfiguringGroupId(group.channel_group);
-                    }}
-                    aria-label={`Configure ${group.name}`}
-                  >
-                    <Cog size={16} />
-                  </ActionIcon>
-                </Tooltip>
+                <Group gap={4} justify="center" wrap="nowrap">
+                  <Tooltip label="Preview imported streams" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      onClick={() => setPreviewGroupId(group.channel_group)}
+                      aria-label={`Preview ${group.name}`}
+                    >
+                      <Eye size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Configure advanced options" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      disabled={!group.enabled}
+                      onClick={() => {
+                        configureSnapshotRef.current = {
+                          ...group,
+                          custom_properties: {
+                            ...(group.custom_properties || {}),
+                          },
+                        };
+                        setConfiguringGroupId(group.channel_group);
+                      }}
+                      aria-label={`Configure ${group.name}`}
+                    >
+                      <Cog size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
               </TableTd>
             </TableTr>
           ))}
         </TableTbody>
       </Table>
+
+      <Modal
+        opened={!!previewGroup}
+        onClose={() => setPreviewGroupId(null)}
+        title={previewGroup ? `${previewGroup.name} streams` : 'Group streams'}
+        size="85vw"
+      >
+        {previewGroup && (
+          <M3UDeveloperCatalog
+            accountId={playlist.id}
+            initialScope="live"
+            lockedScope
+            initialCategory={String(previewGroup.channel_group)}
+            nameTransform={previewOutputName}
+          />
+        )}
+      </Modal>
 
       <Modal
         opened={rulesOpen}

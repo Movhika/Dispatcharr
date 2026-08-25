@@ -137,6 +137,64 @@ class VODSourceManagementTests(TestCase):
         )
         self.assertEqual([relation.id for relation in ordered], [self.german_relation.id])
 
+    def test_first_matching_category_rule_overrides_default_source_constraints(self):
+        self.english_category.metadata_defaults = {
+            "audio_languages": ["eng"],
+            "subtitle_languages": ["ger"],
+            "resolution": "1080p",
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "required_audio_languages": ["ger"],
+            "allow_unknown_metadata": False,
+            "source_rules": [
+                {
+                    "name": "German subtitles for anime",
+                    "category_regex": "ANIME",
+                    "enabled": True,
+                    "required_audio_languages": [],
+                    "required_subtitle_languages": ["ger"],
+                    "language_match_mode": "all",
+                    "allow_unknown_metadata": False,
+                },
+                {
+                    "name": "Would reject if evaluated",
+                    "category_regex": "NETFLIX",
+                    "enabled": True,
+                    "excluded_audio_languages": ["eng"],
+                },
+            ],
+        }
+
+        self.assertTrue(relation_allowed(self.english_relation, self.policy))
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+
+    def test_category_rule_can_exclude_video_features(self):
+        self.english_category.metadata_defaults = {
+            "audio_languages": ["eng"],
+            "subtitle_languages": ["ger"],
+            "resolution": "2160p",
+            "video_features": ["dv"],
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "allow_unknown_metadata": False,
+            "source_rules": [
+                {
+                    "name": "No DV anime",
+                    "category_regex": "ANIME",
+                    "enabled": True,
+                    "required_audio_languages": [],
+                    "required_subtitle_languages": ["ger"],
+                    "excluded_video_features": ["dv", "3d"],
+                    "language_match_mode": "all",
+                    "allow_unknown_metadata": False,
+                }
+            ],
+        }
+
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
     def test_failover_can_prefer_lower_resolution(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.ranking = [
@@ -843,6 +901,51 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("ranking", serializer.errors)
+
+    def test_profile_rejects_invalid_source_rule_expression(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Invalid category rule",
+                "hard_constraints": {
+                    "source_rules": [
+                        {
+                            "name": "Broken",
+                            "category_regex": "[",
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("hard_constraints", serializer.errors)
+
+    def test_admin_polling_recovers_pending_profile_with_finished_task(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-recovery-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            is_active=True,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now() - timedelta(minutes=1),
+            selection_progress={"task_id": "finished-task"},
+        )
+        request = APIRequestFactory().get("/api/vod/access-policies/")
+        force_authenticate(request, user=admin)
+
+        with (
+            patch("celery.result.AsyncResult") as async_result,
+            patch(
+                "apps.vod.profile_selection.enqueue_profile_selection_rebuild"
+            ) as enqueue,
+        ):
+            async_result.return_value.state = "SUCCESS"
+            response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        enqueue.assert_called_once_with(self.policy.pk)
 
     def test_admin_can_replace_vod_output_profile_categories(self):
         admin = get_user_model().objects.create_user(

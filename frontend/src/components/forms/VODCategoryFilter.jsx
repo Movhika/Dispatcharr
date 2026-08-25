@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActionIcon,
   Button,
   Checkbox,
   Flex,
@@ -17,13 +18,14 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Info } from 'lucide-react';
+import { Eye, Info } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
 import VODMetadataFields from '../VODMetadataFields.jsx';
 import M3UGroupRules from './M3UGroupRules.jsx';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
+import M3UDeveloperCatalog from './M3UDeveloperCatalog.jsx';
 
 const VODCategoryFilter = ({
   playlist = null,
@@ -38,6 +40,7 @@ const VODCategoryFilter = ({
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [previewCategoryId, setPreviewCategoryId] = useState(null);
   const [metadataModes, setMetadataModes] = useState({
     audio_languages: 'keep',
     subtitle_languages: 'keep',
@@ -289,6 +292,9 @@ const VODCategoryFilter = ({
                 </Group>
               </TableTh>
               <TableTh w={180}>Features</TableTh>
+              <TableTh w={70} ta="center">
+                Actions
+              </TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -345,6 +351,17 @@ const VODCategoryFilter = ({
                     ', '
                   ) || '—'}
                 </TableTd>
+                <TableTd ta="center">
+                  <Tooltip label="Preview imported sources" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      aria-label={`Preview ${category.name}`}
+                      onClick={() => setPreviewCategoryId(category.id)}
+                    >
+                      <Eye size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                </TableTd>
               </TableTr>
             ))}
           </TableTbody>
@@ -387,6 +404,22 @@ const VODCategoryFilter = ({
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal
+        opened={!!previewCategoryId}
+        onClose={() => setPreviewCategoryId(null)}
+        title={`${type === 'movie' ? 'Movie' : 'Series'} sources`}
+        size="85vw"
+      >
+        {previewCategoryId && (
+          <M3UDeveloperCatalog
+            accountId={playlist.id}
+            initialScope={type}
+            lockedScope
+            initialCategory={String(previewCategoryId)}
+          />
+        )}
       </Modal>
 
       <Modal

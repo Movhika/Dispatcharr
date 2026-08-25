@@ -122,7 +122,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
       onClose={onClose}
       title={
         <Group justify="space-between" wrap="nowrap" w="100%">
-          <span>M3U Group Filter & Auto Channel Sync</span>
+          <span>Source import</span>
           <Button
             size="xs"
             aria-label="Developer mode"
@@ -134,15 +134,15 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
           </Button>
         </Group>
       }
-      size="95vw"
+      size="90vw"
       styles={{
         content: {
           '--mantine-color-body': '#27272A',
-          height: '96vh',
+          height: '92vh',
           overflowX: 'hidden',
         },
         body: {
-          height: 'calc(96vh - 60px)',
+          height: 'calc(92vh - 60px)',
           overflowX: 'hidden',
         },
         title: { flex: 1 },
@@ -150,7 +150,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
       scrollAreaComponent={Modal.NativeScrollArea}
       lockScroll={false}
       withinPortal={true}
-      yOffset="2vh"
+      yOffset="4vh"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
       <Stack mih="100%">

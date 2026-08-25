@@ -58,6 +58,12 @@ import {
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
+const formatRefreshDuration = (seconds) => {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value < 60) return `${value}s`;
+  return `${Math.floor(value / 60)}m ${value % 60}s`;
+};
+
 const StatusRow = ({ label, value }) => (
   <Flex justify="space-between" align="center">
     <Text size="xs" fw={500}>
@@ -450,6 +456,15 @@ const M3UTable = () => {
         cell: ({ cell, row }) => {
           const value = cell.getValue();
           const data = row.original;
+          const timings = data.custom_properties?.refresh_timings || {};
+          const timingLines = [
+            Number.isFinite(Number(timings.live_seconds))
+              ? `Live ${formatRefreshDuration(timings.live_seconds)}`
+              : null,
+            Number.isFinite(Number(timings.vod_seconds))
+              ? `VOD ${formatRefreshDuration(timings.vod_seconds)}`
+              : null,
+          ].filter(Boolean);
 
           // Get account id to check for refresh progress
           const accountId = data.id;
@@ -476,7 +491,7 @@ const M3UTable = () => {
           }
 
           // No progress data, display normal status message
-          if (!value) return null;
+          if (!value && !timingLines.length) return null;
 
           // Show error message with red styling for errors
           if (data.status === 'error') {
@@ -497,21 +512,28 @@ const M3UTable = () => {
           // Show success message with green styling for success
           if (data.status === 'success') {
             return (
-              <Tooltip label={value} multiline width={300}>
-                <Text
-                  c="dimmed"
-                  size="xs"
-                  style={{
-                    color: theme.colors.green[6],
-                    lineHeight: 1.3,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {value}
-                </Text>
-              </Tooltip>
+              <Flex direction="column" gap={0}>
+                <Tooltip label={value} multiline width={300}>
+                  <Text
+                    c="dimmed"
+                    size="xs"
+                    style={{
+                      color: theme.colors.green[6],
+                      lineHeight: 1.3,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {value}
+                  </Text>
+                </Tooltip>
+                {timingLines.map((line) => (
+                  <Text key={line} size="xs" c="dimmed">
+                    {line}
+                  </Text>
+                ))}
+              </Flex>
             );
           }
 

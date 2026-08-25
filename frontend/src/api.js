@@ -1479,13 +1479,20 @@ export default class API {
     );
   }
 
-  static async getM3UDeveloperCatalog(accountId, scope, search = '', page = 1) {
+  static async getM3UDeveloperCatalog(
+    accountId,
+    scope,
+    search = '',
+    page = 1,
+    category = ''
+  ) {
     const params = new URLSearchParams({
       scope,
       search,
       page: String(page),
       page_size: '100',
     });
+    if (category) params.set('category', category);
     return await request(
       `${host}/api/m3u/accounts/${accountId}/developer-catalog/?${params}`
     );

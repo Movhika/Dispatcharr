@@ -39,6 +39,10 @@ vi.mock('../M3UGroupRules.jsx', () => ({
   default: () => <div data-testid="discovery-rules" />,
 }));
 
+vi.mock('../M3UDeveloperCatalog.jsx', () => ({
+  default: () => <div data-testid="group-preview">Preview</div>,
+}));
+
 vi.mock('../AutoSyncAdvanced.jsx', () => ({
   default: ({
     group,
@@ -245,6 +249,7 @@ vi.mock('@mantine/core', async () => ({
 vi.mock('lucide-react', () => ({
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
+  Eye: () => <svg data-testid="icon-eye" />,
   Info: (props) => <svg data-testid="icon-info" {...props} />,
   Settings: () => <svg data-testid="icon-cog" />,
 }));
