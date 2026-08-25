@@ -412,12 +412,22 @@ def refresh_vod_content(account_id):
         # Provider rows are already in memory during import. Use their compact,
         # order-independent signatures to avoid rebuilding every user profile
         # after a scheduled scan that did not change selectable VOD content.
-        fingerprints_available = bool(movie_catalog and series_catalog)
+        movie_fingerprint = (
+            movie_catalog.get("fingerprint")
+            if isinstance(movie_catalog, dict)
+            else None
+        )
+        series_fingerprint = (
+            series_catalog.get("fingerprint")
+            if isinstance(series_catalog, dict)
+            else None
+        )
+        fingerprints_available = bool(movie_fingerprint and series_fingerprint)
         current_fingerprint = (
             hashlib.sha256(
                 (
-                    f"movie:{movie_catalog['fingerprint']}|"
-                    f"series:{series_catalog['fingerprint']}"
+                    f"movie:{movie_fingerprint}|"
+                    f"series:{series_fingerprint}"
                 ).encode("utf-8")
             ).hexdigest()
             if fingerprints_available
