@@ -1482,6 +1482,20 @@ def build_vod_stats_data(redis_client):
                         content_type = combined_data.get('content_obj_type', 'unknown')
                         content_uuid = combined_data.get('content_uuid', 'unknown')
                         client_id = session_id
+                        active_streams = int(
+                            combined_data.get('active_streams', 0) or 0
+                        )
+                        reconnecting = bool(
+                            redis_client.exists(
+                                f"vod_proxy:disconnect_grace:{session_id}"
+                            )
+                        )
+
+                        # HEAD requests may pre-create provider/session state.
+                        # Only expose sessions that are transferring bytes or
+                        # waiting briefly for a seek/reconnect request.
+                        if active_streams <= 0 and not reconnecting:
+                            continue
 
                         # Get content info with enhanced metadata
                         content_name = "Unknown"
@@ -1670,6 +1684,10 @@ def build_vod_stats_data(redis_client):
                             ),
                             'm3u_profile': m3u_profile_info,
                             'client_id': client_id,
+                            'active_streams': active_streams,
+                            'connection_state': (
+                                'streaming' if active_streams > 0 else 'reconnecting'
+                            ),
                             'client_ip': combined_data.get('client_ip', 'Unknown'),
                             'user_id': combined_data.get('user_id', '0'),
                             'user_agent': combined_data.get('client_user_agent', 'Unknown'),

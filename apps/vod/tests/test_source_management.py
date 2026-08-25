@@ -1035,6 +1035,34 @@ class VODSourceManagementTests(TestCase):
 
         self.assertEqual(playback.failover_count, 1)
 
+    def test_range_reconnect_clears_stale_playback_end_time(self):
+        record_playback_selection(
+            session_id="proxy-range-reconnect",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.PROXYING,
+        )
+        playback = record_playback_selection(
+            session_id="proxy-range-reconnect",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        self.assertIsNotNone(playback.ended_at)
+
+        playback = record_playback_selection(
+            session_id="proxy-range-reconnect",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.PROXYING,
+        )
+
+        self.assertEqual(playback.status, VODPlaybackSession.Status.PROXYING)
+        self.assertIsNone(playback.ended_at)
+
     def test_playback_history_exposes_the_recorded_technical_snapshot(self):
         playback = record_playback_selection(
             session_id="proxy-test-1",

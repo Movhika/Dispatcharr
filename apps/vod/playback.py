@@ -90,6 +90,15 @@ def record_playback_selection(
         "failover_count": _failover_count(failover_chain),
         "custom_properties": custom_properties or {},
     }
+    if status not in {
+        VODPlaybackSession.Status.COMPLETED,
+        VODPlaybackSession.Status.STOPPED,
+        VODPlaybackSession.Status.FAILED,
+    }:
+        # A Range reconnect can revive the same session URL after a previous
+        # transport request ended.  Do not leave a stale terminal timestamp on
+        # a playback that is active again.
+        values["ended_at"] = None
     playback, created = VODPlaybackSession.objects.update_or_create(
         session_id=session_id,
         defaults=values,

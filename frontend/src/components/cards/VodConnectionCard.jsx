@@ -365,6 +365,13 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
           </Box>
 
           <Group>
+            {connection?.connection_state === 'reconnecting' && (
+              <Tooltip label="Waiting briefly for the player's next seek request">
+                <Badge color="yellow" variant="light">
+                  Seeking / reconnecting
+                </Badge>
+              </Tooltip>
+            )}
             {connection && (
               <Tooltip
                 label={`Connected at ${getConnectionStartTime(connection)}`}

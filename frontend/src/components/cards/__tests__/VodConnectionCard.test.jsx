@@ -302,6 +302,21 @@ describe('VodConnectionCard', () => {
       expect(screen.getByTestId('icon-square-x')).toBeInTheDocument();
     });
 
+    it('shows when a logical VOD session is waiting for a seek reconnect', () => {
+      render(
+        <VodConnectionCard
+          vodContent={makeMovieContent({
+            individual_connection: makeConnection({
+              connection_state: 'reconnecting',
+            }),
+          })}
+          stopVODClient={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('Seeking / reconnecting')).toBeInTheDocument();
+    });
+
     it('renders the client IP in the connection section', () => {
       render(
         <VodConnectionCard

@@ -137,6 +137,8 @@ class _FakeVodScript:
                 return self._decr(keys[0], args[0])
             if "vod_cleanup_idle" in self._script:
                 return self._cleanup(keys[0])
+            if "vod_cleanup_after_grace" in self._script:
+                return self._cleanup_after_grace(keys[0], keys[1], args[0])
             if "vod_meta_save_if_exists" in self._script:
                 return self._meta_save(keys[0], args)
             raise AssertionError(f"Unknown VOD script: {self._script[:80]}")
@@ -169,6 +171,21 @@ class _FakeVodScript:
         if current > 0:
             return 0
         del self._redis._hashes[conn_key]
+        return 1
+
+    def _cleanup_after_grace(self, conn_key, grace_key, expected_token):
+        current_token = self._redis._data.get(grace_key)
+        if current_token is None or str(current_token) != str(expected_token):
+            return 0
+        if conn_key not in self._redis._hashes:
+            self._redis._data.pop(grace_key, None)
+            return -1
+        current = int(self._redis._hashes[conn_key].get("active_streams", 0))
+        if current > 0:
+            self._redis._data.pop(grace_key, None)
+            return 0
+        del self._redis._hashes[conn_key]
+        self._redis._data.pop(grace_key, None)
         return 1
 
     def _meta_save(self, key, args):
@@ -441,6 +458,50 @@ class TestAtomicActiveStreams(SimpleTestCase):
         self.assertEqual(conn.get_active_streams_count(), 1)
         self.assertIsNotNone(conn._get_connection_state())
 
+    def test_disconnect_grace_keeps_idle_session_until_finalized(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_grace_idle", active_streams=0)
+
+        token = conn.begin_disconnect_grace(seconds=8)
+
+        self.assertTrue(token)
+        self.assertIsNotNone(conn._get_connection_state())
+        self.assertTrue(conn.finalize_disconnect_grace(token))
+        self.assertIsNone(conn._get_connection_state())
+
+    def test_new_range_request_cancels_old_disconnect_grace(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_grace_cancel", active_streams=0)
+        token = conn.begin_disconnect_grace(seconds=8)
+
+        conn.cancel_disconnect_grace()
+        self.assertEqual(conn.increment_active_streams(), 1)
+
+        self.assertFalse(conn.finalize_disconnect_grace(token))
+        self.assertIsNotNone(conn._get_connection_state())
+        self.assertEqual(conn.get_active_streams_count(), 1)
+
+    def test_newer_disconnect_timer_supersedes_older_timer(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_grace_generation", active_streams=0)
+        old_token = conn.begin_disconnect_grace(seconds=8)
+        new_token = conn.begin_disconnect_grace(seconds=8)
+
+        self.assertFalse(conn.finalize_disconnect_grace(old_token))
+        self.assertIsNotNone(conn._get_connection_state())
+        self.assertTrue(conn.finalize_disconnect_grace(new_token))
+        self.assertIsNone(conn._get_connection_state())
+
+    def test_active_range_request_blocks_grace_finalization(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_grace_active", active_streams=0)
+        token = conn.begin_disconnect_grace(seconds=8)
+        self.assertEqual(conn.increment_active_streams(), 1)
+
+        self.assertFalse(conn.finalize_disconnect_grace(token))
+        self.assertIsNotNone(conn._get_connection_state())
+        self.assertEqual(conn.get_active_streams_count(), 1)
+
 
 class TestLegacyLockContentionBehaviorGone(SimpleTestCase):
     """Document that the old lock-gated DECR orphan path no longer exists."""
@@ -567,6 +628,26 @@ class TestVodActiveStreamsRealRedis(SimpleTestCase):
         conn.cleanup()
         self.assertTrue(bool(self.redis.exists(conn.connection_key)))
         self.assertEqual(int(self.redis.hget(conn.connection_key, "active_streams")), 1)
+
+    def test_real_lua_disconnect_grace_is_cancelled_by_reconnect(self):
+        conn = self._seed(active_streams=0)
+        token = conn.begin_disconnect_grace(seconds=8)
+        self._keys_to_delete.append(conn.disconnect_grace_key)
+
+        self.assertTrue(token)
+        conn.cancel_disconnect_grace()
+        self.assertEqual(conn.increment_active_streams(), 1)
+        self.assertFalse(conn.finalize_disconnect_grace(token))
+        self.assertTrue(bool(self.redis.exists(conn.connection_key)))
+
+    def test_real_lua_disconnect_grace_finalizes_idle_session(self):
+        conn = self._seed(active_streams=0)
+        token = conn.begin_disconnect_grace(seconds=8)
+        self._keys_to_delete.append(conn.disconnect_grace_key)
+
+        self.assertTrue(token)
+        self.assertTrue(conn.finalize_disconnect_grace(token))
+        self.assertFalse(bool(self.redis.exists(conn.connection_key)))
 
     def test_real_lua_concurrent_decr_under_metadata_churn(self):
         RedisBackedVODConnection, _ = _import_vod()
