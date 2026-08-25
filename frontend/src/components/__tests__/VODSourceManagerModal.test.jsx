@@ -6,6 +6,7 @@ vi.mock('../../api', () => ({
     getVODPlaybackSessions: vi.fn(),
     getVODPlaybackFacets: vi.fn(),
     getVODPlaybackStats: vi.fn(),
+    updateVODPlaybackRetention: vi.fn(),
     deleteVODPlaybackSessions: vi.fn(),
     bulkUpdateVODPlaybackMetadata: vi.fn(),
     updateVODSourceManualMetadata: vi.fn(),
@@ -80,6 +81,18 @@ vi.mock('@mantine/core', () => {
     ),
     Group: Wrapper,
     Modal,
+    NumberInput: ({ label, value, onChange, disabled }) => (
+      <label>
+        {label}
+        <input
+          type="number"
+          aria-label={label}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </label>
+    ),
     MultiSelect: ({ label, value = [], onChange, disabled }) => (
       <label>
         {label}
@@ -167,6 +180,7 @@ const playback = {
   category_name: 'GERMANY KIDS',
   username: 'Maria',
   status: 'completed',
+  mode: 'proxy',
   watched_seconds: 125,
   bytes_sent: 1048576,
   source_asset: 9,
@@ -198,6 +212,8 @@ describe('VODSourceManagerModal playback history', () => {
           m3u_account: 4,
         },
       ],
+      retention_days: 0,
+      can_manage_history: true,
     });
     API.getVODPlaybackStats.mockResolvedValue({
       sessions: 1,
@@ -205,6 +221,7 @@ describe('VODSourceManagerModal playback history', () => {
       bytes_sent: 1048576,
       popular: [],
     });
+    API.updateVODPlaybackRetention.mockResolvedValue({ retention_days: 30 });
     API.deleteVODPlaybackSessions.mockResolvedValue({ deleted_sessions: 1 });
     API.bulkUpdateVODPlaybackMetadata.mockResolvedValue({
       selected_sessions: 1,
@@ -222,7 +239,8 @@ describe('VODSourceManagerModal playback history', () => {
     expect(
       screen.getByText('1080p • Audio: ger • Subs: eng')
     ).toBeInTheDocument();
-    expect(screen.getByText(/Automatic cleanup: Off/)).toBeInTheDocument();
+    expect(screen.getAllByText('Completed')).toHaveLength(2);
+    expect(screen.getByText('Requested source used')).toBeInTheDocument();
     expect(
       screen.getByText(
         new Date(playback.started_at).toLocaleDateString(undefined, {
@@ -246,9 +264,26 @@ describe('VODSourceManagerModal playback history', () => {
     await waitFor(() =>
       expect(API.updateVODSourceManualMetadata).toHaveBeenCalledWith(
         9,
-        { audio_languages: ['ger', 'eng'] },
-        ['audio_languages']
+        {
+          audio_languages: ['ger', 'eng'],
+          subtitle_languages: ['eng'],
+          resolution: '1080p',
+        },
+        ['audio_languages', 'subtitle_languages', 'resolution']
       )
+    );
+  });
+
+  it('updates automatic history retention in days', async () => {
+    render(<VODSourceManagerModal opened onClose={vi.fn()} />);
+    await screen.findByText('Avatar - S01E01');
+    fireEvent.change(screen.getByLabelText('Auto-delete after (days)'), {
+      target: { value: '30' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save retention' }));
+
+    await waitFor(() =>
+      expect(API.updateVODPlaybackRetention).toHaveBeenCalledWith(30)
     );
   });
 
@@ -278,7 +313,7 @@ describe('VODSourceManagerModal playback history', () => {
   it('deletes all history matching the current server filters', async () => {
     render(<VODSourceManagerModal opened onClose={vi.fn()} />);
     await screen.findByText('Avatar - S01E01');
-    fireEvent.change(screen.getByLabelText('Status'), {
+    fireEvent.change(screen.getByLabelText('Playback state'), {
       target: { value: 'completed' },
     });
     fireEvent.click(

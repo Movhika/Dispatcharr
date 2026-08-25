@@ -9,7 +9,7 @@ from .models import (
     VODCategory, Series, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import logging
 import json
@@ -49,6 +49,28 @@ VOD_PROFILE_FINGERPRINT_FIELDS = (
     "genre",
     "stream_icon",
 )
+
+
+@shared_task
+def cleanup_vod_playback_history():
+    """Delete playback audit rows outside their configured retention window."""
+    from core.models import CoreSettings
+    from .models import VODPlaybackSession
+
+    retention_days = CoreSettings.get_vod_playback_history_retention_days()
+    if retention_days <= 0:
+        return {"retention_days": 0, "deleted_sessions": 0}
+
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    deleted, _ = VODPlaybackSession.objects.filter(
+        started_at__lt=cutoff
+    ).delete()
+    logger.info(
+        "VOD playback history cleanup removed %s rows older than %s days",
+        deleted,
+        retention_days,
+    )
+    return {"retention_days": retention_days, "deleted_sessions": deleted}
 
 
 def _provider_vod_fingerprint(rows):

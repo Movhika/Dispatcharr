@@ -21,6 +21,7 @@ from apps.accounts.permissions import (
     Authenticated,
     permission_classes_by_action,
 )
+from core.models import CoreSettings
 from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
@@ -1105,8 +1106,6 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(
                 Q(content_name__icontains=search)
                 | Q(provider_asset_id__icontains=search)
-                | Q(m3u_account__name__icontains=search)
-                | Q(category__name__icontains=search)
             )
 
         username = str(filters.get("username") or "").strip()
@@ -1183,8 +1182,32 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     }
                     for row in categories
                 ],
+                "retention_days": (
+                    CoreSettings.get_vod_playback_history_retention_days()
+                ),
+                "can_manage_history": _is_admin(request.user),
             }
         )
+
+    @action(detail=False, methods=["put"], url_path="retention")
+    def retention(self, request):
+        if not _is_admin(request.user):
+            raise PermissionDenied(
+                "Only administrators can change playback history retention."
+            )
+        try:
+            retention_days = int(request.data.get("retention_days", 0))
+            retention_days = CoreSettings.set_vod_playback_history_retention_days(
+                retention_days
+            )
+        except (TypeError, ValueError) as exc:
+            raise DRFValidationError({"retention_days": str(exc)})
+
+        if retention_days > 0:
+            from .tasks import cleanup_vod_playback_history
+
+            cleanup_vod_playback_history.delay()
+        return Response({"retention_days": retention_days})
 
     @action(detail=False, methods=["get"], url_path="stats")
     def stats(self, request):

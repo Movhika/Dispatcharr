@@ -2,7 +2,10 @@
 
 import logging
 
+from django.core.cache import cache
 from django.utils import timezone
+
+from core.models import CoreSettings
 
 from .metadata import sync_relation_declared_metadata
 from .models import VODPlaybackSession, VODSourceAsset
@@ -10,6 +13,32 @@ from .policies import relation_category
 
 
 logger = logging.getLogger(__name__)
+_HISTORY_CLEANUP_THROTTLE_KEY = "vod:playback-history-cleanup:v1"
+_HISTORY_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+def _schedule_history_cleanup_if_due():
+    """Queue retention cleanup at most once per interval, never in-band."""
+    if CoreSettings.get_vod_playback_history_retention_days() <= 0:
+        return
+    try:
+        acquired = cache.add(
+            _HISTORY_CLEANUP_THROTTLE_KEY,
+            True,
+            timeout=_HISTORY_CLEANUP_INTERVAL_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("Could not schedule VOD history cleanup: %s", exc)
+        return
+    if not acquired:
+        return
+    try:
+        from .tasks import cleanup_vod_playback_history
+
+        cleanup_vod_playback_history.delay()
+    except Exception as exc:
+        cache.delete(_HISTORY_CLEANUP_THROTTLE_KEY)
+        logger.warning("Could not queue VOD history cleanup: %s", exc)
 
 
 def _relation_content(relation):
@@ -110,4 +139,10 @@ def record_playback_selection(
     }:
         playback.ended_at = timezone.now()
         playback.save(update_fields=["ended_at"])
+    if created or status in {
+        VODPlaybackSession.Status.COMPLETED,
+        VODPlaybackSession.Status.STOPPED,
+        VODPlaybackSession.Status.FAILED,
+    }:
+        _schedule_history_cleanup_if_due()
     return playback

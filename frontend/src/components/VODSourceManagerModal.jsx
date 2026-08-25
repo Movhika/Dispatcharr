@@ -7,11 +7,11 @@ import React, {
 } from 'react';
 import {
   ActionIcon,
-  Alert,
   Button,
   Checkbox,
   Group,
   Modal,
+  NumberInput,
   Pagination,
   ScrollArea,
   Select,
@@ -55,8 +55,24 @@ const EMPTY_MODES = Object.fromEntries(
   VOD_METADATA_FIELDS.map((field) => [field, 'keep'])
 );
 
-const formatBytes = (value) =>
-  `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MB`;
+const formatBytes = (value) => {
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+};
+const formatDuration = (value) => {
+  const seconds = Math.max(0, Math.round(Number(value || 0)));
+  if (seconds < 60) return `${seconds}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m ${remainingSeconds}s`;
+};
 const metadataSummary = (playback) => {
   const metadata = playback.source_effective_metadata?.values || {};
   return [
@@ -83,19 +99,53 @@ const playbackDayLabel = (value) =>
     month: 'short',
     day: 'numeric',
   });
-const failoverSummary = (playback) => {
+const FAILOVER_RESULT_LABELS = {
+  at_capacity: 'capacity reached',
+  invalid_url: 'invalid URL',
+  no_url: 'no stream URL',
+  upstream_error: 'upstream error',
+};
+const PLAYBACK_STATUS = {
+  requested: ['Preparing', 'Request accepted'],
+  redirected: ['Redirected', 'Client received the provider URL'],
+  proxying: ['Active', 'Proxy transfer in progress'],
+  completed: ['Completed', 'Transfer ended normally'],
+  stopped: ['Stopped', 'Playback was stopped'],
+  failed: ['Failed', 'Playback request failed'],
+};
+const MODE_LABELS = {
+  redirect: 'Redirect',
+  proxy: 'Proxy',
+  player: 'Player report',
+};
+const sourceStepLabel = (step) =>
+  [step?.m3u_account_name, step?.category_name].filter(Boolean).join(' — ') ||
+  (step?.provider_asset_id
+    ? `Provider ID ${step.provider_asset_id}`
+    : 'Source');
+const sourceChoiceSummary = (playback) => {
   const rejected = (playback.failover_chain || []).filter(
     (step) => step.result !== 'selected'
   );
-  if (!playback.failover_count && !rejected.length) return 'Preferred source';
-  const summary = rejected
-    .map((step) =>
-      [step.m3u_account_name, String(step.result || '').replaceAll('_', ' ')]
-        .filter(Boolean)
-        .join(': ')
+  if (!playback.failover_count && !rejected.length) {
+    return {
+      label: 'Requested',
+      detail: 'Requested source used',
+    };
+  }
+  const detail = rejected
+    .map(
+      (step) =>
+        `${sourceStepLabel(step)}: ${
+          FAILOVER_RESULT_LABELS[step.result] ||
+          String(step.result || 'rejected').replaceAll('_', ' ')
+        }`
     )
     .join(' → ');
-  return summary || `${playback.failover_count || rejected.length} failover(s)`;
+  return {
+    label: `Failover (${playback.failover_count || rejected.length})`,
+    detail,
+  };
 };
 
 const VODSourceManagerModal = ({ opened, onClose }) => {
@@ -111,6 +161,9 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     categories: [],
   });
   const [stats, setStats] = useState({});
+  const [retentionDays, setRetentionDays] = useState(0);
+  const [retentionDraft, setRetentionDraft] = useState(0);
+  const [savingRetention, setSavingRetention] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [manualPlayback, setManualPlayback] = useState(null);
@@ -196,7 +249,13 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
   useEffect(() => {
     if (!opened) return;
     API.getVODPlaybackFacets()
-      .then((response) => setFacets(response || {}))
+      .then((response) => {
+        const next = response || {};
+        const days = Number(next.retention_days || 0);
+        setFacets(next);
+        setRetentionDays(days);
+        setRetentionDraft(days);
+      })
       .catch(() => setFacets({ users: [], accounts: [], categories: [] }));
   }, [opened]);
 
@@ -252,14 +311,37 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
   const openManualEditor = (playback) => {
     const effective = playback.source_effective_metadata || {};
     const values = effective.values || {};
-    const provenance = effective.provenance || {};
     setManualMetadata({
       ...EMPTY_METADATA,
       ...Object.fromEntries(
-        Object.entries(values).filter(([key]) => provenance[key] === 'manual')
+        Object.entries(values).filter(([field]) =>
+          VOD_METADATA_FIELDS.includes(field)
+        )
       ),
     });
     setManualPlayback(playback);
+  };
+
+  const saveRetention = async () => {
+    const days = Math.max(0, Math.min(3650, Number(retentionDraft || 0)));
+    setSavingRetention(true);
+    try {
+      const response = await API.updateVODPlaybackRetention(days);
+      const savedDays = Number(response?.retention_days ?? days);
+      setRetentionDays(savedDays);
+      setRetentionDraft(savedDays);
+      showNotification({
+        title: 'Playback history retention saved',
+        message:
+          savedDays > 0
+            ? `Entries older than ${savedDays} days are cleaned in the background.`
+            : 'Automatic cleanup is disabled.',
+        color: 'green',
+      });
+      await load();
+    } finally {
+      setSavingRetention(false);
+    }
   };
 
   const saveManualMetadata = async () => {
@@ -381,16 +463,40 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
         }}
       >
         <Stack h="100%" gap="sm">
-          <Alert color="blue" variant="light">
-            History is filtered and paged on the server. Bulk metadata updates
-            each distinct source once, even when it appears in several sessions.
-            Automatic cleanup: Off — entries are kept until an administrator
-            deletes them.
-          </Alert>
+          <Group justify="space-between" align="flex-end" wrap="wrap">
+            <Text size="sm" c="dimmed">
+              Metadata edits apply once to each distinct source represented by
+              the selected history entries.
+            </Text>
+            <Group align="flex-end" gap="xs">
+              <NumberInput
+                label="Auto-delete after (days)"
+                description="0 keeps history until it is deleted manually"
+                min={0}
+                max={3650}
+                allowDecimal={false}
+                value={retentionDraft}
+                onChange={(value) => setRetentionDraft(Number(value || 0))}
+                disabled={!facets.can_manage_history}
+                w={220}
+              />
+              <Button
+                variant="default"
+                loading={savingRetention}
+                disabled={
+                  !facets.can_manage_history ||
+                  Number(retentionDraft) === Number(retentionDays)
+                }
+                onClick={saveRetention}
+              >
+                Save retention
+              </Button>
+            </Group>
+          </Group>
           <Group align="flex-end" wrap="wrap">
             <TextInput
               label="Search"
-              placeholder="Title, source, category or provider ID"
+              placeholder="Title or provider ID"
               value={filters.search}
               onChange={(event) =>
                 updateFilter('search', event.currentTarget.value)
@@ -436,14 +542,14 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             />
             <Select
               clearable
-              label="Status"
+              label="Playback state"
               data={[
-                'requested',
-                'redirected',
-                'proxying',
-                'completed',
-                'stopped',
-                'failed',
+                { value: 'requested', label: 'Preparing' },
+                { value: 'redirected', label: 'Redirected' },
+                { value: 'proxying', label: 'Active' },
+                { value: 'completed', label: 'Completed' },
+                { value: 'stopped', label: 'Stopped' },
+                { value: 'failed', label: 'Failed' },
               ]}
               value={filters.status || null}
               onChange={(value) => updateFilter('status', value || '')}
@@ -603,18 +709,17 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   <TableTh>Title</TableTh>
                   <TableTh>Source</TableTh>
                   <TableTh>User</TableTh>
-                  <TableTh>Status</TableTh>
-                  <TableTh>Selection</TableTh>
+                  <TableTh>Playback state</TableTh>
+                  <TableTh>Source choice</TableTh>
                   <TableTh>Watch time</TableTh>
                   <TableTh>Data</TableTh>
-                  <TableTh>Technical metadata</TableTh>
                   <TableTh w={90}>Actions</TableTh>
                 </TableTr>
               </TableThead>
               <TableTbody>
                 {!loading && playbacks.length === 0 && (
                   <TableTr>
-                    <TableTd colSpan={11}>
+                    <TableTd colSpan={10}>
                       <Text c="dimmed" ta="center" py="lg">
                         No VOD playback matches the current filters.
                       </Text>
@@ -622,6 +727,10 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   </TableTr>
                 )}
                 {playbacks.map((playback, index) => {
+                  const sourceChoice = sourceChoiceSummary(playback);
+                  const [statusLabel, statusDetail] = PLAYBACK_STATUS[
+                    playback.status
+                  ] || [playback.status, ''];
                   const showDay =
                     index === 0 ||
                     playbackDayKey(playbacks[index - 1].started_at) !==
@@ -631,7 +740,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                       {showDay && (
                         <TableTr>
                           <TableTd
-                            colSpan={11}
+                            colSpan={10}
                             py={5}
                             style={{
                               background: 'var(--mantine-color-dark-6)',
@@ -661,7 +770,13 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                         <TableTd>
                           {new Date(playback.started_at).toLocaleString()}
                         </TableTd>
-                        <TableTd>{playback.content_name}</TableTd>
+                        <TableTd>
+                          <Text size="sm">{playback.content_name}</Text>
+                          <Text size="xs" c="dimmed">
+                            {metadataSummary(playback) ||
+                              'Technical metadata unknown'}
+                          </Text>
+                        </TableTd>
                         <TableTd>
                           {playback.account_name}
                           {playback.category_name
@@ -669,13 +784,26 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                             : ''}
                         </TableTd>
                         <TableTd>{playback.username || '—'}</TableTd>
-                        <TableTd>{playback.status}</TableTd>
-                        <TableTd>{failoverSummary(playback)}</TableTd>
-                        <TableTd>{playback.watched_seconds || 0}s</TableTd>
-                        <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
                         <TableTd>
-                          {metadataSummary(playback) || 'Unknown'}
+                          <Text size="sm">{statusLabel}</Text>
+                          <Text size="xs" c="dimmed">
+                            {MODE_LABELS[playback.mode] || playback.mode}
+                            {playback.error ? ` · ${playback.error}` : ''}
+                            {!playback.error && statusDetail
+                              ? ` · ${statusDetail}`
+                              : ''}
+                          </Text>
                         </TableTd>
+                        <TableTd>
+                          <Text size="sm">{sourceChoice.label}</Text>
+                          <Text size="xs" c="dimmed">
+                            {sourceChoice.detail}
+                          </Text>
+                        </TableTd>
+                        <TableTd>
+                          {formatDuration(playback.watched_seconds)}
+                        </TableTd>
+                        <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
                         <TableTd>
                           <Group gap={4} wrap="nowrap">
                             <ActionIcon
@@ -724,8 +852,9 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            Saved fields have the highest priority and are not overwritten by
-            later playback observations.
+            Current effective values are prefilled. Saving confirms and locks
+            every displayed value so later playback observations cannot
+            overwrite it.
           </Text>
           <VODMetadataFields
             value={manualMetadata}

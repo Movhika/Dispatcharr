@@ -206,6 +206,7 @@ NETWORK_ACCESS_KEY = "network_access"
 SYSTEM_SETTINGS_KEY = "system_settings"
 EPG_SETTINGS_KEY = "epg_settings"
 USER_LIMITS_SETTINGS_KEY = "user_limit_settings"
+VOD_SETTINGS_KEY = "vod_settings"
 
 # Redis cache for CoreSettings JSON groups. Primary invalidation is post_save /
 # post_delete; TTL is a safety net if a writer bypasses signals.
@@ -760,6 +761,33 @@ class CoreSettings(models.Model):
             "ignore_same_channel_connections": False,
             "terminate_oldest": True,
         })
+
+    @classmethod
+    def get_vod_settings(cls):
+        """Get lightweight VOD library and playback-history settings."""
+        return cls._get_group(VOD_SETTINGS_KEY, {
+            "playback_history_retention_days": 0,
+        })
+
+    @classmethod
+    def get_vod_playback_history_retention_days(cls):
+        raw = cls.get_vod_settings().get("playback_history_retention_days", 0)
+        try:
+            return max(0, int(raw or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def set_vod_playback_history_retention_days(cls, days):
+        days = int(days)
+        if days < 0 or days > 3650:
+            raise ValueError("Playback history retention must be 0-3650 days")
+        cls._update_group(
+            VOD_SETTINGS_KEY,
+            "VOD Settings",
+            {"playback_history_retention_days": days},
+        )
+        return days
 
 
 class SystemEvent(models.Model):

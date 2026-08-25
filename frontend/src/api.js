@@ -1575,6 +1575,13 @@ export default class API {
     );
   }
 
+  static async updateVODPlaybackRetention(retentionDays) {
+    return await request(`${host}/api/vod/playback-sessions/retention/`, {
+      method: 'PUT',
+      body: { retention_days: retentionDays },
+    });
+  }
+
   static async deleteVODPlaybackSessions(selection) {
     return await request(`${host}/api/vod/playback-sessions/bulk-delete/`, {
       method: 'POST',

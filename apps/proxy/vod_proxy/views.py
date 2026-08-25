@@ -208,6 +208,9 @@ def _select_vod_stream(
             "m3u_account_id": candidate.m3u_account_id,
             "m3u_account_name": candidate.m3u_account.name,
             "category_id": getattr(candidate, "category_id", None),
+            "category_name": getattr(
+                getattr(candidate, "category", None), "name", ""
+            ),
             "provider_asset_id": str(
                 getattr(candidate, "stream_id", None)
                 or getattr(candidate, "external_series_id", None)

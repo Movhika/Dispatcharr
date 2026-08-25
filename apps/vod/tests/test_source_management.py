@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
+from core.models import CoreSettings
 from apps.output.views import xc_get_vod_categories, xc_get_vod_streams
 from apps.vod.metadata import (
     category_defaults_for_relation,
@@ -1131,6 +1132,16 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], playback.id)
 
+        account_search = APIRequestFactory().get(
+            "/api/vod/playback-sessions/",
+            {"search": self.account_a.name},
+        )
+        force_authenticate(account_search, user=admin)
+        account_response = VODPlaybackSessionViewSet.as_view({"get": "list"})(
+            account_search
+        )
+        self.assertEqual(account_response.data["count"], 0)
+
     def test_playback_history_facets_and_stats_use_stable_string_ids(self):
         admin = get_user_model().objects.create_user(
             username="history-facets-admin",
@@ -1196,6 +1207,38 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(stats_response.data["failover_sessions"], 1)
         self.assertEqual(stats_response.data["watched_seconds"], 90)
         self.assertEqual(stats_response.data["bytes_sent"], 1048576)
+
+    @patch("apps.vod.tasks.cleanup_vod_playback_history.delay")
+    @patch.object(
+        CoreSettings,
+        "set_vod_playback_history_retention_days",
+        return_value=30,
+    )
+    def test_admin_can_configure_playback_history_retention(
+        self,
+        set_retention,
+        cleanup_delay,
+    ):
+        admin = get_user_model().objects.create_user(
+            username="history-retention-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().put(
+            "/api/vod/playback-sessions/retention/",
+            {"retention_days": 30},
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODPlaybackSessionViewSet.as_view({"put": "retention"})(
+            request
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["retention_days"], 30)
+        set_retention.assert_called_once_with(30)
+        cleanup_delay.assert_called_once_with()
 
     def test_playback_history_bulk_delete_honors_filtered_select_all(self):
         admin = get_user_model().objects.create_user(
