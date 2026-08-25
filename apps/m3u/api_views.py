@@ -780,6 +780,113 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
         # Perform the actual save
         serializer.save(m3u_account_id=account_id)
 
+    def _preview_response(self, target_id, draft):
+        import re
+        from apps.channels.models import Stream
+
+        ordered = list(self.get_queryset().order_by("order", "id"))
+        entries = []
+        for filter_obj in ordered:
+            values = draft if filter_obj.pk == target_id else {
+                "filter_type": filter_obj.filter_type,
+                "regex_pattern": filter_obj.regex_pattern,
+                "exclude": filter_obj.exclude,
+                "order": filter_obj.order,
+                "custom_properties": filter_obj.custom_properties or {},
+            }
+            entries.append((filter_obj.pk, values))
+        if target_id is None:
+            entries.append(("draft", draft))
+        entries.sort(key=lambda entry: (entry[1].get("order", 0), str(entry[0])))
+
+        compiled = []
+        for filter_id, values in entries:
+            flags = (
+                0
+                if values["custom_properties"].get("case_sensitive", True)
+                else re.IGNORECASE
+            )
+            compiled.append(
+                (filter_id, re.compile(values["regex_pattern"], flags), values)
+            )
+
+        match_count = 0
+        matches = []
+        queryset = Stream.objects.filter(
+            m3u_account_id=self.kwargs["account_id"]
+        ).select_related("channel_group").only(
+            "id", "name", "url", "channel_group__name"
+        )
+        for stream in queryset.iterator(chunk_size=2000):
+            group_name = stream.channel_group.name if stream.channel_group else ""
+            for filter_id, pattern, values in compiled:
+                target_value = (
+                    stream.url
+                    if values["filter_type"] == "url"
+                    else group_name
+                    if values["filter_type"] == "group"
+                    else stream.name
+                )
+                if not pattern.search(target_value or ""):
+                    continue
+                if filter_id == (target_id if target_id is not None else "draft"):
+                    match_count += 1
+                    if len(matches) < 200:
+                        matches.append(
+                            {
+                                "id": stream.pk,
+                                "name": stream.name,
+                                "group": group_name,
+                                "url": stream.url or "",
+                                "result": (
+                                    "exclude" if values["exclude"] else "include"
+                                ),
+                            }
+                        )
+                break
+
+        return Response(
+            {
+                "count": match_count,
+                "results": matches,
+                "truncated": match_count > len(matches),
+                "first_match_wins": True,
+                "inventory": "currently imported streams",
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="preview")
+    def preview(self, request, *args, **kwargs):
+        """Preview the first-match result against currently imported streams."""
+        if getattr(request.user, "user_level", 0) < 10:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        target = self.get_object()
+        serializer = self.get_serializer(target, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        draft = {
+            field: serializer.validated_data.get(field, getattr(target, field))
+            for field in (
+                "filter_type",
+                "regex_pattern",
+                "exclude",
+                "order",
+                "custom_properties",
+            )
+        }
+        draft["custom_properties"] = draft["custom_properties"] or {}
+        return self._preview_response(target.pk, draft)
+
+    @action(detail=False, methods=["post"], url_path="preview-draft")
+    def preview_draft(self, request, *args, **kwargs):
+        """Preview an unsaved stream filter in its requested order."""
+        if getattr(request.user, "user_level", 0) < 10:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        draft = dict(serializer.validated_data)
+        draft["custom_properties"] = draft.get("custom_properties") or {}
+        return self._preview_response(None, draft)
+
 
 class M3UGroupRuleViewSet(viewsets.ModelViewSet):
     queryset = M3UGroupRule.objects.all()

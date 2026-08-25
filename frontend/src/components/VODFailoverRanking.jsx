@@ -77,8 +77,8 @@ const SortableCriterion = ({ criterion, onDirectionChange }) => {
         height: '100%',
       }}
     >
-      <Stack gap="sm" h="100%" justify="space-between">
-        <Group wrap="nowrap" align="flex-start">
+      <Group wrap="nowrap" align="center" justify="space-between">
+        <Group wrap="nowrap" align="flex-start" style={{ flex: 1 }}>
           <ActionIcon
             variant="subtle"
             color="gray"
@@ -102,7 +102,7 @@ const SortableCriterion = ({ criterion, onDirectionChange }) => {
           criterion === 'resolution_asc') && (
           <Select
             aria-label="Resolution preference"
-            w="100%"
+            w={150}
             data={[
               { value: 'resolution_desc', label: 'Highest first' },
               { value: 'resolution_asc', label: 'Lowest first' },
@@ -114,7 +114,7 @@ const SortableCriterion = ({ criterion, onDirectionChange }) => {
         {(criterion === 'bitrate_desc' || criterion === 'bitrate_asc') && (
           <Select
             aria-label="Bitrate preference"
-            w="100%"
+            w={150}
             data={[
               { value: 'bitrate_desc', label: 'Highest first' },
               { value: 'bitrate_asc', label: 'Lowest first' },
@@ -123,7 +123,7 @@ const SortableCriterion = ({ criterion, onDirectionChange }) => {
             onChange={onDirectionChange}
           />
         )}
-      </Stack>
+      </Group>
     </Paper>
   );
 };

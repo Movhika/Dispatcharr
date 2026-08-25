@@ -322,10 +322,10 @@ class VODSourceManagementTests(TestCase):
     def test_video_features_are_detected_and_can_bound_a_profile(self):
         self.assertEqual(
             detect_video_features("Movie.3D.HSBS.HDR10+.mkv"),
-            ["3d_sbs", "hdr10_plus"],
+            ["3d", "hdr"],
         )
         self.german_category.metadata_defaults = {
-            "video_features": ["3d_sbs", "hdr10_plus"]
+            "video_features": ["3d", "hdr"]
         }
         self.german_category.save(update_fields=["metadata_defaults"])
         self.policy.hard_constraints = {
@@ -336,9 +336,41 @@ class VODSourceManagementTests(TestCase):
 
         self.assertTrue(relation_allowed(self.german_relation, self.policy))
         self.assertFalse(relation_allowed(self.english_relation, self.policy))
+        self.assertEqual(compatible_video_features("hdr"), ["hdr"])
+
+    def test_profile_exclusions_override_allowed_languages_and_features(self):
+        self.german_category.metadata_defaults = {
+            "audio_languages": ["ger"],
+            "subtitle_languages": ["eng"],
+            "video_features": ["3d"],
+        }
+        self.german_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "required_audio_languages": ["ger"],
+            "excluded_subtitle_languages": ["eng"],
+            "excluded_video_features": ["3d"],
+            "allow_unknown_metadata": True,
+        }
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
+    def test_lowest_bitrate_still_ranks_unknown_after_known(self):
+        self.english_relation.custom_properties = {
+            "detailed_info": {"bitrate": 9000}
+        }
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = ["bitrate_asc", "metadata_completeness"]
+        self.policy.save(update_fields=["hard_constraints", "ranking", "updated_at"])
+
+        ordered = ordered_failover_candidates(
+            [self.german_relation, self.english_relation],
+            self.policy,
+        )
+
         self.assertEqual(
-            compatible_video_features("hdr"),
-            ["hdr", "hdr10", "hdr10_plus", "dolby_vision", "hlg"],
+            [relation.id for relation in ordered],
+            [self.english_relation.id, self.german_relation.id],
         )
 
     def test_failover_can_prefer_lower_known_bitrate(self):
@@ -984,8 +1016,24 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(playback.category_id, self.german.id)
         self.assertEqual(playback.relation_id, self.german_relation.id)
         self.assertEqual(playback.status, VODPlaybackSession.Status.REDIRECTED)
+        self.assertEqual(playback.failover_count, 0)
         self.assertEqual(playback.bytes_sent, 0)
         self.assertIsNotNone(self.german_relation.source_asset_id)
+
+    def test_playback_history_counts_rejected_failover_attempts(self):
+        playback = record_playback_selection(
+            session_id="redirect-test-failover",
+            user=None,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.REDIRECT,
+            status=VODPlaybackSession.Status.REDIRECTED,
+            failover_chain=[
+                {"relation_id": self.english_relation.id, "result": "upstream_error"},
+                {"relation_id": self.german_relation.id, "result": "selected"},
+            ],
+        )
+
+        self.assertEqual(playback.failover_count, 1)
 
     def test_playback_history_exposes_the_recorded_technical_snapshot(self):
         playback = record_playback_selection(
@@ -1054,6 +1102,72 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], playback.id)
+
+    def test_playback_history_facets_and_stats_use_stable_string_ids(self):
+        admin = get_user_model().objects.create_user(
+            username="history-facets-admin",
+            password="test-password",
+            user_level=10,
+        )
+        playback = record_playback_selection(
+            session_id="history-facets-match",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+            failover_chain=[
+                {
+                    "relation_id": self.english_relation.id,
+                    "result": "at_capacity",
+                },
+                {"relation_id": self.german_relation.id, "result": "selected"},
+            ],
+        )
+        VODPlaybackSession.objects.filter(pk=playback.pk).update(
+            bytes_sent=1048576,
+            watched_seconds=90,
+        )
+
+        facets_request = APIRequestFactory().get(
+            "/api/vod/playback-sessions/facets/"
+        )
+        force_authenticate(facets_request, user=admin)
+        facets = VODPlaybackSessionViewSet.as_view({"get": "facets"})(
+            facets_request
+        )
+
+        self.assertEqual(facets.status_code, 200)
+        self.assertIn(
+            {"value": str(admin.id), "label": admin.username},
+            facets.data["users"],
+        )
+        self.assertIn(
+            {"value": str(self.account_a.id), "label": self.account_a.name},
+            facets.data["accounts"],
+        )
+        self.assertIn(
+            {
+                "value": str(self.german.id),
+                "label": self.german.name,
+                "m3u_account": str(self.account_a.id),
+            },
+            facets.data["categories"],
+        )
+
+        stats_request = APIRequestFactory().get(
+            "/api/vod/playback-sessions/stats/",
+            {"user": str(admin.id), "category": str(self.german.id)},
+        )
+        force_authenticate(stats_request, user=admin)
+        stats_response = VODPlaybackSessionViewSet.as_view({"get": "stats"})(
+            stats_request
+        )
+
+        self.assertEqual(stats_response.status_code, 200)
+        self.assertEqual(stats_response.data["sessions"], 1)
+        self.assertEqual(stats_response.data["failover_sessions"], 1)
+        self.assertEqual(stats_response.data["watched_seconds"], 90)
+        self.assertEqual(stats_response.data["bytes_sent"], 1048576)
 
     def test_playback_history_bulk_delete_honors_filtered_select_all(self):
         admin = get_user_model().objects.create_user(
@@ -1313,6 +1427,68 @@ class VODSourceManagementTests(TestCase):
             self.german_relation.source_asset.manual_metadata["resolution"],
             "1080p",
         )
+
+    def test_bulk_title_cleaning_updates_only_filtered_canonical_titles(self):
+        self.movie.name = "┃DE┃ Avatar"
+        self.movie.save(update_fields=["name"])
+        other_movie = Movie.objects.create(name="┃DE┃ Unrelated title")
+        M3UMovieRelation.objects.create(
+            m3u_account=self.account_a,
+            movie=other_movie,
+            category=self.german,
+            stream_id="other-title",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-title-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "select_all": True,
+                "filters": {"type": "movies", "search": "Avatar"},
+                "exclude_selections": [],
+                "metadata": {},
+                "canonical_title": {"mode": "clean"},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["updated_titles"], 1)
+        self.movie.refresh_from_db()
+        other_movie.refresh_from_db()
+        self.assertEqual(self.movie.display_name, "Avatar")
+        self.assertEqual(other_movie.display_name, "")
+
+    def test_bulk_title_regex_requires_a_pattern(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-title-regex-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/bulk-manual-metadata/",
+            {
+                "selections": [{"content_type": "movie", "id": self.movie.id}],
+                "metadata": {},
+                "canonical_title": {"mode": "regex", "pattern": ""},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "bulk_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 400)
 
     def test_bulk_metadata_limits_selected_movie_to_filtered_account_and_category(self):
         admin = get_user_model().objects.create_user(

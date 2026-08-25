@@ -79,6 +79,11 @@ class Series(models.Model):
     """Series information for TV shows"""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
+    display_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional canonical title used for compact client output.",
+    )
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)
@@ -117,6 +122,11 @@ class Movie(models.Model):
     """Movie content"""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
+    display_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional canonical title used for compact client output.",
+    )
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)
@@ -693,6 +703,7 @@ class VODPlaybackSession(models.Model):
     watched_seconds = models.PositiveIntegerField(default=0)
     observed_metadata = models.JSONField(default=dict, blank=True)
     failover_chain = models.JSONField(default=list, blank=True)
+    failover_count = models.PositiveIntegerField(default=0)
     error = models.TextField(blank=True)
     custom_properties = models.JSONField(default=dict, blank=True)
 

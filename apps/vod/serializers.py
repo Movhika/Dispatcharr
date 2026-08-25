@@ -422,6 +422,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     )
     selection_current = serializers.SerializerMethodField()
     selection_available = serializers.SerializerMethodField()
+    selection_task_state = serializers.SerializerMethodField()
 
     class Meta:
         model = VODAccessPolicy
@@ -429,13 +430,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "id", "name", "export_mode", "is_default", "is_active",
             "hard_constraints", "ranking", "users", "category_rules",
             "selection_status", "selection_current", "selection_available",
+            "selection_task_state",
             "selection_counts", "selection_progress",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "selection_status", "selection_current",
-            "selection_available", "selection_counts", "selection_progress",
+            "selection_available", "selection_task_state", "selection_counts", "selection_progress",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
@@ -453,6 +455,19 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def get_selection_available(self, obj):
         """Whether a completed generation can still be served or previewed."""
         return bool(obj.active_selection_generation)
+
+    def get_selection_task_state(self, obj):
+        if obj.selection_status != VODAccessPolicy.SelectionStatus.PENDING:
+            return ""
+        task_id = (obj.selection_progress or {}).get("task_id")
+        if not task_id:
+            return "UNPUBLISHED"
+        try:
+            from celery.result import AsyncResult
+
+            return str(AsyncResult(task_id).state or "PENDING")
+        except Exception:
+            return "UNKNOWN"
 
     def _replace_category_rules(self, policy, rules):
         if rules is None:
@@ -505,14 +520,20 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be an object")
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
-            "required_video_features",
+            "excluded_audio_languages", "excluded_subtitle_languages",
+            "required_video_features", "excluded_video_features",
             "min_resolution", "max_resolution",
             "allow_unknown_metadata", "language_match_mode",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
         normalized = dict(value)
-        for field in ("required_audio_languages", "required_subtitle_languages"):
+        for field in (
+            "required_audio_languages",
+            "required_subtitle_languages",
+            "excluded_audio_languages",
+            "excluded_subtitle_languages",
+        ):
             languages = normalized.get(field, [])
             if not isinstance(languages, list):
                 raise serializers.ValidationError(
@@ -523,18 +544,20 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 validate_source_metadata(
                     {
                         "audio_languages"
-                        if field == "required_audio_languages"
+                        if field in {
+                            "required_audio_languages",
+                            "excluded_audio_languages",
+                        }
                         else "subtitle_languages": normalized[field]
                     }
                 )
             except ValueError as exc:
                 raise serializers.ValidationError({field: str(exc)})
-        features = normalized.get("required_video_features", [])
-        if not isinstance(features, list):
-            raise serializers.ValidationError(
-                {"required_video_features": "Must be a list"}
-            )
-        normalized["required_video_features"] = normalize_video_features(features)
+        for field in ("required_video_features", "excluded_video_features"):
+            features = normalized.get(field, [])
+            if not isinstance(features, list):
+                raise serializers.ValidationError({field: "Must be a list"})
+            normalized[field] = normalize_video_features(features)
         for field in ("min_resolution", "max_resolution"):
             try:
                 normalized[field] = max(0, int(normalized.get(field) or 0))
@@ -622,7 +645,7 @@ class VODPlaybackSessionSerializer(serializers.ModelSerializer):
             "provider_asset_id", "content_name", "mode", "status",
             "client_ip", "user_agent", "started_at", "ended_at",
             "bytes_sent", "watched_seconds", "observed_metadata",
-            "failover_chain", "error", "custom_properties",
+            "failover_chain", "failover_count", "error", "custom_properties",
         ]
 
     def get_source_effective_metadata(self, obj) -> dict:

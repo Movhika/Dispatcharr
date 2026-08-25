@@ -1,3 +1,6 @@
+import re
+
+
 def _first_text(*values):
     for value in values:
         if isinstance(value, str) and value.strip():
@@ -7,6 +10,32 @@ def _first_text(*values):
                 if isinstance(item, str) and item.strip():
                     return item.strip()
     return None
+
+
+_CANONICAL_PREFIX_PATTERNS = (
+    re.compile(r"^\s*[┃|]\s*[^┃|]{1,20}\s*[┃|]\s*"),
+    re.compile(r"^\s*\[[A-Z0-9+._ -]{1,20}\]\s*", re.IGNORECASE),
+    re.compile(r"^\s*[A-Z0-9+._]{1,12}\s+-\s+"),
+)
+
+
+def canonical_output_name(name, *, display_name="", year=None):
+    """Build a lightweight client title without changing provider editions.
+
+    A manually stored display name always wins. Otherwise only common,
+    structurally delimited provider/category prefixes are removed. The raw
+    relation name remains untouched for variants output.
+    """
+    result = _first_text(display_name, name) or ""
+    if not _first_text(display_name):
+        for pattern in _CANONICAL_PREFIX_PATTERNS:
+            cleaned = pattern.sub("", result, count=1).strip()
+            if cleaned != result.strip():
+                result = cleaned
+                break
+    if year and not re.search(rf"\({re.escape(str(year))}\)\s*$", result):
+        result = f"{result} ({year})"
+    return result
 
 
 def _relation_metadata(relation_or_properties):

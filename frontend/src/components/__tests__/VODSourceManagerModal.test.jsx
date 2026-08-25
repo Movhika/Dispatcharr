@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../api', () => ({
   default: {
     getVODPlaybackSessions: vi.fn(),
+    getVODPlaybackFacets: vi.fn(),
+    getVODPlaybackStats: vi.fn(),
     deleteVODPlaybackSessions: vi.fn(),
     bulkUpdateVODPlaybackMetadata: vi.fn(),
     updateVODSourceManualMetadata: vi.fn(),
@@ -186,6 +188,23 @@ describe('VODSourceManagerModal playback history', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     API.getVODPlaybackSessions.mockResolvedValue({ results: [playback] });
+    API.getVODPlaybackFacets.mockResolvedValue({
+      users: [{ value: '3', label: 'Maria' }],
+      accounts: [{ value: '4', label: 'provider-a' }],
+      categories: [
+        {
+          value: '5',
+          label: 'GERMANY KIDS',
+          m3u_account: 4,
+        },
+      ],
+    });
+    API.getVODPlaybackStats.mockResolvedValue({
+      sessions: 1,
+      failover_sessions: 0,
+      bytes_sent: 1048576,
+      popular: [],
+    });
     API.deleteVODPlaybackSessions.mockResolvedValue({ deleted_sessions: 1 });
     API.bulkUpdateVODPlaybackMetadata.mockResolvedValue({
       selected_sessions: 1,
@@ -238,7 +257,7 @@ describe('VODSourceManagerModal playback history', () => {
     await screen.findByText('Avatar - S01E01');
 
     fireEvent.change(screen.getByLabelText('User'), {
-      target: { value: 'Maria' },
+      target: { value: '3' },
     });
     fireEvent.change(screen.getByLabelText('Started after'), {
       target: { value: '2026-08-23T10:00' },
@@ -247,7 +266,7 @@ describe('VODSourceManagerModal playback history', () => {
     await waitFor(() =>
       expect(API.getVODPlaybackSessions).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          username: 'Maria',
+          user: '3',
           started_after: expect.stringContaining('2026-08-23'),
           page: 1,
           page_size: 50,

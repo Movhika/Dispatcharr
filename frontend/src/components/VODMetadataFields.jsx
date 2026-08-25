@@ -1,11 +1,11 @@
 import React from 'react';
-import { MultiSelect, SegmentedControl, Select, Stack } from '@mantine/core';
+import { SegmentedControl, Select, Stack } from '@mantine/core';
 import LanguagePicker from './LanguagePicker.jsx';
+import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
   VOD_METADATA_FIELDS,
-  VIDEO_FEATURE_OPTIONS,
 } from '../utils/vodMetadataOptions.js';
 
 const FIELD_LABELS = {
@@ -62,12 +62,9 @@ const VODMetadataFields = ({
     }
     if (field === 'video_features') {
       return (
-        <MultiSelect
-          clearable
-          searchable
+        <VideoFeaturePicker
           label={label}
           description={descriptions[field]}
-          data={VIDEO_FEATURE_OPTIONS}
           value={value[field] || []}
           disabled={disabled}
           onChange={(nextValue) => updateValue(field, nextValue)}

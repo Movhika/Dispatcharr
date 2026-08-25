@@ -997,7 +997,7 @@ def xc_get_epg(request, user, short=False):
 
 XC_MOVIE_VALUE_FIELDS = (
     'id', 'movie_id', 'category_id', 'container_extension',
-    'movie__id', 'movie__name', 'movie__rating', 'movie__created_at',
+    'movie__id', 'movie__name', 'movie__display_name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
@@ -1006,7 +1006,7 @@ XC_MOVIE_VALUE_FIELDS = (
 
 XC_SERIES_VALUE_FIELDS = (
     'id', 'series_id', 'category_id', 'updated_at',
-    'series__id', 'series__name', 'series__description', 'series__genre',
+    'series__id', 'series__name', 'series__display_name', 'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
@@ -1285,6 +1285,7 @@ def xc_get_vod_categories(user, request=None):
 def xc_get_vod_streams(request, user, category_id=None):
     """Get VOD streams (movies) for XtreamCodes API"""
     from apps.vod.models import M3UMovieRelation
+    from apps.vod.utils import canonical_output_name
 
     from apps.vod.catalog_cache import (
         catalog_cache_key, safe_cache_get, safe_cache_set,
@@ -1339,7 +1340,15 @@ def xc_get_vod_streams(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['rel_source_name'] or row['movie__name'],
+            "name": (
+                canonical_output_name(
+                    row['movie__name'],
+                    display_name=row['movie__display_name'],
+                    year=row['movie__year'],
+                )
+                if compact_policy
+                else row['rel_source_name'] or row['movie__name']
+            ),
             "stream_type": "movie",
             "stream_id": row['id'],
             "stream_icon": _xc_cover_or_logo(
@@ -1421,6 +1430,7 @@ def xc_get_series_categories(user, request=None):
 def xc_get_series(request, user, category_id=None):
     """Get series list for XtreamCodes API"""
     from apps.vod.models import M3USeriesRelation
+    from apps.vod.utils import canonical_output_name
 
     from apps.vod.catalog_cache import (
         catalog_cache_key, safe_cache_get, safe_cache_set,
@@ -1472,7 +1482,15 @@ def xc_get_series(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": row['rel_source_name'] or row['series__name'],
+            "name": (
+                canonical_output_name(
+                    row['series__name'],
+                    display_name=row['series__display_name'],
+                    year=row['series__year'],
+                )
+                if compact_policy
+                else row['rel_source_name'] or row['series__name']
+            ),
             "series_id": row['id'],
             "cover": _xc_cover_or_logo(
                 request,

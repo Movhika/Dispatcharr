@@ -39,10 +39,10 @@ import {
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { LanguageSelect } from '../components/LanguagePicker.jsx';
 import VODMetadataFields from '../components/VODMetadataFields.jsx';
+import VideoFeaturePicker from '../components/VideoFeaturePicker.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
-  VIDEO_FEATURE_OPTIONS,
   videoFeatureLabel,
 } from '../utils/vodMetadataOptions.js';
 
@@ -93,6 +93,11 @@ const VODsPage = () => {
     video_features: [],
   });
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkTitle, setBulkTitle] = useState({
+    mode: 'keep',
+    pattern: '',
+    replacement: '',
+  });
   const [initialLoad, setInitialLoad] = useState(true);
   const [categories, setCategories] = useState({});
   const [seriesModalOpened, seriesModalHandlers] = useDisclosure(false);
@@ -210,18 +215,22 @@ const VODsPage = () => {
     }
     setBulkSaving(true);
     try {
+      const canonicalTitleOptions =
+        bulkTitle.mode === 'keep' ? {} : { canonical_title: bulkTitle };
       const result = selectAllMatching
         ? await API.bulkUpdateVODSourceMetadata([], metadata, {
             select_all: true,
             filters,
             exclude_selections: selections,
+            ...canonicalTitleOptions,
           })
         : await API.bulkUpdateVODSourceMetadata(selections, metadata, {
             filters,
+            ...canonicalTitleOptions,
           });
       showNotification({
         title: 'Source metadata updated',
-        message: `${result.updated_sources || 0} source editions were updated and locked.`,
+        message: `${result.updated_sources || 0} source editions and ${result.updated_titles || 0} canonical titles were updated.`,
         color: 'green',
       });
       bulkEditorHandlers.close();
@@ -374,16 +383,18 @@ const VODsPage = () => {
               }
               w={115}
             />
-            <Select
-              label="Feature"
-              placeholder="Any"
-              clearable
-              searchable
-              data={VIDEO_FEATURE_OPTIONS}
-              value={filters.video_feature || null}
-              onChange={(value) => setFilters({ video_feature: value || '' })}
-              w={170}
-            />
+            <Box w={190}>
+              <VideoFeaturePicker
+                label="Feature"
+                emptyLabel="Any"
+                value={filters.video_feature ? [filters.video_feature] : []}
+                onChange={(value) =>
+                  setFilters({
+                    video_feature: value[value.length - 1] || '',
+                  })
+                }
+              />
+            </Box>
           </Group>
         </Stack>
 
@@ -473,7 +484,9 @@ const VODsPage = () => {
                   </TableTd>
                   <TableTd>{sourceMetadataValue(item, 'resolutions')}</TableTd>
                   <TableTd>
-                    {sourceMetadataValue(item, 'container_extensions')}
+                    {item.contentType === 'series'
+                      ? ''
+                      : sourceMetadataValue(item, 'container_extensions')}
                   </TableTd>
                   <TableTd>
                     {(item.source_metadata?.video_features || []).length
@@ -532,6 +545,44 @@ const VODsPage = () => {
               container_extension: 'Leave empty to keep existing values',
             }}
           />
+          <Select
+            label="Canonical client title"
+            description="Only compact output uses this stored canonical title. Variant names stay unchanged."
+            data={[
+              { value: 'keep', label: 'Keep existing override' },
+              { value: 'clean', label: 'Remove a common provider prefix' },
+              { value: 'regex', label: 'Apply a regular expression' },
+              { value: 'clear', label: 'Clear manual override' },
+            ]}
+            value={bulkTitle.mode}
+            onChange={(mode) =>
+              setBulkTitle((current) => ({ ...current, mode }))
+            }
+          />
+          {bulkTitle.mode === 'regex' && (
+            <Group grow align="flex-start">
+              <TextInput
+                label="Title regular expression"
+                value={bulkTitle.pattern}
+                onChange={(event) =>
+                  setBulkTitle((current) => ({
+                    ...current,
+                    pattern: event.currentTarget.value,
+                  }))
+                }
+              />
+              <TextInput
+                label="Replacement"
+                value={bulkTitle.replacement}
+                onChange={(event) =>
+                  setBulkTitle((current) => ({
+                    ...current,
+                    replacement: event.currentTarget.value,
+                  }))
+                }
+              />
+            </Group>
+          )}
           <Group justify="flex-end">
             <Button variant="default" onClick={bulkEditorHandlers.close}>
               Cancel

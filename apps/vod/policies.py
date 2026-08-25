@@ -189,6 +189,16 @@ def relation_allowed(
         constraints.get("required_subtitle_languages")
     )
     observed_subtitles = _language_set(metadata.get("subtitle_languages"))
+    excluded_audio = _language_set(constraints.get("excluded_audio_languages"))
+    excluded_subtitles = _language_set(
+        constraints.get("excluded_subtitle_languages")
+    )
+    if excluded_audio and not excluded_audio.isdisjoint(observed_audio):
+        return False
+    if excluded_subtitles and not excluded_subtitles.isdisjoint(
+        observed_subtitles
+    ):
+        return False
     language_mode = constraints.get("language_match_mode", "all")
     language_checks = []
     if required_audio:
@@ -235,6 +245,11 @@ def relation_allowed(
         normalize_video_features(constraints.get("required_video_features"))
     )
     observed_features = set(normalize_video_features(metadata.get("video_features")))
+    excluded_features = set(
+        normalize_video_features(constraints.get("excluded_video_features"))
+    )
+    if excluded_features and not excluded_features.isdisjoint(observed_features):
+        return False
     if required_features:
         if not observed_features and not allow_unknown:
             return False

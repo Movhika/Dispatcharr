@@ -28,6 +28,18 @@ def _provider_asset_id(relation):
     )
 
 
+def _failover_count(failover_chain):
+    """Count rejected candidates before the selected source."""
+    count = 0
+    for step in failover_chain or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("result") == "selected":
+            break
+        count += 1
+    return count
+
+
 def record_playback_selection(
     *,
     session_id,
@@ -75,6 +87,7 @@ def record_playback_selection(
         "client_ip": client_ip or None,
         "user_agent": user_agent or "",
         "failover_chain": failover_chain or [],
+        "failover_count": _failover_count(failover_chain),
         "custom_properties": custom_properties or {},
     }
     playback, created = VODPlaybackSession.objects.update_or_create(

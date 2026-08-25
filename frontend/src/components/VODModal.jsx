@@ -26,12 +26,7 @@ import {
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
 import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
-import {
-  formatAudioDetails,
-  formatVideoDetails,
-  getMovieStreamUrl,
-  getTechnicalDetails,
-} from '../utils/components/VODModalUtils.js';
+import { getMovieStreamUrl } from '../utils/components/VODModalUtils.js';
 
 const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
   const displayVOD = detailedVOD || vod;
@@ -137,53 +132,6 @@ const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
           </Button>
         )}
       </Group>
-    </Stack>
-  );
-};
-
-const MovieTechnicalDetails = ({ selectedProvider, displayVOD }) => {
-  const techDetails = getTechnicalDetails(selectedProvider, displayVOD);
-  const hasDetails =
-    techDetails.bitrate || techDetails.video || techDetails.audio;
-
-  if (!hasDetails) return null;
-
-  const hasVideo =
-    techDetails.video && Object.keys(techDetails.video).length > 0;
-  const hasAudio =
-    techDetails.audio && Object.keys(techDetails.audio).length > 0;
-
-  return (
-    <Stack spacing={4} mt="xs">
-      <Text size="sm" weight={500}>
-        Technical Details:
-        {selectedProvider && (
-          <Text size="xs" c="dimmed" weight="normal" span ml={8}>
-            (from {selectedProvider.m3u_account.name}
-            {selectedProvider.stream_id &&
-              ` - Stream ${selectedProvider.stream_id}`}
-            )
-          </Text>
-        )}
-      </Text>
-
-      {techDetails.bitrate && techDetails.bitrate > 0 && (
-        <Text size="xs" c="dimmed">
-          <strong>Bitrate:</strong> {techDetails.bitrate} kbps
-        </Text>
-      )}
-
-      {hasVideo && (
-        <Text size="xs" c="dimmed">
-          <strong>Video:</strong> {formatVideoDetails(techDetails.video)}
-        </Text>
-      )}
-
-      {hasAudio && (
-        <Text size="xs" c="dimmed">
-          <strong>Audio:</strong> {formatAudioDetails(techDetails.audio)}
-        </Text>
-      )}
     </Stack>
   );
 };
@@ -458,12 +406,6 @@ const VODModal = ({ vod, opened, onClose }) => {
                   No exact source relation is available for this movie.
                 </Text>
               ) : null}
-
-              {/* Technical Details */}
-              <MovieTechnicalDetails
-                selectedProvider={selectedProvider}
-                displayVOD={displayVOD}
-              />
             </Stack>
           </Box>
         </Box>

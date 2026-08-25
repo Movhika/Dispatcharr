@@ -21,6 +21,9 @@ vi.mock('../forms/VODUserCategorySelector.jsx', () => ({
 vi.mock('../VODFailoverRanking.jsx', () => ({
   default: () => <div>Failover priority</div>,
 }));
+vi.mock('../VideoFeaturePicker.jsx', () => ({
+  default: ({ label }) => <div>{label}</div>,
+}));
 vi.mock('lucide-react', () => ({
   Plus: () => null,
   RefreshCw: () => null,
@@ -73,6 +76,7 @@ vi.mock('@mantine/core', () => {
   return {
     Alert: Wrapper,
     Badge: Wrapper,
+    Box: Wrapper,
     Button: ({ children, onClick, disabled, loading }) => (
       <button disabled={disabled || loading} onClick={onClick}>
         {children}
@@ -109,6 +113,7 @@ vi.mock('@mantine/core', () => {
       </label>
     ),
     NumberInput: Input,
+    Paper: Wrapper,
     Pagination: () => null,
     Progress: ({ value }) => (
       <div aria-label="Catalog preparation progress">{value}</div>

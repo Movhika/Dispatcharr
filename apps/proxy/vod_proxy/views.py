@@ -201,11 +201,25 @@ def _select_vod_stream(
 
     ordered = ordered_candidates(candidates, policy, relation)
     failover_chain = []
+
+    def failover_step(candidate, result):
+        return {
+            "relation_id": candidate.id,
+            "m3u_account_id": candidate.m3u_account_id,
+            "m3u_account_name": candidate.m3u_account.name,
+            "category_id": getattr(candidate, "category_id", None),
+            "provider_asset_id": str(
+                getattr(candidate, "stream_id", None)
+                or getattr(candidate, "external_series_id", None)
+                or ""
+            ),
+            "result": result,
+        }
     for cand in ordered:
         cand_account = cand.m3u_account
         cand_url = _get_stream_url_from_relation(cand)
         if not cand_url:
-            failover_chain.append({"relation_id": cand.id, "result": "no_url"})
+            failover_chain.append(failover_step(cand, "no_url"))
             logger.warning(
                 "[VOD-FAILOVER] No URL for relation on account %s, skipping",
                 cand_account.name,
@@ -218,7 +232,7 @@ def _select_vod_stream(
             session_id,
         )
         if not profile_result or not profile_result[0]:
-            failover_chain.append({"relation_id": cand.id, "result": "at_capacity"})
+            failover_chain.append(failover_step(cand, "at_capacity"))
             logger.warning(
                 "[VOD-FAILOVER] Account %s at capacity or has no profile, trying next",
                 cand_account.name,
@@ -230,7 +244,7 @@ def _select_vod_stream(
         if not final_stream_url or not final_stream_url.startswith(
             ("http://", "https://")
         ):
-            failover_chain.append({"relation_id": cand.id, "result": "invalid_url"})
+            failover_chain.append(failover_step(cand, "invalid_url"))
             logger.warning(
                 "[VOD-FAILOVER] Invalid stream URL from account %s: %s",
                 cand_account.name,
@@ -243,7 +257,7 @@ def _select_vod_stream(
             cand_account.name,
             cand_account.priority,
         )
-        failover_chain.append({"relation_id": cand.id, "result": "selected"})
+        failover_chain.append(failover_step(cand, "selected"))
         return {
             "content_obj": content_obj,
             "m3u_account": cand_account,

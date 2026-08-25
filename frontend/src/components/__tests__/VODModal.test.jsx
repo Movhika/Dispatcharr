@@ -349,7 +349,7 @@ describe('VODModal', () => {
     expect(screen.getByTestId('modal')).toBeInTheDocument();
   });
 
-  it('should display technical details when available', async () => {
+  it('does not duplicate technical details below the exact source list', async () => {
     const vodWithTech = {
       ...mockVOD,
       bitrate: 5000,
@@ -368,9 +368,8 @@ describe('VODModal', () => {
 
     render(<VODModal vod={vodWithTech} opened={true} onClose={mockOnClose} />);
 
-    await waitFor(() => {
-      expect(screen.getByText(/Technical Details:/)).toBeInTheDocument();
-    });
+    await screen.findByRole('heading', { level: 3, name: 'Sources (1)' });
+    expect(screen.queryByText(/Technical Details:/)).not.toBeInTheDocument();
   });
 
   it('should render IMDb and TMDb badges with correct links', () => {

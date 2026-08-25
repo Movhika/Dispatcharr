@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Badge,
+  Box,
   Button,
   Group,
   Modal,
-  MultiSelect,
+  Paper,
   Pagination,
   Progress,
   ScrollArea,
@@ -36,9 +37,9 @@ import {
   CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_LIMIT_OPTIONS,
   RESOLUTION_VALUES,
-  VIDEO_FEATURE_OPTIONS,
 } from '../utils/vodMetadataOptions.js';
 import LanguagePicker, { LanguageSelect } from './LanguagePicker.jsx';
+import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
 import {
@@ -54,7 +55,10 @@ const EMPTY_PROFILE = {
   hard_constraints: {
     required_audio_languages: [],
     required_subtitle_languages: [],
+    excluded_audio_languages: [],
+    excluded_subtitle_languages: [],
     required_video_features: [],
+    excluded_video_features: [],
     language_match_mode: 'any',
     min_resolution: 0,
     max_resolution: 0,
@@ -290,8 +294,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           required_subtitle_languages: normalizeLanguageCodes(
             draft.hard_constraints.required_subtitle_languages
           ),
+          excluded_audio_languages: normalizeLanguageCodes(
+            draft.hard_constraints.excluded_audio_languages
+          ),
+          excluded_subtitle_languages: normalizeLanguageCodes(
+            draft.hard_constraints.excluded_subtitle_languages
+          ),
           required_video_features:
             draft.hard_constraints.required_video_features || [],
+          excluded_video_features:
+            draft.hard_constraints.excluded_video_features || [],
         },
         ranking: draft.ranking,
         category_rules: relationIds(draft).map((category_relation) => ({
@@ -440,11 +452,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       };
     }
     if (selectedProfile.selection_status === 'pending') {
+      const taskState = selectedProfile.selection_task_state || 'UNKNOWN';
       return {
         label: 'Queued',
         color: 'yellow',
-        description:
-          'The source selection is waiting for background preparation. Saving a profile queues this automatically.',
+        description: `The source selection is waiting in the Celery background queue (task state: ${taskState}). A busy M3U/VOD refresh can delay it; Refresh catalog safely publishes a new attempt.`,
       };
     }
     if (selectedProfile.selection_current) {
@@ -584,6 +596,15 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         }`}
                   </Text>
                 </Group>
+                {selectedProfile.selection_status === 'pending' && (
+                  <Text size="xs" c="dimmed">
+                    Queue: {buildProgress.queue || 'celery'} · Task:{' '}
+                    {buildProgress.task_id || 'not published'} · Backend state:{' '}
+                    {selectedProfile.selection_task_state || 'unknown'}. The
+                    worker may first finish an M3U or VOD refresh already using
+                    the default queue.
+                  </Text>
+                )}
                 <Progress
                   value={buildPercent}
                   animated
@@ -630,156 +651,209 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     alignItems: 'start',
                   }}
                 >
-                  <Stack>
-                    <TextInput
-                      label="Profile name"
-                      required
-                      value={draft.name}
-                      onChange={(event) =>
-                        setDraft({ ...draft, name: event.currentTarget.value })
-                      }
-                    />
-                    <Select
-                      label="XC VOD output"
-                      data={[
-                        {
-                          value: 'compact',
-                          label: 'Compact — one preferred edition per title',
-                        },
-                        {
-                          value: 'variants',
-                          label: 'Variants — every distinct source edition',
-                        },
-                      ]}
-                      value={draft.export_mode}
-                      onChange={(value) =>
-                        setDraft({ ...draft, export_mode: value })
-                      }
-                    />
-                    <Group grow>
-                      <Switch
-                        label="Active"
-                        checked={draft.is_active}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            is_active: event.currentTarget.checked,
-                          })
-                        }
-                      />
-                      <Switch
-                        label="Default profile"
-                        checked={draft.is_default}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            is_default: event.currentTarget.checked,
-                          })
-                        }
-                      />
-                    </Group>
-                    <LanguagePicker
-                      label="Allowed and preferred DUB languages"
-                      value={draft.hard_constraints.required_audio_languages}
-                      onChange={(value) =>
-                        updateConstraint('required_audio_languages', value)
-                      }
-                    />
-                    <LanguagePicker
-                      label="Allowed and preferred SUB languages"
-                      value={draft.hard_constraints.required_subtitle_languages}
-                      onChange={(value) =>
-                        updateConstraint('required_subtitle_languages', value)
-                      }
-                    />
-                    <Select
-                      label="Language matching"
-                      data={[
-                        { value: 'all', label: 'DUB and SUB must match' },
-                        { value: 'any', label: 'DUB or SUB may match' },
-                      ]}
-                      value={draft.hard_constraints.language_match_mode}
-                      onChange={(value) =>
-                        updateConstraint('language_match_mode', value)
-                      }
-                    />
-                    <Group grow align="flex-start">
-                      <Select
-                        label="Minimum resolution"
-                        data={RESOLUTION_LIMIT_OPTIONS}
-                        value={String(
-                          draft.hard_constraints.min_resolution || 0
-                        )}
-                        onChange={(value) =>
-                          updateConstraint('min_resolution', Number(value) || 0)
-                        }
-                      />
-                      <Select
-                        label="Maximum resolution"
-                        data={RESOLUTION_LIMIT_OPTIONS}
-                        value={String(
-                          draft.hard_constraints.max_resolution || 0
-                        )}
-                        onChange={(value) =>
-                          updateConstraint('max_resolution', Number(value) || 0)
-                        }
-                      />
-                    </Group>
-                    <MultiSelect
-                      label="Required video features"
-                      description="Optional source boundary for 3D and HDR editions. Any selected feature may match."
-                      clearable
-                      searchable
-                      data={VIDEO_FEATURE_OPTIONS}
-                      value={
-                        draft.hard_constraints.required_video_features || []
-                      }
-                      onChange={(value) =>
-                        updateConstraint('required_video_features', value)
-                      }
-                    />
-                    <Switch
-                      label="Allow unknown technical metadata"
-                      checked={draft.hard_constraints.allow_unknown_metadata}
-                      onChange={(event) =>
-                        updateConstraint(
-                          'allow_unknown_metadata',
-                          event.currentTarget.checked
-                        )
-                      }
-                    />
-                    <Group justify="space-between">
+                  <Paper withBorder p="md" radius="md">
+                    <Stack>
                       <Stack gap={0}>
-                        <Text fw={500}>Allowed source categories</Text>
+                        <Text fw={700}>Access and metadata rules</Text>
                         <Text size="sm" c="dimmed">
-                          {selectedCategoryIds.length
-                            ? `${selectedCategoryIds.length} categories selected`
-                            : 'All enabled categories'}
+                          Define which sources may enter this profile. Excluded
+                          values always win over allowed values.
                         </Text>
                       </Stack>
-                      <Button
-                        variant="default"
-                        onClick={() => setCategorySelectorOpen(true)}
-                      >
-                        Manage categories
-                      </Button>
-                    </Group>
-                  </Stack>
+                      <TextInput
+                        label="Profile name"
+                        required
+                        value={draft.name}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            name: event.currentTarget.value,
+                          })
+                        }
+                      />
+                      <Select
+                        label="XC VOD output"
+                        data={[
+                          {
+                            value: 'compact',
+                            label: 'Compact — one preferred edition per title',
+                          },
+                          {
+                            value: 'variants',
+                            label: 'Variants — every distinct source edition',
+                          },
+                        ]}
+                        value={draft.export_mode}
+                        onChange={(value) =>
+                          setDraft({ ...draft, export_mode: value })
+                        }
+                      />
+                      <Group grow>
+                        <Switch
+                          label="Active"
+                          checked={draft.is_active}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              is_active: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                        <Switch
+                          label="Default profile"
+                          checked={draft.is_default}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              is_default: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                      </Group>
+                      <LanguagePicker
+                        label="Allowed and preferred DUB languages"
+                        value={draft.hard_constraints.required_audio_languages}
+                        onChange={(value) =>
+                          updateConstraint('required_audio_languages', value)
+                        }
+                      />
+                      <LanguagePicker
+                        label="Allowed and preferred SUB languages"
+                        value={
+                          draft.hard_constraints.required_subtitle_languages
+                        }
+                        onChange={(value) =>
+                          updateConstraint('required_subtitle_languages', value)
+                        }
+                      />
+                      <LanguagePicker
+                        label="Excluded DUB languages"
+                        value={draft.hard_constraints.excluded_audio_languages}
+                        onChange={(value) =>
+                          updateConstraint('excluded_audio_languages', value)
+                        }
+                      />
+                      <LanguagePicker
+                        label="Excluded SUB languages"
+                        value={
+                          draft.hard_constraints.excluded_subtitle_languages
+                        }
+                        onChange={(value) =>
+                          updateConstraint('excluded_subtitle_languages', value)
+                        }
+                      />
+                      <Select
+                        label="Language matching"
+                        data={[
+                          { value: 'all', label: 'DUB and SUB must match' },
+                          { value: 'any', label: 'DUB or SUB may match' },
+                        ]}
+                        value={draft.hard_constraints.language_match_mode}
+                        onChange={(value) =>
+                          updateConstraint('language_match_mode', value)
+                        }
+                      />
+                      <Group grow align="flex-start">
+                        <Select
+                          label="Minimum resolution"
+                          data={RESOLUTION_LIMIT_OPTIONS}
+                          value={String(
+                            draft.hard_constraints.min_resolution || 0
+                          )}
+                          onChange={(value) =>
+                            updateConstraint(
+                              'min_resolution',
+                              Number(value) || 0
+                            )
+                          }
+                        />
+                        <Select
+                          label="Maximum resolution"
+                          data={RESOLUTION_LIMIT_OPTIONS}
+                          value={String(
+                            draft.hard_constraints.max_resolution || 0
+                          )}
+                          onChange={(value) =>
+                            updateConstraint(
+                              'max_resolution',
+                              Number(value) || 0
+                            )
+                          }
+                        />
+                      </Group>
+                      <VideoFeaturePicker
+                        label="Required video features"
+                        description="Any selected built-in or custom feature may match."
+                        value={
+                          draft.hard_constraints.required_video_features || []
+                        }
+                        onChange={(value) =>
+                          updateConstraint('required_video_features', value)
+                        }
+                      />
+                      <VideoFeaturePicker
+                        label="Excluded video features"
+                        description="Sources with any selected feature are rejected."
+                        value={
+                          draft.hard_constraints.excluded_video_features || []
+                        }
+                        onChange={(value) =>
+                          updateConstraint('excluded_video_features', value)
+                        }
+                      />
+                      <Switch
+                        label="Allow unknown technical metadata"
+                        checked={draft.hard_constraints.allow_unknown_metadata}
+                        onChange={(event) =>
+                          updateConstraint(
+                            'allow_unknown_metadata',
+                            event.currentTarget.checked
+                          )
+                        }
+                      />
+                      <Group justify="space-between">
+                        <Stack gap={0}>
+                          <Text fw={500}>Allowed source categories</Text>
+                          <Text size="sm" c="dimmed">
+                            {selectedCategoryIds.length
+                              ? `${selectedCategoryIds.length} categories selected`
+                              : 'All enabled categories'}
+                          </Text>
+                        </Stack>
+                        <Button
+                          variant="default"
+                          onClick={() => setCategorySelectorOpen(true)}
+                        >
+                          Manage categories
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Paper>
 
-                  <Stack gap="lg">
-                    <Alert color="blue">
-                      Failover only compares sources that already passed this
-                      profile&apos;s category, language, subtitle, and
-                      resolution rules. Unknown values remain usable only when
-                      allowed.
-                    </Alert>
-                    <VODFailoverRanking
-                      value={draft.ranking}
-                      onChange={(ranking) =>
-                        setDraft((current) => ({ ...current, ranking }))
-                      }
-                    />
-                  </Stack>
+                  <Paper withBorder p="md" radius="md">
+                    <Stack gap="lg">
+                      <Stack gap={0}>
+                        <Text fw={700}>Failover priority</Text>
+                        <Text size="sm" c="dimmed">
+                          Reorder only the sources that passed the access rules.
+                          Unknown values are always ranked behind known values
+                          when they are allowed.
+                        </Text>
+                      </Stack>
+                      <Alert color="blue">
+                        Failover only compares sources that already passed this
+                        profile&apos;s category, language, subtitle, and
+                        resolution rules. Unknown values remain usable only when
+                        allowed.
+                      </Alert>
+                      <VODFailoverRanking
+                        value={draft.ranking}
+                        onChange={(ranking) =>
+                          setDraft((current) => ({ ...current, ranking }))
+                        }
+                      />
+                    </Stack>
+                  </Paper>
                 </div>
               </ScrollArea>
             </TabsPanel>
@@ -895,17 +969,22 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }
                     w={105}
                   />
-                  <Select
-                    label="Feature"
-                    clearable
-                    searchable
-                    data={VIDEO_FEATURE_OPTIONS}
-                    value={filters.video_feature || null}
-                    onChange={(value) =>
-                      setFilters({ ...filters, video_feature: value || '' })
-                    }
-                    w={170}
-                  />
+                  <Box w={190}>
+                    <VideoFeaturePicker
+                      label="Feature"
+                      emptyLabel="Any"
+                      value={
+                        filters.video_feature ? [filters.video_feature] : []
+                      }
+                      onChange={(value) => {
+                        setFilters({
+                          ...filters,
+                          video_feature: value[value.length - 1] || '',
+                        });
+                        setPage(1);
+                      }}
+                    />
+                  </Box>
                 </Group>
                 <Group justify="space-between">
                   <Text fw={500}>

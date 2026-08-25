@@ -80,7 +80,7 @@ def _provider_vod_fingerprint(rows):
     return f"{len(rows)}:{bytes(digest).hex()}"
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=3, track_started=True)
 def rebuild_vod_profile_selection(self, policy_id):
     """Prepare one reusable VOD output profile outside request handling."""
     from .profile_selection import (
@@ -95,7 +95,7 @@ def rebuild_vod_profile_selection(self, policy_id):
         raise self.retry(exc=exc, countdown=5)
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=3, track_started=True)
 def rebuild_all_vod_profile_selections(self):
     """Refresh all active VOD profiles after a completed catalog import."""
     from .models import VODAccessPolicy

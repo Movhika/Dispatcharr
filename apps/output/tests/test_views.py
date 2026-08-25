@@ -544,6 +544,50 @@ class XcVodSeriesDistinctTests(TestCase):
         self.assertEqual(streams[0]["name"], "Shared Movie")
         self.assertEqual(streams[0]["container_extension"], "mp4")
 
+    def test_compact_vod_uses_clean_canonical_title_with_year(self):
+        policy = VODAccessPolicy.objects.create(
+            name=f"compact-{uuid4().hex[:8]}",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        policy.users.add(self.user)
+        account = self._account(f"acct-{uuid4().hex[:6]}")
+        movie = Movie.objects.create(name="┃DE┃ Bliss", year=2021)
+        M3UMovieRelation.objects.create(
+            m3u_account=account,
+            movie=movie,
+            stream_id="compact-bliss",
+            custom_properties={"basic_data": {"name": "┃DE┃ Bliss"}},
+        )
+
+        streams = xc_get_vod_streams(self.request, self.user)
+
+        self.assertEqual([stream["name"] for stream in streams], ["Bliss (2021)"])
+
+    def test_compact_series_uses_manual_canonical_title_with_year(self):
+        policy = VODAccessPolicy.objects.create(
+            name=f"compact-series-{uuid4().hex[:8]}",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        policy.users.add(self.user)
+        account = self._account(f"acct-{uuid4().hex[:6]}")
+        series = Series.objects.create(
+            name="┃DE┃ Dark",
+            display_name="Dark",
+            year=2017,
+        )
+        M3USeriesRelation.objects.create(
+            m3u_account=account,
+            series=series,
+            external_series_id="compact-dark",
+            custom_properties={"basic_data": {"name": "┃DE┃ Dark"}},
+        )
+
+        rows = xc_get_series(self.request, self.user)
+
+        self.assertEqual([row["name"] for row in rows], ["Dark (2017)"])
+
     def test_vod_streams_excludes_inactive_accounts(self):
         active = self._account(f"active-{uuid4().hex[:6]}", priority=1)
         inactive = self._account(

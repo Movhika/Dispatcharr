@@ -1564,6 +1564,17 @@ export default class API {
     );
   }
 
+  static async getVODPlaybackFacets() {
+    return await request(`${host}/api/vod/playback-sessions/facets/`);
+  }
+
+  static async getVODPlaybackStats(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/playback-sessions/stats/${query ? `?${query}` : ''}`
+    );
+  }
+
   static async deleteVODPlaybackSessions(selection) {
     return await request(`${host}/api/vod/playback-sessions/bulk-delete/`, {
       method: 'POST',
@@ -2160,7 +2171,25 @@ export default class API {
       return response;
     } catch (e) {
       errorNotification(`Failed to add profile to account ${accountId}`, e);
+      throw e;
     }
+  }
+
+  static async getM3UFilters(accountId) {
+    return await request(`${host}/api/m3u/accounts/${accountId}/filters/`);
+  }
+
+  static async previewM3UFilter(accountId, filterId, values) {
+    if (!filterId) {
+      return await request(
+        `${host}/api/m3u/accounts/${accountId}/filters/preview-draft/`,
+        { method: 'POST', body: values }
+      );
+    }
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/filters/${filterId}/preview/`,
+      { method: 'POST', body: values }
+    );
   }
 
   static async deleteM3UFilter(accountId, id) {
@@ -2170,6 +2199,7 @@ export default class API {
       });
     } catch (e) {
       errorNotification(`Failed to delete profile for account ${accountId}`, e);
+      throw e;
     }
   }
 
@@ -2186,6 +2216,7 @@ export default class API {
       );
     } catch (e) {
       errorNotification(`Failed to update profile for account ${accountId}`, e);
+      throw e;
     }
   }
 

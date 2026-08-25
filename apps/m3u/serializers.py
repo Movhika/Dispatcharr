@@ -35,6 +35,47 @@ class M3UFilterSerializer(serializers.ModelSerializer):
             "custom_properties",
         ]
 
+    def validate_regex_pattern(self, value):
+        import re
+
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise serializers.ValidationError(f"Invalid regex: {exc}")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        view = self.context.get("view")
+        account_id = getattr(view, "kwargs", {}).get("account_id")
+        filter_type = attrs.get(
+            "filter_type", getattr(self.instance, "filter_type", "group")
+        )
+        regex_pattern = attrs.get(
+            "regex_pattern", getattr(self.instance, "regex_pattern", "")
+        )
+        properties = attrs.get(
+            "custom_properties",
+            getattr(self.instance, "custom_properties", {}) or {},
+        ) or {}
+        case_sensitive = bool(properties.get("case_sensitive", True))
+        duplicates = M3UFilter.objects.filter(
+            m3u_account_id=account_id,
+            filter_type=filter_type,
+            regex_pattern=regex_pattern,
+        )
+        if self.instance:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        for duplicate in duplicates.only("id", "custom_properties"):
+            duplicate_case = bool(
+                (duplicate.custom_properties or {}).get("case_sensitive", True)
+            )
+            if duplicate_case == case_sensitive:
+                raise serializers.ValidationError(
+                    "An identical stream filter already exists for this field."
+                )
+        return attrs
+
 
 class M3UGroupRuleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -84,6 +125,32 @@ class M3UGroupRuleSerializer(serializers.ModelSerializer):
             return validate_source_metadata(value)
         except ValueError as exc:
             raise serializers.ValidationError(str(exc))
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        view = self.context.get("view")
+        account_id = getattr(view, "kwargs", {}).get("account_id")
+        values = {
+            field: attrs.get(field, getattr(self.instance, field, default))
+            for field, default in (
+                ("scope", "live"),
+                ("match_field", "group_name"),
+                ("match_mode", "any"),
+                ("regex_pattern", ""),
+                ("case_sensitive", False),
+            )
+        }
+        duplicates = M3UGroupRule.objects.filter(
+            m3u_account_id=account_id,
+            **values,
+        )
+        if self.instance:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError(
+                "An identical import rule already exists in this scope."
+            )
+        return attrs
 
 
 class M3UAccountTemplateSerializer(serializers.ModelSerializer):

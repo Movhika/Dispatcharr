@@ -10,7 +10,7 @@ from rest_framework.exceptions import (
 )
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import connection, transaction
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, Prefetch, Q, Sum
 from django.db.models.expressions import RawSQL
 from django.utils.dateparse import parse_date, parse_datetime
 import django_filters
@@ -501,16 +501,18 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         filters = request.data.get("filters")
         filters = filters if isinstance(filters, dict) else {}
         metadata = request.data.get("metadata", {})
+        title_update = request.data.get("canonical_title", {})
         if (
             not isinstance(selections, list)
             or not isinstance(exclude_selections, list)
             or not isinstance(metadata, dict)
+            or not isinstance(title_update, dict)
         ):
             return Response(
                 {
                     "detail": (
                         "selections and exclude_selections must be lists and "
-                        "metadata an object"
+                        "metadata and canonical_title objects"
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -600,21 +602,86 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 )
                 updated_asset_ids.update(asset.id for asset in assets)
 
-        for queryset in relation_querysets:
-            batch = []
-            for relation in queryset.iterator(chunk_size=1000):
-                batch.append(relation)
-                if len(batch) == 1000:
+        if metadata:
+            for queryset in relation_querysets:
+                batch = []
+                for relation in queryset.iterator(chunk_size=1000):
+                    batch.append(relation)
+                    if len(batch) == 1000:
+                        update_assets(ensure_source_assets(batch))
+                        batch = []
+                if batch:
                     update_assets(ensure_source_assets(batch))
-                    batch = []
-            if batch:
-                update_assets(ensure_source_assets(batch))
+
+        updated_titles = 0
+        title_mode = str(title_update.get("mode") or "keep")
+        if title_mode not in {"keep", "clean", "clear", "regex"}:
+            raise DRFValidationError(
+                {"canonical_title": "mode must be keep, clean, clear, or regex"}
+            )
+        title_pattern = None
+        if title_mode == "regex":
+            import re
+
+            raw_pattern = str(title_update.get("pattern") or "")
+            if not raw_pattern:
+                raise DRFValidationError(
+                    {"canonical_title": "pattern is required for regex mode"}
+                )
+            try:
+                title_pattern = re.compile(raw_pattern)
+            except re.error as exc:
+                raise DRFValidationError(
+                    {"canonical_title": f"Invalid regular expression: {exc}"}
+                )
+        if title_mode != "keep":
+            from .utils import canonical_output_name
+
+            for queryset in (
+                Movie.objects.filter(pk__in=movie_ids),
+                Series.objects.filter(pk__in=series_ids),
+            ):
+                changed = []
+                for content in queryset.only("id", "name", "display_name").iterator(
+                    chunk_size=1000
+                ):
+                    if title_mode == "clear":
+                        display_name = ""
+                    elif title_mode == "clean":
+                        display_name = canonical_output_name(content.name)
+                    else:
+                        display_name = title_pattern.sub(
+                            str(title_update.get("replacement") or ""),
+                            content.name,
+                        ).strip()
+                    if content.display_name == display_name:
+                        continue
+                    content.display_name = display_name
+                    changed.append(content)
+                    if len(changed) >= 1000:
+                        queryset.model.objects.bulk_update(changed, ["display_name"])
+                        updated_titles += len(changed)
+                        changed.clear()
+                if changed:
+                    queryset.model.objects.bulk_update(changed, ["display_name"])
+                    updated_titles += len(changed)
+        if not metadata and title_mode == "keep":
+            raise DRFValidationError(
+                {"detail": "Choose metadata or a canonical title update."}
+            )
+
         from .catalog_cache import bump_catalog_generation
         from .profile_selection import enqueue_all_profile_selection_rebuilds
 
-        bump_catalog_generation()
-        enqueue_all_profile_selection_rebuilds()
-        return Response({"updated_sources": len(updated_asset_ids)})
+        bump_catalog_generation(invalidate_selections=bool(metadata))
+        if metadata:
+            enqueue_all_profile_selection_rebuilds()
+        return Response(
+            {
+                "updated_sources": len(updated_asset_ids),
+                "updated_titles": updated_titles,
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="link-relations")
     def link_relations(self, request, pk=None):
@@ -943,7 +1010,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             matching_count = queryset.count()
             rows = list(queryset[(page - 1) * page_size : page * page_size])
 
-        from .utils import get_vod_source_name
+        from .utils import canonical_output_name, get_vod_source_name
 
         results = []
         for row in rows:
@@ -954,7 +1021,14 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "id": row.id,
                     "content_type": content_type,
                     "canonical_id": content.id,
-                    "name": content.name,
+                    "name": (
+                        canonical_output_name(
+                            content.name,
+                            display_name=content.display_name,
+                        )
+                        if policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
+                        else content.name
+                    ),
                     "year": content.year,
                     "relation_id": relation.id,
                     "source_name": get_vod_source_name(relation, content.name),
@@ -1039,6 +1113,11 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
         if username:
             queryset = queryset.filter(user__username__icontains=username)
 
+        for field in ("user", "m3u_account", "category"):
+            value = str(filters.get(field) or "").strip()
+            if value:
+                queryset = queryset.filter(**{f"{field}_id": value})
+
         for field in ("status", "mode", "content_type"):
             value = str(filters.get(field) or "").strip()
             if value:
@@ -1057,6 +1136,79 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return self._apply_history_filters(
             self._base_queryset(), self.request.query_params
+        )
+
+    @action(detail=False, methods=["get"], url_path="facets")
+    def facets(self, request):
+        queryset = self._base_queryset()
+        users = list(
+            queryset.exclude(user_id=None)
+            .order_by("user__username")
+            .values("user_id", "user__username")
+            .distinct()
+        )
+        accounts = list(
+            queryset.exclude(m3u_account_id=None)
+            .order_by("m3u_account__name")
+            .values("m3u_account_id", "m3u_account__name")
+            .distinct()
+        )
+        categories = list(
+            queryset.exclude(category_id=None)
+            .order_by("category__name")
+            .values("category_id", "category__name", "m3u_account_id")
+            .distinct()
+        )
+        return Response(
+            {
+                "users": [
+                    {
+                        "value": str(row["user_id"]),
+                        "label": row["user__username"],
+                    }
+                    for row in users
+                ],
+                "accounts": [
+                    {
+                        "value": str(row["m3u_account_id"]),
+                        "label": row["m3u_account__name"],
+                    }
+                    for row in accounts
+                ],
+                "categories": [
+                    {
+                        "value": str(row["category_id"]),
+                        "label": row["category__name"],
+                        "m3u_account": str(row["m3u_account_id"]),
+                    }
+                    for row in categories
+                ],
+            }
+        )
+
+    @action(detail=False, methods=["get"], url_path="stats")
+    def stats(self, request):
+        queryset = self._apply_history_filters(
+            self._base_queryset(), request.query_params
+        )
+        totals = queryset.aggregate(
+            sessions=Count("id"),
+            watched_seconds=Sum("watched_seconds"),
+            bytes_sent=Sum("bytes_sent"),
+        )
+        failovers = queryset.filter(failover_count__gt=0).count()
+        popular = list(
+            queryset.exclude(content_name="")
+            .values("content_name", "content_type")
+            .annotate(plays=Count("id"), watched_seconds=Sum("watched_seconds"))
+            .order_by("-plays", "-watched_seconds", "content_name")[:10]
+        )
+        return Response(
+            {
+                **{key: value or 0 for key, value in totals.items()},
+                "failover_sessions": failovers,
+                "popular": popular,
+            }
         )
 
     def _selected_history(self, request):

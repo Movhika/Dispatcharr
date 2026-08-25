@@ -64,8 +64,11 @@ def enqueue_profile_selection_rebuild(policy_id):
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
     ).update(
         selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        selection_started_at=timezone.now(),
         selection_error="",
-        selection_progress=_progress_payload("Waiting for worker", 0),
+        selection_progress=_progress_payload(
+            "Publishing background task", 0, queue="celery"
+        ),
     )
     if not updated:
         return False
@@ -74,10 +77,34 @@ def enqueue_profile_selection_rebuild(policy_id):
         from .tasks import rebuild_vod_profile_selection
 
         try:
-            rebuild_vod_profile_selection.delay(policy_id)
-        except Exception:
+            result = rebuild_vod_profile_selection.delay(policy_id)
+            queued_at = timezone.now().isoformat()
+            VODAccessPolicy.objects.filter(
+                pk=policy_id,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_progress=_progress_payload(
+                    "Waiting in Celery queue",
+                    0,
+                    queue="celery",
+                    task_id=result.id,
+                    queued_at=queued_at,
+                )
+            )
+        except Exception as exc:
             logger.exception(
                 "Could not enqueue VOD profile selection %s", policy_id
+            )
+            VODAccessPolicy.objects.filter(
+                pk=policy_id,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_status=VODAccessPolicy.SelectionStatus.FAILED,
+                selection_error=str(exc)[:2000],
+                selection_progress=_progress_payload(
+                    "Could not publish background task", 100, queue="celery"
+                ),
+                selection_completed_at=timezone.now(),
             )
 
     transaction.on_commit(enqueue)
@@ -91,6 +118,7 @@ def enqueue_all_profile_selection_rebuilds():
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
     ).update(
         selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        selection_started_at=timezone.now(),
         selection_error="",
         selection_progress=queued_progress,
     )
@@ -110,13 +138,37 @@ def enqueue_all_profile_selection_rebuilds():
         if not acquired:
             return
         try:
-            rebuild_all_vod_profile_selections.delay()
-        except Exception:
+            result = rebuild_all_vod_profile_selections.delay()
+            VODAccessPolicy.objects.filter(
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_progress=_progress_payload(
+                    "Waiting in Celery queue",
+                    0,
+                    queue="celery",
+                    task_id=result.id,
+                    queued_at=timezone.now().isoformat(),
+                    batch=True,
+                )
+            )
+        except Exception as exc:
             try:
                 cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
             except Exception:
                 pass
             logger.exception("Could not enqueue all VOD profile selections")
+            VODAccessPolicy.objects.filter(
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_status=VODAccessPolicy.SelectionStatus.FAILED,
+                selection_error=str(exc)[:2000],
+                selection_progress=_progress_payload(
+                    "Could not publish background task", 100, queue="celery"
+                ),
+                selection_completed_at=timezone.now(),
+            )
 
     transaction.on_commit(enqueue)
 

@@ -39,12 +39,14 @@ const COMMON_LANGUAGE_NAMES = {
   zxx: 'No linguistic content',
 };
 
-export const LANGUAGE_OPTIONS = ISO_639_2B_CODE_LIST.map((code) => ({
-  value: code,
-  label: COMMON_LANGUAGE_NAMES[code]
-    ? `${code.toUpperCase()} — ${COMMON_LANGUAGE_NAMES[code]}`
-    : code.toUpperCase(),
-})).sort((left, right) => left.label.localeCompare(right.label));
+export const LANGUAGE_OPTIONS = ISO_639_2B_CODE_LIST.filter(
+  (code) => COMMON_LANGUAGE_NAMES[code]
+)
+  .map((code) => ({
+    value: code,
+    label: `${code.toUpperCase()} — ${COMMON_LANGUAGE_NAMES[code]}`,
+  }))
+  .sort((left, right) => left.label.localeCompare(right.label));
 
 const LANGUAGE_ALIASES = {
   de: 'ger',

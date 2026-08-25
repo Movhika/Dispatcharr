@@ -6,7 +6,6 @@ import {
   Checkbox,
   Group,
   Modal,
-  MultiSelect,
   ScrollArea,
   Select,
   Stack,
@@ -41,10 +40,8 @@ import API from '../../api';
 import { showNotification } from '../../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 import LanguagePicker from '../LanguagePicker.jsx';
-import {
-  RESOLUTION_VALUES,
-  VIDEO_FEATURE_OPTIONS,
-} from '../../utils/vodMetadataOptions.js';
+import VideoFeaturePicker from '../VideoFeaturePicker.jsx';
+import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
 
 const SortableRuleRow = ({ ruleId, children }) => {
   const {
@@ -145,7 +142,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
       match_field: rule.match_field,
       match_mode: rule.match_mode,
       regex_pattern: rule.regex_pattern,
-      exclude_regex_pattern: rule.exclude_regex_pattern || '',
+      exclude_regex_pattern: '',
       action: rule.action,
       case_sensitive: rule.case_sensitive,
       enabled: rule.enabled,
@@ -268,9 +265,9 @@ const M3UGroupRules = ({ accountId, scope }) => {
             Import rules
           </Text>
           <Text c="dimmed" size="xs">
-            First matching rule wins. The exclusion expression vetoes a match.
-            Existing choices and learned or manual metadata are not changed
-            unless you preview and explicitly apply a rule.
+            First matching rule wins. Use an earlier disable or ignore rule for
+            exclusions. Existing choices and learned or manual metadata are not
+            changed unless you preview and explicitly apply a rule.
           </Text>
         </div>
         <Button
@@ -301,7 +298,6 @@ const M3UGroupRules = ({ accountId, scope }) => {
                 <TableTh w={48} aria-label="Rule order" />
                 <TableTh w={145}>Match</TableTh>
                 <TableTh>Regular expression</TableTh>
-                <TableTh>Exclude expression</TableTh>
                 <TableTh w={120}>Item mode</TableTh>
                 <TableTh w={145}>Result</TableTh>
                 {scope !== 'live' && <TableTh w={175}>DUB</TableTh>}
@@ -347,19 +343,6 @@ const M3UGroupRules = ({ accountId, scope }) => {
                           onChange={(event) =>
                             updateLocal(rule.id, {
                               regex_pattern: event.currentTarget.value,
-                            })
-                          }
-                        />
-                      </TableTd>
-                      <TableTd>
-                        <TextInput
-                          size="xs"
-                          aria-label="Exclude regular expression"
-                          placeholder="Optional NOT regex"
-                          value={rule.exclude_regex_pattern || ''}
-                          onChange={(event) =>
-                            updateLocal(rule.id, {
-                              exclude_regex_pattern: event.currentTarget.value,
                             })
                           }
                         />
@@ -441,11 +424,9 @@ const M3UGroupRules = ({ accountId, scope }) => {
                       )}
                       {scope !== 'live' && (
                         <TableTd>
-                          <MultiSelect
+                          <VideoFeaturePicker
                             size="xs"
-                            clearable
-                            searchable
-                            data={VIDEO_FEATURE_OPTIONS}
+                            label={null}
                             value={rule.metadata_defaults?.video_features || []}
                             onChange={(value) =>
                               updateMetadata(rule, 'video_features', value)

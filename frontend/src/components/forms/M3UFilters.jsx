@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon,
   Alert,
@@ -35,8 +35,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { GripVertical, Info, Plus, Save, Trash2 } from 'lucide-react';
-import usePlaylistsStore from '../../store/playlists';
+import { Eye, GripVertical, Info, Plus, Save, Trash2 } from 'lucide-react';
+import API from '../../api.js';
 import ConfirmationDialog from '../ConfirmationDialog';
 import useWarningsStore from '../../store/warnings';
 import { M3U_FILTER_TYPES } from '../../constants';
@@ -91,7 +91,10 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const fetchPlaylist = usePlaylistsStore((state) => state.fetchPlaylist);
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewFilter, setPreviewFilter] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const isWarningSuppressed = useWarningsStore(
     (state) => state.isWarningSuppressed
   );
@@ -101,9 +104,24 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  const loadFilters = useCallback(async () => {
+    if (!playlist?.id) return;
+    setLoading(true);
+    try {
+      setFilters((await API.getM3UFilters(playlist.id)) || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [playlist?.id]);
+
   useEffect(() => {
-    setFilters(playlist?.filters || []);
-  }, [playlist]);
+    if (isOpen) loadFilters();
+  }, [isOpen, loadFilters]);
+
+  const filterTypeOptions = useMemo(
+    () => M3U_FILTER_TYPES.filter((option) => option.value !== 'group'),
+    []
+  );
 
   const updateLocal = (id, values) =>
     setFilters((current) =>
@@ -119,7 +137,7 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
       {
         id,
         isNew: true,
-        filter_type: 'group',
+        filter_type: 'name',
         regex_pattern: '',
         exclude: true,
         order: current.length,
@@ -164,16 +182,14 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
       const saved = filter.isNew
         ? await addM3UFilter(playlist, payloadFor(filter))
         : await updateM3UFilter(playlist, filter, payloadFor(filter));
-      const updatedPlaylist = await fetchPlaylist(playlist.id);
-      if (updatedPlaylist?.filters) {
-        setFilters(updatedPlaylist.filters);
-      } else if (saved) {
+      if (saved) {
         setFilters((current) =>
           current.map((item) =>
             item.id === filter.id ? { ...saved, isNew: false } : item
           )
         );
       }
+      await loadFilters();
       showNotification({
         title: 'Stream filter saved',
         message: 'The ordered filter is used during future Live TV scans.',
@@ -198,11 +214,8 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
     setDeleting(true);
     try {
       await deleteM3UFilter(playlist, id);
-      const updatedPlaylist = await fetchPlaylist(playlist.id);
-      setFilters(
-        updatedPlaylist?.filters ||
-          filters.filter((current) => current.id !== id)
-      );
+      setFilters((current) => current.filter((item) => item.id !== id));
+      await loadFilters();
     } finally {
       setDeleting(false);
       setConfirmDeleteOpen(false);
@@ -242,9 +255,25 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
             updateM3UFilter(playlist, filter, payloadFor(filter))
           )
       );
-      await fetchPlaylist(playlist.id);
+      await loadFilters();
     } catch {
       setFilters(previous);
+    }
+  };
+
+  const openPreview = async (filter) => {
+    setPreviewFilter(filter);
+    setPreviewLoading(true);
+    try {
+      setPreview(
+        await API.previewM3UFilter(
+          playlist.id,
+          filter.isNew ? null : filter.id,
+          payloadFor(filter)
+        )
+      );
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -276,6 +305,7 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
               size="xs"
               leftSection={<Plus size={14} />}
               onClick={addFilter}
+              loading={loading}
             >
               Add filter
             </Button>
@@ -313,7 +343,11 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
                             <Select
                               size="xs"
                               aria-label="Stream filter field"
-                              data={M3U_FILTER_TYPES}
+                              data={
+                                filter.filter_type === 'group'
+                                  ? M3U_FILTER_TYPES
+                                  : filterTypeOptions
+                              }
                               value={filter.filter_type}
                               onChange={(value) =>
                                 updateLocal(filter.id, { filter_type: value })
@@ -376,6 +410,15 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
                                 <Save size={15} />
                               </ActionIcon>
                               <ActionIcon
+                                aria-label="Preview stream filter"
+                                color="green"
+                                variant="subtle"
+                                disabled={!filter.regex_pattern.trim()}
+                                onClick={() => openPreview(filter)}
+                              >
+                                <Eye size={15} />
+                              </ActionIcon>
+                              <ActionIcon
                                 aria-label="Delete stream filter"
                                 color="red"
                                 variant="subtle"
@@ -409,6 +452,71 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
         onSuppressChange={suppressWarning}
         size="md"
       />
+
+      <Modal
+        opened={Boolean(previewFilter)}
+        onClose={() => {
+          setPreviewFilter(null);
+          setPreview(null);
+        }}
+        title="Stream filter preview"
+        size="xl"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            The complete ordered filter list is evaluated. The preview uses
+            currently imported Live TV streams and shows only rows for which
+            this filter is the first match.
+          </Text>
+          <Text fw={600}>
+            {previewLoading
+              ? 'Evaluating…'
+              : `${preview?.count || 0} matching streams`}
+          </Text>
+          <ScrollArea h="45vh">
+            <Table striped withTableBorder stickyHeader>
+              <TableThead>
+                <TableTr>
+                  <TableTh>Name</TableTh>
+                  <TableTh>Group</TableTh>
+                  <TableTh>URL</TableTh>
+                  <TableTh w={100}>Result</TableTh>
+                </TableTr>
+              </TableThead>
+              <TableTbody>
+                {(preview?.results || []).map((row) => (
+                  <TableTr key={row.id}>
+                    <TableTd>{row.name}</TableTd>
+                    <TableTd>{row.group || '—'}</TableTd>
+                    <TableTd>
+                      <Text size="xs" lineClamp={1} title={row.url}>
+                        {row.url}
+                      </Text>
+                    </TableTd>
+                    <TableTd>{row.result}</TableTd>
+                  </TableTr>
+                ))}
+              </TableTbody>
+            </Table>
+          </ScrollArea>
+          {preview?.truncated && (
+            <Text size="xs" c="dimmed">
+              Showing the first 200 matches.
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => {
+                setPreviewFilter(null);
+                setPreview(null);
+              }}
+            >
+              Close
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
   );
 };

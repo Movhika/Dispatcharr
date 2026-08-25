@@ -36,7 +36,9 @@ import VODMetadataFields from './VODMetadataFields.jsx';
 
 const EMPTY_FILTERS = {
   search: '',
-  username: '',
+  user: '',
+  m3u_account: '',
+  category: '',
   status: '',
   mode: '',
   content_type: '',
@@ -81,6 +83,20 @@ const playbackDayLabel = (value) =>
     month: 'short',
     day: 'numeric',
   });
+const failoverSummary = (playback) => {
+  const rejected = (playback.failover_chain || []).filter(
+    (step) => step.result !== 'selected'
+  );
+  if (!playback.failover_count && !rejected.length) return 'Preferred source';
+  const summary = rejected
+    .map((step) =>
+      [step.m3u_account_name, String(step.result || '').replaceAll('_', ' ')]
+        .filter(Boolean)
+        .join(': ')
+    )
+    .join(' → ');
+  return summary || `${playback.failover_count || rejected.length} failover(s)`;
+};
 
 const VODSourceManagerModal = ({ opened, onClose }) => {
   const [playbacks, setPlaybacks] = useState([]);
@@ -89,7 +105,12 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
   const [pageSize, setPageSize] = useState(50);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [debouncedSearch] = useDebouncedValue(filters.search, 350);
-  const [debouncedUsername] = useDebouncedValue(filters.username, 350);
+  const [facets, setFacets] = useState({
+    users: [],
+    accounts: [],
+    categories: [],
+  });
+  const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [manualPlayback, setManualPlayback] = useState(null);
@@ -106,14 +127,16 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
   const queryFilters = useMemo(
     () => ({
       search: debouncedSearch,
-      username: debouncedUsername,
+      user: filters.user,
+      m3u_account: filters.m3u_account,
+      category: filters.category,
       status: filters.status,
       mode: filters.mode,
       content_type: filters.content_type,
       started_after: apiDate(filters.started_after),
       started_before: apiDate(filters.started_before),
     }),
-    [debouncedSearch, debouncedUsername, filters]
+    [debouncedSearch, filters]
   );
   const activeQueryFilters = useMemo(
     () =>
@@ -138,16 +161,20 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     try {
-      const response = await API.getVODPlaybackSessions({
-        ...activeQueryFilters,
-        page,
-        page_size: pageSize,
-      });
+      const [response, statsResponse] = await Promise.all([
+        API.getVODPlaybackSessions({
+          ...activeQueryFilters,
+          page,
+          page_size: pageSize,
+        }),
+        API.getVODPlaybackStats(activeQueryFilters).catch(() => ({})),
+      ]);
       if (sequence !== requestSequence.current) return;
       const rows =
         response?.results || (Array.isArray(response) ? response : []);
       setPlaybacks(rows);
       setTotalCount(response?.count ?? rows.length);
+      setStats(statsResponse || {});
     } catch (error) {
       if (sequence !== requestSequence.current) return;
       setPlaybacks([]);
@@ -165,6 +192,23 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
   useEffect(() => {
     if (opened) load();
   }, [opened, load]);
+
+  useEffect(() => {
+    if (!opened) return;
+    API.getVODPlaybackFacets()
+      .then((response) => setFacets(response || {}))
+      .catch(() => setFacets({ users: [], accounts: [], categories: [] }));
+  }, [opened]);
+
+  const categoryOptions = useMemo(
+    () =>
+      (facets.categories || []).filter(
+        (option) =>
+          !filters.m3u_account ||
+          String(option.m3u_account) === String(filters.m3u_account)
+      ),
+    [facets.categories, filters.m3u_account]
+  );
 
   useEffect(() => {
     clearSelection();
@@ -353,13 +397,41 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               }
               style={{ flex: '1 1 260px' }}
             />
-            <TextInput
+            <Select
+              clearable
+              searchable
               label="User"
-              placeholder="Search username"
-              value={filters.username}
-              onChange={(event) =>
-                updateFilter('username', event.currentTarget.value)
-              }
+              placeholder="All users"
+              data={facets.users || []}
+              value={filters.user || null}
+              onChange={(value) => updateFilter('user', value || '')}
+              style={{ flex: '1 1 180px' }}
+            />
+            <Select
+              clearable
+              searchable
+              label="M3U account"
+              placeholder="All accounts"
+              data={facets.accounts || []}
+              value={filters.m3u_account || null}
+              onChange={(value) => {
+                setFilters((current) => ({
+                  ...current,
+                  m3u_account: value || '',
+                  category: '',
+                }));
+                setPage(1);
+              }}
+              style={{ flex: '1 1 180px' }}
+            />
+            <Select
+              clearable
+              searchable
+              label="Category"
+              placeholder="All categories"
+              data={categoryOptions}
+              value={filters.category || null}
+              onChange={(value) => updateFilter('category', value || '')}
               style={{ flex: '1 1 180px' }}
             />
             <Select
@@ -490,6 +562,19 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             <Text size="sm">
               {selectedCount} selected · {totalCount} matching
             </Text>
+            <Text size="sm" c="dimmed">
+              {stats.sessions || 0} plays · {stats.failover_sessions || 0}{' '}
+              failovers · {formatBytes(stats.bytes_sent || 0)} sent
+            </Text>
+            {(stats.popular || []).length > 0 && (
+              <Text size="xs" c="dimmed" lineClamp={1}>
+                Most played:{' '}
+                {stats.popular
+                  .slice(0, 3)
+                  .map((item) => `${item.content_name} (${item.plays})`)
+                  .join(' · ')}
+              </Text>
+            )}
             {totalCount > 0 && (
               <Pagination value={page} onChange={setPage} total={pageCount} />
             )}
@@ -519,6 +604,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   <TableTh>Source</TableTh>
                   <TableTh>User</TableTh>
                   <TableTh>Status</TableTh>
+                  <TableTh>Selection</TableTh>
                   <TableTh>Watch time</TableTh>
                   <TableTh>Data</TableTh>
                   <TableTh>Technical metadata</TableTh>
@@ -528,7 +614,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               <TableTbody>
                 {!loading && playbacks.length === 0 && (
                   <TableTr>
-                    <TableTd colSpan={10}>
+                    <TableTd colSpan={11}>
                       <Text c="dimmed" ta="center" py="lg">
                         No VOD playback matches the current filters.
                       </Text>
@@ -545,7 +631,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                       {showDay && (
                         <TableTr>
                           <TableTd
-                            colSpan={10}
+                            colSpan={11}
                             py={5}
                             style={{
                               background: 'var(--mantine-color-dark-6)',
@@ -584,6 +670,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                         </TableTd>
                         <TableTd>{playback.username || '—'}</TableTd>
                         <TableTd>{playback.status}</TableTd>
+                        <TableTd>{failoverSummary(playback)}</TableTd>
                         <TableTd>{playback.watched_seconds || 0}s</TableTd>
                         <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
                         <TableTd>

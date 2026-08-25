@@ -88,29 +88,29 @@ ISO_639_2B_CODES = frozenset(
 
 VIDEO_FEATURE_ALIASES = {
     "3d": "3d",
-    "sbs": "3d_sbs",
-    "hsbs": "3d_sbs",
-    "side-by-side": "3d_sbs",
-    "side by side": "3d_sbs",
-    "3d_sbs": "3d_sbs",
-    "tab": "3d_tab",
-    "hou": "3d_tab",
-    "over-under": "3d_tab",
-    "top-and-bottom": "3d_tab",
-    "top and bottom": "3d_tab",
-    "3d_tab": "3d_tab",
+    "sbs": "3d",
+    "hsbs": "3d",
+    "side-by-side": "3d",
+    "side by side": "3d",
+    "3d_sbs": "3d",
+    "tab": "3d",
+    "hou": "3d",
+    "over-under": "3d",
+    "top-and-bottom": "3d",
+    "top and bottom": "3d",
+    "3d_tab": "3d",
     "hdr": "hdr",
-    "hdr10": "hdr10",
-    "hdr10+": "hdr10_plus",
-    "hdr10_plus": "hdr10_plus",
-    "dv": "dolby_vision",
-    "dovi": "dolby_vision",
-    "dolby vision": "dolby_vision",
-    "dolby_vision": "dolby_vision",
-    "hlg": "hlg",
+    "hdr10": "hdr",
+    "hdr10+": "hdr",
+    "hdr10_plus": "hdr",
+    "hlg": "hdr",
+    "dv": "dv",
+    "dovi": "dv",
+    "dolby vision": "dv",
+    "dolby_vision": "dv",
 }
 
-VIDEO_FEATURES = frozenset(VIDEO_FEATURE_ALIASES.values())
+VIDEO_FEATURES = frozenset({"3d", "hdr", "dv"})
 
 
 def normalize_language_code(value):
@@ -143,21 +143,24 @@ def invalid_language_codes(value):
 
 
 def normalize_video_features(value):
-    """Return stable technical feature identifiers for policy matching."""
+    """Return stable built-in or explicitly namespaced custom feature tags."""
     if isinstance(value, str):
         value = [part.strip() for part in value.replace(";", ",").split(",")]
     if not isinstance(value, (list, tuple, set)):
         return []
-    return list(
-        dict.fromkeys(
-            normalized
-            for normalized in (
-                VIDEO_FEATURE_ALIASES.get(str(item or "").strip().lower())
-                for item in value
-            )
-            if normalized
-        )
-    )
+    normalized = []
+    for item in value:
+        raw = str(item or "").strip().lower()
+        if not raw:
+            continue
+        feature = VIDEO_FEATURE_ALIASES.get(raw)
+        if not feature:
+            custom = raw.removeprefix("custom:")
+            custom = re.sub(r"[^a-z0-9._-]+", "-", custom).strip("-._")
+            feature = f"custom:{custom}" if custom else ""
+        if feature and feature not in normalized:
+            normalized.append(feature)
+    return normalized
 
 
 def compatible_video_features(value):
@@ -166,10 +169,6 @@ def compatible_video_features(value):
     if not normalized:
         return []
     feature = normalized[0]
-    if feature == "3d":
-        return ["3d", "3d_sbs", "3d_tab"]
-    if feature == "hdr":
-        return ["hdr", "hdr10", "hdr10_plus", "dolby_vision", "hlg"]
     return [feature]
 
 
@@ -178,22 +177,22 @@ def detect_video_features(*values):
     text = " ".join(str(value or "") for value in values).lower()
     detected = []
     if re.search(r"(?:^|[\s._|\-])(?:h?sbs|side[\s._-]*by[\s._-]*side)(?:$|[\s._|\-])", text):
-        detected.append("3d_sbs")
+        detected.append("3d")
     elif re.search(r"(?:^|[\s._|\-])(?:h?ou|tab|top[\s._-]*and[\s._-]*bottom|over[\s._-]*under)(?:$|[\s._|\-])", text):
-        detected.append("3d_tab")
+        detected.append("3d")
     elif re.search(r"(?:^|[\s._|\-])3d(?:$|[\s._|\-])", text):
         detected.append("3d")
 
     if re.search(r"\b(?:dolby[\s._-]*vision|dovi|dvhe|dvh1)\b", text):
-        detected.append("dolby_vision")
+        detected.append("dv")
     elif re.search(r"\bhdr10(?:\+(?!\w)|[\s._-]*plus\b)", text):
-        detected.append("hdr10_plus")
+        detected.append("hdr")
     elif re.search(r"\bhdr10\b", text):
-        detected.append("hdr10")
+        detected.append("hdr")
     elif re.search(r"\b(?:hdr|smpte2084|smpte2086|pq)\b", text):
         detected.append("hdr")
     if re.search(r"\b(?:hlg|arib[\s._-]*std[\s._-]*b67)\b", text):
-        detected.append("hlg")
+        detected.append("hdr")
     return list(dict.fromkeys(detected))
 
 

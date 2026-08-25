@@ -2,8 +2,13 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../store/playlists', () => ({ default: vi.fn() }));
 vi.mock('../../../store/warnings', () => ({ default: vi.fn() }));
+vi.mock('../../../api.js', () => ({
+  default: {
+    getM3UFilters: vi.fn(),
+    previewM3UFilter: vi.fn(),
+  },
+}));
 vi.mock('../../../utils/notificationUtils.js', () => ({
   showNotification: vi.fn(),
 }));
@@ -43,6 +48,7 @@ vi.mock('@dnd-kit/utilities', () => ({
 }));
 vi.mock('@dnd-kit/modifiers', () => ({ restrictToVerticalAxis: vi.fn() }));
 vi.mock('lucide-react', () => ({
+  Eye: () => null,
   GripVertical: () => null,
   Info: () => null,
   Plus: () => null,
@@ -107,7 +113,7 @@ vi.mock('@mantine/core', () => {
   };
 });
 
-import usePlaylistsStore from '../../../store/playlists';
+import API from '../../../api.js';
 import useWarningsStore from '../../../store/warnings';
 import * as filterAPI from '../../../utils/forms/M3uFilterUtils.js';
 import M3UFilters from '../M3UFilters.jsx';
@@ -127,14 +133,21 @@ const playlist = {
 };
 
 describe('M3UFilters', () => {
-  const fetchPlaylist = vi.fn();
-
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchPlaylist.mockResolvedValue(playlist);
-    usePlaylistsStore.mockImplementation((selector) =>
-      selector({ fetchPlaylist })
-    );
+    API.getM3UFilters.mockResolvedValue(playlist.filters);
+    API.previewM3UFilter.mockResolvedValue({
+      count: 1,
+      results: [
+        {
+          id: 7,
+          name: 'HBO HD',
+          group: 'Entertainment',
+          url: 'https://example.test/live/7',
+          result: 'exclude',
+        },
+      ],
+    });
     useWarningsStore.mockImplementation((selector) =>
       selector({
         isWarningSuppressed: () => false,
@@ -148,17 +161,18 @@ describe('M3UFilters', () => {
     expect(screen.queryByText('Stream filters')).not.toBeInTheDocument();
   });
 
-  it('edits existing filters inline', () => {
+  it('edits existing filters inline', async () => {
     render(<M3UFilters playlist={playlist} isOpen onClose={vi.fn()} />);
-    expect(screen.getByText('Stream filters')).toBeInTheDocument();
+    expect(await screen.findByText('Stream filters')).toBeInTheDocument();
     expect(
       screen.getByLabelText('Stream filter regular expression')
     ).toHaveValue('HBO.*');
     expect(screen.queryByText('Filter')).not.toBeInTheDocument();
   });
 
-  it('adds a new inline row without opening another dialog', () => {
+  it('adds a new inline row without opening another dialog', async () => {
     render(<M3UFilters playlist={playlist} isOpen onClose={vi.fn()} />);
+    await screen.findByLabelText('Stream filter regular expression');
     fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
     expect(
       screen.getAllByLabelText('Stream filter regular expression')
@@ -174,6 +188,7 @@ describe('M3UFilters', () => {
       order: 1,
     });
     render(<M3UFilters playlist={playlist} isOpen onClose={vi.fn()} />);
+    await screen.findByLabelText('Stream filter regular expression');
     fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
     const patterns = screen.getAllByLabelText(
       'Stream filter regular expression'
@@ -187,15 +202,31 @@ describe('M3UFilters', () => {
         expect.objectContaining({ regex_pattern: 'NEWS.*' })
       )
     );
-    expect(fetchPlaylist).toHaveBeenCalledWith(10);
+    expect(API.getM3UFilters).toHaveBeenCalledWith(10);
   });
 
   it('deletes a saved filter after confirmation', async () => {
     render(<M3UFilters playlist={playlist} isOpen onClose={vi.fn()} />);
+    await screen.findByLabelText('Delete stream filter');
     fireEvent.click(screen.getByLabelText('Delete stream filter'));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
     await waitFor(() =>
       expect(filterAPI.deleteM3UFilter).toHaveBeenCalledWith(playlist, 1)
     );
+  });
+
+  it('previews a rule in the context of the ordered filter list', async () => {
+    render(<M3UFilters playlist={playlist} isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByLabelText('Preview stream filter'));
+
+    await waitFor(() =>
+      expect(API.previewM3UFilter).toHaveBeenCalledWith(
+        10,
+        1,
+        expect.objectContaining({ regex_pattern: 'HBO.*' })
+      )
+    );
+    expect(await screen.findByText('HBO HD')).toBeInTheDocument();
+    expect(screen.getByText('1 matching streams')).toBeInTheDocument();
   });
 });
