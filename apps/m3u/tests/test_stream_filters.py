@@ -1,7 +1,8 @@
 """Tests for M3U stream filter compilation and batch application."""
+import tempfile
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.accounts.models import User
@@ -12,11 +13,15 @@ from apps.m3u.tasks import (
     _compile_m3u_stream_filters,
     _stream_passes_m3u_filters,
     process_m3u_batch_direct,
+    write_live_filter_catalog,
 )
 
 
 class M3UStreamFilterAPITests(TestCase):
     def setUp(self):
+        self.media_root = tempfile.TemporaryDirectory()
+        self.settings_override = override_settings(MEDIA_ROOT=self.media_root.name)
+        self.settings_override.enable()
         self.factory = APIRequestFactory()
         self.admin = User.objects.create_user(
             username="stream-filter-admin",
@@ -27,6 +32,11 @@ class M3UStreamFilterAPITests(TestCase):
             name="stream-filter-account",
             server_url="https://provider.example",
         )
+
+    def tearDown(self):
+        self.settings_override.disable()
+        self.media_root.cleanup()
+        super().tearDown()
 
     def test_identical_stream_filters_are_rejected(self):
         payload = {
@@ -104,6 +114,46 @@ class M3UStreamFilterAPITests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], matching.id)
         self.assertTrue(response.data["first_match_wins"])
+
+    def test_preview_uses_pre_filter_catalog_for_excluded_streams(self):
+        write_live_filter_catalog(
+            self.account.id,
+            [
+                {
+                    "name": "### Hidden channel",
+                    "url": "https://provider.example/hidden",
+                    "attributes": {"group-title": "Enabled Group"},
+                },
+                {
+                    "name": "Visible channel",
+                    "url": "https://provider.example/visible",
+                    "attributes": {"group-title": "Enabled Group"},
+                },
+            ],
+        )
+        request = self.factory.post(
+            "/filters/preview-draft/",
+            {
+                "filter_type": "name",
+                "regex_pattern": "###",
+                "exclude": True,
+                "order": 0,
+                "custom_properties": {"case_sensitive": True},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = M3UFilterViewSet.as_view({"post": "preview_draft"})(
+            request,
+            account_id=self.account.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["inventory_count"], 2)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["name"], "### Hidden channel")
+        self.assertTrue(response.data["catalog_complete"])
 
 
 class CompileM3UStreamFiltersTests(SimpleTestCase):

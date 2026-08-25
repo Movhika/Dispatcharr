@@ -138,6 +138,8 @@ describe('M3UFilters', () => {
     API.getM3UFilters.mockResolvedValue(playlist.filters);
     API.previewM3UFilter.mockResolvedValue({
       count: 1,
+      inventory_count: 12,
+      catalog_complete: true,
       results: [
         {
           id: 7,
@@ -227,6 +229,8 @@ describe('M3UFilters', () => {
       )
     );
     expect(await screen.findByText('HBO HD')).toBeInTheDocument();
-    expect(screen.getByText('1 matching streams')).toBeInTheDocument();
+    expect(
+      screen.getByText('1 matching streams from 12 candidates')
+    ).toBeInTheDocument();
   });
 });

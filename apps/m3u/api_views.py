@@ -16,7 +16,11 @@ from django.core.cache import cache
 import os
 from rest_framework.decorators import action
 from django.conf import settings
-from .tasks import refresh_m3u_groups
+from .tasks import (
+    has_live_filter_catalog,
+    iter_live_filter_catalog,
+    refresh_m3u_groups,
+)
 import json
 import logging
 
@@ -812,20 +816,46 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
 
         match_count = 0
         matches = []
-        queryset = Stream.objects.filter(
-            m3u_account_id=self.kwargs["account_id"]
-        ).select_related("channel_group").only(
-            "id", "name", "url", "channel_group__name"
-        )
-        for stream in queryset.iterator(chunk_size=2000):
-            group_name = stream.channel_group.name if stream.channel_group else ""
+        inventory_count = 0
+        account_id = self.kwargs["account_id"]
+        catalog_complete = has_live_filter_catalog(account_id)
+
+        if catalog_complete:
+            inventory = iter_live_filter_catalog(account_id)
+        else:
+            # Backwards-compatible fallback for installations that have not
+            # performed a Live TV refresh since this catalog was introduced.
+            queryset = Stream.objects.filter(
+                m3u_account_id=account_id
+            ).select_related("channel_group").only(
+                "id", "name", "url", "channel_group__name"
+            )
+
+            def imported_inventory():
+                for stream in queryset.iterator(chunk_size=2000):
+                    yield {
+                        "id": stream.pk,
+                        "name": stream.name,
+                        "group": (
+                            stream.channel_group.name
+                            if stream.channel_group
+                            else ""
+                        ),
+                        "url": stream.url or "",
+                    }
+
+            inventory = imported_inventory()
+
+        for stream in inventory:
+            inventory_count += 1
+            group_name = stream.get("group") or ""
             for filter_id, pattern, values in compiled:
                 target_value = (
-                    stream.url
+                    stream.get("url")
                     if values["filter_type"] == "url"
                     else group_name
                     if values["filter_type"] == "group"
-                    else stream.name
+                    else stream.get("name")
                 )
                 if not pattern.search(target_value or ""):
                     continue
@@ -834,10 +864,10 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
                     if len(matches) < 200:
                         matches.append(
                             {
-                                "id": stream.pk,
-                                "name": stream.name,
+                                "id": stream.get("id"),
+                                "name": stream.get("name") or "",
                                 "group": group_name,
-                                "url": stream.url or "",
+                                "url": stream.get("url") or "",
                                 "result": (
                                     "exclude" if values["exclude"] else "include"
                                 ),
@@ -851,7 +881,13 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
                 "results": matches,
                 "truncated": match_count > len(matches),
                 "first_match_wins": True,
-                "inventory": "currently imported streams",
+                "inventory_count": inventory_count,
+                "inventory": (
+                    "enabled groups before stream filters"
+                    if catalog_complete
+                    else "currently imported streams"
+                ),
+                "catalog_complete": catalog_complete,
             }
         )
 

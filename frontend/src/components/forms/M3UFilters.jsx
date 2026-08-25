@@ -464,14 +464,22 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            The complete ordered filter list is evaluated. The preview uses
-            currently imported Live TV streams and shows only rows for which
-            this filter is the first match.
+            The complete ordered filter list is evaluated. The preview uses the
+            enabled groups from the last Live TV refresh, before stream filters
+            are applied, and shows only rows for which this filter is the first
+            match.
           </Text>
+          {!previewLoading && preview && !preview.catalog_complete && (
+            <Alert color="yellow">
+              The complete pre-filter catalog is not available yet. Refresh this
+              M3U account once, then open the preview again. Until then, only
+              currently imported streams can be checked.
+            </Alert>
+          )}
           <Text fw={600}>
             {previewLoading
               ? 'Evaluating…'
-              : `${preview?.count || 0} matching streams`}
+              : `${preview?.count || 0} matching streams from ${preview?.inventory_count || 0} candidates`}
           </Text>
           <ScrollArea h="45vh">
             <Table striped withTableBorder stickyHeader>

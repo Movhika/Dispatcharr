@@ -38,6 +38,79 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 1500  # Optimized batch size for threading
 m3u_dir = os.path.join(settings.MEDIA_ROOT, "cached_m3u")
 
+
+def _live_filter_catalog_path(account_id):
+    """Return the persistent, compressed pre-filter Live TV catalog path."""
+    return os.path.join(
+        settings.MEDIA_ROOT,
+        "cached_m3u",
+        f"{account_id}.live-filter-preview.jsonl.gz",
+    )
+
+
+def write_live_filter_catalog(account_id, streams):
+    """Atomically cache enabled-group Live TV candidates before stream filters.
+
+    Only the four fields needed by the preview are retained. JSON Lines keeps
+    reads streaming and gzip keeps the persistent footprint small even for
+    large provider catalogs.
+    """
+    path = _live_filter_catalog_path(account_id)
+    temp_path = f"{path}.tmp"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    count = 0
+    try:
+        with gzip.open(temp_path, "wt", encoding="utf-8") as catalog:
+            for index, stream in enumerate(streams):
+                attributes = stream.get("attributes") or {}
+                catalog.write(
+                    json.dumps(
+                        {
+                            "id": f"catalog-{index}",
+                            "name": str(stream.get("name") or ""),
+                            "group": str(attributes.get("group-title") or ""),
+                            "url": str(stream.get("url") or ""),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                catalog.write("\n")
+                count += 1
+        os.replace(temp_path, path)
+        logger.debug(
+            "Cached %s pre-filter Live TV candidates for account %s",
+            count,
+            account_id,
+        )
+    except Exception:
+        # A preview cache must never make the actual M3U refresh fail. Atomic
+        # replacement also leaves the previous complete catalog available.
+        logger.warning(
+            "Could not update Live TV stream-filter preview catalog for account %s",
+            account_id,
+            exc_info=True,
+        )
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+    return count
+
+
+def iter_live_filter_catalog(account_id):
+    """Yield cached pre-filter Live TV candidates without loading them all."""
+    path = _live_filter_catalog_path(account_id)
+    with gzip.open(path, "rt", encoding="utf-8") as catalog:
+        for line in catalog:
+            if line.strip():
+                yield json.loads(line)
+
+
+def has_live_filter_catalog(account_id):
+    path = _live_filter_catalog_path(account_id)
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
 _NON_TERMINAL_REFRESH_STATUSES = frozenset({
     M3UAccount.Status.FETCHING,
     M3UAccount.Status.PARSING,
@@ -3719,6 +3792,29 @@ def _refresh_single_m3u_account_impl(account_id):
             logger.debug(
                 f"Processing Standard account ({account_id}) with groups: {existing_groups}"
             )
+
+            def enabled_standard_catalog():
+                for stream in extinf_data:
+                    attributes = stream.get("attributes") or {}
+                    group_title = get_case_insensitive_attr(
+                        attributes, "group-title", "Default Group"
+                    )
+                    if group_title not in existing_groups:
+                        continue
+                    # Match the normalization used by process_m3u_batch_direct
+                    # without mutating the parsed provider row.
+                    yield {
+                        **stream,
+                        "attributes": {
+                            **attributes,
+                            "group-title": group_title,
+                        },
+                    }
+
+            write_live_filter_catalog(
+                account_id,
+                enabled_standard_catalog(),
+            )
             # Break into batches and process with threading - use global batch size
             batches = [
                 extinf_data[i : i + BATCH_SIZE]
@@ -3862,6 +3958,12 @@ def _refresh_single_m3u_account_impl(account_id):
                 )
                 return "Failed to update m3u account, no streams returned from provider"
             else:
+                # Preserve the post-group-selection, pre-stream-filter
+                # inventory. Excluded streams are intentionally absent from
+                # the Stream table, so that table cannot provide a truthful
+                # preview on later visits.
+                write_live_filter_catalog(account_id, all_xc_streams)
+
                 # Now batch by stream count (like standard M3U processing)
                 batches = [
                     all_xc_streams[i : i + BATCH_SIZE]
