@@ -18,7 +18,7 @@ from apps.vod.metadata import (
     normalize_language_list,
     relation_declared_metadata,
 )
-from apps.vod.playback import record_playback_selection
+from apps.vod.playback import episode_history_name, record_playback_selection
 from apps.vod.serializers import (
     VODAccessPolicySerializer,
     VODPlaybackSessionSerializer,
@@ -807,6 +807,91 @@ class VODSourceManagementTests(TestCase):
             ["ger"],
         )
 
+    def test_draft_stream_filter_preview_respects_order_and_category_scope(self):
+        admin = get_user_model().objects.create_user(
+            username="draft-filter-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/access-policies/preview-stream-filter/",
+            {
+                "target_rule_id": "english-only",
+                "category_relation_ids": [
+                    self.german_category.id,
+                    self.english_category.id,
+                ],
+                "source_rules": [
+                    {
+                        "id": "german-first",
+                        "match_field": "category",
+                        "regex_pattern": "GERMANY",
+                        "result": "include",
+                    },
+                    {
+                        "id": "english-only",
+                        "match_field": "category",
+                        "regex_pattern": "NETFLIX",
+                        "required_audio_languages": ["eng"],
+                        "result": "exclude",
+                    },
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view(
+            {"post": "preview_stream_filter"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["id"], self.english_relation.id
+        )
+        self.assertEqual(response.data["results"][0]["result"], "exclude")
+
+    def test_empty_category_expression_applies_feature_filter_globally(self):
+        self.english_category.metadata_defaults = {
+            **self.english_category.metadata_defaults,
+            "video_features": ["3d"],
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        admin = get_user_model().objects.create_user(
+            username="global-feature-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/access-policies/preview-stream-filter/",
+            {
+                "target_rule_id": "exclude-3d",
+                "category_relation_ids": [],
+                "source_rules": [
+                    {
+                        "id": "exclude-3d",
+                        "match_field": "category",
+                        "regex_pattern": "",
+                        "required_video_features": ["3d"],
+                        "result": "exclude",
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view(
+            {"post": "preview_stream_filter"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["id"], self.english_relation.id
+        )
+
     def test_pending_profile_previews_and_serves_last_completed_generation(self):
         build_vod_profile_selection(self.policy.id)
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
@@ -1294,6 +1379,26 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(metadata["values"]["audio_languages"], ["ger"])
         self.assertEqual(metadata["values"]["resolution"], "1080p")
         self.assertEqual(metadata["provenance"]["resolution"], "playback")
+
+    def test_episode_history_keeps_only_the_played_episode_title(self):
+        provider_title = "| DE | Mushoku Tensei - S03E09 - 058 - Lament"
+        canonical_title = (
+            "NF - Mushoku Tensei (2021) - S03E09 - " + provider_title
+        )
+
+        self.assertEqual(
+            episode_history_name(canonical_title),
+            provider_title,
+        )
+        legacy = VODPlaybackSession(
+            content_type=VODSourceAsset.AssetType.EPISODE,
+            content_name=canonical_title,
+            custom_properties={},
+        )
+        self.assertEqual(
+            VODPlaybackSessionSerializer(legacy).data["content_name"],
+            provider_title,
+        )
 
     def test_playback_history_filters_by_user_title_and_time_on_the_server(self):
         admin = get_user_model().objects.create_user(

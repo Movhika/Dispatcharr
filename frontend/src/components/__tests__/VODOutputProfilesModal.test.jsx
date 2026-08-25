@@ -318,6 +318,34 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByLabelText('Profile name')).toHaveValue('Unsaved edit');
   });
 
+  it('uses one stable updating state while queued and building', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'pending',
+        selection_current: false,
+        selection_progress: { phase: 'Waiting in Celery queue', percent: 0 },
+      },
+    ];
+    const view = render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByText('Updating')).toBeInTheDocument();
+
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'building',
+        selection_current: false,
+        selection_progress: { phase: 'Preparing movies', percent: 25 },
+      },
+    ];
+    view.rerender(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(screen.getByText('Updating')).toBeInTheDocument();
+    expect(screen.queryByText('Queued')).not.toBeInTheDocument();
+    expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
+  });
+
   it('shows catalog build progress while a previous generation stays available', async () => {
     storeProfiles = [
       {

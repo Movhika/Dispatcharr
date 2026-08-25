@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ActionIcon,
   Alert,
+  Badge,
   Button,
   Group,
+  Loader,
+  Modal,
   ScrollArea,
   Select,
   Stack,
@@ -37,6 +40,7 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { Eye, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
+import API from '../api.js';
 
 const RULE_DEFAULTS = {
   match_field: 'category',
@@ -91,7 +95,11 @@ const SortableRuleRow = ({ ruleId, children }) => {
   );
 };
 
-const VODSourceRules = ({ value = [], onChange, onPreview }) => {
+const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
+  const [previewOpened, setPreviewOpened] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [preview, setPreview] = useState({ count: 0, results: [] });
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -117,6 +125,25 @@ const VODSourceRules = ({ value = [], onChange, onPreview }) => {
     const from = normalized.findIndex((rule) => rule.id === active.id);
     const to = normalized.findIndex((rule) => rule.id === over.id);
     if (from >= 0 && to >= 0) onChange(arrayMove(normalized, from, to));
+  };
+  const previewRule = async (ruleId) => {
+    setPreviewOpened(true);
+    setPreviewLoading(true);
+    setPreviewError('');
+    setPreview({ count: 0, results: [] });
+    try {
+      setPreview(
+        await API.previewVODAccessPolicyStreamFilter({
+          source_rules: normalized,
+          target_rule_id: ruleId,
+          category_relation_ids: categoryRelationIds,
+        })
+      );
+    } catch (error) {
+      setPreviewError(error?.message || 'The filter preview could not load.');
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   return (
@@ -242,12 +269,12 @@ const VODSourceRules = ({ value = [], onChange, onPreview }) => {
                       </TableTd>
                       <TableTd>
                         <Group gap={4} wrap="nowrap">
-                          <Tooltip label="Open prepared content preview">
+                          <Tooltip label="Preview this draft filter">
                             <ActionIcon
                               aria-label="Preview VOD stream filters"
                               color="green"
                               variant="subtle"
-                              onClick={onPreview}
+                              onClick={() => previewRule(rule.id)}
                             >
                               <Eye size={15} />
                             </ActionIcon>
@@ -270,6 +297,85 @@ const VODSourceRules = ({ value = [], onChange, onPreview }) => {
           </SortableContext>
         </DndContext>
       )}
+
+      <Modal
+        opened={previewOpened}
+        onClose={() => setPreviewOpened(false)}
+        title="VOD stream filter preview"
+        size="xl"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            The complete ordered draft is evaluated. Only sources for which this
+            filter is the first match are shown.
+          </Text>
+          {previewLoading && (
+            <Group justify="center" py="xl">
+              <Loader />
+            </Group>
+          )}
+          {previewError && <Alert color="red">{previewError}</Alert>}
+          {!previewLoading && !previewError && (
+            <>
+              <Text fw={600}>
+                {preview.count || 0} matching sources
+                {preview.truncated ? ' (first 200 shown)' : ''}
+              </Text>
+              <ScrollArea h="min(62vh, 620px)" type="auto">
+                <Table striped withTableBorder stickyHeader miw={900}>
+                  <TableThead>
+                    <TableTr>
+                      <TableTh>Title</TableTh>
+                      <TableTh>M3U account</TableTh>
+                      <TableTh>Category</TableTh>
+                      <TableTh>DUB</TableTh>
+                      <TableTh>SUB</TableTh>
+                      <TableTh>Resolution</TableTh>
+                      <TableTh>Features</TableTh>
+                      <TableTh>Result</TableTh>
+                    </TableTr>
+                  </TableThead>
+                  <TableTbody>
+                    {!preview.results?.length && (
+                      <TableTr>
+                        <TableTd colSpan={8}>
+                          <Text ta="center" c="dimmed" py="lg">
+                            No source has this filter as its first match.
+                          </Text>
+                        </TableTd>
+                      </TableTr>
+                    )}
+                    {(preview.results || []).map((row) => (
+                      <TableTr key={`${row.content_type}-${row.id}`}>
+                        <TableTd>{row.title}</TableTd>
+                        <TableTd>{row.m3u_account_name}</TableTd>
+                        <TableTd>{row.category_name || '—'}</TableTd>
+                        <TableTd>
+                          {(row.audio_languages || []).join(', ') || '—'}
+                        </TableTd>
+                        <TableTd>
+                          {(row.subtitle_languages || []).join(', ') || '—'}
+                        </TableTd>
+                        <TableTd>{row.resolution || '—'}</TableTd>
+                        <TableTd>
+                          {(row.video_features || []).join(', ') || '—'}
+                        </TableTd>
+                        <TableTd>
+                          <Badge
+                            color={row.result === 'exclude' ? 'red' : 'green'}
+                          >
+                            {row.result}
+                          </Badge>
+                        </TableTd>
+                      </TableTr>
+                    ))}
+                  </TableTbody>
+                </Table>
+              </ScrollArea>
+            </>
+          )}
+        </Stack>
+      </Modal>
     </Stack>
   );
 };

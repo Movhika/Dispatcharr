@@ -425,20 +425,15 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           'The latest XC catalog preparation failed. Review the error and refresh the catalog.',
       };
     }
-    if (selectedProfile.selection_status === 'building') {
-      return {
-        label: 'Preparing',
-        color: 'blue',
-        description:
-          'The source selection is being prepared in the background. The previous catalog remains active until this finishes.',
-      };
-    }
-    if (selectedProfile.selection_status === 'pending') {
+    if (['pending', 'building'].includes(selectedProfile.selection_status)) {
+      const waiting = selectedProfile.selection_status === 'pending';
       const taskState = selectedProfile.selection_task_state || 'UNKNOWN';
       return {
-        label: 'Queued',
-        color: 'yellow',
-        description: `The source selection is waiting in the Celery background queue (task state: ${taskState}). A busy M3U/VOD refresh can delay it; Refresh catalog safely publishes a new attempt.`,
+        label: 'Updating',
+        color: 'blue',
+        description: waiting
+          ? `The update is waiting in the Celery queue (task state: ${taskState}). The current catalog remains active.`
+          : 'The updated source selection is being prepared. The current catalog remains active until this finishes.',
       };
     }
     if (selectedProfile.selection_current) {
@@ -712,7 +707,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       onChange={(value) =>
                         updateConstraint('source_rules', value)
                       }
-                      onPreview={() => setActiveTab('preview')}
+                      categoryRelationIds={selectedCategoryIds}
                     />
                   </Paper>
                 </Stack>

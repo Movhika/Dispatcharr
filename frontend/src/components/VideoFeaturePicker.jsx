@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ActionIcon,
+  Box,
   Button,
   Checkbox,
   Group,
@@ -8,6 +10,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
+import { Plus } from 'lucide-react';
 import {
   VIDEO_FEATURE_OPTIONS,
   videoFeatureLabel,
@@ -78,8 +81,18 @@ const VideoFeaturePicker = ({
           )}
         </Stack>
       )}
-      <Group gap={5} justify="space-between" align="flex-start" wrap="nowrap">
-        <Group gap={5} style={{ flex: 1 }}>
+      <Box
+        style={{
+          minHeight: size === 'xs' ? 30 : 36,
+          border: '1px solid var(--mantine-color-default-border)',
+          borderRadius: 'var(--mantine-radius-default)',
+          background: 'var(--mantine-color-default)',
+          display: 'flex',
+          alignItems: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        <Group gap={5} px="xs" py={3} style={{ flex: 1, minWidth: 0 }}>
           {normalized.length ? (
             normalized.map((feature) => (
               <Button
@@ -99,22 +112,22 @@ const VideoFeaturePicker = ({
               </Button>
             ))
           ) : (
-            <Text size="sm" c="dimmed">
+            <Text size={size === 'xs' ? 'xs' : 'sm'} c="dimmed">
               {emptyLabel}
             </Text>
           )}
         </Group>
-        <Button
+        <ActionIcon
           aria-label={label ? `Add ${label}` : 'Add video feature'}
           disabled={disabled}
-          size={size || 'sm'}
-          px="sm"
-          variant="default"
+          size={size === 'xs' ? 28 : 32}
+          m={2}
+          variant="subtle"
           onClick={openPicker}
         >
-          +
-        </Button>
-      </Group>
+          <Plus size={15} />
+        </ActionIcon>
+      </Box>
       <Modal
         opened={opened}
         onClose={() => setOpened(false)}

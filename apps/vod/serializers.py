@@ -750,6 +750,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
 
 class VODPlaybackSessionSerializer(serializers.ModelSerializer):
+    content_name = serializers.SerializerMethodField()
     source_effective_metadata = serializers.SerializerMethodField()
     account_name = serializers.CharField(source="m3u_account.name", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
@@ -786,6 +787,16 @@ class VODPlaybackSessionSerializer(serializers.ModelSerializer):
                 **current["provenance"],
             },
         }
+
+    def get_content_name(self, obj) -> str:
+        if obj.content_type != VODSourceAsset.AssetType.EPISODE:
+            return obj.content_name
+        from .playback import episode_history_name
+
+        return episode_history_name(
+            obj.content_name,
+            (obj.custom_properties or {}).get("episode_name", ""),
+        )
 
 
 class EnhancedSeriesSerializer(serializers.ModelSerializer):

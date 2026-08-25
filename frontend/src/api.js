@@ -1557,6 +1557,16 @@ export default class API {
     });
   }
 
+  static async previewVODAccessPolicyStreamFilter(values) {
+    return await request(
+      `${host}/api/vod/access-policies/preview-stream-filter/`,
+      {
+        method: 'POST',
+        body: values,
+      }
+    );
+  }
+
   static async getVODAccessPolicySelections(id, params = {}) {
     const query = new URLSearchParams(params).toString();
     return await request(

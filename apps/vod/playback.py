@@ -1,6 +1,7 @@
 """Playback history helpers shared by redirect, proxy, and player telemetry."""
 
 import logging
+import re
 
 from django.core.cache import cache
 from django.utils import timezone
@@ -69,6 +70,24 @@ def _failover_count(failover_chain):
     return count
 
 
+def episode_history_name(value, source_name=""):
+    """Keep only the provider episode title when a canonical prefix was added.
+
+    Older rows can contain ``<series> - SxxExx - <provider episode>``.  The
+    provider title normally contains its own SxxExx marker, so the prefix adds
+    no information and makes history rows hard to scan.
+    """
+    explicit = str(source_name or "").strip()
+    if explicit:
+        return explicit
+    text = str(value or "").strip()
+    markers = list(re.finditer(r"\bS\d{1,3}E\d{1,4}\b", text, re.IGNORECASE))
+    if len(markers) < 2:
+        return text
+    separator = text.find(" - ", markers[0].end())
+    return text[separator + 3 :].strip() if separator >= 0 else text
+
+
 def record_playback_selection(
     *,
     session_id,
@@ -101,6 +120,7 @@ def record_playback_selection(
             exc,
         )
     category = relation_category(relation)
+    custom_properties = custom_properties or {}
     values = {
         "user": user if getattr(user, "is_authenticated", False) else None,
         "source_asset": asset,
@@ -114,7 +134,12 @@ def record_playback_selection(
         # identifier/title. Prefixing the canonical series again makes history
         # rows unnecessarily long and often duplicates SxxExx.
         "content_name": (
-            content.name if asset_type == "episode" else str(content)
+            episode_history_name(
+                content.name,
+                custom_properties.get("episode_name", ""),
+            )
+            if asset_type == "episode"
+            else str(content)
         )[:500],
         "mode": mode,
         "status": status,
@@ -122,7 +147,7 @@ def record_playback_selection(
         "user_agent": user_agent or "",
         "failover_chain": failover_chain or [],
         "failover_count": _failover_count(failover_chain),
-        "custom_properties": custom_properties or {},
+        "custom_properties": custom_properties,
     }
     if status not in {
         VODPlaybackSession.Status.COMPLETED,

@@ -206,8 +206,8 @@ def _stream_filter_metadata_matches(rule, metadata):
     return True
 
 
-def relation_stream_filter_result(relation, policy, metadata):
-    """Return the first matching ordered VOD stream filter decision."""
+def relation_stream_filter_match(relation, policy, metadata):
+    """Return ``(rule_id, decision)`` for the first matching stream filter."""
     rules = ((policy.hard_constraints if policy else None) or {}).get(
         "source_rules", []
     )
@@ -245,8 +245,17 @@ def relation_stream_filter_result(relation, policy, metadata):
             continue
         if not _stream_filter_metadata_matches(rule, metadata):
             continue
-        return rule.get("result", "include") != "exclude"
+        return (
+            str(rule.get("id") or ""),
+            rule.get("result", "include") != "exclude",
+        )
     return None
+
+
+def relation_stream_filter_result(relation, policy, metadata):
+    """Return the first matching ordered VOD stream filter decision."""
+    match = relation_stream_filter_match(relation, policy, metadata)
+    return match[1] if match is not None else None
 
 
 def relation_constraints(relation, policy):

@@ -102,9 +102,27 @@ def _provider_vod_fingerprint(rows):
     return f"{len(rows)}:{bytes(digest).hex()}"
 
 
-@shared_task(bind=True, max_retries=3, track_started=True)
+@shared_task(bind=True, max_retries=180, track_started=True)
 def rebuild_vod_profile_selection(self, policy_id):
     """Prepare one reusable VOD output profile outside request handling."""
+    from apps.m3u.models import M3UAccount
+
+    if M3UAccount.objects.filter(
+        is_active=True,
+        status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
+    ).exists():
+        from .models import VODAccessPolicy
+        from .profile_selection import _progress_payload
+
+        VODAccessPolicy.objects.filter(
+            pk=policy_id,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        ).update(
+            selection_progress=_progress_payload(
+                "Waiting for M3U/VOD refresh", 0, queue="celery"
+            )
+        )
+        raise self.retry(countdown=10)
     from .profile_selection import (
         CatalogChangedDuringBuild,
         ProfileBuildAlreadyRunning,
@@ -117,9 +135,27 @@ def rebuild_vod_profile_selection(self, policy_id):
         raise self.retry(exc=exc, countdown=5)
 
 
-@shared_task(bind=True, max_retries=3, track_started=True)
+@shared_task(bind=True, max_retries=180, track_started=True)
 def rebuild_all_vod_profile_selections(self):
     """Refresh all active VOD profiles after a completed catalog import."""
+    from apps.m3u.models import M3UAccount
+
+    if M3UAccount.objects.filter(
+        is_active=True,
+        status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
+    ).exists():
+        from .models import VODAccessPolicy
+        from .profile_selection import _progress_payload
+
+        VODAccessPolicy.objects.filter(
+            is_active=True,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        ).update(
+            selection_progress=_progress_payload(
+                "Waiting for M3U/VOD refresh", 0, queue="celery"
+            )
+        )
+        raise self.retry(countdown=10)
     from .models import VODAccessPolicy
     from django.core.cache import cache
     from .profile_selection import (
@@ -355,6 +391,15 @@ def refresh_vod_content(account_id):
         logger.info(f"Starting batch VOD refresh for account {account.name}")
         start_time = timezone.now()
         progress_started_at = time.monotonic()
+
+        # The Live import has already returned the account to SUCCESS before
+        # this independent VOD task starts.  Keep the account in PARSING for
+        # the complete VOD mutation window so profile workers wait for a stable
+        # catalog instead of repeatedly switching between Pending and Building.
+        M3UAccount.objects.filter(pk=account_id).update(
+            status=M3UAccount.Status.PARSING,
+            last_message="VOD refresh in progress...",
+        )
 
         # Send start notification
         _send_vod_refresh_progress(

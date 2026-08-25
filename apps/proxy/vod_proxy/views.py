@@ -1059,7 +1059,10 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                         custom_properties={
                             "source_effective_metadata": selected.get(
                                 "source_metadata", {}
-                            ).get("technical_metadata", {})
+                            ).get("technical_metadata", {}),
+                            "episode_name": selected.get(
+                                "source_metadata", {}
+                            ).get("episode_name", ""),
                         },
                     )
                 close_old_connections()
@@ -1164,7 +1167,8 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                 custom_properties={
                     "source_effective_metadata": source_metadata.get(
                         "technical_metadata", {}
-                    )
+                    ),
+                    "episode_name": source_metadata.get("episode_name", ""),
                 },
             )
 

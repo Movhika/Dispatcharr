@@ -1101,6 +1101,160 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=False, methods=["post"], url_path="preview-stream-filter")
+    def preview_stream_filter(self, request):
+        """Evaluate one draft filter against the current source inventory.
+
+        This intentionally does not build or mutate a profile.  It evaluates
+        the complete ordered draft, then returns only sources for which the
+        requested rule is the first match.  The bounded sample keeps this
+        useful on very large provider catalogs without materializing another
+        catalog in PostgreSQL.
+        """
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+
+        source_rules = request.data.get("source_rules", [])
+        target_rule_id = str(request.data.get("target_rule_id") or "")
+        category_relation_ids = request.data.get("category_relation_ids", [])
+        if not isinstance(category_relation_ids, list):
+            return Response(
+                {"detail": "category_relation_ids must be a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        validator = VODAccessPolicySerializer()
+        try:
+            hard_constraints = validator.validate_hard_constraints(
+                {"source_rules": source_rules}
+            )
+            category_relation_ids = [
+                int(relation_id) for relation_id in category_relation_ids
+            ]
+        except (DRFValidationError, TypeError, ValueError) as exc:
+            detail = getattr(exc, "detail", str(exc))
+            return Response(detail, status=status.HTTP_400_BAD_REQUEST)
+
+        normalized_rules = hard_constraints.get("source_rules", [])
+        if not target_rule_id or target_rule_id not in {
+            str(rule.get("id")) for rule in normalized_rules
+        }:
+            return Response(
+                {"detail": "target_rule_id must identify a draft filter"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .policies import (
+            _vertical_resolution,
+            _relation_source_name,
+            enabled_category_map,
+            relation_metadata,
+            relation_stream_filter_match,
+        )
+
+        if category_relation_ids:
+            category_relations = list(
+                M3UVODCategoryRelation.objects.filter(
+                    pk__in=category_relation_ids,
+                    enabled=True,
+                    m3u_account__is_active=True,
+                ).select_related("m3u_account", "category")
+            )
+            category_mapping = {
+                (relation.m3u_account_id, relation.category_id): (
+                    relation.metadata_defaults or {}
+                )
+                for relation in category_relations
+            }
+        else:
+            category_mapping = enabled_category_map()
+
+        category_query = Q(pk__in=[])
+        categories_by_account = {}
+        for account_id, category_id in category_mapping:
+            categories_by_account.setdefault(account_id, []).append(category_id)
+        for account_id, category_ids in categories_by_account.items():
+            category_query |= Q(
+                m3u_account_id=account_id,
+                category_id__in=category_ids,
+            )
+
+        policy = VODAccessPolicy(hard_constraints=hard_constraints)
+        rows = []
+        matching_count = 0
+        inventory_count = 0
+        sample_limit = 200
+
+        for content_type, relation_model, canonical_field in (
+            ("movie", M3UMovieRelation, "movie"),
+            ("series", M3USeriesRelation, "series"),
+        ):
+            queryset = (
+                relation_model.objects.filter(
+                    m3u_account__is_active=True,
+                )
+                .filter(category_query)
+                .select_related(
+                    canonical_field,
+                    "m3u_account",
+                    "category",
+                    "source_asset",
+                )
+                .order_by("pk")
+            )
+            for relation in queryset.iterator(chunk_size=2000):
+                inventory_count += 1
+                metadata = relation_metadata(
+                    relation,
+                    category_mapping.get(
+                        (relation.m3u_account_id, relation.category_id), {}
+                    ),
+                )
+                match = relation_stream_filter_match(relation, policy, metadata)
+                if match is None or match[0] != target_rule_id:
+                    continue
+                matching_count += 1
+                if len(rows) >= sample_limit:
+                    continue
+                content = getattr(relation, canonical_field)
+                resolution_height = _vertical_resolution(metadata)
+                rows.append(
+                    {
+                        "id": relation.id,
+                        "content_type": content_type,
+                        "title": _relation_source_name(relation),
+                        "m3u_account_name": relation.m3u_account.name,
+                        "category_name": (
+                            relation.category.name if relation.category else ""
+                        ),
+                        "audio_languages": metadata.get("audio_languages")
+                        or metadata.get("languages")
+                        or [],
+                        "subtitle_languages": metadata.get(
+                            "subtitle_languages"
+                        )
+                        or [],
+                        "resolution": (
+                            f"{resolution_height}p" if resolution_height else ""
+                        ),
+                        "video_features": normalize_video_features(
+                            metadata.get("video_features")
+                        ),
+                        "result": "include" if match[1] else "exclude",
+                    }
+                )
+
+        return Response(
+            {
+                "count": matching_count,
+                "inventory_count": inventory_count,
+                "truncated": matching_count > sample_limit,
+                "first_match_wins": True,
+                "results": rows,
+            }
+        )
+
 
 class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VODPlaybackSession.objects.select_related(
