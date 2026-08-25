@@ -26,7 +26,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { RefreshCw, Trash2, Wrench } from 'lucide-react';
+import { Trash2, Wrench } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
@@ -90,7 +90,12 @@ const metadataSummary = (playback) => {
     .filter(Boolean)
     .join(' • ');
 };
-const apiDate = (value) => (value ? new Date(value).toISOString() : '');
+const apiDate = (value, endOfDay = false) =>
+  value
+    ? new Date(
+        `${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`
+      ).toISOString()
+    : '';
 const playbackDayKey = (value) => new Date(value).toLocaleDateString('en-CA');
 const playbackDayLabel = (value) =>
   new Date(value).toLocaleDateString(undefined, {
@@ -99,55 +104,6 @@ const playbackDayLabel = (value) =>
     month: 'short',
     day: 'numeric',
   });
-const FAILOVER_RESULT_LABELS = {
-  at_capacity: 'capacity reached',
-  invalid_url: 'invalid URL',
-  no_url: 'no stream URL',
-  upstream_error: 'upstream error',
-};
-const PLAYBACK_STATUS = {
-  requested: ['Preparing', 'Request accepted'],
-  redirected: ['Redirected', 'Client received the provider URL'],
-  proxying: ['Active', 'Proxy transfer in progress'],
-  completed: ['Completed', 'Transfer ended normally'],
-  stopped: ['Stopped', 'Playback was stopped'],
-  failed: ['Failed', 'Playback request failed'],
-};
-const MODE_LABELS = {
-  redirect: 'Redirect',
-  proxy: 'Proxy',
-  player: 'Player report',
-};
-const sourceStepLabel = (step) =>
-  [step?.m3u_account_name, step?.category_name].filter(Boolean).join(' — ') ||
-  (step?.provider_asset_id
-    ? `Provider ID ${step.provider_asset_id}`
-    : 'Source');
-const sourceChoiceSummary = (playback) => {
-  const rejected = (playback.failover_chain || []).filter(
-    (step) => step.result !== 'selected'
-  );
-  if (!playback.failover_count && !rejected.length) {
-    return {
-      label: 'Requested',
-      detail: 'Requested source used',
-    };
-  }
-  const detail = rejected
-    .map(
-      (step) =>
-        `${sourceStepLabel(step)}: ${
-          FAILOVER_RESULT_LABELS[step.result] ||
-          String(step.result || 'rejected').replaceAll('_', ' ')
-        }`
-    )
-    .join(' → ');
-  return {
-    label: `Failover (${playback.failover_count || rejected.length})`,
-    detail,
-  };
-};
-
 const VODSourceManagerModal = ({ opened, onClose }) => {
   const [playbacks, setPlaybacks] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -187,7 +143,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
       mode: filters.mode,
       content_type: filters.content_type,
       started_after: apiDate(filters.started_after),
-      started_before: apiDate(filters.started_before),
+      started_before: apiDate(filters.started_before, true),
     }),
     [debouncedSearch, filters]
   );
@@ -324,6 +280,13 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
 
   const saveRetention = async () => {
     const days = Math.max(0, Math.min(3650, Number(retentionDraft || 0)));
+    if (
+      !facets.can_manage_history ||
+      days === Number(retentionDays) ||
+      savingRetention
+    ) {
+      return;
+    }
     setSavingRetention(true);
     try {
       const response = await API.updateVODPlaybackRetention(days);
@@ -468,30 +431,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               Metadata edits apply once to each distinct source represented by
               the selected history entries.
             </Text>
-            <Group align="flex-end" gap="xs">
-              <NumberInput
-                label="Auto-delete after (days)"
-                description="0 keeps history until it is deleted manually"
-                min={0}
-                max={3650}
-                allowDecimal={false}
-                value={retentionDraft}
-                onChange={(value) => setRetentionDraft(Number(value || 0))}
-                disabled={!facets.can_manage_history}
-                w={220}
-              />
-              <Button
-                variant="default"
-                loading={savingRetention}
-                disabled={
-                  !facets.can_manage_history ||
-                  Number(retentionDraft) === Number(retentionDays)
-                }
-                onClick={saveRetention}
-              >
-                Save retention
-              </Button>
-            </Group>
           </Group>
           <Group align="flex-end" wrap="wrap">
             <TextInput
@@ -542,29 +481,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             />
             <Select
               clearable
-              label="Playback state"
-              data={[
-                { value: 'requested', label: 'Preparing' },
-                { value: 'redirected', label: 'Redirected' },
-                { value: 'proxying', label: 'Active' },
-                { value: 'completed', label: 'Completed' },
-                { value: 'stopped', label: 'Stopped' },
-                { value: 'failed', label: 'Failed' },
-              ]}
-              value={filters.status || null}
-              onChange={(value) => updateFilter('status', value || '')}
-              w={150}
-            />
-            <Select
-              clearable
-              label="Mode"
-              data={['redirect', 'proxy', 'player']}
-              value={filters.mode || null}
-              onChange={(value) => updateFilter('mode', value || '')}
-              w={130}
-            />
-            <Select
-              clearable
               label="Type"
               data={['movie', 'series', 'episode']}
               value={filters.content_type || null}
@@ -572,97 +488,75 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               w={130}
             />
           </Group>
-          <Group align="flex-end" wrap="wrap">
-            <TextInput
-              type="datetime-local"
-              label="Started after"
-              value={filters.started_after}
-              onChange={(event) =>
-                updateFilter('started_after', event.currentTarget.value)
-              }
-            />
-            <TextInput
-              type="datetime-local"
-              label="Started before"
-              value={filters.started_before}
-              onChange={(event) =>
-                updateFilter('started_before', event.currentTarget.value)
-              }
-            />
-            <Select
-              label="Rows"
-              data={['25', '50', '100', '200']}
-              value={String(pageSize)}
-              onChange={(value) => {
-                setPageSize(Number(value || 50));
-                setPage(1);
-              }}
-              w={90}
-            />
-            <Button
-              variant="default"
-              onClick={() => {
-                setFilters(EMPTY_FILTERS);
-                setPage(1);
-              }}
-              disabled={!hasFilters}
-            >
-              Reset filters
-            </Button>
-            <Button
-              variant="default"
-              leftSection={<RefreshCw size={15} />}
-              loading={loading}
-              onClick={load}
-            >
-              Refresh
-            </Button>
-            <Button
-              variant="default"
-              leftSection={<Wrench size={15} />}
-              disabled={selectedCount === 0}
-              onClick={openBulkEditor}
-            >
-              Edit selected ({selectedCount})
-            </Button>
-            <Button
-              color="red"
-              variant="outline"
-              leftSection={<Trash2 size={15} />}
-              disabled={selectedCount === 0}
-              onClick={() =>
-                setDeleteRequest({
-                  title: 'Delete selected playback history',
-                  message: `Delete ${selectedCount} selected history entries?`,
-                  payload: selectionPayload(),
-                })
-              }
-            >
-              Delete selected
-            </Button>
-            <Button
-              color="red"
-              variant="subtle"
-              onClick={() =>
-                setDeleteRequest({
-                  title: hasFilters
-                    ? 'Clear filtered history'
-                    : 'Clear playback history',
-                  message: hasFilters
-                    ? `Delete all ${totalCount} entries matching the current filters?`
-                    : `Delete all ${totalCount} playback history entries?`,
-                  payload: {
-                    ids: [],
-                    select_all: true,
-                    exclude_ids: [],
-                    filters: activeQueryFilters,
-                  },
-                })
-              }
-              disabled={totalCount === 0}
-            >
-              {hasFilters ? 'Clear filtered' : 'Clear history'}
-            </Button>
+          <Group justify="space-between" align="flex-end" wrap="wrap">
+            <Group align="flex-end" wrap="wrap">
+              <TextInput
+                type="date"
+                label="Started from"
+                value={filters.started_after}
+                onChange={(event) =>
+                  updateFilter('started_after', event.currentTarget.value)
+                }
+              />
+              <TextInput
+                type="date"
+                label="Started through"
+                value={filters.started_before}
+                onChange={(event) =>
+                  updateFilter('started_before', event.currentTarget.value)
+                }
+              />
+            </Group>
+            <Group align="flex-end" wrap="wrap">
+              <NumberInput
+                label="Auto-delete (days)"
+                description="0 disables cleanup"
+                min={0}
+                max={3650}
+                allowDecimal={false}
+                value={retentionDraft}
+                onChange={(value) => setRetentionDraft(Number(value || 0))}
+                onBlur={saveRetention}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                }}
+                disabled={!facets.can_manage_history || savingRetention}
+                w={150}
+              />
+              <Button
+                variant="default"
+                onClick={() => {
+                  setFilters(EMPTY_FILTERS);
+                  setPage(1);
+                }}
+                disabled={!hasFilters}
+              >
+                Reset filters
+              </Button>
+              <Button
+                variant="default"
+                leftSection={<Wrench size={15} />}
+                disabled={selectedCount === 0}
+                onClick={openBulkEditor}
+              >
+                Edit selected ({selectedCount})
+              </Button>
+              <Button
+                color="red"
+                variant="outline"
+                leftSection={<Trash2 size={15} />}
+                disabled={selectedCount === 0}
+                onClick={() =>
+                  setDeleteRequest({
+                    title: 'Delete selected playback history',
+                    message: `Delete ${selectedCount} selected history entries?`,
+                    payload: selectionPayload(),
+                  })
+                }
+              >
+                Delete selected
+              </Button>
+            </Group>
           </Group>
           <Group justify="space-between">
             <Text size="sm">
@@ -672,18 +566,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               {stats.sessions || 0} plays · {stats.failover_sessions || 0}{' '}
               failovers · {formatBytes(stats.bytes_sent || 0)} sent
             </Text>
-            {(stats.popular || []).length > 0 && (
-              <Text size="xs" c="dimmed" lineClamp={1}>
-                Most played:{' '}
-                {stats.popular
-                  .slice(0, 3)
-                  .map((item) => `${item.content_name} (${item.plays})`)
-                  .join(' · ')}
-              </Text>
-            )}
-            {totalCount > 0 && (
-              <Pagination value={page} onChange={setPage} total={pageCount} />
-            )}
           </Group>
           <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             <Table stickyHeader striped withTableBorder>
@@ -707,10 +589,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   </TableTh>
                   <TableTh>Started</TableTh>
                   <TableTh>Title</TableTh>
-                  <TableTh>Source</TableTh>
                   <TableTh>User</TableTh>
-                  <TableTh>Playback state</TableTh>
-                  <TableTh>Source choice</TableTh>
                   <TableTh>Watch time</TableTh>
                   <TableTh>Data</TableTh>
                   <TableTh w={90}>Actions</TableTh>
@@ -719,7 +598,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               <TableTbody>
                 {!loading && playbacks.length === 0 && (
                   <TableTr>
-                    <TableTd colSpan={10}>
+                    <TableTd colSpan={7}>
                       <Text c="dimmed" ta="center" py="lg">
                         No VOD playback matches the current filters.
                       </Text>
@@ -727,10 +606,6 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                   </TableTr>
                 )}
                 {playbacks.map((playback, index) => {
-                  const sourceChoice = sourceChoiceSummary(playback);
-                  const [statusLabel, statusDetail] = PLAYBACK_STATUS[
-                    playback.status
-                  ] || [playback.status, ''];
                   const showDay =
                     index === 0 ||
                     playbackDayKey(playbacks[index - 1].started_at) !==
@@ -740,7 +615,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                       {showDay && (
                         <TableTr>
                           <TableTd
-                            colSpan={10}
+                            colSpan={7}
                             py={5}
                             style={{
                               background: 'var(--mantine-color-dark-6)',
@@ -773,33 +648,16 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                         <TableTd>
                           <Text size="sm">{playback.content_name}</Text>
                           <Text size="xs" c="dimmed">
+                            {[playback.account_name, playback.category_name]
+                              .filter(Boolean)
+                              .join(' — ') || 'Source unknown'}
+                          </Text>
+                          <Text size="xs" c="dimmed">
                             {metadataSummary(playback) ||
                               'Technical metadata unknown'}
                           </Text>
                         </TableTd>
-                        <TableTd>
-                          {playback.account_name}
-                          {playback.category_name
-                            ? ` — ${playback.category_name}`
-                            : ''}
-                        </TableTd>
                         <TableTd>{playback.username || '—'}</TableTd>
-                        <TableTd>
-                          <Text size="sm">{statusLabel}</Text>
-                          <Text size="xs" c="dimmed">
-                            {MODE_LABELS[playback.mode] || playback.mode}
-                            {playback.error ? ` · ${playback.error}` : ''}
-                            {!playback.error && statusDetail
-                              ? ` · ${statusDetail}`
-                              : ''}
-                          </Text>
-                        </TableTd>
-                        <TableTd>
-                          <Text size="sm">{sourceChoice.label}</Text>
-                          <Text size="xs" c="dimmed">
-                            {sourceChoice.detail}
-                          </Text>
-                        </TableTd>
                         <TableTd>
                           {formatDuration(playback.watched_seconds)}
                         </TableTd>
@@ -837,11 +695,22 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
               </TableTbody>
             </Table>
           </ScrollArea>
-          {totalCount > 0 && (
-            <Group justify="flex-end">
+          <Group justify="space-between" align="flex-end">
+            <Select
+              label="Rows"
+              data={['25', '50', '100', '200']}
+              value={String(pageSize)}
+              onChange={(value) => {
+                setPageSize(Number(value || 50));
+                setPage(1);
+              }}
+              w={90}
+            />
+            {totalCount > 0 && (
               <Pagination value={page} onChange={setPage} total={pageCount} />
-            </Group>
-          )}
+            )}
+            <div style={{ width: 90 }} />
+          </Group>
         </Stack>
       </Modal>
 

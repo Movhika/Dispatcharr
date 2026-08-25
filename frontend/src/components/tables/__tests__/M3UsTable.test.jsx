@@ -911,20 +911,42 @@ describe('M3UTable', () => {
       expect(getByText('Initializing refresh...')).toBeInTheDocument();
     });
 
-    it('bypasses progress UI when progress equals 100', () => {
+    it('hides the raw completion message when timings are unavailable', () => {
       const playlist = makePlaylist({ id: 1, status: 'success' });
       setupMocks({
         playlists: [playlist],
         refreshProgress: { 1: { progress: 100 } },
       });
       render(<M3UTable />);
-      const { getByText } = render(
+      const result = getCol('last_message').cell({
+        cell: { getValue: () => 'Done' },
+        row: { original: playlist },
+      });
+      expect(result).toBeNull();
+    });
+
+    it('shows only the stored Live and VOD refresh durations on success', () => {
+      const playlist = makePlaylist({
+        id: 1,
+        status: 'success',
+        custom_properties: {
+          refresh_timings: { live_seconds: 55, vod_seconds: 90 },
+        },
+      });
+      setupMocks({ playlists: [playlist] });
+      render(<M3UTable />);
+      const { getByText, queryByText } = render(
         getCol('last_message').cell({
-          cell: { getValue: () => 'Done' },
+          cell: { getValue: () => 'VOD refresh completed in 90 seconds' },
           row: { original: playlist },
         })
       );
-      expect(getByText('Done')).toBeInTheDocument();
+
+      expect(getByText('Live 55s')).toBeInTheDocument();
+      expect(getByText('VOD 1m 30s')).toBeInTheDocument();
+      expect(
+        queryByText('VOD refresh completed in 90 seconds')
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1248,17 +1270,16 @@ describe('M3UTable', () => {
       expect(getByText('Parse failure')).toBeInTheDocument();
     });
 
-    it('renders success-styled text when status is "success"', () => {
+    it('hides generic success text when no refresh timings exist', () => {
       setupMocks();
       render(<M3UTable />);
       const playlist = makePlaylist({ id: 1, status: 'success' });
-      const { getByText } = render(
+      expect(
         getCol('last_message').cell({
           cell: { getValue: () => 'Loaded 500 streams' },
           row: { original: playlist },
         })
-      );
-      expect(getByText('Loaded 500 streams')).toBeInTheDocument();
+      ).toBeNull();
     });
   });
 

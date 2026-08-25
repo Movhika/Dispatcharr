@@ -511,30 +511,15 @@ const M3UTable = () => {
 
           // Show success message with green styling for success
           if (data.status === 'success') {
-            return (
+            return timingLines.length ? (
               <Flex direction="column" gap={0}>
-                <Tooltip label={value} multiline width={300}>
-                  <Text
-                    c="dimmed"
-                    size="xs"
-                    style={{
-                      color: theme.colors.green[6],
-                      lineHeight: 1.3,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {value}
-                  </Text>
-                </Tooltip>
                 {timingLines.map((line) => (
                   <Text key={line} size="xs" c="dimmed">
                     {line}
                   </Text>
                 ))}
               </Flex>
-            );
+            ) : null;
           }
 
           // For all other status values, just use dimmed text

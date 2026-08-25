@@ -1540,7 +1540,7 @@ def build_vod_stats_data(redis_client):
                                 }
                             elif content_type == 'episode':
                                 content_obj = Episode.objects.select_related('series', 'series__logo').get(uuid=content_uuid)
-                                content_name = f"{content_obj.series.name} - {content_obj.name}"
+                                content_name = content_obj.name
 
                                 # Get duration from content object
                                 duration_secs = None

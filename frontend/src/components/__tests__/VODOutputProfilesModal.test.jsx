@@ -25,6 +25,9 @@ vi.mock('../VideoFeaturePicker.jsx', () => ({
   default: ({ label }) => <div>{label}</div>,
 }));
 vi.mock('lucide-react', () => ({
+  Eye: () => null,
+  GripVertical: () => null,
+  Info: () => null,
   Plus: () => null,
   RefreshCw: () => null,
   Save: () => null,
@@ -289,9 +292,7 @@ describe('VODOutputProfilesModal', () => {
       expect(API.createVODAccessPolicy).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'New profile',
-          hard_constraints: expect.not.objectContaining({
-            preferred_resolutions: expect.anything(),
-          }),
+          hard_constraints: { source_rules: [] },
         })
       )
     );

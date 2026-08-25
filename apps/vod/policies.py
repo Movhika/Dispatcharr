@@ -12,6 +12,7 @@ from .metadata import (
     normalize_video_features,
 )
 from .models import M3UVODCategoryRelation, VODAccessPolicy
+from .utils import get_vod_source_name
 
 
 def policy_for_user(user):
@@ -163,6 +164,91 @@ def relation_metadata(relation, category_relation=None):
 _METADATA_NOT_PROVIDED = object()
 
 
+def _relation_source_name(relation):
+    content = (
+        getattr(relation, "movie", None)
+        or getattr(relation, "series", None)
+        or getattr(relation, "episode", None)
+    )
+    return get_vod_source_name(
+        relation,
+        getattr(content, "name", "") or "",
+    )
+
+
+def _stream_filter_metadata_matches(rule, metadata):
+    required_audio = _language_set(rule.get("required_audio_languages"))
+    observed_audio = _language_set(
+        metadata.get("audio_languages") or metadata.get("languages")
+    )
+    if required_audio and required_audio.isdisjoint(observed_audio):
+        return False
+
+    required_subtitles = _language_set(rule.get("required_subtitle_languages"))
+    observed_subtitles = _language_set(metadata.get("subtitle_languages"))
+    if required_subtitles and required_subtitles.isdisjoint(observed_subtitles):
+        return False
+
+    required_features = set(
+        normalize_video_features(rule.get("required_video_features"))
+    )
+    if required_features:
+        observed_features = set(
+            normalize_video_features(metadata.get("video_features"))
+        )
+        compatible_required = {
+            compatible
+            for required in required_features
+            for compatible in compatible_video_features(required)
+        }
+        if compatible_required.isdisjoint(observed_features):
+            return False
+    return True
+
+
+def relation_stream_filter_result(relation, policy, metadata):
+    """Return the first matching ordered VOD stream filter decision."""
+    rules = ((policy.hard_constraints if policy else None) or {}).get(
+        "source_rules", []
+    )
+    rules = [
+        rule
+        for rule in rules if isinstance(rule, dict) and rule.get("match_field")
+    ]
+    if not rules:
+        return None
+
+    cache_key = repr(rules)
+    compiled_cache = getattr(policy, "_compiled_vod_stream_filters", None)
+    if not compiled_cache or compiled_cache[0] != cache_key:
+        compiled = []
+        for rule in rules:
+            if rule.get("enabled", True) is False:
+                continue
+            flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
+            try:
+                compiled.append(
+                    (re.compile(str(rule.get("regex_pattern") or ""), flags), rule)
+                )
+            except re.error:
+                continue
+        compiled_cache = (cache_key, compiled)
+        setattr(policy, "_compiled_vod_stream_filters", compiled_cache)
+
+    category = relation_category(relation)
+    targets = {
+        "category": getattr(category, "name", "") or "",
+        "stream": _relation_source_name(relation),
+    }
+    for pattern, rule in compiled_cache[1]:
+        if pattern.search(targets.get(rule.get("match_field"), "")) is None:
+            continue
+        if not _stream_filter_metadata_matches(rule, metadata):
+            continue
+        return rule.get("result", "include") != "exclude"
+    return None
+
+
 def relation_constraints(relation, policy):
     """Return global constraints with the first matching source rule applied."""
     constraints = dict((policy.hard_constraints if policy else None) or {})
@@ -176,7 +262,11 @@ def relation_constraints(relation, policy):
     if not compiled_cache or compiled_cache[0] != cache_key:
         compiled_rules = []
         for rule in rules if isinstance(rules, list) else []:
-            if not isinstance(rule, dict) or rule.get("enabled", True) is False:
+            if (
+                not isinstance(rule, dict)
+                or rule.get("enabled", True) is False
+                or rule.get("match_field")
+            ):
                 continue
             pattern = str(rule.get("category_regex") or ".*")
             flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
@@ -224,6 +314,9 @@ def relation_allowed(
 
     if metadata is _METADATA_NOT_PROVIDED:
         metadata = relation_metadata(relation, category_relation)
+    stream_filter_result = relation_stream_filter_result(relation, policy, metadata)
+    if stream_filter_result is not None:
+        return stream_filter_result
     constraints = relation_constraints(relation, policy)
     allow_unknown = constraints.get("allow_unknown_metadata", True)
 

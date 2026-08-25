@@ -195,6 +195,70 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(relation_allowed(self.english_relation, self.policy))
 
+    def test_ordered_stream_filters_use_first_matching_category_decision(self):
+        self.policy.hard_constraints = {
+            "source_rules": [
+                {
+                    "match_field": "category",
+                    "regex_pattern": "GERMANY",
+                    "required_audio_languages": ["ger"],
+                    "result": "include",
+                },
+                {
+                    "match_field": "category",
+                    "regex_pattern": ".*",
+                    "result": "exclude",
+                },
+            ]
+        }
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_stream_filter_can_match_provider_specific_source_name(self):
+        self.english_relation.custom_properties = {
+            "basic_data": {"name": "| USA | Avatar"}
+        }
+        self.english_relation.save(update_fields=["custom_properties"])
+        self.policy.hard_constraints = {
+            "source_rules": [
+                {
+                    "match_field": "stream",
+                    "regex_pattern": r"^\| USA \|",
+                    "result": "exclude",
+                }
+            ]
+        }
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_stream_filter_metadata_is_part_of_the_first_match(self):
+        self.english_category.metadata_defaults = {
+            "audio_languages": ["eng"],
+            "subtitle_languages": ["ger"],
+            "resolution": "1080p",
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "source_rules": [
+                {
+                    "match_field": "category",
+                    "regex_pattern": "ANIME",
+                    "required_subtitle_languages": ["ger"],
+                    "result": "include",
+                },
+                {
+                    "match_field": "category",
+                    "regex_pattern": ".*",
+                    "result": "exclude",
+                },
+            ]
+        }
+
+        self.assertTrue(relation_allowed(self.english_relation, self.policy))
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
     def test_failover_can_prefer_lower_resolution(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.ranking = [
@@ -919,6 +983,48 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("hard_constraints", serializer.errors)
+
+    def test_profile_rejects_duplicate_stream_filters(self):
+        rule = {
+            "match_field": "category",
+            "regex_pattern": "ANIME",
+            "required_subtitle_languages": ["ger"],
+            "result": "include",
+        }
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Duplicate filters",
+                "hard_constraints": {"source_rules": [rule, rule]},
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("hard_constraints", serializer.errors)
+
+    def test_profile_keeps_simplified_stream_filter_payload_compact(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Stream filters only",
+                "hard_constraints": {
+                    "source_rules": [
+                        {
+                            "match_field": "category",
+                            "regex_pattern": "ANIME",
+                            "required_subtitle_languages": ["deu"],
+                            "result": "include",
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        constraints = serializer.validated_data["hard_constraints"]
+        self.assertEqual(set(constraints), {"source_rules"})
+        self.assertEqual(
+            constraints["source_rules"][0]["required_subtitle_languages"],
+            ["ger"],
+        )
 
     def test_admin_polling_recovers_pending_profile_with_finished_task(self):
         admin = get_user_model().objects.create_user(

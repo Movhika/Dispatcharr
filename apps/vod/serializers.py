@@ -520,6 +520,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def validate_hard_constraints(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("Must be an object")
+        requested_fields = set(value)
         allowed = {
             "required_audio_languages", "required_subtitle_languages",
             "excluded_audio_languages", "excluded_subtitle_languages",
@@ -591,11 +592,86 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             )
         normalized["language_match_mode"] = language_match_mode
         normalized_rules = []
+        seen_stream_filters = set()
         for index, rule in enumerate(source_rules):
             if not isinstance(rule, dict):
                 raise serializers.ValidationError(
                     {"source_rules": {index: "Must be an object"}}
                 )
+            if rule.get("match_field"):
+                match_field = str(rule.get("match_field"))
+                if match_field not in {"category", "stream"}:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: {"match_field": "Use category or stream"}
+                            }
+                        }
+                    )
+                regex_pattern = str(rule.get("regex_pattern") or "")
+                try:
+                    re.compile(regex_pattern)
+                except re.error as exc:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: {"regex_pattern": str(exc)}}}
+                    )
+                result = str(rule.get("result") or "include")
+                if result not in {"include", "exclude"}:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: {"result": "Use include or exclude"}
+                            }
+                        }
+                    )
+                audio_languages = normalize_language_list(
+                    rule.get("required_audio_languages") or []
+                )
+                subtitle_languages = normalize_language_list(
+                    rule.get("required_subtitle_languages") or []
+                )
+                try:
+                    validate_source_metadata(
+                        {
+                            "audio_languages": audio_languages,
+                            "subtitle_languages": subtitle_languages,
+                        }
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: str(exc)}}
+                    )
+                video_features = normalize_video_features(
+                    rule.get("required_video_features") or []
+                )
+                duplicate_key = (
+                    match_field,
+                    regex_pattern,
+                    bool(rule.get("case_sensitive", False)),
+                    tuple(audio_languages),
+                    tuple(subtitle_languages),
+                    tuple(video_features),
+                )
+                if duplicate_key in seen_stream_filters:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: "Duplicate VOD stream filter"}}
+                    )
+                seen_stream_filters.add(duplicate_key)
+                normalized_rules.append(
+                    {
+                        "id": str(rule.get("id") or index),
+                        "match_field": match_field,
+                        "regex_pattern": regex_pattern,
+                        "case_sensitive": bool(rule.get("case_sensitive", False)),
+                        "enabled": bool(rule.get("enabled", True)),
+                        "required_audio_languages": audio_languages,
+                        "required_subtitle_languages": subtitle_languages,
+                        "required_video_features": video_features,
+                        "result": result,
+                    }
+                )
+                continue
+
             category_regex = str(rule.get("category_regex") or ".*")
             try:
                 re.compile(category_regex)
@@ -621,6 +697,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 }
             )
         normalized["source_rules"] = normalized_rules
+        if requested_fields <= {"source_rules"} and all(
+            rule.get("match_field") for rule in normalized_rules
+        ):
+            return {"source_rules": normalized_rules}
         return normalized
 
     def _assign_users(self, policy, users):

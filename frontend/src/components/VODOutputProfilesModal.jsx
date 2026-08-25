@@ -35,10 +35,9 @@ import { showNotification } from '../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import {
   CONTAINER_EXTENSION_OPTIONS,
-  RESOLUTION_LIMIT_OPTIONS,
   RESOLUTION_VALUES,
 } from '../utils/vodMetadataOptions.js';
-import LanguagePicker, { LanguageSelect } from './LanguagePicker.jsx';
+import { LanguageSelect } from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
@@ -54,16 +53,6 @@ const EMPTY_PROFILE = {
   is_default: false,
   is_active: true,
   hard_constraints: {
-    required_audio_languages: [],
-    required_subtitle_languages: [],
-    excluded_audio_languages: [],
-    excluded_subtitle_languages: [],
-    required_video_features: [],
-    excluded_video_features: [],
-    language_match_mode: 'any',
-    min_resolution: 0,
-    max_resolution: 0,
-    allow_unknown_metadata: true,
     source_rules: [],
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
@@ -137,16 +126,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
   const resetDraft = (profile = null) => {
     const source = profile || EMPTY_PROFILE;
-    const sourceConstraints = { ...(source.hard_constraints || {}) };
-    delete sourceConstraints.preferred_resolutions;
-    delete sourceConstraints.min_height;
-    delete sourceConstraints.max_height;
+    const sourceRules = source.hard_constraints?.source_rules || [];
     setDraft({
       ...EMPTY_PROFILE,
       ...source,
       hard_constraints: {
-        ...EMPTY_PROFILE.hard_constraints,
-        ...sourceConstraints,
+        source_rules: sourceRules,
       },
       ranking: normalizeVODFailoverRanking(
         source.ranking || EMPTY_PROFILE.ranking
@@ -289,23 +274,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         is_default: draft.is_default,
         is_active: draft.is_active,
         hard_constraints: {
-          ...draft.hard_constraints,
-          required_audio_languages: normalizeLanguageCodes(
-            draft.hard_constraints.required_audio_languages
+          source_rules: (draft.hard_constraints.source_rules || []).map(
+            (rule) => ({
+              ...rule,
+              required_audio_languages: normalizeLanguageCodes(
+                rule.required_audio_languages || []
+              ),
+              required_subtitle_languages: normalizeLanguageCodes(
+                rule.required_subtitle_languages || []
+              ),
+              required_video_features: rule.required_video_features || [],
+            })
           ),
-          required_subtitle_languages: normalizeLanguageCodes(
-            draft.hard_constraints.required_subtitle_languages
-          ),
-          excluded_audio_languages: normalizeLanguageCodes(
-            draft.hard_constraints.excluded_audio_languages
-          ),
-          excluded_subtitle_languages: normalizeLanguageCodes(
-            draft.hard_constraints.excluded_subtitle_languages
-          ),
-          required_video_features:
-            draft.hard_constraints.required_video_features || [],
-          excluded_video_features:
-            draft.hard_constraints.excluded_video_features || [],
         },
         ranking: draft.ranking,
         category_rules: relationIds(draft).map((category_relation) => ({
@@ -727,138 +707,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   </Paper>
 
                   <Paper withBorder p="lg" radius="md">
-                    <Stack>
-                      <Stack gap={0}>
-                        <Text fw={700}>Default source rules</Text>
-                        <Text size="sm" c="dimmed">
-                          Used when no category-specific rule below matches.
-                          Excluded values always win.
-                        </Text>
-                      </Stack>
-                      <Group grow align="flex-start">
-                        <LanguagePicker
-                          label="Allowed and preferred DUB languages"
-                          value={
-                            draft.hard_constraints.required_audio_languages
-                          }
-                          onChange={(value) =>
-                            updateConstraint('required_audio_languages', value)
-                          }
-                        />
-                        <LanguagePicker
-                          label="Allowed and preferred SUB languages"
-                          value={
-                            draft.hard_constraints.required_subtitle_languages
-                          }
-                          onChange={(value) =>
-                            updateConstraint(
-                              'required_subtitle_languages',
-                              value
-                            )
-                          }
-                        />
-                      </Group>
-                      <Group grow align="flex-start">
-                        <LanguagePicker
-                          label="Excluded DUB languages"
-                          value={
-                            draft.hard_constraints.excluded_audio_languages
-                          }
-                          onChange={(value) =>
-                            updateConstraint('excluded_audio_languages', value)
-                          }
-                        />
-                        <LanguagePicker
-                          label="Excluded SUB languages"
-                          value={
-                            draft.hard_constraints.excluded_subtitle_languages
-                          }
-                          onChange={(value) =>
-                            updateConstraint(
-                              'excluded_subtitle_languages',
-                              value
-                            )
-                          }
-                        />
-                      </Group>
-                      <Select
-                        label="Language matching"
-                        data={[
-                          { value: 'all', label: 'DUB and SUB must match' },
-                          { value: 'any', label: 'DUB or SUB may match' },
-                        ]}
-                        value={draft.hard_constraints.language_match_mode}
-                        onChange={(value) =>
-                          updateConstraint('language_match_mode', value)
-                        }
-                      />
-                      <Group grow align="flex-start">
-                        <Select
-                          label="Minimum resolution"
-                          data={RESOLUTION_LIMIT_OPTIONS}
-                          value={String(
-                            draft.hard_constraints.min_resolution || 0
-                          )}
-                          onChange={(value) =>
-                            updateConstraint(
-                              'min_resolution',
-                              Number(value) || 0
-                            )
-                          }
-                        />
-                        <Select
-                          label="Maximum resolution"
-                          data={RESOLUTION_LIMIT_OPTIONS}
-                          value={String(
-                            draft.hard_constraints.max_resolution || 0
-                          )}
-                          onChange={(value) =>
-                            updateConstraint(
-                              'max_resolution',
-                              Number(value) || 0
-                            )
-                          }
-                        />
-                      </Group>
-                      <Group grow align="flex-start">
-                        <VideoFeaturePicker
-                          label="Required video features"
-                          value={
-                            draft.hard_constraints.required_video_features || []
-                          }
-                          onChange={(value) =>
-                            updateConstraint('required_video_features', value)
-                          }
-                        />
-                        <VideoFeaturePicker
-                          label="Excluded video features"
-                          value={
-                            draft.hard_constraints.excluded_video_features || []
-                          }
-                          onChange={(value) =>
-                            updateConstraint('excluded_video_features', value)
-                          }
-                        />
-                      </Group>
-                      <Switch
-                        label="Allow unknown technical metadata"
-                        checked={draft.hard_constraints.allow_unknown_metadata}
-                        onChange={(event) =>
-                          updateConstraint(
-                            'allow_unknown_metadata',
-                            event.currentTarget.checked
-                          )
-                        }
-                      />
-                    </Stack>
-                  </Paper>
-
-                  <Paper withBorder p="lg" radius="md">
                     <VODSourceRules
                       value={draft.hard_constraints.source_rules || []}
                       onChange={(value) =>
                         updateConstraint('source_rules', value)
                       }
+                      onPreview={() => setActiveTab('preview')}
                     />
                   </Paper>
                 </Stack>

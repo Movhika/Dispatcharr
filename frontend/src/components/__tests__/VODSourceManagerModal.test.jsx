@@ -86,7 +86,7 @@ vi.mock('@mantine/core', () => {
     ),
     Group: Wrapper,
     Modal,
-    NumberInput: ({ label, value, onChange, disabled }) => (
+    NumberInput: ({ label, value, onChange, onBlur, onKeyDown, disabled }) => (
       <label>
         {label}
         <input
@@ -95,6 +95,8 @@ vi.mock('@mantine/core', () => {
           value={value}
           disabled={disabled}
           onChange={(event) => onChange(Number(event.target.value))}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
         />
       </label>
     ),
@@ -244,8 +246,7 @@ describe('VODSourceManagerModal playback history', () => {
     expect(
       screen.getByText('1080p • Audio: ger • Subs: eng')
     ).toBeInTheDocument();
-    expect(screen.getAllByText('Completed')).toHaveLength(2);
-    expect(screen.getByText('Requested source used')).toBeInTheDocument();
+    expect(screen.getByText('2m 5s')).toBeInTheDocument();
     expect(
       screen.getByText(
         new Date(playback.started_at).toLocaleDateString(undefined, {
@@ -282,10 +283,10 @@ describe('VODSourceManagerModal playback history', () => {
   it('updates automatic history retention in days', async () => {
     render(<VODSourceManagerModal opened onClose={vi.fn()} />);
     await screen.findByText('Avatar - S01E01');
-    fireEvent.change(screen.getByLabelText('Auto-delete after (days)'), {
+    fireEvent.change(screen.getByLabelText('Auto-delete (days)'), {
       target: { value: '30' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save retention' }));
+    fireEvent.blur(screen.getByLabelText('Auto-delete (days)'));
 
     await waitFor(() =>
       expect(API.updateVODPlaybackRetention).toHaveBeenCalledWith(30)
@@ -299,15 +300,15 @@ describe('VODSourceManagerModal playback history', () => {
     fireEvent.change(screen.getByLabelText('User'), {
       target: { value: '3' },
     });
-    fireEvent.change(screen.getByLabelText('Started after'), {
-      target: { value: '2026-08-23T10:00' },
+    fireEvent.change(screen.getByLabelText('Started from'), {
+      target: { value: '2026-08-23' },
     });
 
     await waitFor(() =>
       expect(API.getVODPlaybackSessions).toHaveBeenLastCalledWith(
         expect.objectContaining({
           user: '3',
-          started_after: expect.stringContaining('2026-08-23'),
+          started_after: new Date('2026-08-23T00:00:00').toISOString(),
           page: 1,
           page_size: 50,
         })
@@ -318,11 +319,9 @@ describe('VODSourceManagerModal playback history', () => {
   it('deletes all history matching the current server filters', async () => {
     render(<VODSourceManagerModal opened onClose={vi.fn()} />);
     await screen.findByText('Avatar - S01E01');
-    fireEvent.change(screen.getByLabelText('Playback state'), {
-      target: { value: 'completed' },
-    });
+    fireEvent.click(screen.getByLabelText('Select all matching history'));
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Clear filtered' })
+      await screen.findByRole('button', { name: 'Delete selected' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
 
@@ -331,7 +330,7 @@ describe('VODSourceManagerModal playback history', () => {
         ids: [],
         select_all: true,
         exclude_ids: [],
-        filters: { status: 'completed' },
+        filters: {},
       })
     );
   });

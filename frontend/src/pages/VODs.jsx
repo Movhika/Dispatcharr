@@ -335,19 +335,6 @@ const VODsPage = () => {
               clearable
               miw={180}
             />
-            <Select
-              label="Rows"
-              value={String(pageSize)}
-              onChange={(value) => {
-                setPageSize(Number(value));
-                localStorage.setItem('vodsPageSize', value);
-              }}
-              data={['24', '48', '96'].map((value) => ({
-                value,
-                label: value,
-              }))}
-              w={100}
-            />
           </Group>
           <Group gap="md" align="end">
             <LanguageSelect
@@ -385,7 +372,7 @@ const VODsPage = () => {
             />
             <Box w={190}>
               <VideoFeaturePicker
-                label="Features"
+                label="Feature"
                 emptyLabel="Any"
                 value={filters.video_feature ? [filters.video_feature] : []}
                 onChange={(value) =>
@@ -510,15 +497,32 @@ const VODsPage = () => {
           </Table>
         )}
 
-        {totalPages > 1 && (
-          <Flex justify="center">
+        <Group justify="space-between" align="flex-end">
+          <Select
+            label="Rows"
+            value={String(pageSize)}
+            onChange={(value) => {
+              setPageSize(Number(value));
+              setPage(1);
+              localStorage.setItem('vodsPageSize', value);
+            }}
+            data={['24', '48', '96'].map((value) => ({
+              value,
+              label: value,
+            }))}
+            w={100}
+          />
+          {totalPages > 1 ? (
             <Pagination
               value={currentPage}
               onChange={setPage}
               total={totalPages}
             />
-          </Flex>
-        )}
+          ) : (
+            <div />
+          )}
+          <div style={{ width: 100 }} />
+        </Group>
         {selectAllMatching && selectedCount > 0 && (
           <Text size="sm" c="blue" ta="center">
             All {selectedCount} VODs matching the current filters are selected.

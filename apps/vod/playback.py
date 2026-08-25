@@ -110,7 +110,12 @@ def record_playback_selection(
         "canonical_id": content.id,
         "relation_id": relation.id,
         "provider_asset_id": _provider_asset_id(relation),
-        "content_name": str(content)[:500],
+        # Episode names supplied by providers already contain their episode
+        # identifier/title. Prefixing the canonical series again makes history
+        # rows unnecessarily long and often duplicates SxxExx.
+        "content_name": (
+            content.name if asset_type == "episode" else str(content)
+        )[:500],
         "mode": mode,
         "status": status,
         "client_ip": client_ip or None,

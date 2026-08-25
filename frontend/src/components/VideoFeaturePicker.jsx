@@ -1,16 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Badge,
-  Box,
   Button,
   Checkbox,
   Group,
-  InputBase,
   Modal,
   Stack,
+  Text,
   TextInput,
 } from '@mantine/core';
-import { Plus } from 'lucide-react';
 import {
   VIDEO_FEATURE_OPTIONS,
   videoFeatureLabel,
@@ -68,51 +65,56 @@ const VideoFeaturePicker = ({
   };
 
   return (
-    <>
-      <InputBase
-        component="button"
-        type="button"
-        label={label}
-        description={description}
-        size={size}
-        disabled={disabled}
-        aria-label={label ? `Choose ${label}` : 'Choose video features'}
-        onClick={disabled ? undefined : openPicker}
-        rightSection={<Plus size={size === 'xs' ? 14 : 16} />}
-        rightSectionPointerEvents="none"
-        pointer
-        style={{
-          textAlign: 'left',
-          width: '100%',
-        }}
-      >
-        <Box
-          style={{
-            minHeight: size === 'xs' ? 20 : 22,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            flexWrap: 'wrap',
-          }}
-        >
+    <Stack gap={5}>
+      {label && (
+        <Stack gap={0}>
+          <Text component="label" size={size === 'xs' ? 'xs' : 'sm'} fw={500}>
+            {label}
+          </Text>
+          {description && (
+            <Text size="xs" c="dimmed">
+              {description}
+            </Text>
+          )}
+        </Stack>
+      )}
+      <Group gap={5} justify="space-between" align="flex-start" wrap="nowrap">
+        <Group gap={5} style={{ flex: 1 }}>
           {normalized.length ? (
             normalized.map((feature) => (
-              <Badge
+              <Button
                 key={feature}
+                aria-label={`Remove ${videoFeatureLabel(feature)}`}
                 variant="light"
                 color="gray"
-                size={size === 'xs' ? 'xs' : 'sm'}
+                size="compact-xs"
+                disabled={disabled}
+                onClick={() =>
+                  onChange?.(
+                    normalized.filter((current) => current !== feature)
+                  )
+                }
               >
-                {videoFeatureLabel(feature)}
-              </Badge>
+                {videoFeatureLabel(feature)} ×
+              </Button>
             ))
           ) : (
-            <Box component="span" c="dimmed">
+            <Text size="sm" c="dimmed">
               {emptyLabel}
-            </Box>
+            </Text>
           )}
-        </Box>
-      </InputBase>
+        </Group>
+        <Button
+          aria-label={label ? `Add ${label}` : 'Add video feature'}
+          disabled={disabled}
+          size={size || 'sm'}
+          px="sm"
+          variant="default"
+          onClick={openPicker}
+        >
+          +
+        </Button>
+      </Group>
       <Modal
         opened={opened}
         onClose={() => setOpened(false)}
@@ -176,7 +178,7 @@ const VideoFeaturePicker = ({
           </Group>
         </Stack>
       </Modal>
-    </>
+    </Stack>
   );
 };
 
