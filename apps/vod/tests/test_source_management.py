@@ -60,6 +60,7 @@ from apps.vod.catalog_cache import (
 from apps.vod.profile_selection import (
     ProfileBuildAlreadyRunning,
     build_vod_profile_selection,
+    enqueue_all_profile_selection_rebuilds,
     prepared_relation_ids,
 )
 from apps.vod.tasks import rebuild_all_vod_profile_selections
@@ -985,6 +986,35 @@ class VODSourceManagementTests(TestCase):
 
         self.assertEqual(len(built), 2)
         apply_async.assert_called_once_with(countdown=1)
+
+    def test_catalog_invalidation_keeps_an_existing_pending_task_stable(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
+        started_at = timezone.now() - timedelta(minutes=2)
+        progress = {
+            "phase": "Waiting in Celery queue",
+            "percent": 0,
+            "task_id": "existing-task-id",
+        }
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=started_at,
+            selection_progress=progress,
+        )
+
+        with patch(
+            "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+        ) as delay:
+            queued = enqueue_all_profile_selection_rebuilds()
+
+        self.policy.refresh_from_db()
+        self.assertFalse(queued)
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(self.policy.selection_started_at, started_at)
+        self.assertEqual(self.policy.selection_progress, progress)
+        delay.assert_not_called()
 
     def test_admin_can_create_a_reusable_vod_output_profile(self):
         admin = get_user_model().objects.create_user(

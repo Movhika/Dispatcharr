@@ -179,8 +179,17 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     if (!['pending', 'building'].includes(selectedSelectionStatus)) {
       return;
     }
-    const timer = window.setInterval(() => fetchProfiles(), 2000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer;
+    const poll = async () => {
+      await fetchProfiles();
+      if (!cancelled) timer = window.setTimeout(poll, 2000);
+    };
+    timer = window.setTimeout(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [fetchProfiles, opened, selectedProfileId, selectedSelectionStatus]);
 
   const accountOptions = useMemo(

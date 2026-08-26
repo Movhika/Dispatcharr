@@ -114,14 +114,24 @@ def enqueue_profile_selection_rebuild(policy_id):
 def enqueue_all_profile_selection_rebuilds():
     """Mark active profiles stale and enqueue one debounced rebuild task."""
     queued_progress = _progress_payload("Waiting for worker", 0)
-    VODAccessPolicy.objects.filter(is_active=True).exclude(
-        selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+    newly_pending = VODAccessPolicy.objects.filter(is_active=True).exclude(
+        selection_status__in=(
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+        ),
     ).update(
         selection_status=VODAccessPolicy.SelectionStatus.PENDING,
         selection_started_at=timezone.now(),
         selection_error="",
         selection_progress=queued_progress,
     )
+    # Repeated catalog invalidations are common when one UI operation updates
+    # several related source rows.  A pending worker reads the latest catalog
+    # generation when it starts, while an active build detects a changed
+    # generation and retries itself.  Resetting either state here would erase
+    # its task/progress metadata and could publish duplicate recovery work.
+    if not newly_pending:
+        return False
 
     def enqueue():
         from django.core.cache import cache
@@ -171,6 +181,7 @@ def enqueue_all_profile_selection_rebuilds():
             )
 
     transaction.on_commit(enqueue)
+    return True
 
 
 def _metadata_list(metadata, *fields):
