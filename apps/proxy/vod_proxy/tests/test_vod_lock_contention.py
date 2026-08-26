@@ -22,6 +22,7 @@ class LockAwareFakeRedis:
     def __init__(self):
         self._data = {}
         self._hashes = {}
+        self._zsets = {}
         self._lock = threading.Lock()
 
     def set(self, key, value, nx=False, ex=None):
@@ -101,6 +102,39 @@ class LockAwareFakeRedis:
     def register_script(self, script):
         return _FakeVodScript(self, script)
 
+    def zadd(self, key, mapping):
+        with self._lock:
+            zset = self._zsets.setdefault(key, {})
+            zset.update({member: float(score) for member, score in mapping.items()})
+            return len(mapping)
+
+    def zcard(self, key):
+        with self._lock:
+            return len(self._zsets.get(key, {}))
+
+    def zrangebyscore(self, key, minimum, maximum, start=0, num=None):
+        with self._lock:
+            lower = float("-inf") if minimum == "-inf" else float(minimum)
+            upper = float(maximum)
+            members = [
+                member
+                for member, score in sorted(
+                    self._zsets.get(key, {}).items(), key=lambda item: item[1]
+                )
+                if lower <= score <= upper
+            ]
+            return members[start:] if num is None else members[start:start + num]
+
+    def zrem(self, key, *members):
+        with self._lock:
+            zset = self._zsets.get(key, {})
+            removed = 0
+            for member in members:
+                if member in zset:
+                    del zset[member]
+                    removed += 1
+            return removed
+
 
 class _FakePipeline:
     def __init__(self, redis):
@@ -141,6 +175,10 @@ class _FakeVodScript:
                 return self._cleanup_after_grace(keys[0], keys[1], args[0])
             if "vod_meta_save_if_exists" in self._script:
                 return self._meta_save(keys[0], args)
+            if "vod_add_bytes_sent" in self._script:
+                return self._add_bytes_sent(keys[0], args)
+            if "vod_resume_range" in self._script:
+                return self._resume_range(keys[0], keys[1], args[0])
             raise AssertionError(f"Unknown VOD script: {self._script[:80]}")
 
     def _incr(self, key, activity):
@@ -198,6 +236,25 @@ class _FakeVodScript:
                 break
             h[str(args[i])] = str(args[i + 1])
         return 1
+
+    def _add_bytes_sent(self, key, args):
+        if key not in self._redis._hashes:
+            return -1
+        h = self._redis._hashes[key]
+        total = int(h.get("bytes_sent", 0)) + int(args[0])
+        h["bytes_sent"] = str(total)
+        h["last_activity"] = str(args[1])
+        return total
+
+    def _resume_range(self, conn_key, grace_key, activity):
+        if conn_key not in self._redis._hashes:
+            return 0
+        self._redis._data.pop(grace_key, None)
+        h = self._redis._hashes[conn_key]
+        active_streams = int(h.get("active_streams", 0)) + 1
+        h["active_streams"] = str(active_streams)
+        h["last_activity"] = str(activity)
+        return active_streams
 
 
 def _clear_script_cache():
@@ -481,6 +538,30 @@ class TestAtomicActiveStreams(SimpleTestCase):
         self.assertIsNotNone(conn._get_connection_state())
         self.assertEqual(conn.get_active_streams_count(), 1)
 
+    def test_resume_range_atomically_cancels_grace_and_increments(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_resume_atomic", active_streams=0)
+        conn.begin_disconnect_grace(seconds=300)
+
+        self.assertEqual(conn.resume_range_request(), 1)
+        self.assertFalse(redis.exists(conn.disconnect_grace_key))
+        self.assertEqual(conn.get_active_streams_count(), 1)
+
+    def test_resume_range_can_join_overlapping_physical_request(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_resume_overlap", active_streams=1)
+
+        self.assertEqual(conn.resume_range_request(), 2)
+        self.assertEqual(conn.get_active_streams_count(), 2)
+
+    def test_resume_range_does_not_recreate_expired_session(self):
+        RedisBackedVODConnection, _ = _import_vod()
+        redis = LockAwareFakeRedis()
+        conn = RedisBackedVODConnection("vod_resume_missing", redis)
+
+        self.assertEqual(conn.resume_range_request(), 0)
+        self.assertNotIn(conn.connection_key, redis._hashes)
+
     def test_newer_disconnect_timer_supersedes_older_timer(self):
         redis = LockAwareFakeRedis()
         conn = _seed_session(redis, "vod_grace_generation", active_streams=0)
@@ -501,6 +582,92 @@ class TestAtomicActiveStreams(SimpleTestCase):
         self.assertFalse(conn.finalize_disconnect_grace(token))
         self.assertIsNotNone(conn._get_connection_state())
         self.assertEqual(conn.get_active_streams_count(), 1)
+
+    def test_bytes_are_accumulated_across_range_requests(self):
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_bytes", active_streams=0)
+
+        self.assertEqual(conn.add_bytes_sent(1024), 1024)
+        self.assertEqual(conn.add_bytes_sent(2048), 3072)
+        self.assertEqual(conn._get_connection_state().bytes_sent, 3072)
+
+    def test_disconnect_queue_finalizes_one_logical_session(self):
+        from unittest.mock import patch
+
+        from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+            MultiWorkerVODConnectionManager,
+            VOD_DISCONNECT_QUEUE_KEY,
+        )
+
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_queued", active_streams=0)
+        manager = MultiWorkerVODConnectionManager.__new__(
+            MultiWorkerVODConnectionManager
+        )
+        manager.redis_client = redis
+        manager.worker_id = "worker-test"
+        manager._disconnect_sweeper_started = True
+        manager._disconnect_sweeper_guard = threading.Lock()
+        manager._decrement_profile_connections = MagicMock()
+        manager._send_vod_event = MagicMock()
+
+        with patch(
+            "apps.proxy.vod_proxy.multi_worker_connection_manager._update_playback_history"
+        ) as update_history:
+            manager._schedule_logical_disconnect(
+                conn, "vod_queued", "completed", delay_seconds=300
+            )
+            self.assertEqual(redis.zcard(VOD_DISCONNECT_QUEUE_KEY), 1)
+            self.assertIsNotNone(conn._get_connection_state())
+
+            finalized = manager._sweep_due_logical_disconnects(
+                now=time.time() + 301
+            )
+
+        self.assertEqual(finalized, 1)
+        self.assertIsNone(conn._get_connection_state())
+        self.assertEqual(redis.zcard(VOD_DISCONNECT_QUEUE_KEY), 0)
+        manager._decrement_profile_connections.assert_called_once_with(
+            7, "vod_queued"
+        )
+        update_history.assert_called_once_with(
+            "vod_queued", "completed", 0
+        )
+        manager._send_vod_event.assert_called_once()
+
+    def test_reconnect_cancels_queued_disconnect(self):
+        from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+            MultiWorkerVODConnectionManager,
+            VOD_DISCONNECT_QUEUE_KEY,
+        )
+
+        redis = LockAwareFakeRedis()
+        conn = _seed_session(redis, "vod_reconnect", active_streams=0)
+        manager = MultiWorkerVODConnectionManager.__new__(
+            MultiWorkerVODConnectionManager
+        )
+        manager.redis_client = redis
+        manager.worker_id = "worker-test"
+        manager._disconnect_sweeper_started = True
+        manager._disconnect_sweeper_guard = threading.Lock()
+        manager._decrement_profile_connections = MagicMock()
+        manager._send_vod_event = MagicMock()
+
+        manager._schedule_logical_disconnect(
+            conn, "vod_reconnect", "completed", delay_seconds=300
+        )
+        conn.cancel_disconnect_grace()
+        self.assertEqual(conn.increment_active_streams(), 1)
+
+        finalized = manager._sweep_due_logical_disconnects(
+            now=time.time() + 301
+        )
+
+        self.assertEqual(finalized, 0)
+        self.assertEqual(redis.zcard(VOD_DISCONNECT_QUEUE_KEY), 0)
+        self.assertIsNotNone(conn._get_connection_state())
+        manager._decrement_profile_connections.assert_not_called()
+        manager._send_vod_event.assert_not_called()
 
 
 class TestLegacyLockContentionBehaviorGone(SimpleTestCase):
@@ -649,6 +816,29 @@ class TestVodActiveStreamsRealRedis(SimpleTestCase):
         self.assertTrue(conn.finalize_disconnect_grace(token))
         self.assertFalse(bool(self.redis.exists(conn.connection_key)))
 
+    def test_real_lua_resume_range_cancels_grace_and_increments(self):
+        conn = self._seed(active_streams=0)
+        token = conn.begin_disconnect_grace(seconds=300)
+        self._keys_to_delete.append(conn.disconnect_grace_key)
+
+        self.assertTrue(token)
+        self.assertEqual(conn.resume_range_request(), 1)
+        self.assertFalse(bool(self.redis.exists(conn.disconnect_grace_key)))
+        self.assertEqual(
+            int(self.redis.hget(conn.connection_key, "active_streams")),
+            1,
+        )
+
+    def test_real_lua_accumulates_bytes_across_ranges(self):
+        conn = self._seed(active_streams=0)
+
+        self.assertEqual(conn.add_bytes_sent(1024), 1024)
+        self.assertEqual(conn.add_bytes_sent(2048), 3072)
+        self.assertEqual(
+            int(self.redis.hget(conn.connection_key, "bytes_sent")),
+            3072,
+        )
+
     def test_real_lua_concurrent_decr_under_metadata_churn(self):
         RedisBackedVODConnection, _ = _import_vod()
         self._seed(active_streams=2)
@@ -692,7 +882,15 @@ class TestVodActiveStreamsRealRedis(SimpleTestCase):
         """Smoke-check redis-py Script objects hit the live server."""
         conn = self._seed(active_streams=0)
         scripts = conn._vod_scripts()
-        for name in ("incr", "decr", "cleanup", "meta_save"):
+        for name in (
+            "incr",
+            "decr",
+            "cleanup",
+            "cleanup_after_grace",
+            "meta_save",
+            "add_bytes_sent",
+            "resume_range",
+        ):
             self.assertIn(name, scripts)
             # Calling Script triggers SCRIPT LOAD / EVALSHA on first use
             self.assertTrue(hasattr(scripts[name], "sha") or callable(scripts[name]))

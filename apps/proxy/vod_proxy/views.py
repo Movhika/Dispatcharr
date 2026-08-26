@@ -83,11 +83,12 @@ def _find_idle_vod_session(
     user=None,
 ):
     """
-    Return an idle Redis session_id matching this viewer/content, or None.
+    Return a logical Redis session_id matching this viewer/content, or None.
 
     Used before minting a new session or Redirecting, so a reconnect that
     omitted session_id can resume an existing proxy pool instead of starting
-    a new provider hop.
+    a new provider hop. The previous physical Range request may still be
+    winding down when the replacement request arrives.
     """
     from apps.vod.policies import ordered_candidates, policy_for_user
 
@@ -118,6 +119,7 @@ def _find_idle_vod_session(
             utc_end=utc_end,
             offset=offset,
             source_key=_vod_source_key(content_type, relation),
+            user_id=user.id if user else None,
         )
     except Exception as e:
         logger.warning("[VOD-SESSION] Idle session match failed: %s", e)
@@ -200,6 +202,20 @@ def _select_vod_stream(
         return None
 
     ordered = ordered_candidates(candidates, policy, relation)
+    pinned_source_key = _session_pinned_source_key(session_id)
+    if pinned_source_key:
+        ordered = [
+            candidate
+            for candidate in ordered
+            if _vod_source_key(content_type, candidate) == pinned_source_key
+        ]
+        if not ordered:
+            logger.warning(
+                "[VOD-SESSION] Session %s is pinned to unavailable source %s",
+                session_id,
+                pinned_source_key,
+            )
+            return None
     failover_chain = []
 
     def failover_step(candidate, result):
@@ -277,6 +293,31 @@ def _select_vod_stream(
         }
 
     return None
+
+
+def _session_pinned_source_key(session_id):
+    """Return the concrete source already leased by a logical VOD session."""
+    if not session_id:
+        return None
+    try:
+        from core.utils import RedisClient
+
+        redis_client = RedisClient.get_client()
+        if not redis_client:
+            return None
+        value = redis_client.hget(
+            f"vod_persistent_connection:{session_id}", "source_key"
+        )
+        if isinstance(value, bytes):
+            value = value.decode()
+        return value or None
+    except Exception as exc:
+        logger.warning(
+            "[VOD-SESSION] Could not read pinned source for %s: %s",
+            session_id,
+            exc,
+        )
+        return None
 
 
 def _get_content_and_relation(
@@ -985,39 +1026,33 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             request
         )
 
-        # First request (no session_id): decide Redirect vs mint. The idle
-        # fingerprint match (ip/user-agent/content, same as the connection
-        # manager already uses for reconnects) only needs checking when
-        # Redirect is the active default; proxy-mode installs mint exactly
-        # as before, with no extra Redis lookup on this path.
+        # First request (no session_id): adopt an existing logical playback before
+        # deciding Redirect vs proxy mint. Some IPTV clients return to the
+        # original XC URL for every buffered Range request and do not retain
+        # Dispatcharr's prior session path.
         if not session_id:
-            if CoreSettings.is_default_stream_profile_redirect():
-                # A reconnect/retry for content we're already proxying should
-                # keep using that session rather than hopping to the provider,
-                # so an idle match wins over Redirect and adopts that session
-                # directly (redirecting the client to its own URL, so later
-                # Range/seek requests keep targeting the right session).
-                matched_session_id = _find_idle_vod_session(
-                    content_type,
-                    content_id,
-                    preferred_m3u_account_id,
-                    preferred_stream_id,
-                    client_ip,
-                    client_user_agent,
-                    utc_start=utc_start,
-                    utc_end=utc_end,
-                    offset=offset,
-                    user=user,
+            matched_session_id = _find_idle_vod_session(
+                content_type,
+                content_id,
+                preferred_m3u_account_id,
+                preferred_stream_id,
+                client_ip,
+                client_user_agent,
+                utc_start=utc_start,
+                utc_end=utc_end,
+                offset=offset,
+                user=user,
+            )
+            if matched_session_id:
+                logger.info(
+                    "[VOD-SESSION] Adopting logical session %s",
+                    matched_session_id,
                 )
-                if matched_session_id:
-                    logger.info(
-                        "[VOD-SESSION] Adopting idle session %s (skip Redirect/mint)",
-                        matched_session_id,
-                    )
-                    return _vod_session_path_redirect(
-                        request, matched_session_id, profile_id=profile_id, user=user
-                    )
+                return _vod_session_path_redirect(
+                    request, matched_session_id, profile_id=profile_id, user=user
+                )
 
+            if CoreSettings.is_default_stream_profile_redirect():
                 # 301 to provider (no session mint, no slot hold, no probe).
                 # Capacity still gates provider selection.
                 selected = _select_vod_stream(
@@ -1088,6 +1123,14 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             except Exception:
                 pass
 
+        connection_manager = MultiWorkerVODConnectionManager.get_instance()
+        connection_manager.retire_other_idle_sessions_for_viewer(
+            client_ip=client_ip,
+            client_user_agent=client_user_agent,
+            user_id=user.id if user else None,
+            keep_session_id=session_id,
+        )
+
         if user:
             if not check_user_stream_limits(user, session_id, media_id=content_id):
                 return JsonResponse(
@@ -1128,8 +1171,6 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
         )
 
         # Get connection manager (Redis-backed for multi-worker support)
-        connection_manager = MultiWorkerVODConnectionManager.get_instance()
-
         # Release ORM checkout before returning a long-lived StreamingHttpResponse.
         close_old_connections()
 

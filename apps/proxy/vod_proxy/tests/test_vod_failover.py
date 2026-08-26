@@ -41,6 +41,8 @@ from apps.proxy.vod_proxy.views import (
     _build_vod_source_metadata_best_effort,
     _category_scoped_candidates,
     _order_candidates,
+    _select_vod_stream,
+    _session_pinned_source_key,
     stream_vod,
     stream_xc_episode,
     stream_xc_movie,
@@ -137,6 +139,59 @@ class TestPlaybackMetadataIsolation(SimpleTestCase):
         self.assertEqual(result['technical_metadata'], {})
 
 
+class TestLogicalSessionSourcePinning(SimpleTestCase):
+    @patch('apps.proxy.vod_proxy.views._build_vod_source_metadata_best_effort')
+    @patch('apps.proxy.vod_proxy.views._transform_url')
+    @patch('apps.proxy.vod_proxy.views._get_m3u_profile')
+    @patch('apps.proxy.vod_proxy.views._get_stream_url_from_relation')
+    @patch('apps.proxy.vod_proxy.views._session_pinned_source_key')
+    @patch('apps.proxy.vod_proxy.views._get_content_and_relation')
+    @patch('apps.vod.policies.policy_for_user')
+    @patch('apps.vod.policies.ordered_candidates')
+    def test_reconnect_cannot_switch_to_another_source(
+        self,
+        ordered_candidates,
+        policy_for_user,
+        get_content_and_relation,
+        pinned_source_key,
+        get_stream_url,
+        get_profile,
+        transform_url,
+        build_metadata,
+    ):
+        preferred = MagicMock(id=1, m3u_account_id=10, stream_id='preferred')
+        preferred.m3u_account.name = 'Preferred'
+        preferred.category_id = 100
+        preferred.category.name = 'Preferred category'
+        pinned = MagicMock(id=2, m3u_account_id=20, stream_id='pinned')
+        pinned.m3u_account.name = 'Pinned'
+        pinned.category_id = 200
+        pinned.category.name = 'Pinned category'
+        content = MagicMock()
+        get_content_and_relation.return_value = (
+            content,
+            preferred,
+            [preferred, pinned],
+        )
+        policy_for_user.return_value = MagicMock()
+        ordered_candidates.return_value = [preferred, pinned]
+        pinned_source_key.return_value = 'movie:20:pinned'
+        get_stream_url.return_value = 'https://provider/movie.mkv'
+        profile = MagicMock()
+        get_profile.return_value = (profile, 1)
+        transform_url.return_value = 'https://provider/movie.mkv'
+        build_metadata.return_value = {'key': 'movie:20:pinned'}
+
+        selected = _select_vod_stream(
+            'movie',
+            'content-id',
+            session_id='logical-session',
+        )
+
+        self.assertIs(selected['relation'], pinned)
+        get_stream_url.assert_called_once_with(pinned)
+
+
 class TestCategoryScopedCandidates(TestCase):
     def test_movie_failover_cannot_leave_selected_category(self):
         selected = _rel(rel_id=1, priority=1)
@@ -209,6 +264,23 @@ class TestSourceScopedIdleSessions(SimpleTestCase):
 
     def test_rejects_other_category_source(self):
         self.assertIsNone(self._find('movie:1:nickelodeon-stream'))
+
+    def test_reuses_matching_source_while_previous_range_is_active(self):
+        self.redis.hgetall.return_value = {
+            **self.redis.hgetall.return_value,
+            'active_streams': '1',
+        }
+
+        self.assertEqual(self._find('movie:1:netflix-stream'), 'existing')
+
+    @patch('core.utils.RedisClient.get_client')
+    def test_session_source_key_decodes_redis_bytes(self, get_client):
+        get_client.return_value.hget.return_value = b'movie:1:netflix-stream'
+
+        self.assertEqual(
+            _session_pinned_source_key('existing'),
+            'movie:1:netflix-stream',
+        )
 
 
 class TestXCRelationPlayback(TestCase):
