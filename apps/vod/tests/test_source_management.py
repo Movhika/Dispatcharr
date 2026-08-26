@@ -1002,11 +1002,11 @@ class VODSourceManagementTests(TestCase):
         )
 
         with (
-            self.captureOnCommitCallbacks(execute=True),
             patch("django.core.cache.cache.add", return_value=True),
             patch(
                 "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
             ) as delay,
+            self.captureOnCommitCallbacks(execute=True),
         ):
             delay.return_value.id = "replacement-task-id"
             queued = enqueue_all_profile_selection_rebuilds()
