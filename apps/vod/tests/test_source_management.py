@@ -1162,6 +1162,7 @@ class VODSourceManagementTests(TestCase):
             password="test-password",
             user_level=10,
         )
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
             is_active=True,
             selection_status=VODAccessPolicy.SelectionStatus.PENDING,
