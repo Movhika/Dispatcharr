@@ -1681,17 +1681,203 @@ class VODSourceManagementTests(TestCase):
         )
         force_authenticate(request, user=admin)
 
-        response = VODPlaybackSessionViewSet.as_view(
-            {"patch": "bulk_metadata"}
-        )(request)
+        with (
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content",
+                return_value={
+                    "profiles_updated": 1,
+                    "queued_full_rebuild": False,
+                },
+            ) as refresh_profiles,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_full_rebuild,
+        ):
+            response = VODPlaybackSessionViewSet.as_view(
+                {"patch": "bulk_metadata"}
+            )(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["selected_sessions"], 2)
         self.assertEqual(response.data["updated_sources"], 1)
+        self.assertEqual(response.data["affected_titles"], 1)
+        self.assertEqual(response.data["profile_update"], "inline")
+        refresh_profiles.assert_called_once_with(
+            movie_ids={self.movie.id},
+            series_ids=set(),
+        )
+        enqueue_full_rebuild.assert_not_called()
         asset = VODSourceAsset.objects.get(pk=first.source_asset_id)
         self.assertEqual(asset.manual_metadata["resolution"], "1080p")
         self.assertEqual(asset.manual_metadata["subtitle_languages"], ["ger"])
         self.assertIn("resolution", asset.locked_fields)
+
+    def test_playback_history_episode_metadata_refreshes_parent_series_inline(self):
+        admin = get_user_model().objects.create_user(
+            username="history-episode-metadata-admin",
+            password="test-password",
+            user_level=10,
+        )
+        series = Series.objects.create(name="History Series", year=2026)
+        episode = Episode.objects.create(
+            series=series,
+            season_number=1,
+            episode_number=1,
+            name="History Episode",
+        )
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="history-series-source",
+        )
+        episode_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="history-episode-source",
+            container_extension="mkv",
+        )
+        playback = record_playback_selection(
+            session_id="history-episode-metadata",
+            user=admin,
+            relation=episode_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/playback-sessions/bulk-metadata/",
+            {
+                "ids": [playback.id],
+                "updates": {
+                    "subtitle_languages": {
+                        "mode": "set",
+                        "value": ["deu"],
+                    },
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with patch(
+            "apps.vod.profile_selection.refresh_profile_selections_for_content",
+            return_value={
+                "profiles_updated": 1,
+                "queued_full_rebuild": False,
+            },
+        ) as refresh_profiles:
+            response = VODPlaybackSessionViewSet.as_view(
+                {"patch": "bulk_metadata"}
+            )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["affected_titles"], 1)
+        self.assertEqual(response.data["profile_update"], "inline")
+        refresh_profiles.assert_called_once_with(
+            movie_ids=set(),
+            series_ids={series.id},
+        )
+
+    def test_playback_history_select_all_queues_one_full_profile_refresh(self):
+        admin = get_user_model().objects.create_user(
+            username="history-select-all-admin",
+            password="test-password",
+            user_level=10,
+        )
+        playback = record_playback_selection(
+            session_id="history-select-all",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/playback-sessions/bulk-metadata/",
+            {
+                "select_all": True,
+                "filters": {"user": str(admin.id)},
+                "updates": {
+                    "resolution": {"mode": "set", "value": "1080p"},
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with (
+            patch("apps.vod.catalog_cache.bump_catalog_generation") as bump,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_full_rebuild,
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ) as refresh_profiles,
+        ):
+            response = VODPlaybackSessionViewSet.as_view(
+                {"patch": "bulk_metadata"}
+            )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["selected_sessions"], 1)
+        self.assertEqual(response.data["updated_sources"], 1)
+        self.assertIsNone(response.data["affected_titles"])
+        self.assertEqual(response.data["profile_update"], "queued")
+        self.assertTrue(
+            VODSourceAsset.objects.filter(
+                pk=playback.source_asset_id,
+                manual_metadata__resolution="1080p",
+            ).exists()
+        )
+        bump.assert_called_once_with()
+        enqueue_full_rebuild.assert_called_once_with()
+        refresh_profiles.assert_not_called()
+
+    def test_playback_history_explicit_selection_queues_above_inline_limit(self):
+        admin = get_user_model().objects.create_user(
+            username="history-inline-limit-admin",
+            password="test-password",
+            user_level=10,
+        )
+        playback = record_playback_selection(
+            session_id="history-inline-limit",
+            user=admin,
+            relation=self.german_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/playback-sessions/bulk-metadata/",
+            {
+                "ids": [playback.id],
+                "updates": {
+                    "resolution": {"mode": "set", "value": "1080p"},
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with (
+            patch("apps.vod.api_views.PLAYBACK_METADATA_INLINE_TITLE_LIMIT", 0),
+            patch("apps.vod.catalog_cache.bump_catalog_generation") as bump,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_full_rebuild,
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ) as refresh_profiles,
+        ):
+            response = VODPlaybackSessionViewSet.as_view(
+                {"patch": "bulk_metadata"}
+            )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["affected_titles"])
+        self.assertEqual(response.data["profile_update"], "queued")
+        bump.assert_called_once_with()
+        enqueue_full_rebuild.assert_called_once_with()
+        refresh_profiles.assert_not_called()
 
     def test_metadata_precedence_is_category_provider_observed_manual(self):
         asset = VODSourceAsset.objects.create(

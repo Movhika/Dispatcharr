@@ -63,6 +63,56 @@ from .metadata import (
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+PLAYBACK_METADATA_INLINE_TITLE_LIMIT = 25
+
+
+def _canonical_content_ids_for_source_assets(asset_ids, *, limit):
+    """Return canonical titles affected by a small source-asset edit.
+
+    Playback history can contain several sessions for the same source and an
+    explicitly linked source asset can back more than one relation. Resolve
+    canonical IDs from the relations instead of counting history rows, and
+    stop as soon as an inline refresh would exceed its bounded request cost.
+    Episodes invalidate their parent series selection.
+    """
+    asset_ids = set(asset_ids)
+    movie_ids = set()
+    series_ids = set()
+    if not asset_ids:
+        return movie_ids, series_ids, False
+
+    def collect(queryset, target):
+        remaining = max(limit + 1 - len(movie_ids) - len(series_ids), 0)
+        if not remaining:
+            return True
+        for canonical_id in queryset.order_by().distinct()[:remaining]:
+            if canonical_id is not None:
+                target.add(int(canonical_id))
+            if len(movie_ids) + len(series_ids) > limit:
+                return True
+        return False
+
+    if collect(
+        M3UMovieRelation.objects.filter(source_asset_id__in=asset_ids).values_list(
+            "movie_id", flat=True
+        ),
+        movie_ids,
+    ):
+        return movie_ids, series_ids, True
+    if collect(
+        M3USeriesRelation.objects.filter(source_asset_id__in=asset_ids).values_list(
+            "series_id", flat=True
+        ),
+        series_ids,
+    ):
+        return movie_ids, series_ids, True
+    overflow = collect(
+        M3UEpisodeRelation.objects.filter(source_asset_id__in=asset_ids)
+        .exclude(episode__series_id__in=series_ids)
+        .values_list("episode__series_id", flat=True),
+        series_ids,
+    )
+    return movie_ids, series_ids, overflow
 
 
 def _effective_json_array_match(field, value, asset_alias="asset"):
@@ -1551,6 +1601,7 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             "id", "manual_metadata", "locked_fields"
         )
         updated_assets = []
+        updated_asset_ids = set()
         updated_count = 0
         with transaction.atomic():
             for asset in assets.iterator(chunk_size=500):
@@ -1566,6 +1617,7 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 asset.manual_metadata = manual
                 asset.locked_fields = sorted(locked)
                 updated_assets.append(asset)
+                updated_asset_ids.add(asset.id)
                 updated_count += 1
                 if len(updated_assets) >= 500:
                     VODSourceAsset.objects.bulk_update(
@@ -1581,17 +1633,54 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     batch_size=500,
                 )
 
+        profile_update = "not_required"
+        affected_titles = 0
         if updated_count:
-            from .catalog_cache import bump_catalog_generation
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
+            use_background = request.data.get("select_all") is True
+            affected_titles = None
+            movie_ids = set()
+            series_ids = set()
+            if not use_background:
+                movie_ids, series_ids, use_background = (
+                    _canonical_content_ids_for_source_assets(
+                        updated_asset_ids,
+                        limit=PLAYBACK_METADATA_INLINE_TITLE_LIMIT,
+                    )
+                )
+                if not use_background:
+                    affected_titles = len(movie_ids) + len(series_ids)
 
-            bump_catalog_generation()
-            enqueue_all_profile_selection_rebuilds()
+            if use_background:
+                from .catalog_cache import bump_catalog_generation
+                from .profile_selection import (
+                    enqueue_all_profile_selection_rebuilds,
+                )
+
+                bump_catalog_generation()
+                enqueue_all_profile_selection_rebuilds()
+                profile_update = "queued"
+            elif affected_titles:
+                from .profile_selection import (
+                    refresh_profile_selections_for_content,
+                )
+
+                refresh_result = refresh_profile_selections_for_content(
+                    movie_ids=movie_ids,
+                    series_ids=series_ids,
+                )
+                profile_update = (
+                    "queued"
+                    if refresh_result.get("queued_full_rebuild")
+                    and not refresh_result.get("profiles_updated")
+                    else "inline"
+                )
 
         return Response(
             {
                 "selected_sessions": selected_count,
                 "updated_sources": updated_count,
+                "affected_titles": affected_titles,
+                "profile_update": profile_update,
             }
         )
 

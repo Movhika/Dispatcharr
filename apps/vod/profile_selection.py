@@ -309,7 +309,8 @@ def refresh_profile_selections_for_content(*, movie_ids=(), series_ids=()):
     handful of competing provider relations. Rebuilding every prepared VOD
     profile would rescan the complete provider catalog, so replace just those
     prepared rows and advance ready profiles to the new catalog generation.
-    Bulk edits and imports continue to use the background full rebuild.
+    Imports and large bulk edits continue to use the background full rebuild;
+    small manual bulk edits may reuse this bounded path.
     """
     movie_ids = {int(value) for value in movie_ids if value is not None}
     series_ids = {int(value) for value in series_ids if value is not None}
