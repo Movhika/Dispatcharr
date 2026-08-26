@@ -286,6 +286,38 @@ def _validated_source_metadata(value):
         raise DRFValidationError({"metadata": str(exc)})
 
 
+def _validated_manual_source_metadata(value, locked_fields=None):
+    """Validate metadata administrators may override on a concrete source.
+
+    Container format and provider identifiers describe the physical source and
+    are intentionally immutable. They continue to come from the provider,
+    detailed source response, or playback inspection.
+    """
+    from .metadata import MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+
+    unsupported = sorted(
+        set(value or {}) - MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+    )
+    normalized_locked_fields = {
+        str(field)
+        for field in (locked_fields if locked_fields is not None else value)
+    }
+    unsupported_locked = sorted(
+        normalized_locked_fields - MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+    )
+    if unsupported or unsupported_locked:
+        fields = sorted(set(unsupported) | set(unsupported_locked))
+        raise DRFValidationError(
+            {
+                "metadata": (
+                    "Provider source fields cannot be changed manually: "
+                    + ", ".join(fields)
+                )
+            }
+        )
+    return _validated_source_metadata(value), sorted(normalized_locked_fields)
+
+
 def _is_admin(user):
     return bool(user and getattr(user, "user_level", 0) >= 10)
 
@@ -431,8 +463,11 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "metadata must be an object and locked_fields a list"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        asset.manual_metadata = _validated_source_metadata(metadata)
-        asset.locked_fields = sorted({str(field) for field in locked_fields})
+        metadata, locked_fields = _validated_manual_source_metadata(
+            metadata, locked_fields
+        )
+        asset.manual_metadata = metadata
+        asset.locked_fields = locked_fields
         asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
         return Response(self.get_serializer(asset).data)
 
@@ -477,13 +512,42 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
 
         from .metadata import ensure_source_asset, effective_relation_metadata
 
-        asset = relation.source_asset or ensure_source_asset(relation)
-        asset.manual_metadata = _validated_source_metadata(metadata)
-        asset.locked_fields = sorted({str(field) for field in locked_fields})
-        asset.save(
-            update_fields=["manual_metadata", "locked_fields", "updated_at"]
+        metadata, locked_fields = _validated_manual_source_metadata(
+            metadata, locked_fields
         )
-        relation.source_asset = asset
+        with transaction.atomic():
+            asset = relation.source_asset or ensure_source_asset(relation)
+            asset.manual_metadata = metadata
+            asset.locked_fields = locked_fields
+            asset.save(
+                update_fields=["manual_metadata", "locked_fields", "updated_at"]
+            )
+            relation.source_asset = asset
+
+            # A series source is represented by its provider series relation,
+            # while playback and the VOD overview use concrete episode source
+            # assets. Keep that one source edition consistent at both levels.
+            if relation_type == "series":
+                from .metadata import ensure_source_assets
+
+                episode_asset_ids = set()
+                batch = []
+                episode_relations = M3UEpisodeRelation.objects.filter(
+                    series_relation=relation
+                ).select_related("m3u_account__server_group")
+                for episode_relation in episode_relations.iterator(chunk_size=500):
+                    batch.append(episode_relation)
+                    if len(batch) >= 500:
+                        episode_asset_ids.update(ensure_source_assets(batch))
+                        batch.clear()
+                if batch:
+                    episode_asset_ids.update(ensure_source_assets(batch))
+                if episode_asset_ids:
+                    VODSourceAsset.objects.filter(pk__in=episode_asset_ids).update(
+                        manual_metadata=metadata,
+                        locked_fields=locked_fields,
+                        updated_at=timezone.now(),
+                    )
         return Response(
             {
                 "source_asset": asset.pk,
@@ -528,7 +592,7 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             )
         from .metadata import ensure_source_assets
 
-        metadata = _validated_source_metadata(metadata)
+        metadata, _locked_fields = _validated_manual_source_metadata(metadata)
         explicit_movie_ids = {
             int(item["id"])
             for item in selections
@@ -1518,7 +1582,6 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             "audio_languages",
             "subtitle_languages",
             "resolution",
-            "container_extension",
             "video_features",
         }
         normalized_updates = {}
@@ -1544,7 +1607,9 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "At least one metadata field must change"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        validated_values = _validated_source_metadata(values_to_validate)
+        validated_values, _locked_fields = _validated_manual_source_metadata(
+            values_to_validate
+        )
         for field, value in validated_values.items():
             normalized_updates[field]["value"] = value
 
@@ -1584,6 +1649,13 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     ["manual_metadata", "locked_fields"],
                     batch_size=500,
                 )
+
+        if updated_count:
+            from .catalog_cache import bump_catalog_generation
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            bump_catalog_generation()
+            enqueue_all_profile_selection_rebuilds()
 
         return Response(
             {

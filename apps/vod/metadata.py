@@ -21,6 +21,15 @@ RELATION_CONFIG = {
     M3UEpisodeRelation: (VODSourceAsset.AssetType.EPISODE, "stream_id"),
 }
 
+MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS = frozenset(
+    {
+        "audio_languages",
+        "subtitle_languages",
+        "resolution",
+        "video_features",
+    }
+)
+
 
 LANGUAGE_ALIASES = {
     "de": "ger",

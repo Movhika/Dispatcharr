@@ -40,6 +40,5 @@ export const VOD_METADATA_FIELDS = [
   'audio_languages',
   'subtitle_languages',
   'resolution',
-  'container_extension',
   'video_features',
 ];

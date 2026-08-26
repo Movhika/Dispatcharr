@@ -3,14 +3,15 @@ import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import API from '../api';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { showNotification } from '../utils/notificationUtils';
+import { VOD_METADATA_FIELDS } from '../utils/vodMetadataOptions.js';
 import VODMetadataFields from './VODMetadataFields.jsx';
 
-const manualValues = (provider) => {
-  const sourceMetadata = provider?.source_metadata || {};
-  const values = sourceMetadata.values || {};
-  const provenance = sourceMetadata.provenance || {};
+const editableValues = (provider) => {
+  const values = provider?.source_metadata?.values || {};
   return Object.fromEntries(
-    Object.entries(values).filter(([field]) => provenance[field] === 'manual')
+    Object.entries(values).filter(([field]) =>
+      VOD_METADATA_FIELDS.includes(field)
+    )
   );
 };
 
@@ -45,7 +46,7 @@ const VODSourceMetadataModal = ({
   const effectiveSummary = useMemo(() => currentMetadata(provider), [provider]);
 
   useEffect(() => {
-    if (opened && provider) setMetadata(manualValues(provider));
+    if (opened && provider) setMetadata(editableValues(provider));
   }, [opened, provider]);
 
   const save = async () => {
@@ -114,8 +115,9 @@ const VODSourceMetadataModal = ({
           Current effective values: {effectiveSummary || 'Unknown'}
         </Text>
         <Text size="xs" c="dimmed">
-          Only values saved here become manual locks. Empty fields keep using
-          category, provider, or playback metadata.
+          Saving confirms and locks every displayed value. Empty fields keep
+          using category, provider, or playback metadata. The provider format is
+          read-only.
         </Text>
         <VODMetadataFields value={metadata} onChange={setMetadata} />
         <Group justify="flex-end">

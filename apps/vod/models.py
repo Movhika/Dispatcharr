@@ -243,16 +243,24 @@ class VODSourceAsset(models.Model):
 
     def effective_metadata(self, category_defaults=None, relation_declared=None):
         """Resolve metadata and per-field provenance in priority order."""
-        from .metadata import normalize_source_metadata
+        from .metadata import (
+            MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS,
+            normalize_source_metadata,
+        )
 
         values = {}
         provenance = {}
+        manual_metadata = {
+            field: value
+            for field, value in (self.manual_metadata or {}).items()
+            if field in MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        }
         for source, payload in (
             ("category", category_defaults or {}),
             ("provider", self.declared_metadata or {}),
             ("relation", relation_declared or {}),
             ("observed", self.observed_metadata or {}),
-            ("manual", self.manual_metadata or {}),
+            ("manual", manual_metadata),
         ):
             for key, value in payload.items():
                 if value not in (None, "", [], {}):
@@ -265,11 +273,21 @@ class VODSourceAsset(models.Model):
 
     def apply_observation(self, metadata):
         """Apply playback telemetry without overwriting manual fields."""
-        from .metadata import normalize_source_metadata
+        from .metadata import (
+            MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS,
+            normalize_source_metadata,
+        )
 
         metadata = normalize_source_metadata(metadata)
-        manual = self.manual_metadata or {}
-        locked = set(self.locked_fields or []) | set(manual)
+        manual = {
+            field: value
+            for field, value in (self.manual_metadata or {}).items()
+            if field in MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        }
+        locked = (
+            set(self.locked_fields or [])
+            & MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        ) | set(manual)
         observed = dict(self.observed_metadata or {})
         changed = False
         for key, value in (metadata or {}).items():

@@ -3,7 +3,6 @@ import { SegmentedControl, Select, Stack } from '@mantine/core';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import {
-  CONTAINER_EXTENSION_OPTIONS,
   RESOLUTION_VALUES,
   VOD_METADATA_FIELDS,
 } from '../utils/vodMetadataOptions.js';
@@ -12,7 +11,6 @@ const FIELD_LABELS = {
   audio_languages: 'DUB languages',
   subtitle_languages: 'SUB languages',
   resolution: 'Resolution',
-  container_extension: 'Format',
   video_features: 'Video features',
 };
 
@@ -71,18 +69,7 @@ const VODMetadataFields = ({
         />
       );
     }
-    return (
-      <Select
-        clearable
-        searchable
-        label={label}
-        description={descriptions[field]}
-        data={CONTAINER_EXTENSION_OPTIONS}
-        value={value[field] || null}
-        disabled={disabled}
-        onChange={(nextValue) => updateValue(field, nextValue || '')}
-      />
-    );
+    return null;
   };
 
   return fields.map((field) => (

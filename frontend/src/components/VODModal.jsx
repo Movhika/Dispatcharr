@@ -136,7 +136,7 @@ const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
   );
 };
 
-const VODModal = ({ vod, opened, onClose }) => {
+const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
   const [detailedVOD, setDetailedVOD] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [trailerModalOpened, setTrailerModalOpened] = useState(false);
@@ -250,6 +250,12 @@ const VODModal = ({ vod, opened, onClose }) => {
     setSelectedProvider((current) =>
       current?.id === updatedProvider.id ? updatedProvider : current
     );
+    setDetailedVOD((current) =>
+      selectedProvider?.id === updatedProvider.id && current
+        ? { ...current, source_metadata: updatedProvider.source_metadata }
+        : current
+    );
+    onMetadataChanged?.();
   };
 
   if (!vod) return null;

@@ -49,7 +49,7 @@ const EMPTY_METADATA = {
   audio_languages: [],
   subtitle_languages: [],
   resolution: '',
-  container_extension: '',
+  video_features: [],
 };
 const EMPTY_MODES = Object.fromEntries(
   VOD_METADATA_FIELDS.map((field) => [field, 'keep'])

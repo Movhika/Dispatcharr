@@ -413,6 +413,21 @@ class VODSourceManagementTests(TestCase):
             "mkv",
         )
 
+    def test_legacy_manual_container_does_not_override_provider_format(self):
+        self.german_relation.container_extension = "mkv"
+        self.german_relation.save(update_fields=["container_extension"])
+        asset = ensure_source_asset(self.german_relation)
+        asset.manual_metadata = {"container_extension": "mp4"}
+        asset.locked_fields = ["container_extension"]
+        asset.save(update_fields=["manual_metadata", "locked_fields"])
+
+        effective = asset.effective_metadata(
+            relation_declared=relation_declared_metadata(self.german_relation)
+        )
+
+        self.assertEqual(effective["values"]["container_extension"], "mkv")
+        self.assertEqual(effective["provenance"]["container_extension"], "relation")
+
     def test_detailed_provider_metadata_exposes_known_technical_fields(self):
         self.german_relation.custom_properties = {
             "detailed_info": {
@@ -1801,6 +1816,121 @@ class VODSourceManagementTests(TestCase):
             response.data["source_metadata"]["provenance"]["resolution"],
             "manual",
         )
+
+    def test_relation_manual_metadata_rejects_provider_container_format(self):
+        admin = get_user_model().objects.create_user(
+            username="vod-format-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/relation-manual-metadata/",
+            {
+                "content_type": "movie",
+                "relation_id": self.german_relation.id,
+                "metadata": {"container_extension": "mp4"},
+                "locked_fields": ["container_extension"],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "relation_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("container_extension", str(response.data))
+
+    def test_series_manual_metadata_updates_episode_sources_and_overview(self):
+        series = Series.objects.create(name="Exact metadata series")
+        category = VODCategory.objects.create(
+            name="EXACT SERIES", category_type="series"
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=category,
+            enabled=True,
+            metadata_defaults={
+                "audio_languages": ["eng"],
+                "subtitle_languages": ["eng"],
+                "resolution": "720p",
+            },
+        )
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=category,
+            external_series_id="exact-metadata-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        episode_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="exact-metadata-episode",
+            container_extension="mkv",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-series-metadata-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/relation-manual-metadata/",
+            {
+                "content_type": "series",
+                "relation_id": series_relation.id,
+                "metadata": {
+                    "audio_languages": ["deu"],
+                    "subtitle_languages": ["deu"],
+                    "resolution": "1080p",
+                },
+                "locked_fields": [
+                    "audio_languages",
+                    "subtitle_languages",
+                    "resolution",
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODSourceAssetViewSet.as_view(
+            {"patch": "relation_manual_metadata"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        episode_relation.refresh_from_db()
+        self.assertIsNotNone(episode_relation.source_asset_id)
+        self.assertEqual(
+            episode_relation.source_asset.manual_metadata["audio_languages"],
+            ["ger"],
+        )
+        self.assertEqual(
+            episode_relation.source_asset.manual_metadata["resolution"],
+            "1080p",
+        )
+
+        overview_request = APIRequestFactory().get(
+            "/api/vod/", {"type": "series", "search": series.name}
+        )
+        force_authenticate(overview_request, user=admin)
+        overview = UnifiedContentViewSet.as_view({"get": "list"})(
+            overview_request
+        )
+
+        self.assertEqual(overview.status_code, 200, overview.data)
+        row = overview.data["results"][0]
+        self.assertEqual(row["source_metadata"]["audio_languages"], ["ger"])
+        self.assertEqual(row["source_metadata"]["subtitle_languages"], ["ger"])
+        self.assertEqual(row["source_metadata"]["resolutions"], ["1080p"])
+        self.assertEqual(row["source_metadata"]["container_extensions"], ["mkv"])
 
     def test_bulk_metadata_can_target_all_filtered_titles(self):
         other_movie = Movie.objects.create(name="Unrelated title", year=2026)

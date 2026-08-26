@@ -89,7 +89,6 @@ const VODsPage = () => {
     audio_languages: [],
     subtitle_languages: [],
     resolution: '',
-    container_extension: '',
     video_features: [],
   });
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -236,6 +235,7 @@ const VODsPage = () => {
       bulkEditorHandlers.close();
       setSelected(new Set());
       setSelectAllMatching(false);
+      await fetchContent();
     } finally {
       setBulkSaving(false);
     }
@@ -546,7 +546,6 @@ const VODsPage = () => {
             onChange={setBulkMetadata}
             descriptions={{
               resolution: 'Leave empty to keep existing values',
-              container_extension: 'Leave empty to keep existing values',
             }}
           />
           <Select
@@ -604,6 +603,7 @@ const VODsPage = () => {
             series={selectedSeries}
             opened={seriesModalOpened}
             onClose={seriesModalHandlers.close}
+            onMetadataChanged={fetchContent}
           />
         </Suspense>
       </ErrorBoundary>
@@ -629,6 +629,7 @@ const VODsPage = () => {
             vod={selectedVOD}
             opened={vodModalOpened}
             onClose={vodModalHandlers.close}
+            onMetadataChanged={fetchContent}
           />
         </Suspense>
       </ErrorBoundary>

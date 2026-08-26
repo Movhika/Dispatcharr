@@ -726,21 +726,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <TabsPanel value="failover" pt="md">
               <ScrollArea h="calc(96vh - 270px)">
                 <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
-                  <Stack>
-                    <Stack gap={0}>
-                      <Text fw={700}>Failover priority</Text>
-                      <Text size="sm" c="dimmed">
-                        Sources are compared only after they passed the Sources
-                        rules. Drag criteria into the desired order.
-                      </Text>
-                    </Stack>
-                    <VODFailoverRanking
-                      value={draft.ranking}
-                      onChange={(ranking) =>
-                        setDraft((current) => ({ ...current, ranking }))
-                      }
-                    />
-                  </Stack>
+                  <VODFailoverRanking
+                    value={draft.ranking}
+                    onChange={(ranking) =>
+                      setDraft((current) => ({ ...current, ranking }))
+                    }
+                  />
                 </Paper>
               </ScrollArea>
             </TabsPanel>

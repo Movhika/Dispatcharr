@@ -341,7 +341,7 @@ const Episode = ({ episode, displaySeries }) => {
   );
 };
 
-const SeriesModal = ({ series, opened, onClose }) => {
+const SeriesModal = ({ series, opened, onClose, onMetadataChanged }) => {
   const { fetchSeriesInfo, fetchSeriesProviders } = useVODStore();
   const showVideo = useVideoStore((s) => s.showVideo);
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
@@ -500,6 +500,12 @@ const SeriesModal = ({ series, opened, onClose }) => {
     setSelectedProvider((current) =>
       current?.id === updatedProvider.id ? updatedProvider : current
     );
+    setDetailedSeries((current) =>
+      selectedProvider?.id === updatedProvider.id && current
+        ? { ...current, source_metadata: updatedProvider.source_metadata }
+        : current
+    );
+    onMetadataChanged?.();
   };
 
   if (!series) return null;
