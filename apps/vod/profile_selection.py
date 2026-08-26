@@ -111,26 +111,38 @@ def enqueue_profile_selection_rebuild(policy_id):
     return True
 
 
-def enqueue_all_profile_selection_rebuilds():
-    """Mark active profiles stale and enqueue one debounced rebuild task."""
+def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
+    """Enqueue one debounced rebuild task for active profiles.
+
+    Normal catalog invalidations mark every ready profile pending. Incremental
+    metadata updates use ``pending_only`` so an already-stranded pending
+    profile can be republished without invalidating profiles that were updated
+    synchronously.
+    """
     queued_progress = _progress_payload("Waiting for worker", 0)
-    newly_pending = VODAccessPolicy.objects.filter(is_active=True).exclude(
-        selection_status__in=(
-            VODAccessPolicy.SelectionStatus.PENDING,
-            VODAccessPolicy.SelectionStatus.BUILDING,
-        ),
-    ).update(
-        selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-        selection_started_at=timezone.now(),
-        selection_error="",
-        selection_progress=queued_progress,
-    )
+    newly_pending = 0
+    if not pending_only:
+        newly_pending = VODAccessPolicy.objects.filter(is_active=True).exclude(
+            selection_status__in=(
+                VODAccessPolicy.SelectionStatus.PENDING,
+                VODAccessPolicy.SelectionStatus.BUILDING,
+            ),
+        ).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now(),
+            selection_error="",
+            selection_progress=queued_progress,
+        )
     # Repeated catalog invalidations are common when one UI operation updates
     # several related source rows.  A pending worker reads the latest catalog
     # generation when it starts, while an active build detects a changed
     # generation and retries itself.  Resetting either state here would erase
     # its task/progress metadata and could publish duplicate recovery work.
-    if not newly_pending:
+    pending_exists = VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+    ).exists()
+    if not newly_pending and not pending_exists:
         return False
 
     def enqueue():
@@ -182,6 +194,229 @@ def enqueue_all_profile_selection_rebuilds():
 
     transaction.on_commit(enqueue)
     return True
+
+
+def _selection_rows_for_canonical_ids(
+    policy,
+    generation,
+    relation_model,
+    selection_model,
+    canonical_field,
+    canonical_ids,
+):
+    """Prepare selected rows for a small set of canonical titles."""
+    if not canonical_ids:
+        return []
+    category_mapping = policy_category_map(policy)
+    candidates = (
+        relation_model.objects.filter(
+            m3u_account__is_active=True,
+            **{f"{canonical_field}__in": canonical_ids},
+        )
+        .filter(allowed_category_query(policy))
+        .select_related("m3u_account", "source_asset")
+        .order_by("pk")
+    )
+    selected_ids = select_relation_ids_for_policy(
+        candidates.iterator(chunk_size=500),
+        policy,
+        canonical_field,
+    )
+    relations = relation_model.objects.filter(pk__in=selected_ids).select_related(
+        "source_asset"
+    )
+    rows = []
+    for relation in relations:
+        metadata = relation_metadata(
+            relation,
+            category_mapping.get(
+                (relation.m3u_account_id, relation.category_id)
+            ),
+        )
+        rows.append(
+            selection_model(
+                policy=policy,
+                generation=generation,
+                relation=relation,
+                category_id=relation.category_id,
+                **{canonical_field: getattr(relation, canonical_field)},
+                **_metadata_columns(metadata, relation),
+            )
+        )
+    return rows
+
+
+def _adjusted_selection_counts(
+    counts,
+    type_key,
+    old_queryset,
+    new_rows,
+    canonical_field,
+):
+    """Apply counters for only the replaced title rows as a small delta."""
+    counts = dict(counts or {})
+    type_counts = dict(counts.get(type_key) or {})
+    old_output = old_queryset.count()
+    old_canonical = old_queryset.values(canonical_field).distinct().count()
+    old_unknown = old_queryset.filter(
+        audio_languages=[],
+        subtitle_languages=[],
+        resolution_height=0,
+    ).count()
+    new_output = len(new_rows)
+    new_canonical = len(
+        {getattr(row, canonical_field) for row in new_rows}
+    )
+    new_unknown = sum(
+        not (
+            row.audio_languages
+            or row.subtitle_languages
+            or row.resolution_height
+        )
+        for row in new_rows
+    )
+    for key, old_value, new_value in (
+        ("output_entries", old_output, new_output),
+        ("canonical_titles", old_canonical, new_canonical),
+        ("unknown_metadata", old_unknown, new_unknown),
+    ):
+        type_counts[key] = max(
+            int(type_counts.get(key) or 0) - old_value + new_value,
+            0,
+        )
+    counts[type_key] = type_counts
+    counts.update(
+        output_entries=sum(
+            (counts.get(key) or {}).get("output_entries", 0)
+            for key in ("movies", "series")
+        ),
+        canonical_titles=sum(
+            (counts.get(key) or {}).get("canonical_titles", 0)
+            for key in ("movies", "series")
+        ),
+        unknown_metadata=sum(
+            (counts.get(key) or {}).get("unknown_metadata", 0)
+            for key in ("movies", "series")
+        ),
+    )
+    return counts
+
+
+def refresh_profile_selections_for_content(*, movie_ids=(), series_ids=()):
+    """Synchronously re-evaluate only manually edited canonical titles.
+
+    A single metadata correction normally affects one movie or series and its
+    handful of competing provider relations. Rebuilding every prepared VOD
+    profile would rescan the complete provider catalog, so replace just those
+    prepared rows and advance ready profiles to the new catalog generation.
+    Bulk edits and imports continue to use the background full rebuild.
+    """
+    movie_ids = {int(value) for value in movie_ids if value is not None}
+    series_ids = {int(value) for value in series_ids if value is not None}
+    if not movie_ids and not series_ids:
+        return {"profiles_updated": 0, "queued_full_rebuild": False}
+
+    from .catalog_cache import bump_catalog_generation
+
+    bump_catalog_generation()
+    source_generation = str(selection_catalog_generation())
+    updated_profiles = 0
+    try:
+        with transaction.atomic():
+            policies = list(
+                VODAccessPolicy.objects.select_for_update().filter(
+                    is_active=True,
+                    selection_status=VODAccessPolicy.SelectionStatus.READY,
+                ).exclude(active_selection_generation="")
+            )
+            for policy in policies:
+                generation = policy.active_selection_generation
+                movie_rows = _selection_rows_for_canonical_ids(
+                    policy,
+                    generation,
+                    M3UMovieRelation,
+                    VODMovieProfileSelection,
+                    "movie_id",
+                    movie_ids,
+                )
+                series_rows = _selection_rows_for_canonical_ids(
+                    policy,
+                    generation,
+                    M3USeriesRelation,
+                    VODSeriesProfileSelection,
+                    "series_id",
+                    series_ids,
+                )
+                if movie_ids:
+                    old_rows = VODMovieProfileSelection.objects.filter(
+                        policy=policy,
+                        generation=generation,
+                        movie_id__in=movie_ids,
+                    )
+                    policy.selection_counts = _adjusted_selection_counts(
+                        policy.selection_counts,
+                        "movies",
+                        old_rows,
+                        movie_rows,
+                        "movie_id",
+                    )
+                    old_rows.delete()
+                    VODMovieProfileSelection.objects.bulk_create(
+                        movie_rows, batch_size=500
+                    )
+                if series_ids:
+                    old_rows = VODSeriesProfileSelection.objects.filter(
+                        policy=policy,
+                        generation=generation,
+                        series_id__in=series_ids,
+                    )
+                    policy.selection_counts = _adjusted_selection_counts(
+                        policy.selection_counts,
+                        "series",
+                        old_rows,
+                        series_rows,
+                        "series_id",
+                    )
+                    old_rows.delete()
+                    VODSeriesProfileSelection.objects.bulk_create(
+                        series_rows, batch_size=500
+                    )
+                policy.selection_catalog_generation = source_generation
+                policy.selection_status = VODAccessPolicy.SelectionStatus.READY
+                policy.selection_error = ""
+                policy.selection_completed_at = timezone.now()
+                policy.selection_progress = _progress_payload(
+                    "Ready after metadata update", 100, incremental=True
+                )
+                # Avoid the VODAccessPolicy post-save invalidation signal. This
+                # updates prepared bookkeeping, not the profile definition.
+                VODAccessPolicy.objects.filter(pk=policy.pk).update(
+                    selection_counts=policy.selection_counts,
+                    selection_catalog_generation=source_generation,
+                    selection_status=VODAccessPolicy.SelectionStatus.READY,
+                    selection_error="",
+                    selection_completed_at=policy.selection_completed_at,
+                    selection_progress=policy.selection_progress,
+                )
+                updated_profiles += 1
+    except Exception:
+        logger.exception(
+            "Incremental VOD profile refresh failed for movies=%s series=%s",
+            sorted(movie_ids),
+            sorted(series_ids),
+        )
+        enqueue_all_profile_selection_rebuilds()
+        return {"profiles_updated": 0, "queued_full_rebuild": True}
+
+    # Profiles already pending/building will consume the new generation in
+    # their active task. This also repairs any unpublished pending state.
+    queued_full_rebuild = enqueue_all_profile_selection_rebuilds(
+        pending_only=True
+    )
+    return {
+        "profiles_updated": updated_profiles,
+        "queued_full_rebuild": queued_full_rebuild,
+    }
 
 
 def _metadata_list(metadata, *fields):

@@ -8,7 +8,6 @@ vi.mock('../../api', () => ({
     createVODAccessPolicy: vi.fn(),
     updateVODAccessPolicy: vi.fn(),
     deleteVODAccessPolicy: vi.fn(),
-    rebuildVODAccessPolicy: vi.fn(),
     getVODAccessPolicySelections: vi.fn(),
   },
 }));
@@ -220,7 +219,6 @@ describe('VODOutputProfilesModal', () => {
     });
     API.updateVODAccessPolicy.mockResolvedValue(profile);
     API.deleteVODAccessPolicy.mockResolvedValue({});
-    API.rebuildVODAccessPolicy.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
         categories: {},
@@ -240,11 +238,11 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText(/Movies: 80 output entries/)).toBeInTheDocument();
     expect(screen.getByText(/Series: 43 output entries/)).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Retry catalog update' })
-    ).toBeDisabled();
+      screen.queryByRole('button', { name: 'Retry catalog update' })
+    ).not.toBeInTheDocument();
   });
 
-  it('can retry an outdated catalog update', async () => {
+  it('does not require a manual retry for an outdated catalog update', async () => {
     storeProfiles = [
       {
         ...profile,
@@ -252,21 +250,12 @@ describe('VODOutputProfilesModal', () => {
         selection_current: false,
       },
     ];
-    API.rebuildVODAccessPolicy.mockResolvedValue({
-      ...storeProfiles[0],
-      selection_status: 'pending',
-    });
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Retry catalog update' })
-    );
-
-    await waitFor(() =>
-      expect(API.rebuildVODAccessPolicy).toHaveBeenCalledWith(7)
-    );
-    expect(upsertAccessPolicy).toHaveBeenCalled();
-    expect(fetchAccessPolicies).toHaveBeenCalled();
+    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Retry catalog update' })
+    ).not.toBeInTheDocument();
   });
 
   it('removes a deleted profile from the local list before polling again', async () => {
@@ -365,8 +354,8 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.queryByText('Queued')).not.toBeInTheDocument();
     expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Retry catalog update' })
-    ).toBeDisabled();
+      screen.queryByRole('button', { name: 'Retry catalog update' })
+    ).not.toBeInTheDocument();
   });
 
   it('shows catalog build progress while a previous generation stays available', async () => {

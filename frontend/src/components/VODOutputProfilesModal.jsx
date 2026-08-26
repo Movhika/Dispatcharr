@@ -28,7 +28,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Plus, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -95,7 +95,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
@@ -328,30 +327,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     }
   };
 
-  const rebuild = async () => {
-    if (!selectedProfile) return;
-    setRebuilding(true);
-    try {
-      const queued = await API.rebuildVODAccessPolicy(selectedProfile.id);
-      upsertAccessPolicy(queued);
-      await fetchProfiles();
-      showNotification({
-        title: 'Catalog update queued',
-        message:
-          'The current catalog stays available until the new one is ready.',
-        color: 'blue',
-      });
-    } catch (error) {
-      showNotification({
-        title: 'XC catalog refresh was not queued',
-        message: error?.message || 'Please retry.',
-        color: 'red',
-      });
-    } finally {
-      setRebuilding(false);
-    }
-  };
-
   const remove = async () => {
     if (!selectedProfile || selectedProfile.is_default) return;
     const deletedProfile = selectedProfile;
@@ -432,7 +407,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         label: 'Failed',
         color: 'red',
         description:
-          'The latest XC catalog preparation failed. Review the error and refresh the catalog.',
+          'The latest XC catalog preparation failed. Correct and save the profile, or wait for the next source change to start a new update.',
       };
     }
     if (['pending', 'building'].includes(selectedProfile.selection_status)) {
@@ -461,22 +436,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         'The prepared XC catalog no longer matches the source state.',
     };
   })();
-  const catalogUpdateRunning = ['pending', 'building'].includes(
-    selectedProfile?.selection_status
-  );
-  const catalogRetryAvailable = Boolean(
-    selectedProfile?.is_active &&
-    !catalogUpdateRunning &&
-    !selectedProfile?.selection_current
-  );
-  const catalogRetryTooltip = !selectedProfile?.is_active
-    ? 'Activate this profile before retrying its catalog update.'
-    : catalogUpdateRunning
-      ? 'The saved changes are already being applied automatically. No manual action is required.'
-      : selectedProfile?.selection_current
-        ? 'The catalog is current. Saving profile changes starts an update automatically.'
-        : 'Retry a failed or outdated catalog update. Normal profile saves start this update automatically.';
-
   return (
     <>
       <Modal
@@ -530,17 +489,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             >
               Save profile
             </Button>
-            <Tooltip label={catalogRetryTooltip} multiline maw={360}>
-              <Button
-                variant="default"
-                leftSection={<RefreshCw size={15} />}
-                disabled={!catalogRetryAvailable}
-                loading={rebuilding}
-                onClick={rebuild}
-              >
-                Retry catalog update
-              </Button>
-            </Tooltip>
             <Button
               color="red"
               variant="light"

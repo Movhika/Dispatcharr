@@ -987,7 +987,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(len(built), 2)
         apply_async.assert_called_once_with(countdown=1)
 
-    def test_catalog_invalidation_keeps_an_existing_pending_task_stable(self):
+    def test_catalog_invalidation_republishes_an_existing_pending_profile(self):
         VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
         started_at = timezone.now() - timedelta(minutes=2)
         progress = {
@@ -1001,20 +1001,27 @@ class VODSourceManagementTests(TestCase):
             selection_progress=progress,
         )
 
-        with patch(
-            "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
-        ) as delay:
+        with (
+            self.captureOnCommitCallbacks(execute=True),
+            patch("django.core.cache.cache.add", return_value=True),
+            patch(
+                "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+            ) as delay,
+        ):
+            delay.return_value.id = "replacement-task-id"
             queued = enqueue_all_profile_selection_rebuilds()
 
         self.policy.refresh_from_db()
-        self.assertFalse(queued)
+        self.assertTrue(queued)
         self.assertEqual(
             self.policy.selection_status,
             VODAccessPolicy.SelectionStatus.PENDING,
         )
         self.assertEqual(self.policy.selection_started_at, started_at)
-        self.assertEqual(self.policy.selection_progress, progress)
-        delay.assert_not_called()
+        self.assertEqual(
+            self.policy.selection_progress["task_id"], "replacement-task-id"
+        )
+        delay.assert_called_once_with()
 
     def test_admin_can_create_a_reusable_vod_output_profile(self):
         admin = get_user_model().objects.create_user(
@@ -1155,67 +1162,6 @@ class VODSourceManagementTests(TestCase):
             constraints["source_rules"][0]["required_subtitle_languages"],
             ["ger"],
         )
-
-    def test_admin_polling_recovers_pending_profile_with_finished_task(self):
-        admin = get_user_model().objects.create_user(
-            username="profile-recovery-admin",
-            password="test-password",
-            user_level=10,
-        )
-        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
-        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            selection_started_at=timezone.now() - timedelta(minutes=1),
-            selection_progress={"task_id": "finished-task"},
-        )
-        request = APIRequestFactory().get("/api/vod/access-policies/")
-        force_authenticate(request, user=admin)
-
-        with (
-            patch("celery.result.AsyncResult") as async_result,
-            patch(
-                "apps.vod.profile_selection.enqueue_profile_selection_rebuild"
-            ) as enqueue,
-        ):
-            async_result.return_value.state = "SUCCESS"
-            response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
-
-        self.assertEqual(response.status_code, 200)
-        enqueue.assert_called_once_with(self.policy.pk)
-
-    def test_rebuild_is_idempotent_while_profile_update_is_active(self):
-        admin = get_user_model().objects.create_user(
-            username="profile-rebuild-admin",
-            password="test-password",
-            user_level=10,
-        )
-        for selection_status in (
-            VODAccessPolicy.SelectionStatus.PENDING,
-            VODAccessPolicy.SelectionStatus.BUILDING,
-        ):
-            with self.subTest(selection_status=selection_status):
-                request = APIRequestFactory().post(
-                    f"/api/vod/access-policies/{self.policy.pk}/rebuild/"
-                )
-                force_authenticate(request, user=admin)
-                VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
-                    is_active=True,
-                    selection_status=selection_status,
-                    selection_progress={"phase": "Catalog update active"},
-                )
-                with patch(
-                    "apps.vod.profile_selection.enqueue_profile_selection_rebuild"
-                ) as enqueue:
-                    response = VODAccessPolicyViewSet.as_view(
-                        {"post": "rebuild"}
-                    )(request, pk=self.policy.pk)
-
-                self.assertEqual(response.status_code, 202, response.data)
-                self.assertEqual(
-                    response.data["selection_status"], selection_status
-                )
-                enqueue.assert_not_called()
 
     def test_admin_can_replace_vod_output_profile_categories(self):
         admin = get_user_model().objects.create_user(
@@ -1847,6 +1793,74 @@ class VODSourceManagementTests(TestCase):
             response.data["source_metadata"]["provenance"]["resolution"],
             "manual",
         )
+
+    def test_manual_metadata_incrementally_updates_ready_profiles(self):
+        """One edited title must not queue a full-catalog Celery rebuild."""
+        build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        self.assertEqual(
+            list(
+                VODMovieProfileSelection.objects.filter(
+                    policy=self.policy,
+                    generation=self.policy.active_selection_generation,
+                ).values_list("relation_id", flat=True)
+            ),
+            [self.german_relation.id],
+        )
+        self.assertEqual(self.policy.selection_counts["output_entries"], 1)
+        self.assertEqual(
+            self.policy.selection_counts["movies"]["canonical_titles"], 1
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-incremental-metadata-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().patch(
+            "/api/vod/source-assets/relation-manual-metadata/",
+            {
+                "content_type": "movie",
+                "relation_id": self.german_relation.id,
+                "metadata": {"audio_languages": ["eng"]},
+                "locked_fields": ["audio_languages"],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with patch(
+            "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+        ) as full_rebuild:
+            response = VODSourceAssetViewSet.as_view(
+                {"patch": "relation_manual_metadata"}
+            )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.policy.refresh_from_db()
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        self.assertEqual(
+            self.policy.selection_catalog_generation,
+            str(selection_catalog_generation()),
+        )
+        self.assertFalse(
+            VODMovieProfileSelection.objects.filter(
+                policy=self.policy,
+                generation=self.policy.active_selection_generation,
+                movie=self.movie,
+            ).exists()
+        )
+        self.assertEqual(self.policy.selection_counts["output_entries"], 0)
+        self.assertEqual(
+            self.policy.selection_counts["movies"]["canonical_titles"], 0
+        )
+        self.assertEqual(
+            self.policy.selection_progress["phase"],
+            "Ready after metadata update",
+        )
+        full_rebuild.assert_not_called()
 
     def test_relation_manual_metadata_rejects_provider_container_format(self):
         admin = get_user_model().objects.create_user(

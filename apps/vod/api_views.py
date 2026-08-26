@@ -466,9 +466,23 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         metadata, locked_fields = _validated_manual_source_metadata(
             metadata, locked_fields
         )
-        asset.manual_metadata = metadata
-        asset.locked_fields = locked_fields
-        asset.save(update_fields=["manual_metadata", "locked_fields", "updated_at"])
+        movie_ids = set(asset.movie_relations.values_list("movie_id", flat=True))
+        series_ids = set(asset.series_relations.values_list("series_id", flat=True))
+        # QuerySet.update intentionally avoids the generic source-asset signal:
+        # a single manual edit is applied incrementally below instead of
+        # invalidating and rebuilding every prepared profile.
+        VODSourceAsset.objects.filter(pk=asset.pk).update(
+            manual_metadata=metadata,
+            locked_fields=locked_fields,
+            updated_at=timezone.now(),
+        )
+        from .profile_selection import refresh_profile_selections_for_content
+
+        refresh_profile_selections_for_content(
+            movie_ids=movie_ids,
+            series_ids=series_ids,
+        )
+        asset.refresh_from_db()
         return Response(self.get_serializer(asset).data)
 
     @action(
@@ -517,11 +531,15 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         )
         with transaction.atomic():
             asset = relation.source_asset or ensure_source_asset(relation)
+            # Suppress the broad source-asset invalidation signal. The exact
+            # canonical title is refreshed synchronously after this update.
+            VODSourceAsset.objects.filter(pk=asset.pk).update(
+                manual_metadata=metadata,
+                locked_fields=locked_fields,
+                updated_at=timezone.now(),
+            )
             asset.manual_metadata = metadata
             asset.locked_fields = locked_fields
-            asset.save(
-                update_fields=["manual_metadata", "locked_fields", "updated_at"]
-            )
             relation.source_asset = asset
 
             # A series source is represented by its provider series relation,
@@ -548,6 +566,12 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                         locked_fields=locked_fields,
                         updated_at=timezone.now(),
                     )
+        from .profile_selection import refresh_profile_selections_for_content
+
+        refresh_profile_selections_for_content(
+            movie_ids=[relation.movie_id] if relation_type == "movie" else [],
+            series_ids=[relation.series_id] if relation_type == "series" else [],
+        )
         return Response(
             {
                 "source_asset": asset.pk,
@@ -908,52 +932,6 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
     def _admin_only(self, request):
         return None if _is_admin(request.user) else Response(status=status.HTTP_403_FORBIDDEN)
 
-    def _recover_finished_pending_tasks(self, request):
-        """Republish pending builds whose recorded Celery task already ended.
-
-        A catalog invalidation can land just after a batch task completed.  In
-        that narrow race the profile is correctly marked pending, but its
-        recorded task ID points at the already-successful batch.  Admin polling
-        performs a cheap terminal-state check and republishes at most once per
-        minute, keeping normal pending/running tasks untouched.
-        """
-        if not _is_admin(request.user):
-            return
-        try:
-            from celery.result import AsyncResult
-            from django.core.cache import cache
-            from .profile_selection import enqueue_profile_selection_rebuild
-
-            now = timezone.now()
-            pending = VODAccessPolicy.objects.filter(
-                is_active=True,
-                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            ).values("id", "selection_progress", "selection_started_at")
-            for row in pending:
-                progress = row["selection_progress"] or {}
-                task_id = progress.get("task_id")
-                started = row["selection_started_at"]
-                age = (now - started).total_seconds() if started else 999
-                state = str(AsyncResult(task_id).state) if task_id else "UNPUBLISHED"
-                if not (
-                    state in {"SUCCESS", "FAILURE", "REVOKED"}
-                    or (state == "UNPUBLISHED" and age >= 10)
-                ):
-                    continue
-                key = f"vod_profile_selection:recover:{row['id']}:{task_id or 'none'}"
-                if cache.add(key, "1", timeout=60):
-                    enqueue_profile_selection_rebuild(row["id"])
-        except Exception:
-            logger.exception("Could not recover stalled VOD profile selections")
-
-    def list(self, request, *args, **kwargs):
-        self._recover_finished_pending_tasks(request)
-        return super().list(request, *args, **kwargs)
-
-    def retrieve(self, request, *args, **kwargs):
-        self._recover_finished_pending_tasks(request)
-        return super().retrieve(request, *args, **kwargs)
-
     def create(self, request, *args, **kwargs):
         denied = self._admin_only(request)
         if denied is not None:
@@ -977,53 +955,6 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         if denied is not None:
             return denied
         return super().destroy(request, *args, **kwargs)
-
-    @action(detail=True, methods=["post"], url_path="rebuild")
-    def rebuild(self, request, pk=None):
-        denied = self._admin_only(request)
-        if denied is not None:
-            return denied
-        policy = self.get_object()
-        from .profile_selection import enqueue_profile_selection_rebuild
-
-        if not policy.is_active:
-            return Response(
-                {"detail": "Activate the profile before rebuilding it"},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        # Saving an active profile already queues a catalog rebuild. Treat a
-        # repeated request while that work is pending/running as idempotent so
-        # a slightly stale browser response cannot turn a harmless retry into
-        # an HTTP 409 or publish duplicate Celery work.
-        if policy.selection_status in {
-            VODAccessPolicy.SelectionStatus.PENDING,
-            VODAccessPolicy.SelectionStatus.BUILDING,
-        }:
-            return Response(
-                self.get_serializer(policy).data,
-                status=status.HTTP_202_ACCEPTED,
-            )
-
-        if not enqueue_profile_selection_rebuild(policy.pk):
-            policy.refresh_from_db()
-            if policy.is_active and policy.selection_status in {
-                VODAccessPolicy.SelectionStatus.PENDING,
-                VODAccessPolicy.SelectionStatus.BUILDING,
-            }:
-                return Response(
-                    self.get_serializer(policy).data,
-                    status=status.HTTP_202_ACCEPTED,
-                )
-            return Response(
-                {"detail": "The catalog update could not be queued"},
-                status=status.HTTP_409_CONFLICT,
-            )
-        policy.refresh_from_db()
-        return Response(
-            self.get_serializer(policy).data,
-            status=status.HTTP_202_ACCEPTED,
-        )
 
     @action(detail=True, methods=["get"], url_path="selections")
     def selections(self, request, pk=None):
