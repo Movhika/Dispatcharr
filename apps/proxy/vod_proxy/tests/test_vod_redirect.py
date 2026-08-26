@@ -238,15 +238,18 @@ class StreamVodRedirectTests(SimpleTestCase):
         return_value=False,
     )
     @patch("apps.proxy.vod_proxy.views.network_access_allowed", return_value=True)
-    def test_no_idle_check_when_not_redirect(
+    def test_proxy_mode_adopts_existing_logical_session(
         self,
         _network_ok,
         _is_redirect,
         mock_idle,
         mock_select,
     ):
-        """Proxy-mode installs never pay for the idle-session scan; the mint
-        path is unchanged from before Redirect existed."""
+        """Proxy mode also adopts the previous logical session.
+
+        Clients may return to the original XC URL for every Range request, so
+        reconnect detection must happen before a new proxy session is minted.
+        """
         from apps.proxy.vod_proxy.views import stream_vod
 
         response = stream_vod(
@@ -257,7 +260,7 @@ class StreamVodRedirectTests(SimpleTestCase):
         )
 
         self.assertEqual(response.status_code, 301)
-        mock_idle.assert_not_called()
+        mock_idle.assert_called_once()
         mock_select.assert_not_called()
 
 
