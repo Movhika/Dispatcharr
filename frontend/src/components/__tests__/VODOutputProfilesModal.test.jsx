@@ -233,14 +233,34 @@ describe('VODOutputProfilesModal', () => {
     );
   });
 
-  it('shows prepared counts and can rebuild the selected profile', async () => {
+  it('shows prepared counts for a current profile', async () => {
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
     expect(screen.getByText(/Movies: 80 output entries/)).toBeInTheDocument();
     expect(screen.getByText(/Series: 43 output entries/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retry catalog update' })
+    ).toBeDisabled();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh catalog' }));
+  it('can retry an outdated catalog update', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'failed',
+        selection_current: false,
+      },
+    ];
+    API.rebuildVODAccessPolicy.mockResolvedValue({
+      ...storeProfiles[0],
+      selection_status: 'pending',
+    });
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Retry catalog update' })
+    );
 
     await waitFor(() =>
       expect(API.rebuildVODAccessPolicy).toHaveBeenCalledWith(7)
@@ -344,6 +364,9 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText('Updating')).toBeInTheDocument();
     expect(screen.queryByText('Queued')).not.toBeInTheDocument();
     expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Retry catalog update' })
+    ).toBeDisabled();
   });
 
   it('shows catalog build progress while a previous generation stays available', async () => {
@@ -370,7 +393,8 @@ describe('VODOutputProfilesModal', () => {
       screen.getByLabelText('Catalog preparation progress')
     ).toHaveTextContent('36');
     expect(
-      screen.getByText(/Showing the last completed catalog/)
+      screen.getByText(/saved rules are not active in this preview yet/)
     ).toBeInTheDocument();
+    expect(screen.getByText(/No manual retry is required/)).toBeInTheDocument();
   });
 });

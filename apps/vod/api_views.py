@@ -922,13 +922,44 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         policy = self.get_object()
         from .profile_selection import enqueue_profile_selection_rebuild
 
-        if not enqueue_profile_selection_rebuild(policy.pk):
+        if not policy.is_active:
             return Response(
                 {"detail": "Activate the profile before rebuilding it"},
                 status=status.HTTP_409_CONFLICT,
             )
+
+        # Saving an active profile already queues a catalog rebuild. Treat a
+        # repeated request while that work is pending/running as idempotent so
+        # a slightly stale browser response cannot turn a harmless retry into
+        # an HTTP 409 or publish duplicate Celery work.
+        if policy.selection_status in {
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+        }:
+            return Response(
+                self.get_serializer(policy).data,
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        if not enqueue_profile_selection_rebuild(policy.pk):
+            policy.refresh_from_db()
+            if policy.is_active and policy.selection_status in {
+                VODAccessPolicy.SelectionStatus.PENDING,
+                VODAccessPolicy.SelectionStatus.BUILDING,
+            }:
+                return Response(
+                    self.get_serializer(policy).data,
+                    status=status.HTTP_202_ACCEPTED,
+                )
+            return Response(
+                {"detail": "The catalog update could not be queued"},
+                status=status.HTTP_409_CONFLICT,
+            )
         policy.refresh_from_db()
-        return Response(self.get_serializer(policy).data, status=status.HTTP_202_ACCEPTED)
+        return Response(
+            self.get_serializer(policy).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=["get"], url_path="selections")
     def selections(self, request, pk=None):

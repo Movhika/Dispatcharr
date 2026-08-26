@@ -1138,6 +1138,39 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.status_code, 200)
         enqueue.assert_called_once_with(self.policy.pk)
 
+    def test_rebuild_is_idempotent_while_profile_update_is_active(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-rebuild-admin",
+            password="test-password",
+            user_level=10,
+        )
+        for selection_status in (
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+        ):
+            with self.subTest(selection_status=selection_status):
+                request = APIRequestFactory().post(
+                    f"/api/vod/access-policies/{self.policy.pk}/rebuild/"
+                )
+                force_authenticate(request, user=admin)
+                VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+                    is_active=True,
+                    selection_status=selection_status,
+                    selection_progress={"phase": "Catalog update active"},
+                )
+                with patch(
+                    "apps.vod.profile_selection.enqueue_profile_selection_rebuild"
+                ) as enqueue:
+                    response = VODAccessPolicyViewSet.as_view(
+                        {"post": "rebuild"}
+                    )(request, pk=self.policy.pk)
+
+                self.assertEqual(response.status_code, 202, response.data)
+                self.assertEqual(
+                    response.data["selection_status"], selection_status
+                )
+                enqueue.assert_not_called()
+
     def test_admin_can_replace_vod_output_profile_categories(self):
         admin = get_user_model().objects.create_user(
             username="profile-update-admin",

@@ -304,7 +304,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       setProfileId(String(saved.id));
       showNotification({
         title: 'VOD output profile saved',
-        message: 'Its XC catalog has been queued automatically.',
+        message:
+          'The catalog update started automatically. No manual rebuild is required; the previous preview remains visible until the update finishes.',
         color: 'green',
       });
     } catch (error) {
@@ -326,7 +327,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       upsertAccessPolicy(queued);
       await fetchProfiles();
       showNotification({
-        title: 'XC catalog refresh queued',
+        title: 'Catalog update queued',
         message:
           'The current catalog stays available until the new one is ready.',
         color: 'blue',
@@ -451,6 +452,21 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         'The prepared XC catalog no longer matches the source state.',
     };
   })();
+  const catalogUpdateRunning = ['pending', 'building'].includes(
+    selectedProfile?.selection_status
+  );
+  const catalogRetryAvailable = Boolean(
+    selectedProfile?.is_active &&
+    !catalogUpdateRunning &&
+    !selectedProfile?.selection_current
+  );
+  const catalogRetryTooltip = !selectedProfile?.is_active
+    ? 'Activate this profile before retrying its catalog update.'
+    : catalogUpdateRunning
+      ? 'The saved changes are already being applied automatically. No manual action is required.'
+      : selectedProfile?.selection_current
+        ? 'The catalog is current. Saving profile changes starts an update automatically.'
+        : 'Retry a failed or outdated catalog update. Normal profile saves start this update automatically.';
 
   return (
     <>
@@ -505,22 +521,15 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             >
               Save profile
             </Button>
-            <Tooltip
-              label="Saving queues catalog preparation automatically. Use this to retry or manually refresh the prepared XC selection."
-              multiline
-              maw={360}
-            >
+            <Tooltip label={catalogRetryTooltip} multiline maw={360}>
               <Button
                 variant="default"
                 leftSection={<RefreshCw size={15} />}
-                disabled={
-                  !selectedProfile?.is_active ||
-                  selectedProfile?.selection_status === 'building'
-                }
+                disabled={!catalogRetryAvailable}
                 loading={rebuilding}
                 onClick={rebuild}
               >
-                Refresh catalog
+                Retry catalog update
               </Button>
             </Tooltip>
             <Button
@@ -746,8 +755,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 )}
                 {selectionAvailable && !selectedProfile?.selection_current && (
                   <Alert color="blue">
-                    Showing the last completed catalog while the updated one is
-                    prepared in the background.
+                    Your saved rules are not active in this preview yet. It is
+                    showing the last completed catalog while the update runs, so
+                    newly excluded sources can remain visible temporarily. No
+                    manual retry is required.
                   </Alert>
                 )}
                 <Group align="flex-end" wrap="wrap">
