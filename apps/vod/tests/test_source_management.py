@@ -1064,6 +1064,14 @@ class VODSourceManagementTests(TestCase):
         response = VODAccessPolicyViewSet.as_view({"post": "create"})(request)
 
         self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            response.data["selection_status"],
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(
+            response.data["selection_progress"]["phase"],
+            "Publishing background task",
+        )
         created = VODAccessPolicy.objects.get(name="German 1080p")
         self.assertEqual(
             created.hard_constraints["required_audio_languages"], ["ger"]

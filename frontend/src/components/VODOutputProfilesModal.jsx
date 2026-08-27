@@ -96,7 +96,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -141,14 +140,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
   useEffect(() => {
     if (!opened) return;
-    let active = true;
-    setProfilesLoaded(false);
-    Promise.all([fetchCategories(), fetchProfiles()]).finally(() => {
-      if (active) setProfilesLoaded(true);
-    });
-    return () => {
-      active = false;
-    };
+    Promise.all([fetchCategories(), fetchProfiles()]);
   }, [fetchCategories, fetchProfiles, opened]);
 
   useEffect(() => {
@@ -156,7 +148,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     setCreating(false);
     setProfileId('');
     setActiveTab('settings');
-    setProfilesLoaded(false);
   }, [opened]);
 
   useEffect(() => {
@@ -307,9 +298,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         : await API.createVODAccessPolicy(payload);
       upsertAccessPolicy(saved);
       resetDraft(saved);
-      await fetchProfiles();
       setCreating(false);
       setProfileId(String(saved.id));
+      // Keep the mutation response selected immediately. Polling can now
+      // start from its persisted pending state while this background refresh
+      // reconciles task id and progress without blanking the selector.
+      fetchProfiles();
       showNotification({
         title: 'VOD output profile saved',
         message:
@@ -370,9 +364,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     Math.min(Number(buildProgress.percent) || 0, 100)
   );
   const buildStartedAt =
-    selectedProfile?.selection_status === 'building'
-      ? selectedProfile.selection_started_at
-      : buildProgress.updated_at;
+    selectedProfile?.selection_status === 'pending'
+      ? buildProgress.queued_at ||
+        selectedProfile.selection_started_at ||
+        buildProgress.updated_at
+      : selectedProfile?.selection_started_at || buildProgress.updated_at;
   const buildElapsedSeconds = buildStartedAt
     ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
     : 0;
@@ -389,6 +385,22 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     ).getTime();
     if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
     return Math.max((completed - started) / 1000, 0);
+  })();
+  const typicalBuildSeconds = (() => {
+    const durations = profiles
+      .map((profile) => {
+        const started = new Date(profile.selection_started_at || '').getTime();
+        const completed = new Date(
+          profile.selection_completed_at || ''
+        ).getTime();
+        return Number.isFinite(started) && Number.isFinite(completed)
+          ? Math.max((completed - started) / 1000, 0)
+          : null;
+      })
+      .filter((duration) => duration !== null && duration > 0)
+      .sort((left, right) => left - right);
+    if (!durations.length) return null;
+    return durations[Math.floor(durations.length / 2)];
   })();
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
@@ -516,58 +528,66 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </Text>
           </Group>
 
-          {profilesLoaded &&
-            ['pending', 'building'].includes(
-              selectedProfile?.selection_status
-            ) && (
-              <Stack gap={5}>
-                <Group justify="space-between" gap="sm">
-                  <Text size="sm" fw={500}>
-                    {buildProgress.phase ||
-                      (selectedProfile.selection_status === 'pending'
-                        ? 'Waiting for worker'
-                        : 'Preparing catalog')}
-                    {Number.isFinite(Number(buildProgress.processed)) &&
-                      Number(buildProgress.total) > 0 &&
-                      ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    {selectedProfile.selection_status === 'pending'
-                      ? `Queued for ${formatDuration(buildElapsedSeconds)}`
-                      : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
-                          buildRemainingSeconds !== null
-                            ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
-                            : ''
-                        }`}
-                  </Text>
-                </Group>
-                {selectedProfile.selection_status === 'pending' && (
-                  <Text size="xs" c="dimmed">
-                    Queue: {buildProgress.queue || 'celery'} · Task:{' '}
-                    {buildProgress.task_id || 'not published'} · Backend state:{' '}
-                    {selectedProfile.selection_task_state || 'unknown'}. The
-                    worker may first finish an M3U or VOD refresh already using
-                    the default queue.
-                  </Text>
-                )}
-                <Progress
-                  value={buildPercent}
-                  animated
-                  color={
-                    selectedProfile.selection_status === 'pending'
-                      ? 'yellow'
-                      : 'blue'
-                  }
-                  aria-label="Catalog preparation progress"
-                />
-              </Stack>
-            )}
+          {['pending', 'building'].includes(
+            selectedProfile?.selection_status
+          ) && (
+            <Stack gap={5}>
+              <Group justify="space-between" gap="sm">
+                <Text size="sm" fw={500}>
+                  {buildProgress.phase ||
+                    (selectedProfile.selection_status === 'pending'
+                      ? 'Waiting for worker'
+                      : 'Preparing catalog')}
+                  {Number.isFinite(Number(buildProgress.processed)) &&
+                    Number(buildProgress.total) > 0 &&
+                    ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {selectedProfile.selection_status === 'pending'
+                    ? `Waiting for ${formatDuration(buildElapsedSeconds)}${
+                        typicalBuildSeconds !== null
+                          ? ` · preparation usually about ${formatDuration(typicalBuildSeconds)} after it starts`
+                          : ' · an estimate appears when preparation starts'
+                      }`
+                    : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
+                        buildRemainingSeconds !== null
+                          ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
+                          : ''
+                      }`}
+                </Text>
+              </Group>
+              {selectedProfile.selection_status === 'pending' && (
+                <Text size="xs" c="dimmed">
+                  Queue: {buildProgress.queue || 'celery'} · Task:{' '}
+                  {buildProgress.task_id || 'not published'} · Backend state:{' '}
+                  {selectedProfile.selection_task_state || 'unknown'}. The
+                  worker may first finish an M3U or VOD refresh already using
+                  the default queue.
+                </Text>
+              )}
+              <Progress
+                value={buildPercent}
+                animated
+                color={
+                  selectedProfile.selection_status === 'pending'
+                    ? 'yellow'
+                    : 'blue'
+                }
+                aria-label="Catalog preparation progress"
+              />
+            </Stack>
+          )}
 
-          {profilesLoaded &&
-            selectedProfile?.selection_status === 'ready' &&
+          {selectedProfile?.selection_status === 'ready' &&
             lastBuildSeconds !== null && (
               <Text size="sm" c="dimmed">
-                Catalog prepared in {formatDuration(lastBuildSeconds)}.
+                Catalog ready · prepared in {formatDuration(lastBuildSeconds)}
+                {selectedProfile.selection_completed_at
+                  ? ` · completed ${new Date(
+                      selectedProfile.selection_completed_at
+                    ).toLocaleString()}`
+                  : ''}
+                .
               </Text>
             )}
 

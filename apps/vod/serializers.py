@@ -729,6 +729,11 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(policy.pk)
+        # The enqueue helper persists the initial queue status with a queryset
+        # update. Refresh before DRF serializes the POST response so a newly
+        # created profile is immediately visible as pending, including its
+        # progress phase, without requiring a second list request.
+        policy.refresh_from_db()
         return policy
 
     @transaction.atomic

@@ -288,6 +288,23 @@ describe('VODOutputProfilesModal', () => {
   });
 
   it('creates and saves a new reusable profile', async () => {
+    const pendingProfile = {
+      ...profile,
+      id: 8,
+      name: 'New profile',
+      selection_status: 'pending',
+      selection_current: false,
+      selection_available: false,
+      selection_started_at: new Date().toISOString(),
+      selection_progress: {
+        phase: 'Publishing background task',
+        percent: 0,
+      },
+    };
+    API.createVODAccessPolicy.mockResolvedValue(pendingProfile);
+    upsertAccessPolicy.mockImplementation((saved) => {
+      storeProfiles = [...storeProfiles, saved];
+    });
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
     await screen.findByDisplayValue('German HD');
 
@@ -308,6 +325,11 @@ describe('VODOutputProfilesModal', () => {
     expect(upsertAccessPolicy).toHaveBeenCalledWith(
       expect.objectContaining({ id: 8, name: 'New profile' })
     );
+    expect(screen.getByLabelText('Profile')).toHaveValue('8');
+    expect(screen.getByText('Publishing background task')).toBeInTheDocument();
+    expect(
+      screen.getByText(/an estimate appears when preparation starts/)
+    ).toBeInTheDocument();
   });
 
   it('does not overwrite an edited draft when profile status is polled', async () => {
