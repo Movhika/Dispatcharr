@@ -1,4 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   ActionIcon,
   Box,
@@ -45,6 +46,11 @@ import {
   RESOLUTION_VALUES,
   videoFeatureLabel,
 } from '../utils/vodMetadataOptions.js';
+import {
+  canViewVod,
+  isVodMoviesEnabled,
+  isVodSeriesEnabled,
+} from '../utils/vodAccess';
 
 const SeriesModal = React.lazy(() => import('../components/SeriesModal'));
 const VODModal = React.lazy(() => import('../components/VODModal'));
@@ -66,6 +72,10 @@ const sourceCount = (item) =>
   item.source_count ?? item.source_metadata?.source_count ?? 0;
 
 const VODsPage = () => {
+  const user = useAuthStore((state) => state.user);
+  const moviesEnabled = isVodMoviesEnabled(user);
+  const seriesEnabled = isVodSeriesEnabled(user);
+  const vodAllowed = canViewVod(user);
   const currentPageContent = useVODStore((s) => s.currentPageContent);
   const allCategories = useVODStore((s) => s.categories);
   const filters = useVODStore((s) => s.filters);
@@ -77,7 +87,6 @@ const VODsPage = () => {
   const setPageSize = useVODStore((s) => s.setPageSize);
   const fetchContent = useVODStore((s) => s.fetchContent);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
-  const user = useAuthStore((state) => state.user);
   const playlists = usePlaylistsStore((state) => state.playlists);
   const fetchPlaylists = usePlaylistsStore((state) => state.fetchPlaylists);
 
@@ -123,29 +132,72 @@ const VODsPage = () => {
     ? Math.max(0, totalCount - selected.size)
     : selected.size;
 
+  // Hydrate page size from localStorage before the first content fetch so a
+  // stored size that differs from the store default does not cause a refetch.
+  const [pageSizeReady, setPageSizeReady] = useState(false);
   useEffect(() => {
     const stored = localStorage.getItem('vodsPageSize');
     if (stored && !isNaN(Number(stored)) && Number(stored) !== pageSize) {
       setPageSize(Number(stored));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPageSizeReady(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydrate
   }, []);
 
+  const typeOptions = useMemo(() => {
+    const options = [];
+    if (moviesEnabled && seriesEnabled) {
+      options.push({ label: 'All', value: 'all' });
+    }
+    if (moviesEnabled) {
+      options.push({ label: 'Movies', value: 'movies' });
+    }
+    if (seriesEnabled) {
+      options.push({ label: 'Series', value: 'series' });
+    }
+    return options;
+  }, [moviesEnabled, seriesEnabled]);
+
+  // When only one content type is allowed, lock the store filter to it.
+  // Fetch waits until the lock matches so we do not load the unified
+  // "all" catalog first and then immediately refetch.
+  const requiredType =
+    moviesEnabled && !seriesEnabled
+      ? 'movies'
+      : seriesEnabled && !moviesEnabled
+        ? 'series'
+        : null;
+
+  useEffect(() => {
+    if (!vodAllowed || !requiredType || filters.type === requiredType) return;
+    setFilters({ type: requiredType, category: '' });
+  }, [vodAllowed, requiredType, filters.type, setFilters]);
   useEffect(() => {
     setCategories(filterCategoriesToEnabled(allCategories));
   }, [allCategories]);
 
   useEffect(() => {
+    if (!vodAllowed) return;
     fetchCategories();
-  }, [fetchCategories]);
+  }, [vodAllowed, fetchCategories]);
 
   useEffect(() => {
     if (!playlists.length) fetchPlaylists();
   }, [fetchPlaylists, playlists.length]);
 
   useEffect(() => {
+    if (!vodAllowed || !pageSizeReady) return;
+    if (requiredType && filters.type !== requiredType) return;
     fetchContent().finally(() => setInitialLoad(false));
-  }, [filters, currentPage, pageSize, fetchContent]);
+  }, [
+    vodAllowed,
+    pageSizeReady,
+    requiredType,
+    filters,
+    currentPage,
+    pageSize,
+    fetchContent,
+  ]);
 
   useEffect(() => {
     // A global selection always tracks the current filtered result set.
@@ -252,6 +304,11 @@ const VODsPage = () => {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((playlist) => ({ value: String(playlist.id), label: playlist.name }));
   const totalPages = Math.ceil(totalCount / pageSize);
+  const showTypeControl = typeOptions.length > 1;
+
+  if (!vodAllowed) {
+    return <Navigate to="/channels" replace />;
+  }
 
   return (
     <Box p="md" id="vods-container">
@@ -293,18 +350,16 @@ const VODsPage = () => {
 
         <Stack gap="xs">
           <Group gap="md" align="end">
-            <SegmentedControl
-              value={filters.type}
-              onChange={(value) => {
-                setFilters({ type: value, category: '' });
-                setPage(1);
-              }}
-              data={[
-                { label: 'All', value: 'all' },
-                { label: 'Movies', value: 'movies' },
-                { label: 'Series', value: 'series' },
-              ]}
-            />
+            {showTypeControl && (
+              <SegmentedControl
+                value={filters.type}
+                onChange={(value) => {
+                  setFilters({ type: value, category: '' });
+                  setPage(1);
+                }}
+                data={typeOptions}
+              />
+            )}
             <TextInput
               placeholder="Search VODs..."
               leftSection={<Search size={16} />}
@@ -597,7 +652,7 @@ const VODsPage = () => {
         </Stack>
       </Modal>
 
-      <ErrorBoundary>
+      <ErrorBoundary inline>
         <Suspense fallback={<LoadingOverlay />}>
           <SeriesModal
             series={selectedSeries}
@@ -623,7 +678,7 @@ const VODsPage = () => {
           />
         </Suspense>
       </ErrorBoundary>
-      <ErrorBoundary>
+      <ErrorBoundary inline>
         <Suspense fallback={<LoadingOverlay />}>
           <VODModal
             vod={selectedVOD}

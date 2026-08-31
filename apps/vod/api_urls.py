@@ -27,4 +27,28 @@ router.register(r'access-policies', VODAccessPolicyViewSet, basename='vod-access
 router.register(r'playback-sessions', VODPlaybackSessionViewSet, basename='vod-playback-session')
 router.register(r'category-relations', M3UVODCategoryRelationViewSet, basename='vod-category-relation')
 
-urlpatterns = router.urls
+urlpatterns = [
+    # Some clients strip trailing slashes from artwork URLs. Serve the same
+    # views directly (no redirect) so image fetches still return bytes.
+    path(
+        'vodlogos/<int:pk>/cache',
+        VODLogoViewSet.as_view({'get': 'cache'}),
+        name='vodlogo-cache-noslash',
+    ),
+    path(
+        'movies/<int:pk>/image',
+        MovieViewSet.as_view({'get': 'image'}),
+        name='movie-image-noslash',
+    ),
+    path(
+        'series/<int:pk>/image',
+        SeriesViewSet.as_view({'get': 'image'}),
+        name='series-image-noslash',
+    ),
+    path(
+        'episodes/<int:pk>/image',
+        EpisodeViewSet.as_view({'get': 'image'}),
+        name='episode-image-noslash',
+    ),
+]
+urlpatterns += router.urls

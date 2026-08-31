@@ -14,10 +14,12 @@ from django.http import JsonResponse, Http404, HttpResponse, HttpResponseRedirec
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from apps.vod.models import Movie, Series, Episode, M3UMovieRelation, M3UEpisodeRelation
+from apps.vod.utils import is_vod_movies_enabled, is_vod_series_enabled
 from apps.m3u.models import M3UAccountProfile
 from apps.proxy.vod_proxy.multi_worker_connection_manager import MultiWorkerVODConnectionManager, infer_content_type_from_url, get_vod_client_stop_key
 from .utils import get_client_info
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from apps.accounts.models import User
 from apps.accounts.permissions import IsAdmin
@@ -922,6 +924,22 @@ def _transform_url(original_url, m3u_profile):
         logger.error(f"Error transforming URL: {e}")
         return original_url
 
+def _user_from_vod_request(request, user=None):
+    """Prefer an explicit user, then an authenticated request.user, else None."""
+    if user is None and hasattr(request, "user") and request.user.is_authenticated:
+        return request.user
+    return user
+
+
+def _vod_playback_allowed(content_type, user):
+    """True when *user* is allowed to play this proxy content_type."""
+    if content_type == "movie":
+        return is_vod_movies_enabled(user=user)
+    if content_type in ("series", "episode"):
+        return is_vod_series_enabled(user=user)
+    return True
+
+
 @api_view(["GET", "HEAD"])
 @authentication_classes([JWTAuthentication, ApiKeyAuthentication, QueryParamJWTAuthentication])
 @permission_classes([AllowAny])
@@ -946,8 +964,9 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
         )
     if not network_access_allowed(request, "STREAMS"):
         return JsonResponse({"error": "Forbidden"}, status=403)
-    if user is None and hasattr(request, "user") and request.user.is_authenticated:
-        user = request.user
+    user = _user_from_vod_request(request, user)
+    if not _vod_playback_allowed(content_type, user):
+        return JsonResponse({"error": "Forbidden"}, status=403)
     logger.info(f"[VOD-REQUEST] Starting VOD stream request: {content_type}/{content_id}, session: {session_id}, profile: {profile_id}")
     logger.info(f"[VOD-REQUEST] Full request path: {request.get_full_path()}")
     logger.info(f"[VOD-REQUEST] Request method: {request.method}")
@@ -1237,6 +1256,8 @@ def head_vod(
     Returns content length and session URL header for subsequent GET requests
     """
     if not network_access_allowed(request, "STREAMS"):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+    if not _vod_playback_allowed(content_type, _user_from_vod_request(request)):
         return JsonResponse({"error": "Forbidden"}, status=403)
 
     logger.info(f"[VOD-HEAD] HEAD request: {content_type}/{content_id}, session: {session_id}, profile: {profile_id}")
@@ -1912,12 +1933,23 @@ def stream_xc_movie(request, username, password, stream_id, extension):
     if custom_properties["xc_password"] != password:
         return Response({"error": "Invalid credentials"}, status=401)
 
-    movie_relation = M3UMovieRelation.objects.select_related(
+    if not is_vod_movies_enabled(user=user):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+
+    movie_relations = M3UMovieRelation.objects.select_related(
         'movie', 'm3u_account', 'category', 'source_asset'
-    ).filter(
+    )
+    movie_relation = movie_relations.filter(
         id=stream_id,
         m3u_account__is_active=True,
-    ).first()
+    ).order_by('-m3u_account__priority', 'id').first()
+    if not movie_relation:
+        # Keep compatibility with pre-profile XC URLs that exposed a canonical
+        # movie id instead of the concrete source-relation id.
+        movie_relation = movie_relations.filter(
+            movie_id=stream_id,
+            m3u_account__is_active=True,
+        ).order_by('-m3u_account__priority', 'id').first()
     if not movie_relation:
         return JsonResponse({"error": "Movie not found"}, status=404)
     from apps.vod.policies import policy_for_user, relation_allowed
@@ -1963,12 +1995,22 @@ def stream_xc_episode(request, username, password, stream_id, extension):
     if custom_properties["xc_password"] != password:
         return Response({"error": "Invalid credentials"}, status=401)
 
-    episode_relation = M3UEpisodeRelation.objects.select_related(
+    if not is_vod_series_enabled(user=user):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+
+    episode_relations = M3UEpisodeRelation.objects.select_related(
         'episode', 'm3u_account', 'series_relation__category', 'source_asset'
-    ).filter(
+    )
+    episode_relation = episode_relations.filter(
         id=stream_id,
         m3u_account__is_active=True,
-    ).first()
+    ).order_by('-m3u_account__priority', 'id').first()
+    if not episode_relation:
+        # Older XC catalogs used the canonical episode id in this path.
+        episode_relation = episode_relations.filter(
+            episode_id=stream_id,
+            m3u_account__is_active=True,
+        ).order_by('-m3u_account__priority', 'id').first()
     if not episode_relation:
         return JsonResponse({"error": "Episode not found"}, status=404)
     from apps.vod.policies import policy_for_user, relation_allowed

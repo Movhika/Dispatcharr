@@ -53,7 +53,11 @@ from .image_proxy import (
     vodlogo_cache_url,
 )
 from .tasks import refresh_series_episodes, refresh_movie_advanced_data
-from .utils import get_series_display_name
+from .utils import (
+    get_series_display_name,
+    is_vod_movies_enabled,
+    is_vod_series_enabled,
+)
 from .metadata import (
     compatible_video_features,
     effective_relation_metadata,
@@ -1734,6 +1738,14 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(self.get_serializer(playback).data)
 
 
+def _authenticated_user(request):
+    """Return the request user when authenticated, else None."""
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        return user
+    return None
+
+
 class VODPagination(PageNumberPagination):
     page_size = 20  # Default page size to match frontend default
     page_size_query_param = "page_size"  # Allow clients to specify page size
@@ -1791,6 +1803,10 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             return [Authenticated()]
 
     def get_queryset(self):
+        user = _authenticated_user(self.request)
+        if not is_vod_movies_enabled(user=user):
+            return Movie.objects.none()
+
         # Apply active account, selected account, and category to the same
         # concrete source relation. The filter backend may repeat the latter
         # two predicates, but cannot broaden this relation-exact result set.
@@ -1809,10 +1825,8 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         qs = movies.select_related('logo').prefetch_related(
             _vod_source_relation_prefetch(M3UMovieRelation)
         )
-        user = getattr(self.request, 'user', None)
         if (
             user is not None
-            and getattr(user, 'is_authenticated', False)
             and user.user_level < 10
             and (user.custom_properties or {}).get('hide_adult_content', False)
         ):
@@ -2030,6 +2044,10 @@ class EpisodeViewSet(viewsets.ReadOnlyModelViewSet):
             return [Authenticated()]
 
     def get_queryset(self):
+        user = _authenticated_user(self.request)
+        if not is_vod_series_enabled(user=user):
+            return Episode.objects.none()
+
         return Episode.objects.select_related('series').filter(
             m3u_relations__m3u_account__is_active=True
         ).distinct()
@@ -2061,6 +2079,10 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             return [Authenticated()]
 
     def get_queryset(self):
+        user = _authenticated_user(self.request)
+        if not is_vod_series_enabled(user=user):
+            return Series.objects.none()
+
         filters = {
             "m3u_account": self.request.query_params.get("m3u_account", ""),
             "category": self.request.query_params.get("category", ""),
@@ -2377,6 +2399,19 @@ class VODCategoryViewSet(viewsets.ReadOnlyModelViewSet):
         except KeyError:
             return [Authenticated()]
 
+    def get_queryset(self):
+        qs = VODCategory.objects.all()
+        user = _authenticated_user(self.request)
+        movies_allowed = is_vod_movies_enabled(user=user)
+        series_allowed = is_vod_series_enabled(user=user)
+        if movies_allowed and series_allowed:
+            return qs
+        if movies_allowed:
+            return qs.filter(category_type="movie")
+        if series_allowed:
+            return qs.filter(category_type="series")
+        return qs.none()
+
     def list(self, request, *args, **kwargs):
         """Override list to ensure Uncategorized categories and relations exist for all XC accounts with VOD enabled"""
         from apps.m3u.models import M3UAccount
@@ -2453,6 +2488,14 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
         from django.db import connection
 
         try:
+            user = _authenticated_user(request)
+            movies_allowed = is_vod_movies_enabled(user=user)
+            series_allowed = is_vod_series_enabled(user=user)
+            if not movies_allowed and not series_allowed:
+                return Response(
+                    {"count": 0, "next": False, "previous": False, "results": []}
+                )
+
             # Get pagination parameters
             page_size = int(request.query_params.get('page_size', 24))
             page_number = int(request.query_params.get('page', 1))
@@ -2524,12 +2567,17 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             if not series_enabled:
                 series_params = []
 
+            if not movies_allowed:
+                where_conditions[0] = "1=0"
+            if not series_allowed:
+                where_conditions[1] = "1=0"
+
             if search:
                 search_param = f"%{search.lower()}%"
-                if movie_enabled:
+                if movie_enabled and movies_allowed:
                     where_conditions[0] += " AND LOWER(movies.name) LIKE %s"
                     movie_params.append(search_param)
-                if series_enabled:
+                if series_enabled and series_allowed:
                     where_conditions[1] += " AND LOWER(series.name) LIKE %s"
                     series_params.append(search_param)
 

@@ -924,7 +924,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
                 { value: 'never', label: 'Never remove' },
               ]}
             />
-            <ErrorBoundary>
+            <ErrorBoundary inline>
               <Suspense fallback={<Loader />}>
                 <AutoSyncAdvanced
                   group={configuringGroup}
@@ -1028,7 +1028,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
 
       {/* Logo Upload Modal */}
       {logoModalOpen && (
-        <ErrorBoundary>
+        <ErrorBoundary inline>
           <Suspense fallback={<Loader />}>
             <LogoForm
               isOpen={logoModalOpen}

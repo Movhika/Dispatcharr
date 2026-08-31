@@ -1,6 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 vi.mock('../../store/useVODStore', () => ({ default: vi.fn() }));
 vi.mock('../../store/auth', () => ({ default: vi.fn() }));
@@ -170,7 +171,7 @@ vi.mock('@mantine/core', () => {
       </button>
     ),
     SegmentedControl: ({ value, onChange, data }) => (
-      <div>
+      <div data-testid="type-control">
         {data.map((item) => (
           <button
             key={item.value}
@@ -339,5 +340,58 @@ describe('VODsPage list and bulk editing', () => {
         }
       )
     );
+  });
+
+  it('redirects when both VOD access flags are disabled', async () => {
+    useAuthStore.mockImplementation((selector) =>
+      selector({
+        user: {
+          id: 2,
+          user_level: 1,
+          custom_properties: {
+            vod_movies_enabled: false,
+            vod_series_enabled: false,
+          },
+        },
+      })
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/vods']}>
+        <Routes>
+          <Route path="/vods" element={<VODsPage />} />
+          <Route path="/channels" element={<div>Channels page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Channels page')).toBeInTheDocument();
+    expect(fetchCategories).not.toHaveBeenCalled();
+    expect(fetchContent).not.toHaveBeenCalled();
+  });
+
+  it('locks the catalog to movies when series access is disabled', async () => {
+    useAuthStore.mockImplementation((selector) =>
+      selector({
+        user: {
+          id: 3,
+          user_level: 1,
+          custom_properties: {
+            vod_movies_enabled: true,
+            vod_series_enabled: false,
+          },
+        },
+      })
+    );
+
+    render(<VODsPage />);
+
+    await waitFor(() =>
+      expect(setFilters).toHaveBeenCalledWith({
+        type: 'movies',
+        category: '',
+      })
+    );
+    expect(fetchContent).not.toHaveBeenCalled();
   });
 });

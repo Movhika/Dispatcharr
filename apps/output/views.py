@@ -3,6 +3,7 @@ import json
 from django.urls import reverse
 from apps.channels.models import Channel, ChannelProfile, ChannelGroup, Stream
 from apps.channels.utils import format_channel_number, is_catchup_enabled
+from apps.vod.utils import is_vod_movies_enabled, is_vod_series_enabled
 from django.db.models import Prefetch
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -26,7 +27,8 @@ import regex
 from core.models import CoreSettings
 from core.utils import log_system_event, build_absolute_uri_with_port
 import hashlib
-from apps.output.epg import generate_epg, generate_dummy_programs
+from apps.output.dummy_epg import generate_dummy_programs, resolve_channel_parse_name
+from apps.output.epg import generate_epg
 from apps.vod.image_proxy import (
     is_proxyable_image_url,
     prefer_relation_artwork,
@@ -796,7 +798,18 @@ def xc_get_epg(request, user, short=False):
 
     channel = None
     def _annotate(qs):
-        return with_effective_values(qs, select_related_fks=True).exclude(hidden_from_output=True)
+        return (
+            with_effective_values(qs, select_related_fks=True)
+            .exclude(hidden_from_output=True)
+            .prefetch_related(
+                Prefetch(
+                    'streams',
+                    queryset=Stream.objects.only('id', 'name').order_by(
+                        'channelstream__order'
+                    ),
+                )
+            )
+        )
 
     if user.user_level < 10:
         user_profile_count = user.channel_profiles.count()
@@ -899,18 +912,31 @@ def xc_get_epg(request, user, short=False):
 
     lookback_cutoff = now - timedelta(days=prev_days)
     forward_cutoff = now + timedelta(days=num_days) if num_days > 0 else None
+    dummy_days = num_days if num_days > 0 else 3
     effective_epg_data = channel.effective_epg_data_obj
     effective_name = channel.effective_name
+
+    # Short EPG: current/upcoming only, stop after `limit` programmes (XC default 4).
+    dummy_lookback = now if short else lookback_cutoff
+    dummy_max_programs = limit if short else None
 
     if effective_epg_data:
         # Check if this is a dummy EPG that generates on-demand
         if effective_epg_data.epg_source and effective_epg_data.epg_source.source_type == 'dummy':
             if not effective_epg_data.programs.exists():
-                # Generate on-demand using custom patterns
+                parse_name = resolve_channel_parse_name(
+                    channel,
+                    effective_epg_data.epg_source,
+                    fallback_name=effective_name,
+                )
                 programs = generate_dummy_programs(
                     channel_id=channel_id,
-                    channel_name=effective_name,
-                    epg_source=effective_epg_data.epg_source
+                    channel_name=parse_name,
+                    num_days=dummy_days,
+                    epg_source=effective_epg_data.epg_source,
+                    export_lookback=dummy_lookback,
+                    export_cutoff=forward_cutoff,
+                    max_programs=dummy_max_programs,
                 )
             else:
                 # Has stored programs, use them
@@ -938,7 +964,15 @@ def xc_get_epg(request, user, short=False):
                 programs = qs.order_by('start_time')
     else:
         # No EPG data assigned, generate default dummy
-        programs = generate_dummy_programs(channel_id=channel_id, channel_name=effective_name, epg_source=None)
+        programs = generate_dummy_programs(
+            channel_id=channel_id,
+            channel_name=effective_name,
+            num_days=dummy_days,
+            epg_source=None,
+            export_lookback=dummy_lookback,
+            export_cutoff=forward_cutoff,
+            max_programs=dummy_max_programs,
+        )
 
     output = {"epg_listings": []}
 
@@ -1241,6 +1275,9 @@ def _xc_policy_for_user(user):
 
 def xc_get_vod_categories(user, request=None):
     """Get VOD categories for XtreamCodes API"""
+    if not is_vod_movies_enabled(user=user):
+        return []
+
     from apps.vod.models import VODCategory, M3UMovieRelation
 
     from apps.vod.catalog_cache import (
@@ -1255,6 +1292,7 @@ def xc_get_vod_categories(user, request=None):
 
     response = []
 
+    # Users with movie access get categories from active, enabled sources.
     categories = VODCategory.objects.filter(
         category_type='movie',
         m3u_relations__enabled=True,
@@ -1284,6 +1322,9 @@ def xc_get_vod_categories(user, request=None):
 
 def xc_get_vod_streams(request, user, category_id=None):
     """Get VOD streams (movies) for XtreamCodes API"""
+    if not is_vod_movies_enabled(user=user):
+        return []
+
     from apps.vod.models import M3UMovieRelation
     from apps.vod.utils import canonical_output_name
 
@@ -1386,6 +1427,9 @@ def xc_get_vod_streams(request, user, category_id=None):
 
 def xc_get_series_categories(user, request=None):
     """Get series categories for XtreamCodes API"""
+    if not is_vod_series_enabled(user=user):
+        return []
+
     from apps.vod.models import VODCategory, M3USeriesRelation
 
     from apps.vod.catalog_cache import (
@@ -1400,6 +1444,7 @@ def xc_get_series_categories(user, request=None):
 
     response = []
 
+    # Users with series access get categories from active, enabled sources.
     categories = VODCategory.objects.filter(
         category_type='series',
         m3u_relations__enabled=True,
@@ -1429,6 +1474,9 @@ def xc_get_series_categories(user, request=None):
 
 def xc_get_series(request, user, category_id=None):
     """Get series list for XtreamCodes API"""
+    if not is_vod_series_enabled(user=user):
+        return []
+
     from apps.vod.models import M3USeriesRelation
     from apps.vod.utils import canonical_output_name
 
@@ -1531,6 +1579,9 @@ def xc_get_series(request, user, category_id=None):
 
 def xc_get_series_info(request, user, series_id):
     """Get detailed series information including episodes"""
+    if not is_vod_series_enabled(user=user):
+        raise Http404()
+
     from apps.vod.models import M3USeriesRelation, M3UEpisodeRelation
 
     if not series_id:
@@ -1547,16 +1598,23 @@ def xc_get_series_info(request, user, series_id):
     if cached is not None:
         return cached
 
-    # All authenticated users get access to series from all active M3U accounts
+    # Access flags are checked above; the profile policy further scopes sources.
     filters = {"id": series_id, "m3u_account__is_active": True}
 
-    try:
-        series_relation = M3USeriesRelation.objects.select_related(
-            'series', 'series__logo', 'm3u_account', 'category', 'source_asset'
-        ).get(**filters)
-        series = series_relation.series
-    except M3USeriesRelation.DoesNotExist:
+    series_relations = M3USeriesRelation.objects.select_related(
+        'series', 'series__logo', 'm3u_account', 'category', 'source_asset'
+    )
+    series_relation = series_relations.filter(**filters).first()
+    if not series_relation:
+        # Accept older XC clients whose cached catalog contains the canonical
+        # series id rather than the source-relation id.
+        series_relation = series_relations.filter(
+            series_id=series_id,
+            m3u_account__is_active=True,
+        ).order_by('-m3u_account__priority', 'id').first()
+    if not series_relation:
         raise Http404()
+    series = series_relation.series
     if policy and not relation_allowed(series_relation, policy):
         raise Http404()
 
@@ -1846,6 +1904,9 @@ def xc_get_series_info(request, user, series_id):
 
 def xc_get_vod_info(request, user, vod_id):
     """Get detailed VOD (movie) information"""
+    if not is_vod_movies_enabled(user=user):
+        raise Http404()
+
     from apps.vod.models import M3UMovieRelation
     from django.utils import timezone
     from datetime import timedelta
@@ -1864,20 +1925,28 @@ def xc_get_vod_info(request, user, vod_id):
     if cached is not None:
         return cached
 
-    # All authenticated users get access to VOD from all active M3U accounts
+    # Access flags are checked above; the profile policy further scopes sources.
     filters = {"id": vod_id, "m3u_account__is_active": True}
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
         filters["movie__is_adult"] = False
 
-    try:
-        movie_relation = M3UMovieRelation.objects.select_related(
-            'movie', 'movie__logo', 'm3u_account', 'category', 'source_asset'
-        ).filter(**filters).first()
-        if not movie_relation:
-            raise Http404()
-        movie = movie_relation.movie
-    except (M3UMovieRelation.DoesNotExist, M3UMovieRelation.MultipleObjectsReturned):
+    movie_relations = M3UMovieRelation.objects.select_related(
+        'movie', 'movie__logo', 'm3u_account', 'category', 'source_asset'
+    )
+    movie_relation = movie_relations.filter(**filters).first()
+    if not movie_relation:
+        fallback_filters = {
+            'movie_id': vod_id,
+            'm3u_account__is_active': True,
+        }
+        if 'movie__is_adult' in filters:
+            fallback_filters['movie__is_adult'] = filters['movie__is_adult']
+        movie_relation = movie_relations.filter(**fallback_filters).order_by(
+            '-m3u_account__priority', 'id'
+        ).first()
+    if not movie_relation:
         raise Http404()
+    movie = movie_relation.movie
     if policy and not relation_allowed(movie_relation, policy):
         raise Http404()
 
