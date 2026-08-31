@@ -1292,21 +1292,23 @@ def xc_get_vod_categories(user, request=None):
 
     response = []
 
-    # Users with movie access get categories from active, enabled sources.
+    # Before the first post-migration provider refresh, an upgraded catalog can
+    # contain concrete movie relations but no category-inventory rows yet. In
+    # that short compatibility window, keep the existing categories visible.
+    # As soon as inventory exists, it becomes the hard enabled-source boundary.
+    from apps.vod.policies import policy_category_map
+
+    allowed_categories = policy_category_map(policy)
     categories = VODCategory.objects.filter(
         category_type='movie',
-        m3u_relations__enabled=True,
-        m3u_relations__m3u_account__is_active=True,
         m3umovierelation__m3u_account__is_active=True,
     )
-    if policy:
-        from apps.vod.policies import policy_category_map
-
-        allowed_category_ids = {
-            category_id
-            for _account_id, category_id in policy_category_map(policy)
-        }
-        categories = categories.filter(pk__in=allowed_category_ids)
+    if allowed_categories:
+        categories = categories.filter(
+            m3u_relations__enabled=True,
+            m3u_relations__m3u_account__is_active=True,
+            pk__in={category_id for _account_id, category_id in allowed_categories},
+        )
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:
@@ -1444,21 +1446,19 @@ def xc_get_series_categories(user, request=None):
 
     response = []
 
-    # Users with series access get categories from active, enabled sources.
+    from apps.vod.policies import policy_category_map
+
+    allowed_categories = policy_category_map(policy)
     categories = VODCategory.objects.filter(
         category_type='series',
-        m3u_relations__enabled=True,
-        m3u_relations__m3u_account__is_active=True,
         m3useriesrelation__m3u_account__is_active=True,
     )
-    if policy:
-        from apps.vod.policies import policy_category_map
-
-        allowed_category_ids = {
-            category_id
-            for _account_id, category_id in policy_category_map(policy)
-        }
-        categories = categories.filter(pk__in=allowed_category_ids)
+    if allowed_categories:
+        categories = categories.filter(
+            m3u_relations__enabled=True,
+            m3u_relations__m3u_account__is_active=True,
+            pk__in={category_id for _account_id, category_id in allowed_categories},
+        )
     categories = categories.distinct().order_by(Lower("name"))
 
     for category in categories:

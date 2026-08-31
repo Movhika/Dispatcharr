@@ -1746,6 +1746,11 @@ def _authenticated_user(request):
     return None
 
 
+def _request_query_params(request):
+    """Return query parameters for DRF requests and direct Django view tests."""
+    return getattr(request, "query_params", getattr(request, "GET", {}))
+
+
 class VODPagination(PageNumberPagination):
     page_size = 20  # Default page size to match frontend default
     page_size_query_param = "page_size"  # Allow clients to specify page size
@@ -1807,19 +1812,19 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         if not is_vod_movies_enabled(user=user):
             return Movie.objects.none()
 
+        query_params = _request_query_params(self.request)
+
         # Apply active account, selected account, and category to the same
         # concrete source relation. The filter backend may repeat the latter
         # two predicates, but cannot broaden this relation-exact result set.
         filters = {
-            "m3u_account": self.request.query_params.get("m3u_account", ""),
-            "category": self.request.query_params.get("category", ""),
-            "audio_language": self.request.query_params.get("audio_language", ""),
-            "subtitle_language": self.request.query_params.get("subtitle_language", ""),
-            "resolution": self.request.query_params.get("resolution", ""),
-            "container_extension": self.request.query_params.get(
-                "container_extension", ""
-            ),
-            "video_feature": self.request.query_params.get("video_feature", ""),
+            "m3u_account": query_params.get("m3u_account", ""),
+            "category": query_params.get("category", ""),
+            "audio_language": query_params.get("audio_language", ""),
+            "subtitle_language": query_params.get("subtitle_language", ""),
+            "resolution": query_params.get("resolution", ""),
+            "container_extension": query_params.get("container_extension", ""),
+            "video_feature": query_params.get("video_feature", ""),
         }
         movies, _ = _filtered_vod_content(filters)
         qs = movies.select_related('logo').prefetch_related(
@@ -2083,16 +2088,16 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
         if not is_vod_series_enabled(user=user):
             return Series.objects.none()
 
+        query_params = _request_query_params(self.request)
+
         filters = {
-            "m3u_account": self.request.query_params.get("m3u_account", ""),
-            "category": self.request.query_params.get("category", ""),
-            "audio_language": self.request.query_params.get("audio_language", ""),
-            "subtitle_language": self.request.query_params.get("subtitle_language", ""),
-            "resolution": self.request.query_params.get("resolution", ""),
-            "container_extension": self.request.query_params.get(
-                "container_extension", ""
-            ),
-            "video_feature": self.request.query_params.get("video_feature", ""),
+            "m3u_account": query_params.get("m3u_account", ""),
+            "category": query_params.get("category", ""),
+            "audio_language": query_params.get("audio_language", ""),
+            "subtitle_language": query_params.get("subtitle_language", ""),
+            "resolution": query_params.get("resolution", ""),
+            "container_extension": query_params.get("container_extension", ""),
+            "video_feature": query_params.get("video_feature", ""),
         }
         _, series = _filtered_vod_content(filters)
         return series.select_related('logo').prefetch_related(
