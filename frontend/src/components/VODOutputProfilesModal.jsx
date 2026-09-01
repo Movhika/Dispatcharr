@@ -117,6 +117,19 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const selectedProfileId = selectedProfile?.id;
   const selectedSelectionStatus = selectedProfile?.selection_status;
+  const defaultReplacementAvailable = profiles.some(
+    (profile) =>
+      String(profile.id) !== String(selectedProfileId) && profile.is_active
+  );
+  const canDeleteProfile = Boolean(
+    selectedProfile &&
+      (!selectedProfile.is_default || defaultReplacementAvailable)
+  );
+  const deleteProfileHint = selectedProfile?.is_default
+    ? defaultReplacementAvailable
+      ? 'The next active profile becomes the default automatically.'
+      : 'Create or activate another profile before deleting the active default.'
+    : 'Delete this VOD output profile.';
   const selectionAvailable =
     selectedProfile?.selection_available ??
     selectedProfile?.selection_current ??
@@ -322,7 +335,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   };
 
   const remove = async () => {
-    if (!selectedProfile || selectedProfile.is_default) return;
+    if (!canDeleteProfile) return;
     const deletedProfile = selectedProfile;
     setDeleting(true);
     try {
@@ -501,16 +514,20 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             >
               Save profile
             </Button>
-            <Button
-              color="red"
-              variant="light"
-              leftSection={<Trash2 size={15} />}
-              disabled={!selectedProfile || selectedProfile.is_default}
-              loading={deleting}
-              onClick={remove}
-            >
-              Delete
-            </Button>
+            <Tooltip label={deleteProfileHint}>
+              <Box>
+                <Button
+                  color="red"
+                  variant="light"
+                  leftSection={<Trash2 size={15} />}
+                  disabled={!canDeleteProfile}
+                  loading={deleting}
+                  onClick={remove}
+                >
+                  Delete
+                </Button>
+              </Box>
+            </Tooltip>
           </Group>
 
           <Group gap="lg" wrap="wrap">

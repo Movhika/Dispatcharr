@@ -1008,7 +1008,32 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         denied = self._admin_only(request)
         if denied is not None:
             return denied
-        return super().destroy(request, *args, **kwargs)
+        policy = self.get_object()
+        replacement = None
+        if policy.is_default:
+            replacement = (
+                VODAccessPolicy.objects.filter(is_active=True)
+                .exclude(pk=policy.pk)
+                .order_by("name", "id")
+                .first()
+            )
+            if replacement is None:
+                return Response(
+                    {
+                        "detail": (
+                            "The last active default VOD output profile cannot "
+                            "be deleted. Create or activate another profile first."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+        with transaction.atomic():
+            self.perform_destroy(policy)
+            if replacement is not None:
+                VODAccessPolicy.objects.filter(pk=replacement.pk).update(
+                    is_default=True
+                )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get"], url_path="selections")
     def selections(self, request, pk=None):
@@ -1143,6 +1168,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         for row in rows:
             content = getattr(row, canonical)
             relation = row.relation
+            source_name = get_vod_source_name(relation, content.name)
             results.append(
                 {
                     "id": row.id,
@@ -1154,11 +1180,11 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                             display_name=content.display_name,
                         )
                         if policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
-                        else content.name
+                        else source_name
                     ),
                     "year": content.year,
                     "relation_id": relation.id,
-                    "source_name": get_vod_source_name(relation, content.name),
+                    "source_name": source_name,
                     "m3u_account_id": relation.m3u_account_id,
                     "m3u_account_name": relation.m3u_account.name,
                     "category_id": row.category_id,

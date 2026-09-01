@@ -408,6 +408,37 @@ describe('M3UTable', () => {
       expect(capturedTableOptions.data[0].name).toBe('Alpha');
       expect(capturedTableOptions.data[1].name).toBe('Zebra');
     });
+
+    it('renders XC catalog counts on three non-wrapping lines', () => {
+      const playlist = makePlaylist({
+        account_type: 'XC',
+        catalog_counts: {
+          live: { original: 100, selected: 80 },
+          movies: { original: 200, selected: 150 },
+          series: { original: 300, selected: 250 },
+        },
+      });
+      setupMocks({ playlists: [playlist] });
+      render(<M3UTable />);
+
+      const { getByText } = render(
+        getCol('name').cell({
+          cell: { getValue: () => playlist.name },
+          row: { original: playlist },
+        })
+      );
+
+      for (const text of [
+        'Live TV 100/80',
+        'Movies 200/150',
+        'Series 300/250',
+      ]) {
+        expect(getByText(text)).toHaveStyle({
+          display: 'block',
+          whiteSpace: 'nowrap',
+        });
+      }
+    });
   });
 
   // ── Add M3U ────────────────────────────────────────────────────────────────

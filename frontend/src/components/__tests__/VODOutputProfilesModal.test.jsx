@@ -159,7 +159,9 @@ vi.mock('@mantine/core', () => {
     ),
     Text: Wrapper,
     TextInput: Input,
-    Tooltip: Wrapper,
+    Tooltip: ({ children, label }) => (
+      <div data-tooltip={typeof label === 'string' ? label : ''}>{children}</div>
+    ),
   };
 });
 
@@ -274,6 +276,37 @@ describe('VODOutputProfilesModal', () => {
     );
     expect(removeAccessPolicy).toHaveBeenCalledWith(9);
     expect(fetchAccessPolicies).toHaveBeenCalled();
+  });
+
+  it('allows deleting the default when another active profile can replace it', async () => {
+    storeProfiles = [
+      profile,
+      { ...profile, id: 9, name: 'Replacement', is_default: false },
+    ];
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Profile')).toHaveValue('7')
+    );
+    const deleteButton = screen.getByRole('button', { name: 'Delete' });
+    expect(deleteButton).toBeEnabled();
+    fireEvent.click(deleteButton);
+
+    await waitFor(() =>
+      expect(API.deleteVODAccessPolicy).toHaveBeenCalledWith(7)
+    );
+  });
+
+  it('explains why the last active default profile cannot be deleted', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
+    const deleteButton = screen.getByRole('button', { name: 'Delete' });
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton.closest('[data-tooltip]')).toHaveAttribute(
+      'data-tooltip',
+      expect.stringMatching(/Create or activate another profile/)
+    );
   });
 
   it('keeps a new draft empty instead of reselecting the first profile', async () => {

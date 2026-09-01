@@ -375,26 +375,36 @@ const M3UTable = () => {
         sortable: true,
         cell: ({ cell, row }) => {
           const counts = row.original.catalog_counts || {};
-          const summary = ['live', 'movies', 'series']
-            .map((key) => {
-              const values = counts[key] || {};
-              const label =
-                key === 'live'
-                  ? 'Live'
-                  : key === 'movies'
-                    ? 'Movies'
-                    : 'Series';
-              return `${label} ${values.original || 0}/${values.selected || 0}`;
-            })
-            .join(' · ');
+          const summary = ['live', 'movies', 'series'].map((key) => {
+            const values = counts[key] || {};
+            const label =
+              key === 'live'
+                ? 'Live TV'
+                : key === 'movies'
+                  ? 'Movies'
+                  : 'Series';
+            return {
+              key,
+              text: `${label} ${values.original || 0}/${values.selected || 0}`,
+            };
+          });
           return (
             <Box>
               <Text size="sm">{cell.getValue()}</Text>
               {row.original.account_type === 'XC' && (
                 <Tooltip label="Original provider entries / selected imported entries">
-                  <Text size="xs" c="dimmed" style={{ cursor: 'help' }}>
-                    {summary}
-                  </Text>
+                  <Box style={{ cursor: 'help' }}>
+                    {summary.map((item) => (
+                      <Text
+                        key={item.key}
+                        size="xs"
+                        c="dimmed"
+                        style={{ display: 'block', whiteSpace: 'nowrap' }}
+                      >
+                        {item.text}
+                      </Text>
+                    ))}
+                  </Box>
                 </Tooltip>
               )}
             </Box>

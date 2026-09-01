@@ -946,6 +946,152 @@ class VODSourceManagementTests(TestCase):
         self.assertTrue(response.data["available"])
         self.assertEqual(response.data["count"], 1)
 
+    def test_variants_preview_uses_each_provider_source_name(self):
+        self.german_relation.custom_properties = {
+            "basic_data": {"name": "| DE | Avatar source"}
+        }
+        self.german_relation.save(update_fields=["custom_properties", "updated_at"])
+        self.english_relation.custom_properties = {
+            "basic_data": {"name": "| EN | Avatar source"}
+        }
+        self.english_relation.save(update_fields=["custom_properties", "updated_at"])
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.save(
+            update_fields=["export_mode", "hard_constraints", "updated_at"]
+        )
+        build_vod_profile_selection(self.policy.id)
+
+        admin = get_user_model().objects.create_user(
+            username="variants-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["relation_id"]: row for row in response.data["results"]}
+        self.assertEqual(
+            rows[self.german_relation.id]["name"], "| DE | Avatar source"
+        )
+        self.assertEqual(
+            rows[self.english_relation.id]["name"], "| EN | Avatar source"
+        )
+        self.assertEqual(
+            rows[self.german_relation.id]["category_name"], self.german.name
+        )
+        self.assertEqual(
+            rows[self.english_relation.id]["category_name"], self.english.name
+        )
+
+    def test_switching_profile_to_variants_queues_catalog_update(self):
+        admin = get_user_model().objects.create_user(
+            username="variants-update-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            selection_progress={"phase": "Ready", "percent": 100},
+        )
+        request = APIRequestFactory().patch(
+            f"/api/vod/access-policies/{self.policy.pk}/",
+            {"export_mode": VODAccessPolicy.ExportMode.VARIANTS},
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with (
+            patch(
+                "apps.vod.tasks.rebuild_vod_profile_selection.delay"
+            ) as delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            delay.return_value.id = "variants-update-task"
+            response = VODAccessPolicyViewSet.as_view(
+                {"patch": "partial_update"}
+            )(request, pk=self.policy.pk)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["export_mode"], VODAccessPolicy.ExportMode.VARIANTS
+        )
+        self.assertEqual(
+            response.data["selection_status"],
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        delay.assert_called_once_with(self.policy.pk)
+
+    def test_deleting_default_profile_promotes_an_active_replacement(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-delete-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_default=False,
+            is_active=False,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            is_default=True,
+            is_active=True,
+        )
+        replacement = VODAccessPolicy.objects.create(
+            name="Active replacement",
+            is_active=True,
+            is_default=False,
+        )
+        request = APIRequestFactory().delete(
+            f"/api/vod/access-policies/{self.policy.pk}/"
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"delete": "destroy"})(
+            request,
+            pk=self.policy.pk,
+        )
+
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(VODAccessPolicy.objects.filter(pk=self.policy.pk).exists())
+        replacement.refresh_from_db()
+        self.assertTrue(replacement.is_default)
+
+    def test_last_active_default_profile_cannot_be_deleted(self):
+        admin = get_user_model().objects.create_user(
+            username="last-profile-delete-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_default=False,
+            is_active=False,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            is_default=True,
+            is_active=True,
+        )
+        request = APIRequestFactory().delete(
+            f"/api/vod/access-policies/{self.policy.pk}/"
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"delete": "destroy"})(
+            request,
+            pk=self.policy.pk,
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertTrue(VODAccessPolicy.objects.filter(pk=self.policy.pk).exists())
+
     def test_global_rebuild_schedules_a_followup_for_late_invalidation(self):
         second_policy = VODAccessPolicy.objects.create(
             name="Second profile",
