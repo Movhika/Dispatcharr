@@ -5,6 +5,7 @@ from django.db.models import Q
 from apps.m3u.models import M3UAccount
 from apps.m3u.utils import parse_is_adult
 from core.xtream_codes import Client as XtreamCodesClient
+from core.utils import acquire_task_lock, release_task_lock, TaskLockRenewer
 from .models import (
     VODCategory, Series, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
@@ -375,8 +376,26 @@ def lookup_by_name_year(model, name_year_pairs):
     return found
 
 
-@shared_task
-def refresh_vod_content(account_id):
+@shared_task(bind=True, max_retries=120, default_retry_delay=30)
+def refresh_vod_content(self, account_id):
+    """Run a VOD import without overlapping another catalog refresh."""
+    if not acquire_task_lock("refresh_single_m3u_account", account_id):
+        logger.info(
+            "Account %s already has a catalog refresh running; retrying VOD refresh",
+            account_id,
+        )
+        raise self.retry(countdown=30)
+
+    lock_renewer = TaskLockRenewer("refresh_single_m3u_account", account_id)
+    lock_renewer.start()
+    try:
+        return _refresh_vod_content_impl(account_id)
+    finally:
+        lock_renewer.stop()
+        release_task_lock("refresh_single_m3u_account", account_id)
+
+
+def _refresh_vod_content_impl(account_id):
     """Refresh VOD content for an M3U account with batch processing for improved performance"""
     # Import here to avoid circular import
     from apps.m3u.tasks import send_m3u_update
@@ -563,6 +582,7 @@ def refresh_vod_content(account_id):
             "refresh_timings": {
                 **(latest_properties.get("refresh_timings") or {}),
                 "vod_seconds": round(duration, 2),
+                "vod_completed_at": end_time.isoformat(),
             },
         }
         M3UAccount.objects.filter(id=account_id).update(

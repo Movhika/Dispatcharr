@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import usePlaylistsStore from '../../store/playlists';
 import M3UForm from '../forms/M3U';
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
@@ -28,6 +28,7 @@ import {
   Filter,
   Square,
   SquareCheck,
+  Film,
 } from 'lucide-react';
 import useBrowserStorage from '../../hooks/useBrowserStorage';
 import {
@@ -48,7 +49,8 @@ import {
   getStatusColor,
   getStatusContent,
   formatStatusText,
-  refreshPlaylist,
+  refreshLivePlaylist,
+  refreshVODContent,
   updatePlaylist,
 } from '../../utils/tables/M3UsTableUtils.js';
 import {
@@ -87,7 +89,8 @@ const RowActions = ({
   editPlaylist,
   handleDeletePlaylist,
   row,
-  handleRefreshPlaylist,
+  handleRefreshLive,
+  handleRefreshVOD,
 }) => {
   const iconSize =
     tableSize == 'default' ? 'sm' : tableSize == 'compact' ? 'xs' : 'md';
@@ -112,15 +115,30 @@ const RowActions = ({
       >
         <SquareMinus size={tableSize === 'compact' ? 16 : 18} />
       </ActionIcon>
-      <ActionIcon
-        variant="transparent"
-        size={iconSize}
-        color="blue.5"
-        onClick={() => handleRefreshPlaylist(row.original.id)}
-        disabled={!row.original.is_active}
-      >
-        <RefreshCcw size={tableSize === 'compact' ? 16 : 18} />
-      </ActionIcon>
+      <Tooltip label="Refresh Live TV">
+        <ActionIcon
+          variant="transparent"
+          size={iconSize}
+          color="blue.5"
+          onClick={() => handleRefreshLive(row.original.id)}
+          disabled={!row.original.is_active}
+        >
+          <RefreshCcw size={tableSize === 'compact' ? 16 : 18} />
+        </ActionIcon>
+      </Tooltip>
+      {row.original.account_type === 'XC' && row.original.enable_vod && (
+        <Tooltip label="Refresh VOD">
+          <ActionIcon
+            variant="transparent"
+            size={iconSize}
+            color="violet.5"
+            onClick={() => handleRefreshVOD(row.original.id)}
+            disabled={!row.original.is_active}
+          >
+            <Film size={tableSize === 'compact' ? 16 : 18} />
+          </ActionIcon>
+        </Tooltip>
+      )}
     </>
   );
 };
@@ -273,7 +291,7 @@ const M3UTable = () => {
     setPlaylistModalOpen(true);
   };
 
-  const handleRefreshPlaylist = async (id) => {
+  const handleRefreshLive = async (id) => {
     // Provide immediate visual feedback before the API call
     setRefreshProgress(id, {
       action: 'initializing',
@@ -283,7 +301,7 @@ const M3UTable = () => {
     });
 
     try {
-      await refreshPlaylist(id);
+      await refreshLivePlaylist(id);
       // No need to set again since WebSocket will update us once the task starts
     } catch {
       // If the API call fails, show an error state
@@ -293,6 +311,29 @@ const M3UTable = () => {
         account: id,
         type: 'm3u_refresh',
         error: 'Failed to start refresh task',
+        status: 'error',
+      });
+    }
+  };
+
+  const handleRefreshVOD = async (id) => {
+    setRefreshProgress(id, {
+      action: 'vod_refresh',
+      phase: 'Waiting for worker',
+      progress: 0,
+      account: id,
+      type: 'vod_refresh',
+    });
+
+    try {
+      await refreshVODContent(id);
+    } catch {
+      setRefreshProgress(id, {
+        action: 'error',
+        progress: 0,
+        account: id,
+        type: 'vod_refresh',
+        error: 'Failed to start VOD refresh task',
         status: 'error',
       });
     }
@@ -676,16 +717,16 @@ const M3UTable = () => {
       {
         id: 'actions',
         header: 'Actions',
-        size: tableSize == 'compact' ? 75 : 100,
+        size: tableSize == 'compact' ? 95 : 125,
       },
     ],
     [
-      handleRefreshPlaylist,
-      editPlaylist,
-      handleDeletePlaylist,
       toggleActive,
       fullDateFormat,
       fullDateTimeFormat,
+      refreshProgress,
+      tableSize,
+      theme.colors.red,
     ]
   );
 
@@ -736,7 +777,7 @@ const M3UTable = () => {
 
   const renderHeaderCell = makeHeaderCellRenderer(sorting, onSortingChange);
 
-  const renderBodyCell = useCallback(({ cell, row }) => {
+  const renderBodyCell = ({ cell, row }) => {
     switch (cell.column.id) {
       case 'actions':
         return (
@@ -745,11 +786,12 @@ const M3UTable = () => {
             editPlaylist={editPlaylist}
             handleDeletePlaylist={handleDeletePlaylist}
             row={row}
-            handleRefreshPlaylist={handleRefreshPlaylist}
+            handleRefreshLive={handleRefreshLive}
+            handleRefreshVOD={handleRefreshVOD}
           />
         );
     }
-  }, []);
+  };
 
   // Mirrors the Type column's own STD-vs-XC display logic so the filter labels
   // and the rendered values can't drift apart.

@@ -43,6 +43,19 @@ import {
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
 import API from '../../api';
 
+const formatScheduleDate = (value) =>
+  value ? new Date(value).toLocaleString() : 'Never';
+
+const ScheduleStatus = ({ schedule, lastRun }) => (
+  <Text size="xs" c="dimmed">
+    {schedule?.enabled ? 'Enabled' : 'Disabled'} · Last:{' '}
+    {formatScheduleDate(lastRun || schedule?.last_run_at)} · Next:{' '}
+    {schedule?.enabled
+      ? formatScheduleDate(schedule?.next_run_at)
+      : 'Not scheduled'}
+  </Text>
+);
+
 const M3U = ({
   m3uAccount = null,
   isOpen,
@@ -62,6 +75,9 @@ const M3U = ({
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
+  const [vodScheduleType, setVodScheduleType] = useState('interval');
+  const [vodRefreshAfterLive, setVodRefreshAfterLive] = useState(true);
+  const [vodEnabled, setVodEnabled] = useState(false);
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
@@ -93,6 +109,9 @@ const M3U = ({
       max_streams: 0,
       refresh_interval: 24,
       cron_expression: '',
+      vod_refresh_interval: 0,
+      vod_cron_expression: '',
+      vod_refresh_after_live: true,
       account_type: 'XC',
       create_epg: false,
       username: '',
@@ -122,6 +141,10 @@ const M3U = ({
         is_active: m3uAccount.is_active,
         refresh_interval: m3uAccount.refresh_interval,
         cron_expression: m3uAccount.cron_expression || '',
+        vod_refresh_interval: m3uAccount.vod_refresh_interval ?? 0,
+        vod_cron_expression: m3uAccount.vod_cron_expression || '',
+        vod_refresh_after_live:
+          m3uAccount.vod_refresh_after_live !== false,
         account_type: m3uAccount.account_type,
         username: m3uAccount.username ?? '',
         password: '',
@@ -144,10 +167,21 @@ const M3U = ({
           ? 'cron'
           : 'interval'
       );
+      setVodScheduleType(
+        m3uAccount.vod_cron_expression &&
+          m3uAccount.vod_cron_expression.trim() !== ''
+          ? 'cron'
+          : 'interval'
+      );
+      setVodRefreshAfterLive(m3uAccount.vod_refresh_after_live !== false);
+      setVodEnabled(Boolean(m3uAccount.enable_vod));
     } else {
       setPlaylist(null);
       form.reset();
       setScheduleType('interval');
+      setVodScheduleType('interval');
+      setVodRefreshAfterLive(true);
+      setVodEnabled(false);
       setExpDate(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -170,11 +204,40 @@ const M3U = ({
       max_streams: settings.max_streams ?? form.getValues().max_streams,
       refresh_interval:
         settings.refresh_interval ?? form.getValues().refresh_interval,
+      cron_expression:
+        settings.cron_expression ?? form.getValues().cron_expression,
+      vod_refresh_interval:
+        settings.vod_refresh_interval ??
+        form.getValues().vod_refresh_interval,
+      vod_cron_expression:
+        settings.vod_cron_expression ??
+        form.getValues().vod_cron_expression,
+      vod_refresh_after_live:
+        settings.vod_refresh_after_live ??
+        form.getValues().vod_refresh_after_live,
       stale_stream_days:
         settings.stale_stream_days ?? form.getValues().stale_stream_days,
       priority: settings.priority ?? form.getValues().priority,
       enable_vod: settings.enable_vod ?? form.getValues().enable_vod,
     });
+    setVodRefreshAfterLive(
+      settings.vod_refresh_after_live ??
+        form.getValues().vod_refresh_after_live
+    );
+    setVodEnabled(settings.enable_vod ?? form.getValues().enable_vod);
+    setScheduleType(
+      (settings.cron_expression ?? form.getValues().cron_expression)?.trim()
+        ? 'cron'
+        : 'interval'
+    );
+    setVodScheduleType(
+      (
+        settings.vod_cron_expression ??
+        form.getValues().vod_cron_expression
+      )?.trim()
+        ? 'cron'
+        : 'interval'
+    );
   };
 
   const applyTemplate = async () => {
@@ -577,6 +640,9 @@ const M3U = ({
             <Divider size="sm" orientation="vertical" />
 
             <Stack gap="xs" style={{ flex: 1, minWidth: 0 }}>
+              <Text fw={600} size="sm">
+                Live TV refresh
+              </Text>
               <ScheduleInput
                 scheduleType={scheduleType}
                 onScheduleTypeChange={setScheduleType}
@@ -588,14 +654,18 @@ const M3U = ({
                 onCronChange={(expr) =>
                   form.setFieldValue('cron_expression', expr)
                 }
-                intervalLabel="Refresh Interval (hours)"
+                intervalLabel="Live TV refresh interval (hours)"
                 intervalDescription={
                   <>
-                    How often to automatically refresh M3U data
+                    How often to refresh Live TV and run auto sync
                     <br />
                     (0 to disable automatic refreshes)
                   </>
                 }
+              />
+              <ScheduleStatus
+                schedule={playlist?.live_refresh_schedule}
+                lastRun={playlist?.updated_at}
               />
               <NumberInput
                 min={0}
@@ -606,7 +676,7 @@ const M3U = ({
               />
 
               {form.getValues().account_type == 'XC' && (
-                <Box>
+                <Stack gap="xs">
                   <NumberInput
                     min={0}
                     max={999}
@@ -622,12 +692,73 @@ const M3U = ({
                       id="enable_vod"
                       name="enable_vod"
                       description="Scan and import VOD content (movies/series) from this Xtream account"
-                      key={form.key('enable_vod')}
-                      {...form.getInputProps('enable_vod', {
-                        type: 'checkbox',
-                      })}
+                      checked={vodEnabled}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setVodEnabled(checked);
+                        form.setFieldValue('enable_vod', checked);
+                      }}
                     />
                   </Group>
+
+                  <Divider my="xs" />
+                  <Text fw={600} size="sm">
+                    VOD refresh
+                  </Text>
+                  <Switch
+                    id="vod_refresh_after_live"
+                    name="vod_refresh_after_live"
+                    label="Refresh VOD after Live TV"
+                    description="Keeps the previous behavior and ignores the separate VOD schedule below"
+                    key={form.key('vod_refresh_after_live')}
+                    checked={vodRefreshAfterLive}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setVodRefreshAfterLive(checked);
+                      form.setFieldValue('vod_refresh_after_live', checked);
+                    }}
+                    disabled={!vodEnabled}
+                  />
+
+                  {vodRefreshAfterLive && (
+                    <Text size="xs" c="dimmed">
+                      VOD runs after each successful Live TV refresh · Last:{' '}
+                      {formatScheduleDate(
+                        playlist?.custom_properties?.refresh_timings
+                          ?.vod_completed_at
+                      )}
+                    </Text>
+                  )}
+
+                  {!vodRefreshAfterLive && (
+                    <>
+                      <ScheduleInput
+                        scheduleType={vodScheduleType}
+                        onScheduleTypeChange={setVodScheduleType}
+                        intervalValue={form.getValues().vod_refresh_interval}
+                        onIntervalChange={(value) =>
+                          form.setFieldValue('vod_refresh_interval', value)
+                        }
+                        cronValue={form.getValues().vod_cron_expression}
+                        onCronChange={(expression) =>
+                          form.setFieldValue(
+                            'vod_cron_expression',
+                            expression
+                          )
+                        }
+                        intervalLabel="VOD refresh interval (hours)"
+                        intervalDescription="Use a separate, less frequent schedule for movies and series (0 to disable)"
+                        disabled={!vodEnabled}
+                      />
+                      <ScheduleStatus
+                        schedule={playlist?.vod_refresh_schedule}
+                        lastRun={
+                          playlist?.custom_properties?.refresh_timings
+                            ?.vod_completed_at
+                        }
+                      />
+                    </>
+                  )}
 
                   {!m3uAccount && (
                     <Group justify="space-between">
@@ -643,7 +774,7 @@ const M3U = ({
                       />
                     </Group>
                   )}
-                </Box>
+                </Stack>
               )}
             </Stack>
           </Group>

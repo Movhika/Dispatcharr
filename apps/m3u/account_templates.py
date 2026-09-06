@@ -8,6 +8,8 @@ from .models import M3UAccountTemplate, M3UFilter, M3UGroupRule
 ACCOUNT_SETTING_FIELDS = (
     "max_streams",
     "refresh_interval",
+    "vod_refresh_interval",
+    "vod_refresh_after_live",
     "stale_stream_days",
     "priority",
 )
@@ -19,6 +21,16 @@ CUSTOM_SETTING_FIELDS = (
 )
 
 
+def _cron_expression(task):
+    if not task or not task.crontab:
+        return ""
+    crontab = task.crontab
+    return (
+        f"{crontab.minute} {crontab.hour} {crontab.day_of_month} "
+        f"{crontab.month_of_year} {crontab.day_of_week}"
+    )
+
+
 def capture_account_template(account, *, name, description=""):
     custom = account.custom_properties or {}
     settings = {
@@ -27,6 +39,8 @@ def capture_account_template(account, *, name, description=""):
     settings.update(
         {field: custom.get(field, field.startswith("use_group_rules_")) for field in CUSTOM_SETTING_FIELDS}
     )
+    settings["cron_expression"] = _cron_expression(account.refresh_task)
+    settings["vod_cron_expression"] = _cron_expression(account.vod_refresh_task)
     filters = list(
         account.filters.order_by("order", "id").values(
             "filter_type", "regex_pattern", "exclude", "order", "custom_properties"
@@ -72,6 +86,10 @@ def apply_account_template(account, template):
             custom[field] = settings[field]
     account.custom_properties = custom
     update_fields.append("custom_properties")
+    if "cron_expression" in settings:
+        account._cron_expression = settings["cron_expression"] or ""
+    if "vod_cron_expression" in settings:
+        account._vod_cron_expression = settings["vod_cron_expression"] or ""
     account.save(update_fields=list(dict.fromkeys(update_fields)))
 
     account.filters.all().delete()

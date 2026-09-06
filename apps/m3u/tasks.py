@@ -3632,11 +3632,21 @@ def refresh_account_info(profile_id):
 
         release_task_lock("refresh_account_info", profile_id)
         return error_msg
-@shared_task(time_limit=3600, soft_time_limit=3500)
-def refresh_single_m3u_account(account_id):
+@shared_task(
+    bind=True,
+    time_limit=3600,
+    soft_time_limit=3500,
+    max_retries=120,
+    default_retry_delay=30,
+)
+def refresh_single_m3u_account(self, account_id, include_vod=None):
     """Splits M3U processing into chunks and dispatches them as parallel tasks."""
     if not acquire_task_lock("refresh_single_m3u_account", account_id):
-        return f"Task already running for account_id={account_id}."
+        logger.info(
+            "Account %s already has a catalog refresh running; retrying Live TV refresh",
+            account_id,
+        )
+        raise self.retry(countdown=30)
 
     # Keep the lock alive while this long-running task is working.
     # Without renewal, the 300s lock TTL can expire during large
@@ -3647,7 +3657,10 @@ def refresh_single_m3u_account(account_id):
     _release_task_db_connection()
 
     try:
-        return _refresh_single_m3u_account_impl(account_id)
+        return _refresh_single_m3u_account_impl(
+            account_id,
+            include_vod=include_vod,
+        )
     except Exception as e:
         logger.error(
             f"refresh_single_m3u_account failed for account {account_id}: {e}",
@@ -3667,7 +3680,7 @@ def refresh_single_m3u_account(account_id):
         release_task_lock("refresh_single_m3u_account", account_id)
 
 
-def _refresh_single_m3u_account_impl(account_id):
+def _refresh_single_m3u_account_impl(account_id, include_vod=None):
     """Implementation of M3U account refresh with guaranteed memory cleanup."""
     # Record start time
     refresh_start_timestamp = timezone.now()  # For the cleanup function
@@ -4218,6 +4231,7 @@ def _refresh_single_m3u_account_impl(account_id):
         custom["refresh_timings"] = {
             **(custom.get("refresh_timings") or {}),
             "live_seconds": round(elapsed_time, 2),
+            "live_completed_at": account.updated_at.isoformat(),
         }
         account.custom_properties = custom
         account.save(
@@ -4263,12 +4277,25 @@ def _refresh_single_m3u_account_impl(account_id):
         del auto_sync_result
         gc.collect()
 
-        # Trigger VOD refresh if enabled and account is XtreamCodes type
-        if vod_enabled and account.account_type == M3UAccount.Types.XC:
+        # Existing installations default to refreshing VOD after Live TV.
+        # Accounts using a separate VOD schedule skip this hand-off. Manual
+        # Live-only requests explicitly pass include_vod=False.
+        should_refresh_vod = should_refresh_vod_after_live(
+            account,
+            include_vod=include_vod,
+        )
+        if (
+            vod_enabled
+            and account.account_type == M3UAccount.Types.XC
+            and should_refresh_vod
+        ):
             logger.info(f"VOD is enabled for account {account_id}, triggering VOD refresh")
             try:
                 from apps.vod.tasks import refresh_vod_content
-                refresh_vod_content.delay(account_id)
+                # The outer Live TV task releases the shared account lock as
+                # soon as this implementation returns. A short countdown
+                # avoids an unnecessary first VOD retry in normal operation.
+                refresh_vod_content.apply_async(args=[account_id], countdown=5)
                 logger.info(f"VOD refresh task queued for account {account_id}")
             except Exception as e:
                 logger.error(f"Failed to queue VOD refresh for account {account_id}: {str(e)}")
@@ -4298,7 +4325,6 @@ def _refresh_single_m3u_account_impl(account_id):
             del compiled_stream_filters
 
         gc.collect()
-
         # Remove cache file after processing (success or failure)
         cache_path = os.path.join(m3u_dir, f"{account_id}.json")
         try:
@@ -4307,6 +4333,13 @@ def _refresh_single_m3u_account_impl(account_id):
             pass
 
     return f"Dispatched jobs complete."
+
+
+def should_refresh_vod_after_live(account, include_vod=None):
+    """Resolve a task override against the account's persisted VOD mode."""
+    if include_vod is not None:
+        return bool(include_vod)
+    return bool(account.vod_refresh_after_live)
 
 
 def send_m3u_update(account_id, action, progress, **kwargs):

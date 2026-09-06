@@ -5,6 +5,8 @@ import * as M3UsTableUtils from '../M3UsTableUtils';
 vi.mock('../../../api.js', () => ({
   default: {
     refreshPlaylist: vi.fn(),
+    refreshLivePlaylist: vi.fn(),
+    refreshVODContent: vi.fn(),
     getPlaylistAutoCreatedChannelsCount: vi.fn(),
     deletePlaylist: vi.fn(),
     updatePlaylist: vi.fn(),
@@ -35,6 +37,18 @@ describe('M3UsTableUtils', () => {
       const result = M3UsTableUtils.refreshPlaylist(3);
       expect(API.refreshPlaylist).toHaveBeenCalledWith(3);
       expect(result).toBe(mockReturn);
+    });
+  });
+
+  describe('separate content refreshes', () => {
+    it('calls the Live TV refresh endpoint wrapper', () => {
+      M3UsTableUtils.refreshLivePlaylist(4);
+      expect(API.refreshLivePlaylist).toHaveBeenCalledWith(4);
+    });
+
+    it('calls the VOD refresh endpoint wrapper', () => {
+      M3UsTableUtils.refreshVODContent(5);
+      expect(API.refreshVODContent).toHaveBeenCalledWith(5);
     });
   });
 

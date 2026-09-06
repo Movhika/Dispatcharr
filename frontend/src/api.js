@@ -1708,6 +1708,16 @@ export default class API {
       errorNotification('Failed to refresh M3U account', e);
     }
   }
+  static async refreshLivePlaylist(id) {
+    try {
+      return await request(
+        `${host}/api/m3u/refresh/${id}/?include_vod=false`,
+        { method: 'POST' }
+      );
+    } catch (e) {
+      errorNotification('Failed to refresh Live TV', e);
+    }
+  }
   static async refreshAllPlaylist() {
     try {
       const response = await request(`${host}/api/m3u/refresh/`, {

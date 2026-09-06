@@ -47,7 +47,8 @@ vi.mock('../../../utils/tables/M3UsTableUtils.js', () => ({
   formatStatusText: vi.fn((s) =>
     s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown'
   ),
-  refreshPlaylist: vi.fn().mockResolvedValue(undefined),
+  refreshLivePlaylist: vi.fn().mockResolvedValue(undefined),
+  refreshVODContent: vi.fn().mockResolvedValue(undefined),
   updatePlaylist: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -212,6 +213,7 @@ vi.mock('@mantine/core', () => ({
 vi.mock('lucide-react', () => ({
   // Icons used by M3UsTable
   Filter: () => <svg data-testid="icon-filter" />,
+  Film: () => <svg data-testid="icon-film" />,
   RefreshCcw: () => <svg data-testid="icon-refresh" />,
   RotateCcw: () => <svg data-testid="icon-rotate-ccw" />,
   Square: () => <svg data-testid="icon-square" />,
@@ -328,7 +330,8 @@ describe('M3UTable', () => {
     vi.clearAllMocks();
     capturedTableOptions = null;
     vi.mocked(M3UsTableUtils.deletePlaylist).mockResolvedValue(undefined);
-    vi.mocked(M3UsTableUtils.refreshPlaylist).mockResolvedValue(undefined);
+    vi.mocked(M3UsTableUtils.refreshLivePlaylist).mockResolvedValue(undefined);
+    vi.mocked(M3UsTableUtils.refreshVODContent).mockResolvedValue(undefined);
     vi.mocked(M3UsTableUtils.updatePlaylist).mockResolvedValue(undefined);
     vi.mocked(
       M3UsTableUtils.getPlaylistAutoCreatedChannelsCount
@@ -560,7 +563,7 @@ describe('M3UTable', () => {
       );
     });
 
-    it('calls refreshPlaylist with the playlist id', async () => {
+    it('calls refreshLivePlaylist with the playlist id', async () => {
       const playlist = makePlaylist({ id: 1 });
       setupMocks({ playlists: [playlist] });
       render(<M3UTable />);
@@ -572,12 +575,12 @@ describe('M3UTable', () => {
       fireEvent.click(getByTestId('icon-refresh').closest('button'));
 
       await waitFor(() =>
-        expect(M3UsTableUtils.refreshPlaylist).toHaveBeenCalledWith(1)
+        expect(M3UsTableUtils.refreshLivePlaylist).toHaveBeenCalledWith(1)
       );
     });
 
-    it('sets error progress when refreshPlaylist rejects', async () => {
-      vi.mocked(M3UsTableUtils.refreshPlaylist).mockRejectedValue(
+    it('sets error progress when refreshLivePlaylist rejects', async () => {
+      vi.mocked(M3UsTableUtils.refreshLivePlaylist).mockRejectedValue(
         new Error('fail')
       );
       const playlist = makePlaylist({ id: 1 });
@@ -1479,22 +1482,22 @@ describe('M3UTable', () => {
       );
     });
 
-    it('actions column size is 75 in compact mode', () => {
+    it('actions column reserves space for separate refreshes in compact mode', () => {
       setupMocks({ tableSize: 'compact' });
       render(<M3UTable />);
       const actionsCol = capturedTableOptions.columns.find(
         (c) => c.id === 'actions'
       );
-      expect(actionsCol.size).toBe(75);
+      expect(actionsCol.size).toBe(95);
     });
 
-    it('actions column size is 100 in default mode', () => {
+    it('actions column reserves space for separate refreshes in default mode', () => {
       setupMocks({ tableSize: 'default' });
       render(<M3UTable />);
       const actionsCol = capturedTableOptions.columns.find(
         (c) => c.id === 'actions'
       );
-      expect(actionsCol.size).toBe(100);
+      expect(actionsCol.size).toBe(125);
     });
   });
 

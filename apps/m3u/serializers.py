@@ -14,7 +14,8 @@ from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
 from apps.channels.serializers import (
     ChannelGroupM3UAccountSerializer,
 )
-from datetime import timezone as dt_tz
+from datetime import timezone as dt_tz, timedelta
+from django.utils import timezone
 import logging
 import json
 
@@ -173,6 +174,10 @@ class M3UAccountTemplateSerializer(serializers.ModelSerializer):
         allowed = {
             "max_streams",
             "refresh_interval",
+            "cron_expression",
+            "vod_refresh_interval",
+            "vod_cron_expression",
+            "vod_refresh_after_live",
             "stale_stream_days",
             "priority",
             "enable_vod",
@@ -327,6 +332,9 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     use_group_rules_movie = serializers.BooleanField(required=False, write_only=True)
     use_group_rules_series = serializers.BooleanField(required=False, write_only=True)
     cron_expression = serializers.CharField(required=False, allow_blank=True, default="")
+    vod_cron_expression = serializers.CharField(required=False, allow_blank=True, default="")
+    live_refresh_schedule = serializers.SerializerMethodField()
+    vod_refresh_schedule = serializers.SerializerMethodField()
     account_template = serializers.PrimaryKeyRelatedField(
         queryset=M3UAccountTemplate.objects.all(),
         required=False,
@@ -353,6 +361,11 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "channel_groups",
             "refresh_interval",
             "cron_expression",
+            "vod_refresh_interval",
+            "vod_cron_expression",
+            "vod_refresh_after_live",
+            "live_refresh_schedule",
+            "vod_refresh_schedule",
             "custom_properties",
             "account_type",
             "username",
@@ -431,6 +444,21 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             cron_expr = f"{ct.minute} {ct.hour} {ct.day_of_month} {ct.month_of_year} {ct.day_of_week}"
         data["cron_expression"] = cron_expr
 
+        vod_cron_expr = ""
+        if hasattr(instance, '_vod_cron_expression'):
+            vod_cron_expr = instance._vod_cron_expression
+        elif (
+            instance.vod_refresh_task_id
+            and instance.vod_refresh_task
+            and instance.vod_refresh_task.crontab
+        ):
+            ct = instance.vod_refresh_task.crontab
+            vod_cron_expr = (
+                f"{ct.minute} {ct.hour} {ct.day_of_month} "
+                f"{ct.month_of_year} {ct.day_of_week}"
+            )
+        data["vod_cron_expression"] = vod_cron_expr
+
         # Surface default profile's exp_date for the form.
         # Use prefetch cache (obj.profiles.all()) to avoid an extra query per account.
         # Always emit a Z-suffix UTC string so JS new Date() never misinterprets it as local.
@@ -443,6 +471,36 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             data["exp_date"] = None
 
         return data
+
+    @staticmethod
+    def _periodic_task_schedule(task):
+        if not task:
+            return {"enabled": False, "last_run_at": None, "next_run_at": None}
+
+        last_run = task.last_run_at
+        next_run = None
+        if task.enabled:
+            try:
+                reference = last_run or task.date_changed or timezone.now()
+                seconds = max(0, float(task.schedule.is_due(reference).next))
+                next_run = timezone.now() + timedelta(seconds=seconds)
+            except Exception:
+                logger.warning(
+                    "Could not calculate next run for periodic task %s",
+                    task.name,
+                    exc_info=True,
+                )
+        return {
+            "enabled": bool(task.enabled),
+            "last_run_at": last_run,
+            "next_run_at": next_run,
+        }
+
+    def get_live_refresh_schedule(self, obj):
+        return self._periodic_task_schedule(obj.refresh_task)
+
+    def get_vod_refresh_schedule(self, obj):
+        return self._periodic_task_schedule(obj.vod_refresh_task)
 
     def get_catalog_counts(self, obj):
         custom = obj.custom_properties or {}
@@ -475,6 +533,22 @@ class M3UAccountSerializer(serializers.ModelSerializer):
                 ct = instance.refresh_task.crontab
                 cron_expr = f"{ct.minute} {ct.hour} {ct.day_of_month} {ct.month_of_year} {ct.day_of_week}"
         instance._cron_expression = cron_expr
+
+        if "vod_cron_expression" in validated_data:
+            vod_cron_expr = validated_data.pop("vod_cron_expression")
+        else:
+            vod_cron_expr = ""
+            if (
+                instance.vod_refresh_task_id
+                and instance.vod_refresh_task
+                and instance.vod_refresh_task.crontab
+            ):
+                ct = instance.vod_refresh_task.crontab
+                vod_cron_expr = (
+                    f"{ct.minute} {ct.hour} {ct.day_of_month} "
+                    f"{ct.month_of_year} {ct.day_of_week}"
+                )
+        instance._vod_cron_expression = vod_cron_expr
 
         # Handle enable_vod preference and auto_enable_new_groups settings
         enable_vod = validated_data.pop("enable_vod", None)
@@ -569,6 +643,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
 
         # Pop cron_expression — it's not a model field
         cron_expr = validated_data.pop("cron_expression", "")
+        vod_cron_expr = validated_data.pop("vod_cron_expression", "")
 
         # Handle enable_vod preference and auto_enable_new_groups settings during creation
         enable_vod = validated_data.pop("enable_vod", False)
@@ -597,6 +672,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # Build instance manually so we can attach transient attr before save triggers signal
         instance = M3UAccount(**validated_data)
         instance._cron_expression = cron_expr
+        instance._vod_cron_expression = vod_cron_expr
         with transaction.atomic():
             instance.save()
             if account_template:
