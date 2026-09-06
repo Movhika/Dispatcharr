@@ -686,16 +686,37 @@ const M3UTable = () => {
         },
       },
       {
-        header: 'Updated',
+        header: 'Last Refresh',
         accessorKey: 'updated_at',
-        size: 175,
-        cell: ({ cell }) => {
-          const value = cell.getValue();
-          if (!value) {
+        size: 220,
+        cell: ({ cell, row }) => {
+          const timings =
+            row?.original?.custom_properties?.refresh_timings || {};
+          const liveCompletedAt =
+            timings.live_completed_at || cell.getValue();
+          const vodCompletedAt = timings.vod_completed_at;
+          const refreshDates = [
+            liveCompletedAt
+              ? `Live ${format(liveCompletedAt, fullDateTimeFormat)}`
+              : null,
+            vodCompletedAt
+              ? `VOD ${format(vodCompletedAt, fullDateTimeFormat)}`
+              : null,
+          ].filter(Boolean);
+
+          if (!refreshDates.length) {
             return <Text size="xs">Never</Text>;
           }
-          const formatted = format(value, fullDateTimeFormat);
-          return <Text size="xs">{formatted}</Text>;
+
+          return (
+            <Flex direction="column" gap={0}>
+              {refreshDates.map((refreshDate) => (
+                <Text key={refreshDate} size="xs">
+                  {refreshDate}
+                </Text>
+              ))}
+            </Flex>
+          );
         },
       },
       {

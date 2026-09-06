@@ -678,7 +678,7 @@ const M3U = ({
                   min={0}
                   max={10080}
                   allowDecimal={false}
-                  label="XC client refresh minimum age (minutes)"
+                  label="Provider refresh age (minutes)"
                   description="A successful Live TV refresh from the scheduler, an administrator, or another client suppresses XC client requests for this long. Use 0 to always permit them."
                   {...form.getInputProps(
                     'xc_live_refresh_min_age_minutes'

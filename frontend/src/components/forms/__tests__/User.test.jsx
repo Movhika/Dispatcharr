@@ -339,6 +339,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 2 })}
         />
       );
+      expect(screen.getByText('Live refresh')).toBeInTheDocument();
       expect(
         screen.getByText(
           'Refresh Live TV providers after XC catalog requests'
@@ -346,11 +347,11 @@ describe('User', () => {
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          'Minimum time between refresh requests from this user (minutes)'
+          'User request interval (minutes)'
         )
       ).toBeInTheDocument();
       expect(
-        screen.getByText('Wait for a fresh XC Live catalog (experimental)')
+        screen.getByText('Wait for a fresh XC Live catalog')
       ).toBeInTheDocument();
       expect(
         screen.getByText('Maximum wait for a fresh catalog (seconds)')
@@ -366,6 +367,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 5 })}
         />
       );
+      expect(screen.queryByText('Live refresh')).not.toBeInTheDocument();
       expect(
         screen.queryByText(
           'Refresh Live TV providers after XC catalog requests'
@@ -373,12 +375,12 @@ describe('User', () => {
       ).not.toBeInTheDocument();
       expect(
         screen.queryByText(
-          'Minimum time between refresh requests from this user (minutes)'
+          'User request interval (minutes)'
         )
       ).not.toBeInTheDocument();
       expect(
         screen.queryByText(
-          'Wait for a fresh XC Live catalog (experimental)'
+          'Wait for a fresh XC Live catalog'
         )
       ).not.toBeInTheDocument();
     });

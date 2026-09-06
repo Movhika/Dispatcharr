@@ -1063,9 +1063,9 @@ describe('M3UTable', () => {
     });
   });
 
-  // ── Column: Updated ────────────────────────────────────────────────────────
+  // ── Column: Last Refresh ───────────────────────────────────────────────────
 
-  describe('Updated column', () => {
+  describe('Last Refresh column', () => {
     it('renders "Never" when updated_at is absent', () => {
       setupMocks();
       render(<M3UTable />);
@@ -1086,7 +1086,39 @@ describe('M3UTable', () => {
           cell: { getValue: () => '2024-01-01T12:00:00Z' },
         })
       );
-      expect(getByText('formatted:2024-01-01T12:00:00Z')).toBeInTheDocument();
+      expect(
+        getByText('Live formatted:2024-01-01T12:00:00Z')
+      ).toBeInTheDocument();
+    });
+
+    it('shows Live and VOD refresh dates on separate lines', () => {
+      vi.mocked(DateTimeUtils.format).mockImplementation(
+        (value) => `formatted:${value}`
+      );
+      setupMocks();
+      render(<M3UTable />);
+      const { getByText } = render(
+        getCol('updated_at').cell({
+          cell: { getValue: () => '2024-01-01T12:00:00Z' },
+          row: {
+            original: makePlaylist({
+              custom_properties: {
+                refresh_timings: {
+                  live_completed_at: '2024-01-02T12:00:00Z',
+                  vod_completed_at: '2024-01-03T12:00:00Z',
+                },
+              },
+            }),
+          },
+        })
+      );
+
+      expect(
+        getByText('Live formatted:2024-01-02T12:00:00Z')
+      ).toBeInTheDocument();
+      expect(
+        getByText('VOD formatted:2024-01-03T12:00:00Z')
+      ).toBeInTheDocument();
     });
   });
 

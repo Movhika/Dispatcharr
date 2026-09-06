@@ -458,7 +458,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       expect(
-        screen.getByText('XC client refresh minimum age (minutes)')
+        screen.getByText('Provider refresh age (minutes)')
       ).toBeInTheDocument();
     });
 
