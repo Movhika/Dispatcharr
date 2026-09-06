@@ -307,6 +307,9 @@ class UserViewSet(viewsets.ModelViewSet):
                 "vod_series_enabled",
                 "dvr_access",
                 "xc_live_refresh_on_request",
+                "xc_live_refresh_request_interval_minutes",
+                "xc_live_refresh_wait_for_completion",
+                "xc_live_refresh_wait_timeout_seconds",
             }
             cp = request.data.get("custom_properties")
             if isinstance(cp, dict):

@@ -789,13 +789,44 @@ def _xc_stream_live_streams(request, user, category_id=None):
 
 
 def _xc_stream_live_streams_then_refresh(request, user, category_id=None):
-    """Serve the current snapshot, then optionally refresh XC Live providers."""
+    """Optionally refresh XC Live providers before or after serving the catalog."""
+    refresh_already_requested = False
+    try:
+        from apps.m3u.client_refresh import (
+            get_xc_live_refresh_wait_timeout,
+            handle_xc_live_catalog_request,
+            wait_for_xc_live_refresh,
+        )
+
+        wait_timeout = get_xc_live_refresh_wait_timeout(user)
+        if wait_timeout is not None:
+            refresh_already_requested = True
+            refresh = handle_xc_live_catalog_request(
+                request,
+                user,
+                wait_for_completion=True,
+                wait_timeout_seconds=wait_timeout,
+            )
+            wait_for_xc_live_refresh(
+                refresh.get("completion_keys", []),
+                wait_timeout,
+            )
+            yield from _xc_stream_live_streams(request, user, category_id)
+            return
+    except Exception:
+        # Experimental same-response waiting must always fall back to the
+        # existing catalog instead of returning a broken XC response.
+        logger.warning(
+            "Could not wait for an XC Live catalog refresh",
+            exc_info=True,
+        )
+
     completed = False
     try:
         yield from _xc_stream_live_streams(request, user, category_id)
         completed = True
     finally:
-        if completed:
+        if completed and not refresh_already_requested:
             try:
                 from apps.m3u.client_refresh import handle_xc_live_catalog_request
 

@@ -10,10 +10,12 @@ import lzma
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from django.db import models, transaction
 from .models import M3UAccount
 from apps.channels.models import Stream, ChannelGroup, ChannelGroupM3UAccount
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 import time
 import json
 from core.utils import (
@@ -38,6 +40,18 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 1500  # Optimized batch size for threading
 m3u_dir = os.path.join(settings.MEDIA_ROOT, "cached_m3u")
+
+
+def _mark_xc_client_refresh_complete(key, outcome):
+    if not key or not str(key).startswith("xc_live_refresh_complete:"):
+        return
+    try:
+        cache.set(key, outcome, timeout=5 * 60)
+    except Exception:
+        logger.warning(
+            "Could not publish XC Live refresh completion marker",
+            exc_info=True,
+        )
 
 
 def _live_filter_catalog_path(account_id):
@@ -3644,6 +3658,9 @@ def refresh_single_m3u_account(
     account_id,
     include_vod=None,
     minimum_age_seconds=None,
+    skip_if_refreshed_after=None,
+    client_triggered=False,
+    client_completion_key=None,
 ):
     """Splits M3U processing into chunks and dispatches them as parallel tasks."""
     if not acquire_task_lock("refresh_single_m3u_account", account_id):
@@ -3653,31 +3670,65 @@ def refresh_single_m3u_account(
         )
         raise self.retry(countdown=30)
 
-    if minimum_age_seconds is not None:
+    if client_triggered:
         try:
-            minimum_age_seconds = max(0, int(minimum_age_seconds))
+            cache.delete(f"xc_live_refresh_request:{account_id}")
+        except Exception:
+            logger.warning(
+                "Could not release XC Live queue reservation for account %s",
+                account_id,
+                exc_info=True,
+            )
+
+    if minimum_age_seconds is not None or skip_if_refreshed_after is not None:
+        try:
+            minimum_age_seconds = max(0, int(minimum_age_seconds or 0))
+            refresh_boundary = None
+            if skip_if_refreshed_after is not None:
+                refresh_boundary = parse_datetime(str(skip_if_refreshed_after))
+                if refresh_boundary is None:
+                    raise ValueError("invalid refresh boundary")
             last_success = (
                 M3UAccount.objects.filter(id=account_id, is_active=True)
                 .values_list("updated_at", flat=True)
                 .first()
             )
-            if (
+            refreshed_after_queue = (
                 last_success is not None
+                and refresh_boundary is not None
+                and last_success >= refresh_boundary
+            )
+            within_minimum_age = (
+                last_success is not None
+                and minimum_age_seconds > 0
                 and (timezone.now() - last_success).total_seconds()
                 < minimum_age_seconds
-            ):
+            )
+            if refreshed_after_queue or within_minimum_age:
+                if refreshed_after_queue:
+                    reason = "the provider was refreshed after the request was queued"
+                else:
+                    reason = (
+                        "the provider was refreshed successfully in the last "
+                        f"{minimum_age_seconds}s"
+                    )
                 logger.info(
-                    "Skipping conditional Live TV refresh for account %s; "
-                    "the provider was refreshed successfully in the last %ss",
+                    "Skipping conditional Live TV refresh for account %s; %s",
                     account_id,
-                    minimum_age_seconds,
+                    reason,
                 )
                 release_task_lock("refresh_single_m3u_account", account_id)
+                _mark_xc_client_refresh_complete(
+                    client_completion_key,
+                    "skipped_fresh",
+                )
                 return "Skipped conditional refresh because the account is fresh"
         except (TypeError, ValueError):
             logger.warning(
-                "Ignoring invalid minimum_age_seconds=%r for account %s",
+                "Ignoring invalid conditional refresh values age=%r boundary=%r "
+                "for account %s",
                 minimum_age_seconds,
+                skip_if_refreshed_after,
                 account_id,
             )
         except Exception:
@@ -3719,6 +3770,7 @@ def refresh_single_m3u_account(
         _release_task_db_connection()
         lock_renewer.stop()
         release_task_lock("refresh_single_m3u_account", account_id)
+        _mark_xc_client_refresh_complete(client_completion_key, "finished")
 
 
 def _refresh_single_m3u_account_impl(account_id, include_vod=None):

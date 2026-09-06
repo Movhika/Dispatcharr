@@ -183,6 +183,42 @@ class UserSerializer(serializers.ModelSerializer):
                 "xc_live_refresh_on_request must be a boolean"
             )
 
+        request_interval = value.get(
+            "xc_live_refresh_request_interval_minutes",
+            55,
+        )
+        if (
+            isinstance(request_interval, bool)
+            or not isinstance(request_interval, int)
+            or request_interval < 0
+            or request_interval > 10080
+        ):
+            raise serializers.ValidationError(
+                "xc_live_refresh_request_interval_minutes must be an integer "
+                "between 0 and 10080"
+            )
+
+        wait_for_completion = value.get(
+            "xc_live_refresh_wait_for_completion",
+            False,
+        )
+        if not isinstance(wait_for_completion, bool):
+            raise serializers.ValidationError(
+                "xc_live_refresh_wait_for_completion must be a boolean"
+            )
+
+        wait_timeout = value.get("xc_live_refresh_wait_timeout_seconds", 15)
+        if (
+            isinstance(wait_timeout, bool)
+            or not isinstance(wait_timeout, int)
+            or wait_timeout < 1
+            or wait_timeout > 60
+        ):
+            raise serializers.ValidationError(
+                "xc_live_refresh_wait_timeout_seconds must be an integer "
+                "between 1 and 60"
+            )
+
         xc_password = value.get("xc_password")
 
         if xc_password and not SAFE_CREDENTIAL_RE.fullmatch(xc_password):

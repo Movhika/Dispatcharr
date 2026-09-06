@@ -57,6 +57,18 @@ export const userToFormValues = (user) => {
     vod_series_enabled: customProps.vod_series_enabled !== false,
     xc_live_refresh_on_request:
       customProps.xc_live_refresh_on_request === true,
+    xc_live_refresh_request_interval_minutes:
+      Number.isInteger(customProps.xc_live_refresh_request_interval_minutes) &&
+      customProps.xc_live_refresh_request_interval_minutes >= 0
+        ? customProps.xc_live_refresh_request_interval_minutes
+        : 55,
+    xc_live_refresh_wait_for_completion:
+      customProps.xc_live_refresh_wait_for_completion === true,
+    xc_live_refresh_wait_timeout_seconds:
+      Number.isInteger(customProps.xc_live_refresh_wait_timeout_seconds) &&
+      customProps.xc_live_refresh_wait_timeout_seconds >= 1
+        ? customProps.xc_live_refresh_wait_timeout_seconds
+        : 15,
     dvr_access:
       customProps.dvr_access === DVR_ACCESS.NONE ||
       customProps.dvr_access === DVR_ACCESS.VIEW ||
@@ -107,6 +119,36 @@ export const formValuesToPayload = (values, existingUser) => {
   customProps.xc_live_refresh_on_request =
     payload.xc_live_refresh_on_request === true;
   delete payload.xc_live_refresh_on_request;
+
+  customProps.xc_live_refresh_request_interval_minutes = Number.isFinite(
+    Number(payload.xc_live_refresh_request_interval_minutes)
+  )
+    ? Math.max(
+        0,
+        Math.min(
+          10080,
+          Math.trunc(Number(payload.xc_live_refresh_request_interval_minutes))
+        )
+      )
+    : 55;
+  delete payload.xc_live_refresh_request_interval_minutes;
+
+  customProps.xc_live_refresh_wait_for_completion =
+    payload.xc_live_refresh_wait_for_completion === true;
+  delete payload.xc_live_refresh_wait_for_completion;
+
+  customProps.xc_live_refresh_wait_timeout_seconds = Number.isFinite(
+    Number(payload.xc_live_refresh_wait_timeout_seconds)
+  )
+    ? Math.max(
+        1,
+        Math.min(
+          60,
+          Math.trunc(Number(payload.xc_live_refresh_wait_timeout_seconds))
+        )
+      )
+    : 15;
+  delete payload.xc_live_refresh_wait_timeout_seconds;
 
   // DVR is a single access level for standard users and admins. Streamers
   // have no DVR surface (unlike catchup/VOD via XC), so force none.
@@ -173,6 +215,9 @@ export const getFormInitialValues = () => {
     vod_movies_enabled: true,
     vod_series_enabled: true,
     xc_live_refresh_on_request: false,
+    xc_live_refresh_request_interval_minutes: 55,
+    xc_live_refresh_wait_for_completion: false,
+    xc_live_refresh_wait_timeout_seconds: 15,
     dvr_access: DVR_ACCESS.VIEW,
     epg_days: 0,
     epg_prev_days: 0,

@@ -406,14 +406,51 @@ const User = ({ user = null, isOpen, onClose }) => {
                 />
               )}
               {isAdmin && (
-                <Switch
-                  label="Refresh Live TV providers after XC catalog requests"
-                  description="After this user receives the current get_live_streams response, queue a Live-only provider refresh when the last successful refresh is at least 55 minutes old. The updated catalog is available on the client's next request."
-                  {...form.getInputProps('xc_live_refresh_on_request', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('xc_live_refresh_on_request')}
-                />
+                <Stack gap="xs">
+                  <Switch
+                    label="Refresh Live TV providers after XC catalog requests"
+                    description="Request a Live-only provider refresh when this user calls get_live_streams. Background mode refreshes for the next request; the experimental wait mode below can return fresh data in the same response."
+                    {...form.getInputProps('xc_live_refresh_on_request', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('xc_live_refresh_on_request')}
+                  />
+                  <NumberInput
+                    min={0}
+                    max={10080}
+                    allowDecimal={false}
+                    label="Minimum time between refresh requests from this user (minutes)"
+                    description="0 lets every XC Live catalog request ask for an update. Each M3U account can still suppress requests after a recent scheduled, manual, or client refresh."
+                    {...form.getInputProps(
+                      'xc_live_refresh_request_interval_minutes'
+                    )}
+                    key={form.key(
+                      'xc_live_refresh_request_interval_minutes'
+                    )}
+                  />
+                  <Switch
+                    label="Wait for a fresh XC Live catalog (experimental)"
+                    description="Queue eligible Live TV provider refreshes before replying. If they finish within the timeout, this get_live_streams response contains the updated catalog; otherwise the existing catalog is returned."
+                    {...form.getInputProps(
+                      'xc_live_refresh_wait_for_completion',
+                      { type: 'checkbox' }
+                    )}
+                    key={form.key(
+                      'xc_live_refresh_wait_for_completion'
+                    )}
+                  />
+                  <NumberInput
+                    min={1}
+                    max={60}
+                    allowDecimal={false}
+                    label="Maximum wait for a fresh catalog (seconds)"
+                    description="Keep this short to avoid player timeouts. 15 seconds is a safe starting point for testing."
+                    {...form.getInputProps(
+                      'xc_live_refresh_wait_timeout_seconds'
+                    )}
+                    key={form.key('xc_live_refresh_wait_timeout_seconds')}
+                  />
+                </Stack>
               )}
               {isAdmin && (
                 <TagsInput

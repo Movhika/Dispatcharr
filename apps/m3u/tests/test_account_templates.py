@@ -18,6 +18,7 @@ class M3UAccountTemplateTests(TestCase):
             password="secret-password",
             max_streams=3,
             refresh_interval=12,
+            xc_live_refresh_min_age_minutes=20,
             stale_stream_days=14,
             priority=7,
             custom_properties={
@@ -85,6 +86,7 @@ class M3UAccountTemplateTests(TestCase):
         self.assertEqual(target.password, "target-password")
         self.assertEqual(target.max_streams, 3)
         self.assertEqual(target.refresh_interval, 12)
+        self.assertEqual(target.xc_live_refresh_min_age_minutes, 20)
         self.assertTrue(target.custom_properties["enable_vod"])
         self.assertNotIn("provider_secret", target.custom_properties)
         self.assertEqual(

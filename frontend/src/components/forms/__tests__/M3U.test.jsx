@@ -358,6 +358,7 @@ const makeM3uAccount = (overrides = {}) => ({
   account_type: 'XC',
   max_streams: 0,
   refresh_interval: 24,
+  xc_live_refresh_min_age_minutes: 55,
   auto_refresh: false,
   is_active: true,
   custom_properties: {},
@@ -451,6 +452,14 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       expect(screen.getByTestId('modal')).toBeInTheDocument();
+    });
+
+    it('shows the XC client refresh freshness setting for XC accounts', () => {
+      setupStores();
+      render(<M3U {...defaultProps()} />);
+      expect(
+        screen.getByText('XC client refresh minimum age (minutes)')
+      ).toBeInTheDocument();
     });
 
     it('does not render the modal when isOpen is false', () => {

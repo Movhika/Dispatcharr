@@ -77,6 +77,35 @@ class UserSerializerValidationTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("custom_properties", serializer.errors)
 
+    def test_xc_live_refresh_request_interval_is_bounded(self):
+        serializer = UserSerializer(
+            data={
+                "username": "refresh-interval-user",
+                "password": "testpassword123",
+                "custom_properties": {
+                    "xc_live_refresh_request_interval_minutes": -1,
+                },
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("custom_properties", serializer.errors)
+
+    def test_xc_live_refresh_wait_settings_are_typed_and_bounded(self):
+        serializer = UserSerializer(
+            data={
+                "username": "refresh-wait-user",
+                "password": "testpassword123",
+                "custom_properties": {
+                    "xc_live_refresh_wait_for_completion": True,
+                    "xc_live_refresh_wait_timeout_seconds": 61,
+                },
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("custom_properties", serializer.errors)
+
     def test_user_without_profile_does_not_create_an_inline_vod_policy(self):
         initial_policy_ids = set(
             VODAccessPolicy.objects.values_list("id", flat=True)

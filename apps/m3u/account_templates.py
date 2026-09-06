@@ -8,6 +8,7 @@ from .models import M3UAccountTemplate, M3UFilter, M3UGroupRule
 ACCOUNT_SETTING_FIELDS = (
     "max_streams",
     "refresh_interval",
+    "xc_live_refresh_min_age_minutes",
     "vod_refresh_interval",
     "vod_refresh_after_live",
     "stale_stream_days",

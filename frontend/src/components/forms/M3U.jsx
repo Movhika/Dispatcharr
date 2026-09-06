@@ -108,6 +108,7 @@ const M3U = ({
       is_active: true,
       max_streams: 0,
       refresh_interval: 24,
+      xc_live_refresh_min_age_minutes: 55,
       cron_expression: '',
       vod_refresh_interval: 0,
       vod_cron_expression: '',
@@ -140,6 +141,8 @@ const M3U = ({
           : '0',
         is_active: m3uAccount.is_active,
         refresh_interval: m3uAccount.refresh_interval,
+        xc_live_refresh_min_age_minutes:
+          m3uAccount.xc_live_refresh_min_age_minutes ?? 55,
         cron_expression: m3uAccount.cron_expression || '',
         vod_refresh_interval: m3uAccount.vod_refresh_interval ?? 0,
         vod_cron_expression: m3uAccount.vod_cron_expression || '',
@@ -204,6 +207,9 @@ const M3U = ({
       max_streams: settings.max_streams ?? form.getValues().max_streams,
       refresh_interval:
         settings.refresh_interval ?? form.getValues().refresh_interval,
+      xc_live_refresh_min_age_minutes:
+        settings.xc_live_refresh_min_age_minutes ??
+        form.getValues().xc_live_refresh_min_age_minutes,
       cron_expression:
         settings.cron_expression ?? form.getValues().cron_expression,
       vod_refresh_interval:
@@ -667,6 +673,19 @@ const M3U = ({
                 schedule={playlist?.live_refresh_schedule}
                 lastRun={playlist?.updated_at}
               />
+              {form.getValues().account_type == 'XC' && (
+                <NumberInput
+                  min={0}
+                  max={10080}
+                  allowDecimal={false}
+                  label="XC client refresh minimum age (minutes)"
+                  description="A successful Live TV refresh from the scheduler, an administrator, or another client suppresses XC client requests for this long. Use 0 to always permit them."
+                  {...form.getInputProps(
+                    'xc_live_refresh_min_age_minutes'
+                  )}
+                  key={form.key('xc_live_refresh_min_age_minutes')}
+                />
+              )}
               <NumberInput
                 min={0}
                 max={365}

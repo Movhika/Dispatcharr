@@ -344,6 +344,17 @@ describe('User', () => {
           'Refresh Live TV providers after XC catalog requests'
         )
       ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Minimum time between refresh requests from this user (minutes)'
+        )
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText('Wait for a fresh XC Live catalog (experimental)')
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText('Maximum wait for a fresh catalog (seconds)')
+      ).toBeInTheDocument();
     });
 
     it('hides the XC Live provider refresh permission for non-admin', () => {
@@ -358,6 +369,16 @@ describe('User', () => {
       expect(
         screen.queryByText(
           'Refresh Live TV providers after XC catalog requests'
+        )
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          'Minimum time between refresh requests from this user (minutes)'
+        )
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          'Wait for a fresh XC Live catalog (experimental)'
         )
       ).not.toBeInTheDocument();
     });
