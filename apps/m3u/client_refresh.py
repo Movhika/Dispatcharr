@@ -11,7 +11,8 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.channels.models import Channel
-from core.utils import get_client_ip, is_task_lock_held, log_system_event
+from core.utils import is_task_lock_held, log_system_event
+from dispatcharr.utils import get_client_ip
 
 from .models import M3UAccount
 
