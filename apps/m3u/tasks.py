@@ -3639,7 +3639,12 @@ def refresh_account_info(profile_id):
     max_retries=120,
     default_retry_delay=30,
 )
-def refresh_single_m3u_account(self, account_id, include_vod=None):
+def refresh_single_m3u_account(
+    self,
+    account_id,
+    include_vod=None,
+    minimum_age_seconds=None,
+):
     """Splits M3U processing into chunks and dispatches them as parallel tasks."""
     if not acquire_task_lock("refresh_single_m3u_account", account_id):
         logger.info(
@@ -3647,6 +3652,42 @@ def refresh_single_m3u_account(self, account_id, include_vod=None):
             account_id,
         )
         raise self.retry(countdown=30)
+
+    if minimum_age_seconds is not None:
+        try:
+            minimum_age_seconds = max(0, int(minimum_age_seconds))
+            last_success = (
+                M3UAccount.objects.filter(id=account_id, is_active=True)
+                .values_list("updated_at", flat=True)
+                .first()
+            )
+            if (
+                last_success is not None
+                and (timezone.now() - last_success).total_seconds()
+                < minimum_age_seconds
+            ):
+                logger.info(
+                    "Skipping conditional Live TV refresh for account %s; "
+                    "the provider was refreshed successfully in the last %ss",
+                    account_id,
+                    minimum_age_seconds,
+                )
+                release_task_lock("refresh_single_m3u_account", account_id)
+                return "Skipped conditional refresh because the account is fresh"
+        except (TypeError, ValueError):
+            logger.warning(
+                "Ignoring invalid minimum_age_seconds=%r for account %s",
+                minimum_age_seconds,
+                account_id,
+            )
+        except Exception:
+            # A best-effort freshness check must not strand the task lock. The
+            # regular refresh path below owns the terminal cleanup behavior.
+            logger.warning(
+                "Could not evaluate conditional refresh freshness for account %s",
+                account_id,
+                exc_info=True,
+            )
 
     # Keep the lock alive while this long-running task is working.
     # Without renewal, the 300s lock TTL can expire during large

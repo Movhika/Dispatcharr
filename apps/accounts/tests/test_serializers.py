@@ -63,6 +63,20 @@ class UserSerializerValidationTests(TestCase):
             str(serializer.errors["custom_properties"]),
         )
 
+    def test_xc_live_refresh_permission_requires_boolean(self):
+        serializer = UserSerializer(
+            data={
+                "username": "refresh-user",
+                "password": "testpassword123",
+                "custom_properties": {
+                    "xc_live_refresh_on_request": "yes",
+                },
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("custom_properties", serializer.errors)
+
     def test_user_without_profile_does_not_create_an_inline_vod_policy(self):
         initial_policy_ids = set(
             VODAccessPolicy.objects.values_list("id", flat=True)

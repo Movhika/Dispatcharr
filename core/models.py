@@ -809,6 +809,7 @@ class SystemEvent(models.Model):
         ('stream_switch', 'Stream Switched'),
         ('m3u_refresh', 'M3U Refreshed'),
         ('m3u_download', 'M3U Downloaded'),
+        ('xc_live_catalog_request', 'XC Live Catalog Requested'),
         ('epg_refresh', 'EPG Refreshed'),
         ('epg_download', 'EPG Downloaded'),
         ('login_success', 'Login Successful'),

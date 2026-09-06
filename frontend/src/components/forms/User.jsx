@@ -406,6 +406,16 @@ const User = ({ user = null, isOpen, onClose }) => {
                 />
               )}
               {isAdmin && (
+                <Switch
+                  label="Refresh Live TV providers after XC catalog requests"
+                  description="After this user receives the current get_live_streams response, queue a Live-only provider refresh when the last successful refresh is at least 55 minutes old. The updated catalog is available on the client's next request."
+                  {...form.getInputProps('xc_live_refresh_on_request', {
+                    type: 'checkbox',
+                  })}
+                  key={form.key('xc_live_refresh_on_request')}
+                />
+              )}
+              {isAdmin && (
                 <TagsInput
                   label="Allowed IPs"
                   description="Further restrict this user by IP/CIDR within global Network Access. Leave empty to inherit global settings only."

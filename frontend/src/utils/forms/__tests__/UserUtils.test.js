@@ -192,6 +192,7 @@ describe('UserUtils', () => {
       expect(result.catchup_enabled).toBe(true);
       expect(result.vod_movies_enabled).toBe(true);
       expect(result.vod_series_enabled).toBe(true);
+      expect(result.xc_live_refresh_on_request).toBe(false);
       expect(result.dvr_access).toBe('view');
       expect(result.epg_days).toBe(0);
       expect(result.epg_prev_days).toBe(0);
@@ -207,6 +208,7 @@ describe('UserUtils', () => {
           catchup_enabled: false,
           vod_movies_enabled: false,
           vod_series_enabled: false,
+          xc_live_refresh_on_request: true,
           dvr_access: 'manage',
           epg_days: 7,
           epg_prev_days: 2,
@@ -224,6 +226,7 @@ describe('UserUtils', () => {
       expect(result.catchup_enabled).toBe(false);
       expect(result.vod_movies_enabled).toBe(false);
       expect(result.vod_series_enabled).toBe(false);
+      expect(result.xc_live_refresh_on_request).toBe(true);
       expect(result.dvr_access).toBe('manage');
       expect(result.epg_days).toBe(7);
       expect(result.epg_prev_days).toBe(2);
@@ -261,6 +264,7 @@ describe('UserUtils', () => {
       catchup_enabled: false,
       vod_movies_enabled: false,
       vod_series_enabled: true,
+      xc_live_refresh_on_request: true,
       dvr_access: 'view',
       epg_days: 7,
       epg_prev_days: 2,
@@ -333,6 +337,12 @@ describe('UserUtils', () => {
       );
       expect(result.custom_properties.vod_movies_enabled).toBe(true);
       expect(result.custom_properties.vod_series_enabled).toBe(true);
+    });
+
+    it('moves the XC Live refresh permission into custom_properties', () => {
+      const result = formValuesToPayload(makeValues(), null);
+      expect(result.xc_live_refresh_on_request).toBeUndefined();
+      expect(result.custom_properties.xc_live_refresh_on_request).toBe(true);
     });
 
     it('maps dvr_access into custom_properties (default view)', () => {
@@ -461,6 +471,7 @@ describe('UserUtils', () => {
         catchup_enabled: true,
         vod_movies_enabled: true,
         vod_series_enabled: true,
+        xc_live_refresh_on_request: false,
         dvr_access: 'view',
         epg_days: 0,
         epg_prev_days: 0,

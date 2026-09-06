@@ -306,6 +306,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 "vod_movies_enabled",
                 "vod_series_enabled",
                 "dvr_access",
+                "xc_live_refresh_on_request",
             }
             cp = request.data.get("custom_properties")
             if isinstance(cp, dict):

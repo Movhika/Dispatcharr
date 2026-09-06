@@ -330,6 +330,38 @@ describe('User', () => {
       expect(screen.getByText('Output Format Override')).toBeInTheDocument();
     });
 
+    it('shows the XC Live provider refresh permission for admin', () => {
+      setupMocks({ authUser: makeAdminUser() });
+      render(
+        <User
+          isOpen={true}
+          onClose={vi.fn()}
+          user={makeRegularUser({ id: 2 })}
+        />
+      );
+      expect(
+        screen.getByText(
+          'Refresh Live TV providers after XC catalog requests'
+        )
+      ).toBeInTheDocument();
+    });
+
+    it('hides the XC Live provider refresh permission for non-admin', () => {
+      setupMocks({ authUser: makeRegularUser({ id: 5 }) });
+      render(
+        <User
+          isOpen={true}
+          onClose={vi.fn()}
+          user={makeRegularUser({ id: 5 })}
+        />
+      );
+      expect(
+        screen.queryByText(
+          'Refresh Live TV providers after XC catalog requests'
+        )
+      ).not.toBeInTheDocument();
+    });
+
     it('hides Output Format Override for non-admin', () => {
       setupMocks({ authUser: makeRegularUser() });
       render(
