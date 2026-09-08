@@ -408,11 +408,6 @@ const M3U = ({
 
   const closeGroupFilter = () => {
     setGroupFilterModalOpen(false);
-    // After group filter setup for a new account, reset everything
-    form.reset();
-    setFile(null);
-    setPlaylist(null);
-    onClose();
   };
 
   useEffect(() => {

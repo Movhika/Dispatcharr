@@ -58,11 +58,14 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange }) => (
-    <div data-testid="m3u-group-filter">
-      <button onClick={() => onChange?.([])}>M3UGroupFilter</button>
-    </div>
-  ),
+  default: ({ isOpen, onClose }) =>
+    isOpen ? (
+      <div data-testid="m3u-group-filter">
+        <button data-testid="m3u-group-filter-close" onClick={onClose}>
+          Close groups
+        </button>
+      </div>
+    ) : null,
 }));
 
 vi.mock('../ScheduleInput', () => ({
@@ -519,7 +522,22 @@ describe('M3U', () => {
     it('renders M3UGroupFilter sub-component', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Groups' }));
       expect(screen.getByTestId('m3u-group-filter')).toBeInTheDocument();
+    });
+
+    it('returns to the account editor when the group editor closes', () => {
+      const onClose = vi.fn();
+      setupStores();
+      render(
+        <M3U {...defaultProps({ m3uAccount: makeM3uAccount(), onClose })} />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Groups' }));
+      fireEvent.click(screen.getByTestId('m3u-group-filter-close'));
+
+      expect(screen.queryByTestId('m3u-group-filter')).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('renders ScheduleInput sub-component', () => {

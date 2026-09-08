@@ -1452,6 +1452,7 @@ export default class API {
       return response;
     } catch (e) {
       errorNotification('Failed to update M3U group settings', e);
+      throw e;
     }
   }
 
@@ -1716,6 +1717,7 @@ export default class API {
       );
     } catch (e) {
       errorNotification('Failed to refresh Live TV', e);
+      throw e;
     }
   }
   static async refreshAllPlaylist() {
@@ -1740,6 +1742,7 @@ export default class API {
       return response;
     } catch (e) {
       errorNotification('Failed to refresh VOD content', e);
+      throw e;
     }
   }
 

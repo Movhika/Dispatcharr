@@ -20,9 +20,10 @@ import M3UDeveloperCatalog from './M3UDeveloperCatalog';
 import { showNotification } from '../../utils/notificationUtils.js';
 import {
   buildGroupStates,
-  saveAndRefreshPlaylist,
+  savePlaylistGroupSettings,
 } from '../../utils/forms/M3uGroupFilterUtils.js';
 import { detectGroupReservationOverlaps } from '../../utils/forms/GroupSyncUtils';
+import API from '../../api.js';
 
 const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
@@ -34,6 +35,7 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
   const [seriesCategoryStates, setSeriesCategoryStates] = useState([]);
   const [activeTab, setActiveTab] = useState('live');
   const [developerMode, setDeveloperMode] = useState(false);
+  const [activeAction, setActiveAction] = useState(null);
 
   const toggleDeveloperMode = (enabled) => {
     setDeveloperMode(enabled);
@@ -80,8 +82,9 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
     }
 
     setIsLoading(true);
+    setActiveAction('save');
     try {
-      await saveAndRefreshPlaylist(
+      await savePlaylistGroupSettings(
         playlist,
         groupStates,
         movieCategoryStates,
@@ -91,26 +94,69 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
 
       showNotification({
         title: 'Group Settings Updated',
-        message: 'Settings saved. Starting M3U refresh to apply changes...',
+        message:
+          'Settings saved. Use the refresh action in this tab when you want to update the provider catalog.',
         color: 'green',
         autoClose: 3000,
       });
-
-      showNotification({
-        title: 'M3U Refresh Started',
-        message:
-          'The M3U account is being refreshed. Channel sync will occur automatically after parsing completes.',
-        color: 'blue',
-        autoClose: 5000,
-      });
-
-      onClose();
+      setMovieCategoryStates((current) =>
+        current.map((category) => ({
+          ...category,
+          original_enabled: category.enabled,
+        }))
+      );
+      setSeriesCategoryStates((current) =>
+        current.map((category) => ({
+          ...category,
+          original_enabled: category.enabled,
+        }))
+      );
     } catch (error) {
       console.error('Error updating group settings:', error);
     } finally {
       setIsLoading(false);
+      setActiveAction(null);
     }
   };
+
+  const refreshCurrentTab = async () => {
+    const isLive = activeTab === 'live';
+    const isVod = activeTab === 'vod-movie' || activeTab === 'vod-series';
+    if (!isLive && !isVod) return;
+
+    setIsLoading(true);
+    setActiveAction('refresh');
+    try {
+      const response = isLive
+        ? await API.refreshLivePlaylist(playlist.id)
+        : await API.refreshVODContent(playlist.id);
+      // API methods display server errors and rethrow. Guard against an empty
+      // response so a failed or aborted request cannot report success.
+      if (!response) return;
+
+      showNotification({
+        title: isLive ? 'Live TV Refresh Started' : 'VOD Refresh Started',
+        message: isLive
+          ? 'The saved Live TV settings are being applied. Channel sync runs after parsing completes.'
+          : 'The saved VOD settings are being applied to movies and series.',
+        color: 'blue',
+        autoClose: 5000,
+      });
+    } catch (error) {
+      console.error('Error starting account refresh:', error);
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  };
+
+  const isVodTab = activeTab === 'vod-movie' || activeTab === 'vod-series';
+  const refreshLabel = isVodTab ? 'Refresh VOD' : 'Refresh Live TV';
+  const showRefreshAction = activeTab === 'live' || isVodTab;
+  const refreshDisabled =
+    isLoading ||
+    (isVodTab &&
+      (playlist.account_type !== 'XC' || playlist.enable_vod === false));
 
   if (!isOpen) {
     return <></>;
@@ -197,17 +243,29 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
 
         <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
           <Button variant="default" onClick={onClose} size="xs">
-            Cancel
+            Close
           </Button>
           <Button
-            type="submit"
+            type="button"
             variant="filled"
             color="blue"
             disabled={isLoading}
+            loading={activeAction === 'save'}
             onClick={submit}
           >
-            Save and Refresh
+            Save
           </Button>
+          {showRefreshAction && (
+            <Button
+              type="button"
+              variant="default"
+              disabled={refreshDisabled}
+              loading={activeAction === 'refresh'}
+              onClick={refreshCurrentTab}
+            >
+              {refreshLabel}
+            </Button>
+          )}
         </Flex>
       </Stack>
     </Modal>
