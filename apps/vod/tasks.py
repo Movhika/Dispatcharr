@@ -127,11 +127,16 @@ def rebuild_vod_profile_selection(self, policy_id):
     from .profile_selection import (
         CatalogChangedDuringBuild,
         ProfileBuildAlreadyRunning,
+        ProfileBuildNotPending,
         build_vod_profile_selection,
     )
 
     try:
-        return build_vod_profile_selection(policy_id)
+        return build_vod_profile_selection(policy_id, require_pending=True)
+    except ProfileBuildNotPending as exc:
+        # A second Celery delivery may arrive after the authoritative build has
+        # already activated its generation. Treat it as a harmless no-op.
+        return {"skipped": str(exc)}
     except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
         raise self.retry(exc=exc, countdown=5)
 
@@ -162,35 +167,61 @@ def rebuild_all_vod_profile_selections(self):
     from .profile_selection import (
         CatalogChangedDuringBuild,
         PROFILE_REBUILD_ENQUEUE_KEY,
+        PROFILE_REBUILD_LOCK_TIMEOUT,
         ProfileBuildAlreadyRunning,
+        ProfileBuildNotPending,
+        _progress_payload,
         build_vod_profile_selection,
     )
 
     results = {}
     retry_exc = None
-    try:
-        for policy_id in VODAccessPolicy.objects.filter(
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-        ).values_list("id", flat=True):
-            try:
-                results[str(policy_id)] = build_vod_profile_selection(policy_id)
-            except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
-                retry_exc = exc
-                results[str(policy_id)] = {"error": str(exc)}
-                break
-            except Exception as exc:
-                logger.warning(
-                    "VOD profile %s could not be prepared: %s", policy_id, exc
-                )
-                results[str(policy_id)] = {"error": str(exc)}
-    finally:
+
+    def release_owned_rebuild_lock():
+        """Never let an older duplicate task remove a newer task's lock."""
         try:
-            cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+            owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
+            task_id = self.request.id
+            if owner is None:
+                return
+            if owner == "1" or not task_id or str(owner) == str(task_id):
+                cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
         except Exception:
             pass
+
+    for policy_id in VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+    ).values_list("id", flat=True):
+        try:
+            results[str(policy_id)] = build_vod_profile_selection(
+                policy_id, require_pending=True
+            )
+        except ProfileBuildNotPending as exc:
+            results[str(policy_id)] = {"skipped": str(exc)}
+        except (CatalogChangedDuringBuild, ProfileBuildAlreadyRunning) as exc:
+            retry_exc = exc
+            results[str(policy_id)] = {"error": str(exc)}
+            break
+        except Exception as exc:
+            logger.warning(
+                "VOD profile %s could not be prepared: %s", policy_id, exc
+            )
+            results[str(policy_id)] = {"error": str(exc)}
     if retry_exc is not None:
+        # Keep the debounce lock across Celery retries. Releasing it here used
+        # to allow a second batch task to race the retry and toggle one profile
+        # repeatedly between Pending and Building.
+        try:
+            cache.set(
+                PROFILE_REBUILD_ENQUEUE_KEY,
+                self.request.id or "retrying",
+                timeout=PROFILE_REBUILD_LOCK_TIMEOUT,
+            )
+        except Exception:
+            pass
         raise self.retry(exc=retry_exc, countdown=5)
+    release_owned_rebuild_lock()
     # An invalidation can arrive after this task has already prepared an early
     # profile. The debounce lock intentionally suppresses another task while we
     # are running, so schedule one follow-up pass for any profile left pending.
@@ -202,13 +233,130 @@ def rebuild_all_vod_profile_selections(self):
             acquired = cache.add(
                 PROFILE_REBUILD_ENQUEUE_KEY,
                 "1",
-                timeout=60,
+                timeout=PROFILE_REBUILD_LOCK_TIMEOUT,
             )
         except Exception:
             acquired = True
         if acquired:
-            self.apply_async(countdown=1)
+            result = self.apply_async(countdown=1)
+            try:
+                cache.set(
+                    PROFILE_REBUILD_ENQUEUE_KEY,
+                    result.id,
+                    timeout=PROFILE_REBUILD_LOCK_TIMEOUT,
+                )
+            except Exception:
+                pass
+            VODAccessPolicy.objects.filter(
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_progress=_progress_payload(
+                    "Waiting in Celery queue",
+                    0,
+                    queue="celery",
+                    task_id=result.id,
+                    queued_at=timezone.now().isoformat(),
+                    batch=True,
+                )
+            )
     return results
+
+
+@shared_task
+def reconcile_vod_profile_selection_queue():
+    """Repair profile builds whose delivery was lost or already completed.
+
+    Catalog reads must remain read-only. This periodic watchdog replaces the
+    old API-list side effect and also repairs the inconsistent state where a
+    profile says Pending although its recorded Celery task is already final.
+    """
+    from celery.result import AsyncResult
+    from django.core.cache import cache
+
+    from .catalog_cache import selection_catalog_generation
+    from .models import VODAccessPolicy
+    from .profile_selection import (
+        PROFILE_REBUILD_ENQUEUE_KEY,
+        _progress_payload,
+        enqueue_all_profile_selection_rebuilds,
+        profile_selection_signature,
+    )
+    from .serializers import VODAccessPolicySerializer
+
+    stale_ready_ids = []
+    current_generation = str(selection_catalog_generation())
+    mode_reader = VODAccessPolicySerializer()
+    for policy in VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.READY,
+    ):
+        counts = policy.selection_counts or {}
+        active_mode = mode_reader.get_selection_active_mode(policy)
+        active_signature = counts.get("profile_signature")
+        stale = bool(
+            not policy.active_selection_generation
+            or policy.selection_catalog_generation != current_generation
+            or (active_mode and active_mode != policy.export_mode)
+            or (
+                active_signature
+                and active_signature != profile_selection_signature(policy)
+            )
+        )
+        if stale:
+            stale_ready_ids.append(policy.pk)
+
+    repaired_ready = 0
+    if stale_ready_ids:
+        repaired_ready = VODAccessPolicy.objects.filter(
+            pk__in=stale_ready_ids,
+            is_active=True,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+        ).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now(),
+            selection_error="",
+            selection_progress=_progress_payload("Waiting for worker", 0),
+        )
+
+    terminal_states = {"SUCCESS", "FAILURE", "REVOKED"}
+    cutoff = timezone.now() - timedelta(minutes=2)
+    stranded = []
+    pending_profiles = VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+    ).filter(
+        Q(selection_started_at__isnull=True) | Q(selection_started_at__lt=cutoff)
+    )
+    for policy in pending_profiles:
+        task_id = (policy.selection_progress or {}).get("task_id")
+        if not task_id:
+            stranded.append((policy.pk, ""))
+            continue
+        try:
+            task_state = str(AsyncResult(task_id).state or "PENDING")
+        except Exception:
+            task_state = "UNKNOWN"
+        if task_state in terminal_states:
+            stranded.append((policy.pk, str(task_id)))
+
+    republished = False
+    if stranded:
+        try:
+            lock_owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
+            recorded_task_ids = {task_id for _, task_id in stranded if task_id}
+            if lock_owner is None or str(lock_owner) in recorded_task_ids | {"1"}:
+                cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+        except Exception:
+            pass
+    if repaired_ready or stranded:
+        republished = enqueue_all_profile_selection_rebuilds(pending_only=True)
+
+    return {
+        "stale_ready_requeued": repaired_ready,
+        "stranded_pending": [policy_id for policy_id, _ in stranded],
+        "republished": republished,
+    }
 
 
 def _send_vod_refresh_progress(

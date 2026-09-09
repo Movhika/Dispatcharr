@@ -458,6 +458,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.m3u.tasks.check_account_expirations",
         "schedule": 86400.0,  # Once every 24 hours
     },
+    # Recover a lost VOD profile task without making the read-only profile API
+    # trigger background work whenever an administrator opens the dialog.
+    "reconcile-vod-profile-selection-queue": {
+        "task": "apps.vod.tasks.reconcile_vod_profile_selection_queue",
+        "schedule": 60.0,
+    },
 }
 
 MEDIA_ROOT = BASE_DIR / "media"

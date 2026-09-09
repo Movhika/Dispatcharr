@@ -64,7 +64,11 @@ from apps.vod.profile_selection import (
     enqueue_all_profile_selection_rebuilds,
     prepared_relation_ids,
 )
-from apps.vod.tasks import rebuild_all_vod_profile_selections
+from apps.vod.tasks import (
+    rebuild_all_vod_profile_selections,
+    rebuild_vod_profile_selection,
+    reconcile_vod_profile_selection_queue,
+)
 
 
 class VODSourceManagementTests(TestCase):
@@ -854,7 +858,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(serialized["selection_active_mode"], "variants")
         self.assertFalse(serialized["selection_current"])
 
-    def test_listing_profiles_requeues_a_stale_ready_generation(self):
+    def test_listing_profiles_is_read_only_for_a_stale_ready_generation(self):
         admin = get_user_model().objects.create_user(
             username="profile-repair-admin",
             password="test-password",
@@ -874,7 +878,7 @@ class VODSourceManagementTests(TestCase):
             response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        enqueue.assert_called_once_with(self.policy.pk)
+        enqueue.assert_not_called()
 
     def test_profile_build_does_not_overlap_an_active_build(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
@@ -884,6 +888,22 @@ class VODSourceManagementTests(TestCase):
 
         with self.assertRaises(ProfileBuildAlreadyRunning):
             build_vod_profile_selection(self.policy.id)
+
+    def test_duplicate_task_does_not_rebuild_an_already_ready_profile(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            selection_progress={"phase": "Ready", "percent": 100},
+        )
+
+        result = rebuild_vod_profile_selection.run(self.policy.id)
+
+        self.policy.refresh_from_db()
+        self.assertIn("skipped", result)
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        self.assertEqual(self.policy.selection_progress["phase"], "Ready")
 
     def test_xc_uses_current_prepared_profile_without_cold_python_selection(self):
         user = get_user_model().objects.create_user(
@@ -1427,7 +1447,7 @@ class VODSourceManagementTests(TestCase):
         ).update(selection_status=VODAccessPolicy.SelectionStatus.PENDING)
         built = []
 
-        def complete_build(policy_id):
+        def complete_build(policy_id, **_kwargs):
             VODAccessPolicy.objects.filter(pk=policy_id).update(
                 selection_status=VODAccessPolicy.SelectionStatus.READY
             )
@@ -1448,10 +1468,15 @@ class VODSourceManagementTests(TestCase):
                 "apply_async",
             ) as apply_async,
         ):
+            apply_async.return_value.id = "followup-task-id"
             rebuild_all_vod_profile_selections.run()
 
         self.assertEqual(len(built), 2)
         apply_async.assert_called_once_with(countdown=1)
+        first_policy = VODAccessPolicy.objects.get(pk=built[0])
+        self.assertEqual(
+            first_policy.selection_progress["task_id"], "followup-task-id"
+        )
 
     def test_catalog_invalidation_republishes_an_existing_pending_profile(self):
         VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
@@ -1484,6 +1509,41 @@ class VODSourceManagementTests(TestCase):
             VODAccessPolicy.SelectionStatus.PENDING,
         )
         self.assertEqual(self.policy.selection_started_at, started_at)
+        self.assertEqual(
+            self.policy.selection_progress["task_id"], "replacement-task-id"
+        )
+        delay.assert_called_once_with()
+
+    def test_watchdog_republishes_pending_profile_with_completed_task(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now() - timedelta(minutes=5),
+            selection_progress={
+                "phase": "Waiting in Celery queue",
+                "percent": 0,
+                "task_id": "completed-task-id",
+            },
+        )
+
+        with (
+            patch("celery.result.AsyncResult") as async_result,
+            patch("django.core.cache.cache.get", return_value="completed-task-id"),
+            patch("django.core.cache.cache.delete"),
+            patch("django.core.cache.cache.add", return_value=True),
+            patch("django.core.cache.cache.set"),
+            patch(
+                "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+            ) as delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            async_result.return_value.state = "SUCCESS"
+            delay.return_value.id = "replacement-task-id"
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stranded_pending"], [self.policy.pk])
+        self.assertTrue(result["republished"])
         self.assertEqual(
             self.policy.selection_progress["task_id"], "replacement-task-id"
         )

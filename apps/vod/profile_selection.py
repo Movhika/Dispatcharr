@@ -34,6 +34,10 @@ BUILD_CHUNK_SIZE = 5000
 PROGRESS_SCAN_INTERVAL = 5000
 BUILD_STAGE_COUNT = 5
 PROFILE_REBUILD_ENQUEUE_KEY = "vod_profile_selection:rebuild-all-enqueued"
+# Profile builds can legitimately take longer than the old one-minute debounce
+# window.  Keep one global catalog worker authoritative for the whole run so a
+# later invalidation cannot publish a duplicate task which races the first one.
+PROFILE_REBUILD_LOCK_TIMEOUT = 4 * 60 * 60
 
 
 class CatalogChangedDuringBuild(RuntimeError):
@@ -41,6 +45,10 @@ class CatalogChangedDuringBuild(RuntimeError):
 
 
 class ProfileBuildAlreadyRunning(RuntimeError):
+    pass
+
+
+class ProfileBuildNotPending(RuntimeError):
     pass
 
 
@@ -225,7 +233,7 @@ def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
             acquired = cache.add(
                 PROFILE_REBUILD_ENQUEUE_KEY,
                 "1",
-                timeout=60,
+                timeout=PROFILE_REBUILD_LOCK_TIMEOUT,
             )
         except Exception:
             acquired = True
@@ -233,6 +241,14 @@ def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
             return
         try:
             result = rebuild_all_vod_profile_selections.delay()
+            try:
+                cache.set(
+                    PROFILE_REBUILD_ENQUEUE_KEY,
+                    result.id,
+                    timeout=PROFILE_REBUILD_LOCK_TIMEOUT,
+                )
+            except Exception:
+                pass
             VODAccessPolicy.objects.filter(
                 is_active=True,
                 selection_status=VODAccessPolicy.SelectionStatus.PENDING,
@@ -733,20 +749,37 @@ def _build_type(
     }
 
 
-def build_vod_profile_selection(policy_id):
+def build_vod_profile_selection(policy_id, *, require_pending=False):
     """Build a new generation and switch to it only when fully complete."""
     generation = uuid.uuid4().hex
     source_generation = str(selection_catalog_generation())
     now = timezone.now()
     stale_build = now - timedelta(hours=1)
-    acquired = VODAccessPolicy.objects.filter(
+    candidates = VODAccessPolicy.objects.filter(
         pk=policy_id,
         is_active=True,
-    ).filter(
-        ~Q(selection_status=VODAccessPolicy.SelectionStatus.BUILDING)
-        | Q(selection_started_at__isnull=True)
-        | Q(selection_started_at__lt=stale_build)
-    ).update(
+    )
+    if require_pending:
+        # Celery deliveries are at-least-once. A delayed duplicate must not
+        # rebuild a profile which another delivery has already made Ready.
+        candidates = candidates.filter(
+            Q(selection_status=VODAccessPolicy.SelectionStatus.PENDING)
+            | Q(
+                selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+                selection_started_at__isnull=True,
+            )
+            | Q(
+                selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+                selection_started_at__lt=stale_build,
+            )
+        )
+    else:
+        candidates = candidates.filter(
+            ~Q(selection_status=VODAccessPolicy.SelectionStatus.BUILDING)
+            | Q(selection_started_at__isnull=True)
+            | Q(selection_started_at__lt=stale_build)
+        )
+    acquired = candidates.update(
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
         selection_started_at=now,
         selection_completed_at=None,
@@ -754,9 +787,19 @@ def build_vod_profile_selection(policy_id):
         selection_progress=_progress_payload("Starting", 1),
     )
     if not acquired:
-        if VODAccessPolicy.objects.filter(pk=policy_id, is_active=True).exists():
+        current = VODAccessPolicy.objects.filter(
+            pk=policy_id, is_active=True
+        ).values("selection_status").first()
+        if current and (
+            current["selection_status"]
+            == VODAccessPolicy.SelectionStatus.BUILDING
+        ):
             raise ProfileBuildAlreadyRunning(
                 f"VOD profile {policy_id} is already being prepared"
+            )
+        if current and require_pending:
+            raise ProfileBuildNotPending(
+                f"VOD profile {policy_id} no longer needs preparation"
             )
         raise VODAccessPolicy.DoesNotExist
     policy = VODAccessPolicy.objects.get(pk=policy_id, is_active=True)

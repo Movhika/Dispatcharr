@@ -983,43 +983,6 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             Q(users=self.request.user) | Q(is_default=True)
         ).distinct()
 
-    def _enqueue_stale_ready_profiles(self):
-        """Recover completed generations invalidated without a queued task."""
-        from .catalog_cache import selection_catalog_generation
-        from .profile_selection import (
-            enqueue_profile_selection_rebuild,
-            profile_selection_signature,
-        )
-
-        current_generation = str(selection_catalog_generation())
-        mode_reader = self.get_serializer_class()()
-        ready_profiles = self.get_queryset().filter(
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.READY,
-        )
-        for policy in ready_profiles:
-            counts = policy.selection_counts or {}
-            active_mode = mode_reader.get_selection_active_mode(policy)
-            active_signature = counts.get("profile_signature")
-            is_stale = bool(
-                not policy.active_selection_generation
-                or policy.selection_catalog_generation != current_generation
-                or (active_mode and active_mode != policy.export_mode)
-                or (
-                    active_signature
-                    and active_signature != profile_selection_signature(policy)
-                )
-            )
-            if is_stale:
-                enqueue_profile_selection_rebuild(policy.pk)
-
-    def list(self, request, *args, **kwargs):
-        # Stale selections normally enqueue at the mutation site. This small
-        # recovery check prevents a missed/failed enqueue from leaving a
-        # profile permanently Outdated and removes the need for a retry button.
-        self._enqueue_stale_ready_profiles()
-        return super().list(request, *args, **kwargs)
-
     def _admin_only(self, request):
         return None if _is_admin(request.user) else Response(status=status.HTTP_403_FORBIDDEN)
 
