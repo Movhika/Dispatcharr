@@ -725,7 +725,7 @@ class VODSourceManagementTests(TestCase):
             list(selections.values_list("edition_name", "output_name")),
             [
                 ("3D", "Avatar (2005) 3D"),
-                ("UHD", "Avatar (2005) 4K"),
+                ("4K", "Avatar (2005) 4K"),
             ],
         )
         self.assertEqual(
