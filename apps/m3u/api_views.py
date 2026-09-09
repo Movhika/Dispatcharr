@@ -769,7 +769,9 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 enqueue_all_profile_selection_rebuilds,
             )
 
-            bump_catalog_generation()
+            bump_catalog_generation(
+                invalidate_selections=bool(category_objects)
+            )
             if category_objects:
                 enqueue_all_profile_selection_rebuilds()
 

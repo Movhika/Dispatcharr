@@ -1,5 +1,7 @@
 """Prepared VOD profile selections used by XC output and profile previews."""
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import timedelta
@@ -28,6 +30,7 @@ from .policies import (
 logger = logging.getLogger(__name__)
 BUILD_CHUNK_SIZE = 5000
 PROGRESS_SCAN_INTERVAL = 5000
+BUILD_STAGE_COUNT = 5
 PROFILE_REBUILD_ENQUEUE_KEY = "vod_profile_selection:rebuild-all-enqueued"
 
 
@@ -53,6 +56,70 @@ def _set_profile_progress(policy_id, phase, percent, **details):
     VODAccessPolicy.objects.filter(pk=policy_id).update(
         selection_progress=_progress_payload(phase, percent, **details)
     )
+
+
+def profile_selection_signature(policy):
+    """Return a stable fingerprint of every profile field used for selection.
+
+    ``updated_at`` protects ordinary profile edits, but category rules live in
+    their own table and therefore need to be part of the build snapshot too.
+    Persisting this signature with the active generation also lets the API
+    distinguish the currently served catalog from newly saved settings.
+    """
+    prefetched = getattr(policy, "_prefetched_objects_cache", {}).get(
+        "vodpolicycategory_set"
+    )
+    if prefetched is None:
+        category_rules = list(
+            policy.vodpolicycategory_set.order_by(
+                "category_relation_id", "id"
+            ).values(
+                "category_relation_id",
+                "enabled",
+                "priority",
+            )
+        )
+    else:
+        category_rules = [
+            {
+                "category_relation_id": rule.category_relation_id,
+                "enabled": rule.enabled,
+                "priority": rule.priority,
+            }
+            for rule in sorted(
+                prefetched,
+                key=lambda rule: (rule.category_relation_id, rule.id),
+            )
+        ]
+    payload = {
+        "export_mode": policy.export_mode,
+        "hard_constraints": policy.hard_constraints or {},
+        "ranking": policy.ranking or [],
+        "provider_order": policy.provider_order or [],
+        "category_rules": category_rules,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_selection_counts(policy, counts):
+    """Refuse to activate an internally inconsistent Compact generation."""
+    if policy.export_mode != VODAccessPolicy.ExportMode.COMPACT:
+        return
+    for content_type in ("movies", "series"):
+        content_counts = counts.get(content_type) or {}
+        output_entries = int(content_counts.get("output_entries") or 0)
+        canonical_titles = int(content_counts.get("canonical_titles") or 0)
+        if output_entries != canonical_titles:
+            raise RuntimeError(
+                f"Compact {content_type} build produced {output_entries} "
+                f"output entries for {canonical_titles} titles"
+            )
 
 
 def enqueue_profile_selection_rebuild(policy_id):
@@ -462,6 +529,9 @@ def _build_type(
     scan_progress_range,
     store_progress_range,
     content_label,
+    build_generation,
+    scan_stage_index,
+    store_stage_index,
 ):
     category_mapping = policy_category_map(policy)
     candidates = (
@@ -474,16 +544,24 @@ def _build_type(
     )
     candidate_total = candidates.count()
     scan_start, scan_end = scan_progress_range
+    scan_started_at = timezone.now().isoformat()
 
     def report_scan(processed):
         ratio = processed / candidate_total if candidate_total else 1
         _set_profile_progress(
             policy.pk,
-            f"Selecting {content_label}",
+            f"Selecting {content_label} sources",
             scan_start + ((scan_end - scan_start) * ratio),
             processed=processed,
             total=candidate_total,
             content_type=content_label,
+            item_type="sources",
+            stage_index=scan_stage_index,
+            stage_count=BUILD_STAGE_COUNT,
+            stage_percent=round(ratio * 100),
+            phase_started_at=scan_started_at,
+            target_export_mode=policy.export_mode,
+            build_generation=build_generation,
         )
 
     report_scan(0)
@@ -503,13 +581,21 @@ def _build_type(
 
     store_start, store_end = store_progress_range
     selected_total = len(selected_ids)
+    store_started_at = timezone.now().isoformat()
     _set_profile_progress(
         policy.pk,
-        f"Preparing {content_label}",
+        f"Building {content_label} output",
         store_start,
         processed=0,
         total=selected_total,
         content_type=content_label,
+        item_type="output entries",
+        stage_index=store_stage_index,
+        stage_count=BUILD_STAGE_COUNT,
+        stage_percent=0,
+        phase_started_at=store_started_at,
+        target_export_mode=policy.export_mode,
+        build_generation=build_generation,
     )
     for offset in range(0, selected_total, BUILD_CHUNK_SIZE):
         relation_chunk = list(
@@ -549,21 +635,35 @@ def _build_type(
         ratio = processed / selected_total if selected_total else 1
         _set_profile_progress(
             policy.pk,
-            f"Preparing {content_label}",
+            f"Building {content_label} output",
             store_start + ((store_end - store_start) * ratio),
             processed=processed,
             total=selected_total,
             content_type=content_label,
+            item_type="output entries",
+            stage_index=store_stage_index,
+            stage_count=BUILD_STAGE_COUNT,
+            stage_percent=round(ratio * 100),
+            phase_started_at=store_started_at,
+            target_export_mode=policy.export_mode,
+            build_generation=build_generation,
         )
 
     if not selected_total:
         _set_profile_progress(
             policy.pk,
-            f"Preparing {content_label}",
+            f"Building {content_label} output",
             store_end,
             processed=0,
             total=0,
             content_type=content_label,
+            item_type="output entries",
+            stage_index=store_stage_index,
+            stage_count=BUILD_STAGE_COUNT,
+            stage_percent=100,
+            phase_started_at=store_started_at,
+            target_export_mode=policy.export_mode,
+            build_generation=build_generation,
         )
 
     return {
@@ -603,6 +703,18 @@ def build_vod_profile_selection(policy_id):
         raise VODAccessPolicy.DoesNotExist
     policy = VODAccessPolicy.objects.get(pk=policy_id, is_active=True)
     policy_updated_at = policy.updated_at
+    policy_signature = profile_selection_signature(policy)
+    _set_profile_progress(
+        policy.pk,
+        "Starting catalog build",
+        1,
+        stage_index=0,
+        stage_count=BUILD_STAGE_COUNT,
+        stage_percent=0,
+        phase_started_at=now.isoformat(),
+        target_export_mode=policy.export_mode,
+        build_generation=generation,
+    )
 
     try:
         movie_counts = _build_type(
@@ -614,6 +726,9 @@ def build_vod_profile_selection(policy_id):
             scan_progress_range=(2, 36),
             store_progress_range=(36, 50),
             content_label="movies",
+            build_generation=generation,
+            scan_stage_index=1,
+            store_stage_index=2,
         )
         series_counts = _build_type(
             policy,
@@ -624,8 +739,22 @@ def build_vod_profile_selection(policy_id):
             scan_progress_range=(50, 84),
             store_progress_range=(84, 98),
             content_label="series",
+            build_generation=generation,
+            scan_stage_index=3,
+            store_stage_index=4,
         )
-        _set_profile_progress(policy.pk, "Activating catalog", 99)
+        activating_started_at = timezone.now().isoformat()
+        _set_profile_progress(
+            policy.pk,
+            "Activating catalog",
+            99,
+            stage_index=5,
+            stage_count=BUILD_STAGE_COUNT,
+            stage_percent=0,
+            phase_started_at=activating_started_at,
+            target_export_mode=policy.export_mode,
+            build_generation=generation,
+        )
         if str(selection_catalog_generation()) != source_generation:
             raise CatalogChangedDuringBuild(
                 "The VOD catalog changed while the profile was being built"
@@ -650,7 +779,11 @@ def build_vod_profile_selection(policy_id):
                 movie_counts["unknown_metadata"]
                 + series_counts["unknown_metadata"]
             ),
+            "export_mode": policy.export_mode,
+            "profile_signature": policy_signature,
+            "generation": generation,
         }
+        _validate_selection_counts(policy, counts)
         with transaction.atomic():
             locked_policy = VODAccessPolicy.objects.select_for_update().get(
                 pk=policy.pk
@@ -663,6 +796,14 @@ def build_vod_profile_selection(policy_id):
                 raise CatalogChangedDuringBuild(
                     "The VOD profile changed while it was being prepared"
                 )
+            if profile_selection_signature(locked_policy) != policy_signature:
+                raise CatalogChangedDuringBuild(
+                    "The VOD profile rules changed while it was being prepared"
+                )
+            completed_at = timezone.now()
+            prepared_seconds = max((completed_at - now).total_seconds(), 0)
+            counts["prepared_seconds"] = prepared_seconds
+            counts["completed_at"] = completed_at.isoformat()
             # QuerySet.update deliberately avoids the catalog-invalidating
             # policy signal: selection bookkeeping does not change policy
             # semantics or source data.
@@ -671,9 +812,18 @@ def build_vod_profile_selection(policy_id):
                 selection_catalog_generation=source_generation,
                 selection_counts=counts,
                 selection_status=VODAccessPolicy.SelectionStatus.READY,
-                selection_completed_at=timezone.now(),
+                selection_completed_at=completed_at,
                 selection_error="",
-                selection_progress=_progress_payload("Ready", 100),
+                selection_progress=_progress_payload(
+                    "Ready",
+                    100,
+                    stage_index=BUILD_STAGE_COUNT,
+                    stage_count=BUILD_STAGE_COUNT,
+                    stage_percent=100,
+                    target_export_mode=policy.export_mode,
+                    build_generation=generation,
+                    prepared_seconds=prepared_seconds,
+                ),
             )
         VODMovieProfileSelection.objects.filter(policy=policy).exclude(
             generation=generation
@@ -693,7 +843,14 @@ def build_vod_profile_selection(policy_id):
             selection_status=VODAccessPolicy.SelectionStatus.PENDING,
             selection_error=str(exc),
             selection_progress=_progress_payload(
-                "Catalog changed; retrying", 0
+                "Catalog changed; restarting",
+                0,
+                stage_index=0,
+                stage_count=BUILD_STAGE_COUNT,
+                stage_percent=0,
+                target_export_mode=policy.export_mode,
+                build_generation=generation,
+                restart_reason=str(exc),
             ),
         )
         raise

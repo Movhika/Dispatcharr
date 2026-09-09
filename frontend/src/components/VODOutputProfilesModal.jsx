@@ -84,6 +84,13 @@ const formatDuration = (seconds) => {
   return `${minutes}m ${remainder}s`;
 };
 
+const outputModeLabel = (mode) =>
+  mode === 'compact'
+    ? 'Compact'
+    : mode === 'variants'
+      ? 'Variants'
+      : 'Unknown mode';
+
 const VODOutputProfilesModal = ({ opened, onClose }) => {
   const categories = useVODStore((state) => state.categories);
   const profiles = useVODStore((state) => state.accessPolicies);
@@ -403,6 +410,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const selectedCategoryIds = relationIds(draft);
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
+  const activeMode =
+    selectedProfile?.selection_active_mode ||
+    counts.export_mode ||
+    (selectedProfile?.selection_current ? selectedProfile.export_mode : '');
+  const targetMode =
+    buildProgress.target_export_mode || selectedProfile?.export_mode || '';
   const buildPercent = Math.max(
     0,
     Math.min(Number(buildProgress.percent) || 0, 100)
@@ -416,11 +429,28 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const buildElapsedSeconds = buildStartedAt
     ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
     : 0;
-  const buildRemainingSeconds =
-    selectedProfile?.selection_status === 'building' && buildPercent > 1
-      ? (buildElapsedSeconds / buildPercent) * (100 - buildPercent)
+  const stageIndex = Math.max(Number(buildProgress.stage_index) || 0, 0);
+  const stageCount = Math.max(Number(buildProgress.stage_count) || 5, 1);
+  const stagePercent = Math.max(
+    0,
+    Math.min(Number(buildProgress.stage_percent) || 0, 100)
+  );
+  const phaseStartedAt = new Date(
+    buildProgress.phase_started_at || ''
+  ).getTime();
+  const phaseElapsedSeconds = Number.isFinite(phaseStartedAt)
+    ? Math.max((Date.now() - phaseStartedAt) / 1000, 0)
+    : 0;
+  const stageRemainingSeconds =
+    selectedProfile?.selection_status === 'building' &&
+    stagePercent >= 10 &&
+    stagePercent < 100 &&
+    phaseElapsedSeconds >= 5
+      ? (phaseElapsedSeconds / stagePercent) * (100 - stagePercent)
       : null;
   const lastBuildSeconds = (() => {
+    const measured = Number(counts.prepared_seconds);
+    if (Number.isFinite(measured) && measured >= 0) return measured;
     const started = new Date(
       selectedProfile?.selection_started_at || ''
     ).getTime();
@@ -433,6 +463,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const typicalBuildSeconds = (() => {
     const durations = profiles
       .map((profile) => {
+        const measured = Number(profile.selection_counts?.prepared_seconds);
+        if (Number.isFinite(measured) && measured > 0) return measured;
         const started = new Date(profile.selection_started_at || '').getTime();
         const completed = new Date(
           profile.selection_completed_at || ''
@@ -561,6 +593,37 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </Tooltip>
           </Group>
 
+          <Group gap="xs" wrap="wrap">
+            <Text size="sm" fw={500}>
+              {['pending', 'building'].includes(
+                selectedProfile?.selection_status
+              )
+                ? 'Currently active catalog:'
+                : 'Active catalog:'}
+            </Text>
+            {selectionAvailable ? (
+              <Badge variant="light" color="gray">
+                {outputModeLabel(activeMode)}
+              </Badge>
+            ) : (
+              <Text size="sm" c="dimmed">
+                None yet
+              </Text>
+            )}
+            {['pending', 'building'].includes(
+              selectedProfile?.selection_status
+            ) && (
+              <>
+                <Text size="sm" c="dimmed">
+                  · Building:
+                </Text>
+                <Badge variant="light" color="blue">
+                  {outputModeLabel(targetMode)}
+                </Badge>
+              </>
+            )}
+          </Group>
+
           <Group gap="lg" wrap="wrap">
             <Text size="sm">
               Movies: {counts.movies?.output_entries || 0} output entries ·{' '}
@@ -582,6 +645,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <Stack gap={5}>
               <Group justify="space-between" gap="sm">
                 <Text size="sm" fw={500}>
+                  {selectedProfile.selection_status === 'building' &&
+                    stageIndex > 0 &&
+                    `Step ${Math.min(stageIndex, stageCount)} of ${stageCount} · `}
                   {buildProgress.phase ||
                     (selectedProfile.selection_status === 'pending'
                       ? 'Waiting for worker'
@@ -597,9 +663,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           ? ` · preparation usually about ${formatDuration(typicalBuildSeconds)} after it starts`
                           : ' · an estimate appears when preparation starts'
                       }`
-                    : `${Math.round(buildPercent)}% · ${formatDuration(buildElapsedSeconds)} elapsed${
-                        buildRemainingSeconds !== null
-                          ? ` · about ${formatDuration(buildRemainingSeconds)} remaining`
+                    : `${Math.round(stagePercent)}% of this step · ${formatDuration(buildElapsedSeconds)} total elapsed${
+                        stageRemainingSeconds !== null
+                          ? ` · current step about ${formatDuration(stageRemainingSeconds)} remaining`
                           : ''
                       }`}
                 </Text>
@@ -629,14 +695,28 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           {selectedProfile?.selection_status === 'ready' &&
             lastBuildSeconds !== null && (
               <Text size="sm" c="dimmed">
-                Catalog ready · prepared in {formatDuration(lastBuildSeconds)}
-                {selectedProfile.selection_completed_at
+                Catalog ready · {outputModeLabel(activeMode)} · prepared in{' '}
+                {formatDuration(lastBuildSeconds)}
+                {counts.completed_at || selectedProfile.selection_completed_at
                   ? ` · completed ${new Date(
-                      selectedProfile.selection_completed_at
+                      counts.completed_at ||
+                        selectedProfile.selection_completed_at
                     ).toLocaleString()}`
                   : ''}
                 .
               </Text>
+            )}
+
+          {selectedProfile?.selection_status === 'ready' &&
+            selectionAvailable &&
+            activeMode &&
+            activeMode !== selectedProfile.export_mode && (
+              <Alert color="yellow" title="Saved settings are not active">
+                The active catalog was built as {outputModeLabel(activeMode)},
+                but this profile is saved as{' '}
+                {outputModeLabel(selectedProfile.export_mode)}. Save the profile
+                once to publish a corrected catalog build.
+              </Alert>
             )}
 
           {selectedProfile?.selection_error && (

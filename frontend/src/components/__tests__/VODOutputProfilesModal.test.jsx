@@ -203,17 +203,21 @@ describe('VODOutputProfilesModal', () => {
     selection_status: 'ready',
     selection_current: true,
     selection_available: true,
+    selection_active_mode: 'compact',
     selection_progress: { phase: 'Ready', percent: 100 },
     selection_counts: {
+      export_mode: 'compact',
+      prepared_seconds: 78,
+      completed_at: '2026-09-09T06:47:21Z',
       movies: {
-        output_entries: 80,
+        output_entries: 78,
         canonical_titles: 78,
       },
       series: {
-        output_entries: 43,
+        output_entries: 42,
         canonical_titles: 42,
       },
-      output_entries: 123,
+      output_entries: 120,
       canonical_titles: 120,
       eligible_sources: 150,
       unknown_metadata: 4,
@@ -247,8 +251,9 @@ describe('VODOutputProfilesModal', () => {
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
-    expect(screen.getByText(/Movies: 80 output entries/)).toBeInTheDocument();
-    expect(screen.getByText(/Series: 43 output entries/)).toBeInTheDocument();
+    expect(screen.getByText(/Movies: 78 output entries/)).toBeInTheDocument();
+    expect(screen.getByText(/Series: 42 output entries/)).toBeInTheDocument();
+    expect(screen.getByText(/Catalog ready · Compact/)).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Retry catalog update' })
     ).not.toBeInTheDocument();
@@ -373,7 +378,7 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByLabelText('Profile')).toHaveValue('8');
     expect(screen.getByText('Publishing background task')).toBeInTheDocument();
     expect(
-      screen.getByText(/an estimate appears when preparation starts/)
+      screen.getByText(/preparation usually about 1m 18s after it starts/)
     ).toBeInTheDocument();
   });
 
@@ -434,17 +439,23 @@ describe('VODOutputProfilesModal', () => {
         selection_available: true,
         selection_started_at: new Date().toISOString(),
         selection_progress: {
-          phase: 'Selecting movies',
+          phase: 'Building movies output',
           percent: 36,
           processed: 5000,
           total: 10000,
+          stage_index: 2,
+          stage_count: 5,
+          stage_percent: 50,
+          phase_started_at: new Date(Date.now() - 30_000).toISOString(),
+          target_export_mode: 'compact',
         },
       },
     ];
 
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
-    expect(await screen.findByText(/Selecting movies/)).toBeInTheDocument();
+    expect(await screen.findByText(/Step 2 of 5/)).toBeInTheDocument();
+    expect(screen.getByText(/50% of this step/)).toBeInTheDocument();
     expect(
       screen.getByLabelText('Catalog preparation progress')
     ).toHaveTextContent('36');
@@ -452,5 +463,28 @@ describe('VODOutputProfilesModal', () => {
       screen.getByText(/saved rules are not active in this preview yet/)
     ).toBeInTheDocument();
     expect(screen.getByText(/No manual retry is required/)).toBeInTheDocument();
+  });
+
+  it('distinguishes an active variants catalog from saved compact settings', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        selection_current: false,
+        selection_active_mode: 'variants',
+        selection_counts: {
+          ...profile.selection_counts,
+          export_mode: 'variants',
+          movies: { output_entries: 80, canonical_titles: 78 },
+        },
+      },
+    ];
+
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByText('Outdated')).toBeInTheDocument();
+    expect(
+      screen.getByText(/active catalog was built as Variants/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/saved as Compact/)).toBeInTheDocument();
   });
 });

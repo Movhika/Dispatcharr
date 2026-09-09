@@ -662,8 +662,85 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(counts["movies"]["candidate_sources"], 2)
         self.assertEqual(counts["movies"]["eligible_sources"], 1)
         self.assertEqual(counts["movies"]["output_entries"], 1)
+        self.assertEqual(counts["export_mode"], "compact")
+        self.assertTrue(counts["profile_signature"])
+        self.assertGreaterEqual(counts["prepared_seconds"], 0)
         self.assertEqual(self.policy.selection_progress["phase"], "Ready")
         self.assertEqual(self.policy.selection_progress["percent"], 100)
+        self.assertEqual(self.policy.selection_progress["stage_index"], 5)
+        self.assertEqual(
+            self.policy.selection_progress["target_export_mode"], "compact"
+        )
+
+    def test_switching_variants_to_compact_activates_compact_generation(self):
+        unrestricted = {"allow_unknown_metadata": True}
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            hard_constraints=unrestricted,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        )
+
+        variant_counts = build_vod_profile_selection(self.policy.id)
+        self.assertEqual(variant_counts["movies"]["output_entries"], 2)
+        self.assertEqual(variant_counts["movies"]["canonical_titles"], 1)
+        self.assertEqual(variant_counts["export_mode"], "variants")
+
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        compact_counts = build_vod_profile_selection(self.policy.id)
+
+        self.policy.refresh_from_db()
+        self.assertEqual(compact_counts["movies"]["output_entries"], 1)
+        self.assertEqual(compact_counts["movies"]["canonical_titles"], 1)
+        self.assertEqual(compact_counts["export_mode"], "compact")
+        self.assertEqual(
+            self.policy.selection_counts["generation"],
+            self.policy.active_selection_generation,
+        )
+        serialized = VODAccessPolicySerializer(self.policy).data
+        self.assertEqual(serialized["selection_active_mode"], "compact")
+        self.assertTrue(serialized["selection_current"])
+
+    def test_legacy_variant_counts_are_not_current_for_compact_profile(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="legacy-generation",
+            selection_catalog_generation=str(selection_catalog_generation()),
+            selection_counts={
+                "movies": {"output_entries": 2, "canonical_titles": 1},
+                "series": {"output_entries": 0, "canonical_titles": 0},
+            },
+        )
+        self.policy.refresh_from_db()
+
+        serialized = VODAccessPolicySerializer(self.policy).data
+
+        self.assertEqual(serialized["selection_active_mode"], "variants")
+        self.assertFalse(serialized["selection_current"])
+
+    def test_listing_profiles_requeues_a_stale_ready_generation(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-repair-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="stale-generation",
+            selection_catalog_generation="stale-source-generation",
+        )
+        request = APIRequestFactory().get("/api/vod/access-policies/")
+        force_authenticate(request, user=admin)
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_profile_selection_rebuild"
+        ) as enqueue:
+            response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        enqueue.assert_called_once_with(self.policy.pk)
 
     def test_profile_build_does_not_overlap_an_active_build(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(

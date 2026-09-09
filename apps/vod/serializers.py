@@ -434,6 +434,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     selection_current = serializers.SerializerMethodField()
     selection_available = serializers.SerializerMethodField()
     selection_task_state = serializers.SerializerMethodField()
+    selection_active_mode = serializers.SerializerMethodField()
 
     class Meta:
         model = VODAccessPolicy
@@ -442,7 +443,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "hard_constraints", "ranking", "provider_order", "users",
             "category_rules",
             "selection_status", "selection_current", "selection_available",
-            "selection_task_state",
+            "selection_task_state", "selection_active_mode",
             "selection_counts", "selection_progress",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
@@ -456,13 +457,48 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def get_selection_current(self, obj):
         from .catalog_cache import selection_catalog_generation
+        from .profile_selection import profile_selection_signature
+
+        active_mode = self.get_selection_active_mode(obj)
+        counts = obj.selection_counts or {}
+        active_signature = counts.get("profile_signature")
 
         return bool(
             obj.selection_status == VODAccessPolicy.SelectionStatus.READY
             and obj.active_selection_generation
             and obj.selection_catalog_generation
             == str(selection_catalog_generation())
+            and (not active_mode or active_mode == obj.export_mode)
+            and (
+                not active_signature
+                or active_signature == profile_selection_signature(obj)
+            )
         )
+
+    def get_selection_active_mode(self, obj):
+        """Identify the mode used for the generation currently being served."""
+        counts = obj.selection_counts or {}
+        stored_mode = counts.get("export_mode")
+        valid_modes = {
+            VODAccessPolicy.ExportMode.COMPACT,
+            VODAccessPolicy.ExportMode.VARIANTS,
+        }
+        if stored_mode in valid_modes:
+            return stored_mode
+
+        # Older generations predate the explicit mode snapshot. Multiple
+        # output rows for one canonical title can only be Variants output.
+        for content_type in ("movies", "series"):
+            content_counts = counts.get(content_type) or {}
+            output_entries = content_counts.get("output_entries")
+            canonical_titles = content_counts.get("canonical_titles")
+            if (
+                output_entries is not None
+                and canonical_titles is not None
+                and int(output_entries) != int(canonical_titles)
+            ):
+                return VODAccessPolicy.ExportMode.VARIANTS
+        return ""
 
     def get_selection_available(self, obj):
         """Whether a completed generation can still be served or previewed."""
