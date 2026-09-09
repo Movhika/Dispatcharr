@@ -18,7 +18,14 @@ vi.mock('../forms/VODUserCategorySelector.jsx', () => ({
   default: () => null,
 }));
 vi.mock('../VODFailoverRanking.jsx', () => ({
-  default: () => <div>Failover priority</div>,
+  default: ({ onProviderOrderChange }) => (
+    <div>
+      Failover priority
+      <button onClick={() => onProviderOrderChange(['22', '11'])}>
+        Set provider order
+      </button>
+    </div>
+  ),
 }));
 vi.mock('../VideoFeaturePicker.jsx', () => ({
   default: ({ label }) => <div>{label}</div>,
@@ -160,7 +167,9 @@ vi.mock('@mantine/core', () => {
     Text: Wrapper,
     TextInput: Input,
     Tooltip: ({ children, label }) => (
-      <div data-tooltip={typeof label === 'string' ? label : ''}>{children}</div>
+      <div data-tooltip={typeof label === 'string' ? label : ''}>
+        {children}
+      </div>
     ),
   };
 });
@@ -189,6 +198,7 @@ describe('VODOutputProfilesModal', () => {
       allow_unknown_metadata: false,
     },
     ranking: ['audio_language', 'subtitle_language', 'resolution'],
+    provider_order: [11, 7],
     category_rules: [],
     selection_status: 'ready',
     selection_current: true,
@@ -345,6 +355,7 @@ describe('VODOutputProfilesModal', () => {
     fireEvent.change(screen.getByLabelText('Profile name'), {
       target: { value: 'New profile' },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Set provider order' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await waitFor(() =>
@@ -352,6 +363,7 @@ describe('VODOutputProfilesModal', () => {
         expect.objectContaining({
           name: 'New profile',
           hard_constraints: { source_rules: [] },
+          provider_order: [22, 11],
         })
       )
     );

@@ -280,6 +280,60 @@ class VODSourceManagementTests(TestCase):
             [self.german_relation.id, self.english_relation.id],
         )
 
+    def test_failover_can_prefer_a_provider_per_profile(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = [
+            "provider",
+            "resolution_desc",
+            "metadata_completeness",
+        ]
+        self.policy.provider_order = [self.account_a.id, self.account_b.id]
+        self.policy.save(
+            update_fields=[
+                "hard_constraints",
+                "ranking",
+                "provider_order",
+                "updated_at",
+            ]
+        )
+
+        ordered = ordered_failover_candidates(
+            [self.english_relation, self.german_relation],
+            self.policy,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.german_relation.id, self.english_relation.id],
+        )
+
+    def test_provider_preference_respects_its_failover_position(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.ranking = [
+            "resolution_desc",
+            "provider",
+            "metadata_completeness",
+        ]
+        self.policy.provider_order = [self.account_a.id, self.account_b.id]
+        self.policy.save(
+            update_fields=[
+                "hard_constraints",
+                "ranking",
+                "provider_order",
+                "updated_at",
+            ]
+        )
+
+        ordered = ordered_failover_candidates(
+            [self.german_relation, self.english_relation],
+            self.policy,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.english_relation.id, self.german_relation.id],
+        )
+
     def test_failover_can_place_unknown_metadata_last(self):
         self.german_category.metadata_defaults = {}
         self.german_category.save(update_fields=["metadata_defaults"])
@@ -1193,7 +1247,13 @@ class VODSourceManagementTests(TestCase):
                 "ranking": [
                     "audio_language",
                     "subtitle_language",
+                    "provider",
                     "resolution",
+                ],
+                "provider_order": [
+                    self.account_b.id,
+                    self.account_a.id,
+                    self.account_b.id,
                 ],
                 "category_rules": [
                     {
@@ -1224,7 +1284,16 @@ class VODSourceManagementTests(TestCase):
         )
         self.assertEqual(
             created.ranking,
-            ["audio_language", "subtitle_language", "resolution_desc"],
+            [
+                "audio_language",
+                "subtitle_language",
+                "provider",
+                "resolution_desc",
+            ],
+        )
+        self.assertEqual(
+            created.provider_order,
+            [self.account_b.id, self.account_a.id],
         )
         self.assertEqual(
             list(
@@ -1256,6 +1325,17 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("ranking", serializer.errors)
+
+    def test_profile_rejects_invalid_provider_order(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Invalid provider order",
+                "provider_order": [self.account_a.id, "not-an-account"],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("provider_order", serializer.errors)
 
     def test_profile_rejects_invalid_source_rule_expression(self):
         serializer = VODAccessPolicySerializer(

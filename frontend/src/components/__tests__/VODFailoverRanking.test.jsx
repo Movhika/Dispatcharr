@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MantineProvider } from '@mantine/core';
+import { describe, expect, it, vi } from 'vitest';
 
+import VODFailoverRanking from '../VODFailoverRanking';
 import { normalizeVODFailoverRanking } from '../../utils/vodFailoverRanking';
 
 describe('VODFailoverRanking', () => {
@@ -8,6 +12,7 @@ describe('VODFailoverRanking', () => {
       'resolution_desc',
       'audio_language',
       'subtitle_language',
+      'provider',
       'bitrate_desc',
       'metadata_completeness',
     ]);
@@ -25,6 +30,7 @@ describe('VODFailoverRanking', () => {
       'resolution_asc',
       'metadata_completeness',
       'subtitle_language',
+      'provider',
       'bitrate_desc',
     ]);
   });
@@ -41,7 +47,34 @@ describe('VODFailoverRanking', () => {
       'audio_language',
       'metadata_completeness',
       'subtitle_language',
+      'provider',
       'resolution_desc',
     ]);
+  });
+
+  it('shows and reorders the profile-specific provider preference', () => {
+    const onProviderOrderChange = vi.fn();
+    render(
+      <MantineProvider>
+        <VODFailoverRanking
+          value={['provider']}
+          onChange={vi.fn()}
+          providerOrder={['11', '7']}
+          providerOptions={[
+            { value: '11', label: 'Provider One' },
+            { value: '7', label: 'Provider Two' },
+          ]}
+          onProviderOrderChange={onProviderOrderChange}
+        />
+      </MantineProvider>
+    );
+
+    expect(screen.getByText('Provider One')).toBeInTheDocument();
+    expect(screen.getByText('Provider Two')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Move Provider Two up' })
+    );
+
+    expect(onProviderOrderChange).toHaveBeenCalledWith(['7', '11']);
   });
 });

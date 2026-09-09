@@ -56,6 +56,7 @@ const EMPTY_PROFILE = {
     source_rules: [],
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
+  provider_order: [],
   category_rules: [],
 };
 
@@ -123,7 +124,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const canDeleteProfile = Boolean(
     selectedProfile &&
-      (!selectedProfile.is_default || defaultReplacementAvailable)
+    (!selectedProfile.is_default || defaultReplacementAvailable)
   );
   const deleteProfileHint = selectedProfile?.is_default
     ? defaultReplacementAvailable
@@ -147,6 +148,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       ranking: normalizeVODFailoverRanking(
         source.ranking || EMPTY_PROFILE.ranking
       ),
+      provider_order: source.provider_order || [],
       category_rules: source.category_rules || [],
     });
   };
@@ -200,10 +202,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       [
         ...new Map(
           Object.values(categories || {}).flatMap((category) =>
-            (category.m3u_accounts || []).map((relation) => [
-              String(relation.m3u_account),
-              relation.account_name,
-            ])
+            (category.m3u_accounts || [])
+              .filter((relation) => relation.enabled !== false)
+              .map((relation) => [
+                String(relation.m3u_account),
+                relation.account_name,
+              ])
           )
         ),
       ]
@@ -211,6 +215,28 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         .sort((left, right) => left.label.localeCompare(right.label)),
     [categories]
   );
+  const failoverAccountOptions = useMemo(() => {
+    const selectedRelations = new Set(
+      (draft.category_rules || [])
+        .filter((rule) => rule.enabled !== false)
+        .map((rule) => String(rule.category_relation))
+    );
+    if (!selectedRelations.size) return accountOptions;
+    const allowedAccountIds = new Set(
+      Object.values(categories || {}).flatMap((category) =>
+        (category.m3u_accounts || [])
+          .filter(
+            (relation) =>
+              relation.enabled !== false &&
+              selectedRelations.has(String(relation.id))
+          )
+          .map((relation) => String(relation.m3u_account))
+      )
+    );
+    return accountOptions.filter((option) =>
+      allowedAccountIds.has(String(option.value))
+    );
+  }, [accountOptions, categories, draft.category_rules]);
   const categoryOptions = useMemo(
     () =>
       Object.values(categories || {})
@@ -300,6 +326,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ),
         },
         ranking: draft.ranking,
+        provider_order: [...new Set(draft.provider_order || [])]
+          .map(Number)
+          .filter(
+            (providerId) => Number.isInteger(providerId) && providerId > 0
+          ),
         category_rules: relationIds(draft).map((category_relation) => ({
           category_relation: Number(category_relation),
           enabled: true,
@@ -722,8 +753,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
                   <VODFailoverRanking
                     value={draft.ranking}
+                    providerOrder={draft.provider_order}
+                    providerOptions={failoverAccountOptions}
                     onChange={(ranking) =>
                       setDraft((current) => ({ ...current, ranking }))
+                    }
+                    onProviderOrderChange={(providerOrder) =>
+                      setDraft((current) => ({
+                        ...current,
+                        provider_order: providerOrder,
+                      }))
                     }
                   />
                 </Paper>

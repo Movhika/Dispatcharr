@@ -444,6 +444,29 @@ def _bitrate_kbps(metadata):
     ) or 0
 
 
+def _provider_preference_score(policy, account_id):
+    """Rank listed providers without querying or excluding unlisted accounts."""
+    order = tuple((policy.provider_order if policy else None) or ())
+    cached = getattr(policy, "_vod_provider_preference", None) if policy else None
+    if not cached or cached[0] != order:
+        normalized = []
+        for raw_account_id in order:
+            try:
+                provider_id = int(raw_account_id)
+            except (TypeError, ValueError):
+                continue
+            if provider_id > 0 and provider_id not in normalized:
+                normalized.append(provider_id)
+        scores = {
+            provider_id: len(normalized) - index
+            for index, provider_id in enumerate(normalized)
+        }
+        cached = (order, scores)
+        if policy:
+            setattr(policy, "_vod_provider_preference", cached)
+    return cached[1].get(account_id, 0) if cached else 0
+
+
 def relation_rank(
     relation,
     category_mapping,
@@ -470,6 +493,7 @@ def relation_rank(
             metadata.get("subtitle_languages"),
             constraints.get("required_subtitle_languages"),
         ),
+        "provider": _provider_preference_score(policy, relation.m3u_account_id),
         # Existing policies used "resolution". Keep it as a high-first alias.
         "resolution": resolution,
         "resolution_desc": resolution,
@@ -511,6 +535,7 @@ def relation_rank(
     allowed_order = [
         "audio_language",
         "subtitle_language",
+        "provider",
         requested_resolution or "resolution_desc",
         requested_bitrate or "bitrate_desc",
         "metadata_completeness",

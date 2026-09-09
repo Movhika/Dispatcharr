@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, Trash2 } from 'lucide-react';
 import { normalizeVODFailoverRanking } from '../utils/vodFailoverRanking.js';
 
 const criterionDetails = (criterion) => {
@@ -39,6 +39,13 @@ const criterionDetails = (criterion) => {
       description: 'Prefers sources with more known technical metadata.',
     };
   }
+  if (criterion === 'provider') {
+    return {
+      title: 'Provider preference',
+      description:
+        'Uses the profile-specific provider order configured in this row.',
+    };
+  }
   if (criterion === 'bitrate_desc' || criterion === 'bitrate_asc') {
     return {
       title: 'Bitrate',
@@ -52,7 +59,92 @@ const criterionDetails = (criterion) => {
   };
 };
 
-const SortableCriterion = ({ criterion, onDirectionChange }) => {
+const ProviderOrder = ({ value, options, onChange }) => {
+  const order = [...new Set((value || []).map(String))];
+  const labels = new Map(
+    (options || []).map((option) => [String(option.value), option.label])
+  );
+  const available = (options || []).filter(
+    (option) => !order.includes(String(option.value))
+  );
+
+  const move = (index, offset) => {
+    const nextIndex = index + offset;
+    if (nextIndex < 0 || nextIndex >= order.length) return;
+    onChange(arrayMove(order, index, nextIndex));
+  };
+
+  return (
+    <Stack gap="xs" mt="xs" pl={40}>
+      {order.length ? (
+        order.map((providerId, index) => (
+          <Paper key={providerId} withBorder px="sm" py={6}>
+            <Group justify="space-between" wrap="nowrap">
+              <Text size="sm" truncate>
+                {labels.get(providerId) ||
+                  `Unavailable provider (${providerId})`}
+              </Text>
+              <Group gap={4} wrap="nowrap">
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  disabled={index === 0}
+                  aria-label={`Move ${labels.get(providerId) || providerId} up`}
+                  onClick={() => move(index, -1)}
+                >
+                  <ChevronUp size={16} />
+                </ActionIcon>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  disabled={index === order.length - 1}
+                  aria-label={`Move ${labels.get(providerId) || providerId} down`}
+                  onClick={() => move(index, 1)}
+                >
+                  <ChevronDown size={16} />
+                </ActionIcon>
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  aria-label={`Remove ${labels.get(providerId) || providerId}`}
+                  onClick={() =>
+                    onChange(order.filter((id) => id !== providerId))
+                  }
+                >
+                  <Trash2 size={15} />
+                </ActionIcon>
+              </Group>
+            </Group>
+          </Paper>
+        ))
+      ) : (
+        <Text size="xs" c="dimmed">
+          No profile-specific order. The global M3U account priority remains the
+          final fallback.
+        </Text>
+      )}
+      <Select
+        aria-label="Add provider preference"
+        placeholder="Add provider"
+        searchable
+        disabled={!available.length}
+        data={available}
+        value={null}
+        onChange={(providerId) => {
+          if (providerId) onChange([...order, String(providerId)]);
+        }}
+      />
+    </Stack>
+  );
+};
+
+const SortableCriterion = ({
+  criterion,
+  onDirectionChange,
+  providerOrder,
+  providerOptions,
+  onProviderOrderChange,
+}) => {
   const {
     attributes,
     listeners,
@@ -124,11 +216,24 @@ const SortableCriterion = ({ criterion, onDirectionChange }) => {
           />
         )}
       </Group>
+      {criterion === 'provider' && (
+        <ProviderOrder
+          value={providerOrder}
+          options={providerOptions}
+          onChange={onProviderOrderChange}
+        />
+      )}
     </Paper>
   );
 };
 
-const VODFailoverRanking = ({ value, onChange }) => {
+const VODFailoverRanking = ({
+  value,
+  onChange,
+  providerOrder = [],
+  providerOptions = [],
+  onProviderOrderChange,
+}) => {
   const ranking = useMemo(() => normalizeVODFailoverRanking(value), [value]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -172,6 +277,9 @@ const VODFailoverRanking = ({ value, onChange }) => {
                 key={criterion}
                 criterion={criterion}
                 onDirectionChange={(next) => changeDirection(criterion, next)}
+                providerOrder={providerOrder}
+                providerOptions={providerOptions}
+                onProviderOrderChange={onProviderOrderChange}
               />
             ))}
           </Stack>

@@ -1,6 +1,7 @@
 const DEFAULT_VOD_FAILOVER_RANKING = [
   'audio_language',
   'subtitle_language',
+  'provider',
   'resolution_desc',
   'bitrate_desc',
   'metadata_completeness',

@@ -439,7 +439,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         model = VODAccessPolicy
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
-            "hard_constraints", "ranking", "users", "category_rules",
+            "hard_constraints", "ranking", "provider_order", "users",
+            "category_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state",
             "selection_counts", "selection_progress",
@@ -496,13 +497,13 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def validate_ranking(self, value):
         allowed = {
-            "audio_language", "subtitle_language", "resolution",
+            "audio_language", "subtitle_language", "provider", "resolution",
             "resolution_desc", "resolution_asc", "bitrate_desc",
             "bitrate_asc", "metadata_completeness",
         }
         if not isinstance(value, list) or set(value) - allowed:
             raise serializers.ValidationError(
-                "Use only supported metadata ranking criteria"
+                "Use only supported failover ranking criteria"
             )
         normalized = [
             "resolution_desc" if item == "resolution" else item
@@ -525,6 +526,25 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 "Choose only one bitrate ranking direction"
             )
         return list(dict.fromkeys(normalized))
+
+    def validate_provider_order(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Use a list of M3U account IDs")
+        normalized = []
+        for raw_account_id in value:
+            try:
+                account_id = int(raw_account_id)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    "Use only positive M3U account IDs"
+                )
+            if account_id <= 0:
+                raise serializers.ValidationError(
+                    "Use only positive M3U account IDs"
+                )
+            if account_id not in normalized:
+                normalized.append(account_id)
+        return normalized
 
     def validate_hard_constraints(self, value):
         if not isinstance(value, dict):

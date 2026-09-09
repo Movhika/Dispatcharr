@@ -352,6 +352,14 @@ class VODAccessPolicy(models.Model):
     is_active = models.BooleanField(default=True)
     hard_constraints = models.JSONField(default=dict, blank=True)
     ranking = models.JSONField(default=list, blank=True)
+    provider_order = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Profile-specific M3U account preference from highest to lowest. "
+            "Unlisted accounts remain eligible behind listed accounts."
+        ),
+    )
     users = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         blank=True,
