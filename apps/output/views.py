@@ -1260,18 +1260,27 @@ def _xc_fetch_priority_distinct_relations(
             allowed_category_query,
             select_relation_ids_for_policy,
         )
-        from apps.vod.profile_selection import prepared_relation_ids
+        from apps.vod.profile_selection import prepared_relation_rows
 
         narrow_qs = narrow_qs.filter(allowed_category_query(policy))
 
-        selected_ids = prepared_relation_ids(
+        prepared_rows = prepared_relation_rows(
             policy,
             manager.model,
             rel_filters,
             selection_filters=prepared_filters,
         )
-        if selected_ids is not None:
-            return _fetch_by_ids(selected_ids)
+        if prepared_rows is not None:
+            rows = _fetch_by_ids(list(prepared_rows))
+            for row in rows:
+                snapshot = prepared_rows.get(row["id"], {})
+                row.update(
+                    profile_edition_key=snapshot.get("edition_key", ""),
+                    profile_edition_name=snapshot.get("edition_name", ""),
+                    profile_edition_suffix=snapshot.get("edition_suffix", ""),
+                    profile_output_name=snapshot.get("output_name", ""),
+                )
+            return rows
 
         candidate_iterator = (
             narrow_qs.select_related(
@@ -1439,7 +1448,7 @@ def xc_get_vod_streams(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": (
+            "name": row.get("profile_output_name") or (
                 canonical_output_name(
                     row['movie__name'],
                     display_name=row['movie__display_name'],
@@ -1477,6 +1486,8 @@ def xc_get_vod_streams(request, user, category_id=None):
             "container_extension": row['container_extension'] or "mp4",
             "custom_sid": None,
             "direct_source": "",
+            "edition": row.get("profile_edition_name", ""),
+            "edition_suffix": row.get("profile_edition_suffix", ""),
         })
 
     safe_cache_set(cache_key, streams, timeout=3600)
@@ -1586,7 +1597,7 @@ def xc_get_series(request, user, category_id=None):
 
         append({
             "num": num,
-            "name": (
+            "name": row.get("profile_output_name") or (
                 canonical_output_name(
                     row['series__name'],
                     display_name=row['series__display_name'],
@@ -1627,6 +1638,8 @@ def xc_get_series(request, user, category_id=None):
             "category_ids": [category_id] if category_id else [],
             "tmdb_id": row['series__tmdb_id'] or "",
             "imdb_id": row['series__imdb_id'] or "",
+            "edition": row.get("profile_edition_name", ""),
+            "edition_suffix": row.get("profile_edition_suffix", ""),
         })
 
     safe_cache_set(cache_key, series_list, timeout=3600)
@@ -1922,6 +1935,16 @@ def xc_get_series_info(request, user, series_id):
         series_relation,
         clean_series_name,
     )
+    if policy:
+        from apps.vod.profile_selection import prepared_relation_snapshot
+
+        output_snapshot = prepared_relation_snapshot(
+            policy,
+            M3USeriesRelation,
+            series_relation.id,
+        )
+        if output_snapshot and output_snapshot.get("output_name"):
+            source_series_name = output_snapshot["output_name"]
 
     info = {
         'seasons': seasons_list,
@@ -2106,6 +2129,16 @@ def xc_get_vod_info(request, user, vod_id):
     from apps.vod.utils import get_vod_source_name
 
     source_name = get_vod_source_name(movie_relation, movie_data['name'])
+    if policy:
+        from apps.vod.profile_selection import prepared_relation_snapshot
+
+        output_snapshot = prepared_relation_snapshot(
+            policy,
+            M3UMovieRelation,
+            movie_relation.id,
+        )
+        if output_snapshot and output_snapshot.get("output_name"):
+            source_name = output_snapshot["output_name"]
 
     # Transform API response to XtreamCodes format
     info = {

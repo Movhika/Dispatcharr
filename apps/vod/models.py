@@ -342,6 +342,12 @@ class VODAccessPolicy(models.Model):
         READY = "ready", "Ready"
         FAILED = "failed", "Failed"
 
+    class NamingMode(models.TextChoices):
+        MODE_DEFAULT = "mode_default", "Default for output mode"
+        PROVIDER = "provider", "Provider title"
+        CANONICAL = "canonical", "Canonical title and edition"
+        TEMPLATE = "template", "Custom template"
+
     name = models.CharField(max_length=255, unique=True)
     export_mode = models.CharField(
         max_length=10,
@@ -359,6 +365,25 @@ class VODAccessPolicy(models.Model):
             "Profile-specific M3U account preference from highest to lowest. "
             "Unlisted accounts remain eligible behind listed accounts."
         ),
+    )
+    edition_rules = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Ordered first-match rules that classify eligible sources into "
+            "editions without changing their source categories."
+        ),
+    )
+    naming_mode = models.CharField(
+        max_length=20,
+        choices=NamingMode.choices,
+        default=NamingMode.MODE_DEFAULT,
+    )
+    name_template = models.CharField(
+        max_length=500,
+        blank=True,
+        default="{canonical} {edition}",
+        help_text="Output title template used when naming_mode is template.",
     )
     users = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
@@ -621,6 +646,10 @@ class VODMovieProfileSelection(models.Model):
     subtitle_languages = models.JSONField(default=list, blank=True)
     resolution_height = models.PositiveIntegerField(default=0)
     container_extension = models.CharField(max_length=10, blank=True)
+    edition_key = models.CharField(max_length=48, blank=True, db_index=True)
+    edition_name = models.CharField(max_length=120, blank=True)
+    edition_suffix = models.CharField(max_length=120, blank=True)
+    output_name = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -670,6 +699,10 @@ class VODSeriesProfileSelection(models.Model):
     subtitle_languages = models.JSONField(default=list, blank=True)
     resolution_height = models.PositiveIntegerField(default=0)
     container_extension = models.CharField(max_length=10, blank=True)
+    edition_key = models.CharField(max_length=48, blank=True, db_index=True)
+    edition_name = models.CharField(max_length=120, blank=True)
+    edition_suffix = models.CharField(max_length=120, blank=True)
+    output_name = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

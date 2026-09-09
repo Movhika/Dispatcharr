@@ -1,5 +1,6 @@
-"""VOD visibility, compact selection and failover-compatible ranking."""
+"""VOD visibility, edition grouping and failover-compatible ranking."""
 
+import hashlib
 import re
 
 from django.db.models import Q
@@ -13,6 +14,14 @@ from .metadata import (
 )
 from .models import M3UVODCategoryRelation, VODAccessPolicy
 from .utils import get_vod_source_name
+
+
+DEFAULT_EDITION = {
+    "key": "default",
+    "rule_id": "",
+    "name": "",
+    "suffix": "",
+}
 
 
 def policy_for_user(user):
@@ -204,6 +213,101 @@ def _stream_filter_metadata_matches(rule, metadata):
         if compatible_required.isdisjoint(observed_features):
             return False
     return True
+
+
+def _edition_match_relation(relation):
+    """Use the parent series source when classifying an episode edition."""
+    return getattr(relation, "series_relation", None) or relation
+
+
+def _edition_rule_matches(relation, rule, metadata):
+    match_field = str(rule.get("match_field") or "any")
+    expression = str(rule.get("regex_pattern") or "")
+    if match_field in {"category", "stream"} and expression:
+        flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
+        try:
+            pattern = re.compile(expression, flags)
+        except re.error:
+            return False
+        category = relation_category(relation)
+        target = (
+            getattr(category, "name", "") or ""
+            if match_field == "category"
+            else _relation_source_name(relation)
+        )
+        if pattern.search(target) is None:
+            return False
+
+    min_resolution = _constraint_int(rule, "min_resolution")
+    max_resolution = _constraint_int(rule, "max_resolution")
+    resolution = _vertical_resolution(metadata)
+    if (min_resolution or max_resolution) and not resolution:
+        return False
+    if min_resolution and resolution < min_resolution:
+        return False
+    if max_resolution and resolution > max_resolution:
+        return False
+
+    required_audio = _language_set(rule.get("required_audio_languages"))
+    observed_audio = _language_set(
+        metadata.get("audio_languages") or metadata.get("languages")
+    )
+    if required_audio and required_audio.isdisjoint(observed_audio):
+        return False
+    required_subtitles = _language_set(rule.get("required_subtitle_languages"))
+    observed_subtitles = _language_set(metadata.get("subtitle_languages"))
+    if required_subtitles and required_subtitles.isdisjoint(observed_subtitles):
+        return False
+
+    observed_features = set(
+        normalize_video_features(metadata.get("video_features"))
+    )
+    for required in normalize_video_features(
+        rule.get("required_video_features")
+    ):
+        if set(compatible_video_features(required)).isdisjoint(observed_features):
+            return False
+    return True
+
+
+def relation_edition(
+    relation,
+    policy,
+    category_mapping=None,
+    metadata=_METADATA_NOT_PROVIDED,
+):
+    """Return the first matching profile edition for a concrete source.
+
+    Editions are deliberately independent from provider categories. The
+    ``default`` key is the catch-all bucket for unmatched sources.
+    """
+    rules = list((policy.edition_rules if policy else None) or [])
+    if not rules:
+        return dict(DEFAULT_EDITION)
+    source_relation = _edition_match_relation(relation)
+    category_mapping = category_mapping or policy_category_map(policy)
+    if metadata is _METADATA_NOT_PROVIDED or source_relation is not relation:
+        category_relation = category_mapping.get(
+            (
+                source_relation.m3u_account_id,
+                relation_category_id(source_relation),
+            )
+        )
+        metadata = relation_metadata(source_relation, category_relation)
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict) or rule.get("enabled", True) is False:
+            continue
+        if not _edition_rule_matches(source_relation, rule, metadata):
+            continue
+        rule_id = str(rule.get("id") or index)
+        key = "ed:" + hashlib.sha1(rule_id.encode("utf-8")).hexdigest()
+        return {
+            "key": key,
+            "rule_id": rule_id,
+            "name": str(rule.get("name") or "")[:120],
+            "suffix": str(rule.get("title_suffix") or "")[:120],
+        }
+    return dict(DEFAULT_EDITION)
 
 
 def relation_stream_filter_match(relation, policy, metadata):
@@ -642,7 +746,13 @@ def select_relations_for_policy(relations, policy, canonical_field):
             metadata=metadata,
         ):
             continue
-        key = _relation_selection_key(relation, policy, canonical_field)
+        key = _relation_selection_key(
+            relation,
+            policy,
+            canonical_field,
+            metadata=metadata,
+            category_mapping=category_mapping,
+        )
         rank = relation_rank(
             relation,
             category_mapping,
@@ -669,9 +779,26 @@ def select_relations_for_policy(relations, policy, canonical_field):
     )
 
 
-def _relation_selection_key(relation, policy, canonical_field):
+def _relation_selection_key(
+    relation,
+    policy,
+    canonical_field,
+    *,
+    metadata=_METADATA_NOT_PROVIDED,
+    category_mapping=None,
+):
     if policy.export_mode == VODAccessPolicy.ExportMode.COMPACT:
-        return ("canonical", getattr(relation, canonical_field))
+        edition = relation_edition(
+            relation,
+            policy,
+            category_mapping=category_mapping,
+            metadata=metadata,
+        )
+        return (
+            "canonical",
+            getattr(relation, canonical_field),
+            edition["key"],
+        )
     # Confirmed aliases are one edition. Unlinked relations remain distinct,
     # even when raw provider IDs collide across accounts.
     if relation.source_asset_id:
@@ -726,7 +853,13 @@ def select_relation_ids_for_policy(
         ):
             continue
         eligible_count += 1
-        key = _relation_selection_key(relation, policy, canonical_field)
+        key = _relation_selection_key(
+            relation,
+            policy,
+            canonical_field,
+            metadata=metadata,
+            category_mapping=category_mapping,
+        )
         rank = relation_rank(
             relation,
             category_mapping,
@@ -747,12 +880,19 @@ def select_relation_ids_for_policy(
     return relation_ids
 
 
-def ordered_failover_candidates(candidates, policy):
+def ordered_failover_candidates(candidates, policy, preferred_relation=None):
     """Apply the same hard constraints and ranking used by Compact output."""
     if not policy:
         return list(candidates)
     category_mapping = policy_category_map(policy)
     ranked = []
+    preferred_edition_key = None
+    if preferred_relation is not None and policy.edition_rules:
+        preferred_edition_key = relation_edition(
+            preferred_relation,
+            policy,
+            category_mapping=category_mapping,
+        )["key"]
     for relation in candidates:
         category_relation = category_mapping.get(
             (relation.m3u_account_id, relation_category_id(relation))
@@ -763,6 +903,17 @@ def ordered_failover_candidates(candidates, policy):
             policy,
             category_mapping,
             metadata=metadata,
+        ):
+            continue
+        if (
+            preferred_edition_key is not None
+            and relation_edition(
+                relation,
+                policy,
+                category_mapping=category_mapping,
+                metadata=metadata,
+            )["key"]
+            != preferred_edition_key
         ):
             continue
         ranked.append(
@@ -787,7 +938,11 @@ def ordered_candidates(candidates, policy, preferred_relation=None):
     if not policy:
         ordered = list(candidates)
     else:
-        ordered = ordered_failover_candidates(candidates, policy)
+        ordered = ordered_failover_candidates(
+            candidates,
+            policy,
+            preferred_relation=preferred_relation,
+        )
     if preferred_relation and any(
         candidate.id == preferred_relation.id for candidate in ordered
     ):

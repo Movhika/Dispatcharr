@@ -673,6 +673,139 @@ class VODSourceManagementTests(TestCase):
             self.policy.selection_progress["target_export_mode"], "compact"
         )
 
+    def test_compact_editions_are_visible_in_preview_and_xc_output(self):
+        self.german_category.metadata_defaults = {
+            **self.german_category.metadata_defaults,
+            "video_features": ["3d"],
+        }
+        self.german_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.edition_rules = [
+            {
+                "id": "three-d",
+                "name": "3D",
+                "title_suffix": "3D",
+                "enabled": True,
+                "match_field": "any",
+                "regex_pattern": "",
+                "required_video_features": ["3d"],
+            },
+            {
+                "id": "ultra-hd",
+                "name": "UHD",
+                "title_suffix": "4K",
+                "enabled": True,
+                "match_field": "any",
+                "regex_pattern": "",
+                "min_resolution": 2160,
+            },
+        ]
+        self.policy.save(
+            update_fields=[
+                "hard_constraints",
+                "edition_rules",
+                "updated_at",
+            ]
+        )
+
+        counts = build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        selections = VODMovieProfileSelection.objects.filter(
+            policy=self.policy,
+            generation=self.policy.active_selection_generation,
+        ).order_by("edition_name")
+
+        self.assertEqual(counts["movies"]["canonical_titles"], 1)
+        self.assertEqual(counts["movies"]["output_entries"], 2)
+        self.assertEqual(
+            list(selections.values_list("edition_name", "output_name")),
+            [
+                ("3D", "Avatar (2005) 3D"),
+                ("UHD", "Avatar (2005) 4K"),
+            ],
+        )
+
+        admin = get_user_model().objects.create_user(
+            username="edition-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        preview_request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(preview_request, user=admin)
+        preview_response = VODAccessPolicyViewSet.as_view(
+            {"get": "selections"}
+        )(preview_request, pk=self.policy.id)
+
+        self.assertEqual(preview_response.status_code, 200, preview_response.data)
+        self.assertEqual(preview_response.data["count"], 2)
+        self.assertEqual(
+            {row["name"] for row in preview_response.data["results"]},
+            {"Avatar (2005) 3D", "Avatar (2005) 4K"},
+        )
+
+        user = get_user_model().objects.create_user(
+            username="edition-client",
+            password="test-password",
+        )
+        self.policy.users.add(user)
+        client_rows = xc_get_vod_streams(
+            RequestFactory().get("/player_api.php"),
+            user,
+        )
+        self.assertEqual(
+            {row["name"] for row in client_rows},
+            {"Avatar (2005) 3D", "Avatar (2005) 4K"},
+        )
+
+        failover = ordered_failover_candidates(
+            [self.german_relation, self.english_relation],
+            self.policy,
+            preferred_relation=self.german_relation,
+        )
+        self.assertEqual(
+            [relation.id for relation in failover],
+            [self.german_relation.id],
+        )
+
+    def test_variants_can_use_canonical_edition_names_without_collapsing(self):
+        self.german_category.metadata_defaults = {
+            **self.german_category.metadata_defaults,
+            "video_features": ["3d"],
+        }
+        self.german_category.save(update_fields=["metadata_defaults"])
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.naming_mode = VODAccessPolicy.NamingMode.CANONICAL
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.edition_rules = [
+            {
+                "id": "three-d",
+                "name": "3D",
+                "title_suffix": "3D",
+                "enabled": True,
+                "match_field": "any",
+                "required_video_features": ["3d"],
+            }
+        ]
+        self.policy.save()
+
+        counts = build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        names = set(
+            VODMovieProfileSelection.objects.filter(
+                policy=self.policy,
+                generation=self.policy.active_selection_generation,
+            ).values_list("output_name", flat=True)
+        )
+
+        self.assertEqual(counts["movies"]["output_entries"], 2)
+        self.assertEqual(
+            names,
+            {"Avatar (2005)", "Avatar (2005) 3D"},
+        )
+
     def test_switching_variants_to_compact_activates_compact_generation(self):
         unrestricted = {"allow_unknown_metadata": True}
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
@@ -1504,6 +1637,37 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("hard_constraints", serializer.errors)
+
+    def test_profile_rejects_duplicate_edition_matches(self):
+        rule = {
+            "match_field": "any",
+            "min_resolution": 2160,
+            "required_video_features": ["hdr"],
+        }
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Duplicate editions",
+                "edition_rules": [
+                    {**rule, "id": "uhd-a", "name": "UHD A"},
+                    {**rule, "id": "uhd-b", "name": "UHD B"},
+                ],
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("edition_rules", serializer.errors)
+
+    def test_profile_rejects_unknown_title_template_placeholders(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Invalid title template",
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": "{canonical} {unknown_value}",
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("name_template", serializer.errors)
 
     def test_profile_keeps_simplified_stream_filter_payload_compact(self):
         serializer = VODAccessPolicySerializer(

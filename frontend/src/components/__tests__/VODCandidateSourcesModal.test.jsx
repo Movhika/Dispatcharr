@@ -94,6 +94,7 @@ describe('VODCandidateSourcesModal', () => {
         contentType="movie"
         canonicalId={3}
         currentRelationId={12}
+        editionKey="ed:three-d"
       />
     );
 
@@ -102,6 +103,7 @@ describe('VODCandidateSourcesModal', () => {
         type: 'movie',
         canonical_id: 3,
         current_relation_id: 12,
+        edition_key: 'ed:three-d',
       })
     );
     expect(await screen.findByText('Example Movie Hindi')).toBeInTheDocument();

@@ -1113,7 +1113,10 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         )
         search = request.query_params.get("search", "").strip()
         if search:
-            queryset = queryset.filter(**{f"{canonical}__name__icontains": search})
+            queryset = queryset.filter(
+                Q(output_name__icontains=search)
+                | Q(**{f"{canonical}__name__icontains": search})
+            )
         if request.query_params.get("m3u_account"):
             queryset = queryset.filter(
                 relation__m3u_account_id=request.query_params["m3u_account"]
@@ -1211,10 +1214,12 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "id": row.id,
                     "content_type": content_type,
                     "canonical_id": content.id,
-                    "name": (
+                    "name": row.output_name
+                    or (
                         canonical_output_name(
                             content.name,
                             display_name=content.display_name,
+                            year=content.year,
                         )
                         if policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
                         else source_name
@@ -1229,6 +1234,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "metadata": row.effective_metadata,
                     "resolution": row.resolution_height,
                     "container_extension": row.container_extension,
+                    "edition_key": row.edition_key,
+                    "edition_name": row.edition_name,
+                    "edition_suffix": row.edition_suffix,
                 }
             )
         return Response(
@@ -1302,6 +1310,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         from .policies import (
             policy_category_map,
             relation_category,
+            relation_edition,
             relation_metadata,
             relation_policy_evaluation,
             relation_rank,
@@ -1309,6 +1318,28 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         from .utils import canonical_output_name, get_vod_source_name
 
         category_mapping = policy_category_map(policy)
+        requested_edition_key = str(
+            request.query_params.get("edition_key") or ""
+        )
+        current_relation_id = request.query_params.get("current_relation_id")
+        try:
+            current_relation_id = int(current_relation_id)
+        except (TypeError, ValueError):
+            current_relation_id = None
+        current_relation = next(
+            (
+                relation
+                for relation in relations
+                if relation.id == current_relation_id
+            ),
+            None,
+        )
+        if not requested_edition_key and current_relation is not None:
+            requested_edition_key = relation_edition(
+                current_relation,
+                policy,
+                category_mapping=category_mapping,
+            )["key"]
         evaluated = []
         for relation in relations:
             category = relation_category(relation)
@@ -1322,11 +1353,27 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 category_mapping=category_mapping,
                 metadata=metadata,
             )
+            edition = relation_edition(
+                relation,
+                policy,
+                category_mapping=category_mapping,
+                metadata=metadata,
+            )
             if not relation.m3u_account.is_active:
                 evaluation = {
                     "allowed": False,
                     "reason": "provider_inactive",
                     "rule_id": "",
+                }
+            elif (
+                requested_edition_key
+                and edition["key"] != requested_edition_key
+                and evaluation["allowed"]
+            ):
+                evaluation = {
+                    "allowed": False,
+                    "reason": "different_edition",
+                    "rule_id": edition["rule_id"],
                 }
             evaluated.append(
                 (
@@ -1340,6 +1387,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     category,
                     metadata,
                     evaluation,
+                    edition,
                 )
             )
 
@@ -1355,14 +1403,10 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 entry[1].id,
             ),
         )
-        current_relation_id = request.query_params.get("current_relation_id")
-        try:
-            current_relation_id = int(current_relation_id)
-        except (TypeError, ValueError):
-            current_relation_id = None
-
         rows = []
-        for position, (_, relation, category, metadata, evaluation) in enumerate(
+        for position, (
+            _, relation, category, metadata, evaluation, edition
+        ) in enumerate(
             eligible + excluded,
             start=1,
         ):
@@ -1422,6 +1466,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "current": relation.id == current_relation_id,
                     "reason": evaluation["reason"],
                     "rule_id": evaluation["rule_id"],
+                    "edition_key": edition["key"],
+                    "edition_name": edition["name"],
+                    "edition_suffix": edition["suffix"],
                 }
             )
 
@@ -1439,6 +1486,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 "content_type": content_type,
                 "canonical_id": canonical.id,
                 "canonical_name": canonical_name,
+                "edition_key": requested_edition_key,
                 "count": len(rows),
                 "eligible_count": len(eligible),
                 "results": rows,

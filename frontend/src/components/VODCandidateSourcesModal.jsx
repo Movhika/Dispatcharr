@@ -35,6 +35,7 @@ const REASON_LABELS = {
   feature_unknown: 'Video features unknown',
   feature_not_matched: 'Required feature not matched',
   provider_inactive: 'Provider inactive',
+  different_edition: 'Belongs to a different edition',
 };
 
 const metadataList = (metadata, primary, fallback) => {
@@ -56,6 +57,7 @@ const VODCandidateSourcesModal = ({
   contentType,
   canonicalId,
   currentRelationId,
+  editionKey,
   title,
   onSwitch,
 }) => {
@@ -73,6 +75,7 @@ const VODCandidateSourcesModal = ({
       type: contentType,
       canonical_id: canonicalId,
       ...(currentRelationId ? { current_relation_id: currentRelationId } : {}),
+      ...(editionKey ? { edition_key: editionKey } : {}),
     })
       .then((response) => {
         if (!cancelled) setData(response);
@@ -92,7 +95,14 @@ const VODCandidateSourcesModal = ({
     return () => {
       cancelled = true;
     };
-  }, [canonicalId, contentType, currentRelationId, opened, profileId]);
+  }, [
+    canonicalId,
+    contentType,
+    currentRelationId,
+    editionKey,
+    opened,
+    profileId,
+  ]);
 
   const heading = useMemo(
     () => title || data?.canonical_name || 'Compact source order',
@@ -128,9 +138,10 @@ const VODCandidateSourcesModal = ({
     >
       <Stack>
         <Alert color="blue">
-          Eligible sources are shown in the exact profile order. Runtime
-          capacity is checked again when playback opens a provider connection;
-          excluded sources remain visible in gray with the reason.
+          Eligible sources for this edition are shown in the exact profile
+          order. Runtime capacity is checked again when playback opens a
+          provider connection; sources from other editions and excluded sources
+          remain visible in gray with the reason.
         </Alert>
         {onSwitch && (
           <Text size="sm" c="dimmed">
@@ -155,6 +166,7 @@ const VODCandidateSourcesModal = ({
                 <TableTr>
                   <TableTh>Order</TableTh>
                   <TableTh>Source</TableTh>
+                  <TableTh>Edition</TableTh>
                   <TableTh>M3U account / category</TableTh>
                   <TableTh>DUB</TableTh>
                   <TableTh>SUB</TableTh>
@@ -168,7 +180,7 @@ const VODCandidateSourcesModal = ({
               <TableTbody>
                 {!data?.results?.length && (
                   <TableTr>
-                    <TableTd colSpan={onSwitch ? 10 : 9}>
+                    <TableTd colSpan={onSwitch ? 11 : 10}>
                       <Text ta="center" c="dimmed" py="lg">
                         No sources found for this title.
                       </Text>
@@ -207,6 +219,14 @@ const VODCandidateSourcesModal = ({
                             Provider ID: {row.provider_asset_id}
                           </Text>
                         )}
+                      </TableTd>
+                      <TableTd>
+                        <Badge
+                          variant="light"
+                          color={row.edition_name ? 'violet' : 'gray'}
+                        >
+                          {row.edition_name || 'Default'}
+                        </Badge>
                       </TableTd>
                       <TableTd>
                         <Text size="sm">{row.m3u_account_name}</Text>

@@ -2,6 +2,8 @@
 
 import re
 
+from .metadata import normalize_language_list
+
 
 def _first_text(*values):
     for value in values:
@@ -38,6 +40,76 @@ def canonical_output_name(name, *, display_name="", year=None):
     if year and not re.search(rf"\({re.escape(str(year))}\)\s*$", result):
         result = f"{result} ({year})"
     return result
+
+
+def policy_output_name(
+    content,
+    relation,
+    policy,
+    *,
+    edition=None,
+    metadata=None,
+):
+    """Render a profile title without mutating canonical or provider data."""
+    edition = edition or {}
+    metadata = metadata or {}
+    provider = get_vod_source_name(relation, getattr(content, "name", "") or "")
+    canonical = canonical_output_name(
+        getattr(content, "name", "") or "",
+        display_name=getattr(content, "display_name", "") or "",
+        year=getattr(content, "year", None),
+    )
+    title = canonical_output_name(
+        getattr(content, "name", "") or "",
+        display_name=getattr(content, "display_name", "") or "",
+    )
+    suffix = str(edition.get("suffix") or "").strip()
+    naming_mode = getattr(policy, "naming_mode", "mode_default")
+    if naming_mode == "provider":
+        return provider
+    if naming_mode == "mode_default":
+        if getattr(policy, "export_mode", "compact") == "variants":
+            return provider
+        return " ".join(part for part in (canonical, suffix) if part).strip()
+    if naming_mode == "canonical":
+        return " ".join(part for part in (canonical, suffix) if part).strip()
+
+    values = {
+        "canonical": canonical,
+        "title": title,
+        "year": str(getattr(content, "year", None) or ""),
+        "edition": suffix,
+        "edition_name": str(edition.get("name") or ""),
+        "provider": str(getattr(relation.m3u_account, "name", "") or ""),
+        "source": provider,
+        "dub": "+".join(
+            code.upper()
+            for code in normalize_language_list(
+                metadata.get("audio_languages") or metadata.get("languages")
+            )
+        ),
+        "sub": "+".join(
+            code.upper()
+            for code in normalize_language_list(metadata.get("subtitle_languages"))
+        ),
+        "resolution": str(
+            metadata.get("height")
+            or metadata.get("resolution")
+            or metadata.get("quality")
+            or ""
+        ),
+        "format": str(
+            metadata.get("container_extension")
+            or getattr(relation, "container_extension", "")
+            or ""
+        ).lower(),
+    }
+    template = getattr(policy, "name_template", "") or "{canonical} {edition}"
+    try:
+        rendered = template.format_map(values)
+    except (KeyError, ValueError):
+        rendered = " ".join(part for part in (canonical, suffix) if part)
+    return re.sub(r"\s+", " ", rendered).strip() or provider or canonical
 
 
 def _relation_metadata(relation_or_properties):

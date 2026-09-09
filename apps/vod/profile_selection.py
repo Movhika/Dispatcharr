@@ -23,9 +23,11 @@ from .policies import (
     _vertical_resolution,
     allowed_category_query,
     policy_category_map,
+    relation_edition,
     relation_metadata,
     select_relation_ids_for_policy,
 )
+from .utils import policy_output_name
 
 logger = logging.getLogger(__name__)
 BUILD_CHUNK_SIZE = 5000
@@ -96,6 +98,9 @@ def profile_selection_signature(policy):
         "hard_constraints": policy.hard_constraints or {},
         "ranking": policy.ranking or [],
         "provider_order": policy.provider_order or [],
+        "edition_rules": policy.edition_rules or [],
+        "naming_mode": policy.naming_mode,
+        "name_template": policy.name_template,
         "category_rules": category_rules,
     }
     encoded = json.dumps(
@@ -115,7 +120,7 @@ def _validate_selection_counts(policy, counts):
         content_counts = counts.get(content_type) or {}
         output_entries = int(content_counts.get("output_entries") or 0)
         canonical_titles = int(content_counts.get("canonical_titles") or 0)
-        if output_entries != canonical_titles:
+        if output_entries < canonical_titles:
             raise RuntimeError(
                 f"Compact {content_type} build produced {output_entries} "
                 f"output entries for {canonical_titles} titles"
@@ -281,7 +286,12 @@ def _selection_rows_for_canonical_ids(
             **{f"{canonical_field}__in": canonical_ids},
         )
         .filter(allowed_category_query(policy))
-        .select_related("m3u_account", "source_asset")
+        .select_related(
+            "m3u_account",
+            "source_asset",
+            "category",
+            canonical_field.removesuffix("_id"),
+        )
         .order_by("pk")
     )
     selected_ids = select_relation_ids_for_policy(
@@ -290,7 +300,10 @@ def _selection_rows_for_canonical_ids(
         canonical_field,
     )
     relations = relation_model.objects.filter(pk__in=selected_ids).select_related(
-        "source_asset"
+        "m3u_account",
+        "source_asset",
+        "category",
+        canonical_field.removesuffix("_id"),
     )
     rows = []
     for relation in relations:
@@ -308,6 +321,13 @@ def _selection_rows_for_canonical_ids(
                 category_id=relation.category_id,
                 **{canonical_field: getattr(relation, canonical_field)},
                 **_metadata_columns(metadata, relation),
+                **_edition_columns(
+                    policy,
+                    relation,
+                    getattr(relation, canonical_field.removesuffix("_id")),
+                    metadata,
+                    category_mapping,
+                ),
             )
         )
     return rows
@@ -519,6 +539,27 @@ def _metadata_columns(metadata, relation):
     }
 
 
+def _edition_columns(policy, relation, content, metadata, category_mapping):
+    edition = relation_edition(
+        relation,
+        policy,
+        category_mapping=category_mapping,
+        metadata=metadata,
+    )
+    return {
+        "edition_key": edition["key"],
+        "edition_name": edition["name"],
+        "edition_suffix": edition["suffix"],
+        "output_name": policy_output_name(
+            content,
+            relation,
+            policy,
+            edition=edition,
+            metadata=metadata,
+        )[:500],
+    }
+
+
 def _build_type(
     policy,
     generation,
@@ -539,7 +580,12 @@ def _build_type(
             m3u_account__is_active=True,
         )
         .filter(allowed_category_query(policy))
-        .select_related("m3u_account", "source_asset")
+        .select_related(
+            "m3u_account",
+            "source_asset",
+            "category",
+            canonical.removesuffix("_id"),
+        )
         .order_by("pk")
     )
     candidate_total = candidates.count()
@@ -601,7 +647,12 @@ def _build_type(
         relation_chunk = list(
             relation_model.objects.filter(
                 pk__in=selected_ids[offset : offset + BUILD_CHUNK_SIZE]
-            ).select_related("source_asset")
+            ).select_related(
+                "m3u_account",
+                "source_asset",
+                "category",
+                canonical.removesuffix("_id"),
+            )
         )
         rows = []
         for relation in relation_chunk:
@@ -627,6 +678,13 @@ def _build_type(
                 "category_id": relation.category_id,
                 canonical: canonical_id,
                 **metadata_columns,
+                **_edition_columns(
+                    policy,
+                    relation,
+                    getattr(relation, canonical.removesuffix("_id")),
+                    metadata,
+                    category_mapping,
+                ),
             }
             rows.append(selection_model(**values))
         selection_model.objects.bulk_create(rows, batch_size=1000)
@@ -831,6 +889,12 @@ def build_vod_profile_selection(policy_id):
         VODSeriesProfileSelection.objects.filter(policy=policy).exclude(
             generation=generation
         ).delete()
+        # A client may have requested the previous active generation while
+        # this build was running. Publish the newly activated snapshots under
+        # a fresh XC cache generation without invalidating this selection.
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation(invalidate_selections=False)
         return counts
     except CatalogChangedDuringBuild as exc:
         VODMovieProfileSelection.objects.filter(
@@ -871,13 +935,17 @@ def build_vod_profile_selection(policy_id):
         raise
 
 
-def prepared_relation_ids(
+def prepared_relation_rows(
     policy,
     relation_model,
     relation_filters,
     selection_filters=None,
 ):
-    """Return prepared relation IDs or ``None`` for a stale/missing build."""
+    """Return prepared output snapshots keyed by relation ID.
+
+    ``None`` means there is no activated generation and callers must use the
+    cold selector. An empty mapping is a valid prepared result.
+    """
     state = VODAccessPolicy.objects.filter(pk=policy.pk).values(
         "selection_status",
         "active_selection_generation",
@@ -901,10 +969,45 @@ def prepared_relation_ids(
         f"relation__{key}": value for key, value in relation_filters.items()
     }
     prefixed_filters.update(selection_filters or {})
-    return list(
-        selection_model.objects.filter(
-            policy_id=policy.pk,
-            generation=state["active_selection_generation"],
-            **prefixed_filters,
-        ).values_list("relation_id", flat=True)
+    rows = selection_model.objects.filter(
+        policy_id=policy.pk,
+        generation=state["active_selection_generation"],
+        **prefixed_filters,
+    ).values(
+        "relation_id",
+        "edition_key",
+        "edition_name",
+        "edition_suffix",
+        "output_name",
     )
+    return {row["relation_id"]: row for row in rows}
+
+
+def prepared_relation_ids(
+    policy,
+    relation_model,
+    relation_filters,
+    selection_filters=None,
+):
+    """Return prepared relation IDs or ``None`` for a stale/missing build."""
+    rows = prepared_relation_rows(
+        policy,
+        relation_model,
+        relation_filters,
+        selection_filters=selection_filters,
+    )
+    if rows is None:
+        return None
+    return list(rows)
+
+
+def prepared_relation_snapshot(policy, relation_model, relation_id):
+    """Return one activated output snapshot for detail responses."""
+    rows = prepared_relation_rows(
+        policy,
+        relation_model,
+        {"pk": relation_id},
+    )
+    if rows is None:
+        return None
+    return rows.get(relation_id)

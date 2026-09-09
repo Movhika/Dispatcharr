@@ -1,4 +1,5 @@
 import re
+import string
 
 from rest_framework import serializers
 from django.db import transaction
@@ -440,7 +441,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         model = VODAccessPolicy
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
-            "hard_constraints", "ranking", "provider_order", "users",
+            "hard_constraints", "ranking", "provider_order", "edition_rules",
+            "naming_mode", "name_template", "users",
             "category_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",
@@ -580,6 +582,118 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 )
             if account_id not in normalized:
                 normalized.append(account_id)
+        return normalized
+
+    def validate_name_template(self, value):
+        template = str(value or "").strip()
+        allowed = {
+            "canonical", "title", "year", "edition", "edition_name",
+            "provider", "source", "dub", "sub", "resolution", "format",
+        }
+        try:
+            fields = {
+                field_name
+                for _literal, field_name, _format_spec, _conversion in (
+                    string.Formatter().parse(template)
+                )
+                if field_name
+            }
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        if fields - allowed:
+            raise serializers.ValidationError(
+                "Unsupported placeholders: " + ", ".join(sorted(fields - allowed))
+            )
+        return template
+
+    def validate_edition_rules(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be an ordered list")
+        normalized = []
+        seen_ids = set()
+        seen_matches = set()
+        for index, raw_rule in enumerate(value):
+            if not isinstance(raw_rule, dict):
+                raise serializers.ValidationError(
+                    {index: "Must be an object"}
+                )
+            rule_id = str(raw_rule.get("id") or f"edition-{index}")[:120]
+            if rule_id in seen_ids:
+                raise serializers.ValidationError({index: "Duplicate rule ID"})
+            seen_ids.add(rule_id)
+            match_field = str(raw_rule.get("match_field") or "any")
+            if match_field not in {"any", "category", "stream"}:
+                raise serializers.ValidationError(
+                    {index: {"match_field": "Use any, category, or stream"}}
+                )
+            regex_pattern = str(raw_rule.get("regex_pattern") or "")
+            try:
+                re.compile(regex_pattern)
+            except re.error as exc:
+                raise serializers.ValidationError(
+                    {index: {"regex_pattern": str(exc)}}
+                )
+            try:
+                min_resolution = max(
+                    0, int(raw_rule.get("min_resolution") or 0)
+                )
+                max_resolution = max(
+                    0, int(raw_rule.get("max_resolution") or 0)
+                )
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {index: "Resolution values must be non-negative integers"}
+                )
+            if min_resolution and max_resolution and min_resolution > max_resolution:
+                raise serializers.ValidationError(
+                    {index: "Minimum resolution cannot exceed maximum resolution"}
+                )
+            audio = normalize_language_list(
+                raw_rule.get("required_audio_languages") or []
+            )
+            subtitles = normalize_language_list(
+                raw_rule.get("required_subtitle_languages") or []
+            )
+            try:
+                validate_source_metadata(
+                    {"audio_languages": audio, "subtitle_languages": subtitles}
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError({index: str(exc)})
+            features = normalize_video_features(
+                raw_rule.get("required_video_features") or []
+            )
+            duplicate_key = (
+                match_field,
+                regex_pattern,
+                bool(raw_rule.get("case_sensitive", False)),
+                min_resolution,
+                max_resolution,
+                tuple(audio),
+                tuple(subtitles),
+                tuple(features),
+            )
+            if duplicate_key in seen_matches:
+                raise serializers.ValidationError(
+                    {index: "Duplicate edition match"}
+                )
+            seen_matches.add(duplicate_key)
+            normalized.append(
+                {
+                    "id": rule_id,
+                    "name": str(raw_rule.get("name") or f"Edition {index + 1}")[:120],
+                    "title_suffix": str(raw_rule.get("title_suffix") or "")[:120],
+                    "enabled": bool(raw_rule.get("enabled", True)),
+                    "match_field": match_field,
+                    "regex_pattern": regex_pattern,
+                    "case_sensitive": bool(raw_rule.get("case_sensitive", False)),
+                    "min_resolution": min_resolution,
+                    "max_resolution": max_resolution,
+                    "required_audio_languages": audio,
+                    "required_subtitle_languages": subtitles,
+                    "required_video_features": features,
+                }
+            )
         return normalized
 
     def validate_hard_constraints(self, value):

@@ -43,6 +43,7 @@ import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
 import VODSourceRules from './VODSourceRules.jsx';
+import VODEditionRules from './VODEditionRules.jsx';
 import VODCandidateSourcesModal from './VODCandidateSourcesModal.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
@@ -59,6 +60,9 @@ const EMPTY_PROFILE = {
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
   provider_order: [],
+  edition_rules: [],
+  naming_mode: 'mode_default',
+  name_template: '{canonical} {edition}',
   category_rules: [],
 };
 
@@ -159,6 +163,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         source.ranking || EMPTY_PROFILE.ranking
       ),
       provider_order: source.provider_order || [],
+      edition_rules: source.edition_rules || [],
+      naming_mode: source.naming_mode || 'mode_default',
+      name_template: source.name_template || '{canonical} {edition}',
       category_rules: source.category_rules || [],
     });
   };
@@ -342,6 +349,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           .filter(
             (providerId) => Number.isInteger(providerId) && providerId > 0
           ),
+        edition_rules: (draft.edition_rules || []).map((rule) => ({
+          ...rule,
+          required_audio_languages: normalizeLanguageCodes(
+            rule.required_audio_languages || []
+          ),
+          required_subtitle_languages: normalizeLanguageCodes(
+            rule.required_subtitle_languages || []
+          ),
+          required_video_features: rule.required_video_features || [],
+        })),
+        naming_mode: draft.naming_mode,
+        name_template: draft.name_template,
         category_rules: relationIds(draft).map((category_relation) => ({
           category_relation: Number(category_relation),
           enabled: true,
@@ -735,6 +754,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
               <TabsTab value="sources">Sources</TabsTab>
+              <TabsTab value="editions">Editions</TabsTab>
               <TabsTab value="failover">Failover</TabsTab>
               <TabsTab value="preview">Content preview</TabsTab>
             </TabsList>
@@ -850,6 +870,73 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }
                   />
                 </Paper>
+              </ScrollArea>
+            </TabsPanel>
+
+            <TabsPanel value="editions" pt="md">
+              <ScrollArea h="calc(96vh - 270px)">
+                <Stack gap="lg">
+                  <Paper
+                    withBorder
+                    p="lg"
+                    radius="md"
+                    maw={1100}
+                    mx="auto"
+                    w="100%"
+                  >
+                    <Stack>
+                      <Text fw={700}>Output naming</Text>
+                      <Select
+                        label="Title source"
+                        data={[
+                          {
+                            value: 'mode_default',
+                            label:
+                              'Mode default — canonical for Compact, provider title for Variants',
+                          },
+                          {
+                            value: 'provider',
+                            label:
+                              'Provider title — unchanged original source name',
+                          },
+                          {
+                            value: 'canonical',
+                            label: 'Canonical title + edition suffix',
+                          },
+                          {
+                            value: 'template',
+                            label: 'Custom template',
+                          },
+                        ]}
+                        value={draft.naming_mode}
+                        onChange={(naming_mode) =>
+                          setDraft({ ...draft, naming_mode })
+                        }
+                      />
+                      {draft.naming_mode === 'template' && (
+                        <TextInput
+                          label="Name template"
+                          description="Available: {canonical}, {title}, {year}, {edition}, {edition_name}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}"
+                          value={draft.name_template}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              name_template: event.currentTarget.value,
+                            })
+                          }
+                        />
+                      )}
+                    </Stack>
+                  </Paper>
+                  <Paper withBorder p="lg" radius="md">
+                    <VODEditionRules
+                      value={draft.edition_rules}
+                      onChange={(edition_rules) =>
+                        setDraft((current) => ({ ...current, edition_rules }))
+                      }
+                    />
+                  </Paper>
+                </Stack>
               </ScrollArea>
             </TabsPanel>
 
@@ -999,6 +1086,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <TableThead>
                       <TableTr>
                         <TableTh>Title</TableTh>
+                        <TableTh>Edition</TableTh>
                         <TableTh>Source</TableTh>
                         <TableTh>Category</TableTh>
                         <TableTh>DUB</TableTh>
@@ -1012,7 +1100,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <TableTbody>
                       {!previewLoading && preview.results?.length === 0 && (
                         <TableTr>
-                          <TableTd colSpan={activeMode === 'compact' ? 9 : 8}>
+                          <TableTd colSpan={activeMode === 'compact' ? 10 : 9}>
                             <Text ta="center" c="dimmed" py="lg">
                               No prepared output matches the current filters.
                             </Text>
@@ -1021,10 +1109,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       )}
                       {(preview.results || []).map((row) => (
                         <TableTr key={row.id}>
-                          <TableTd>
-                            {row.name}
-                            {row.year ? ` (${row.year})` : ''}
-                          </TableTd>
+                          <TableTd>{row.name}</TableTd>
+                          <TableTd>{row.edition_name || 'Default'}</TableTd>
                           <TableTd>
                             {row.m3u_account_name} — {row.source_name}
                           </TableTd>
@@ -1098,6 +1184,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         profileId={selectedProfile?.id}
         contentType={candidateTarget?.content_type || filters.type}
         canonicalId={candidateTarget?.canonical_id}
+        currentRelationId={candidateTarget?.relation_id}
+        editionKey={candidateTarget?.edition_key}
         title={candidateTarget?.name}
       />
     </>
