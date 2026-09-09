@@ -88,6 +88,11 @@ vi.mock('@mantine/core', () => {
     </label>
   );
   return {
+    ActionIcon: ({ children, onClick, 'aria-label': ariaLabel }) => (
+      <button aria-label={ariaLabel} onClick={onClick}>
+        {children}
+      </button>
+    ),
     Alert: Wrapper,
     Badge: Wrapper,
     Box: Wrapper,
@@ -232,6 +237,7 @@ describe('VODOutputProfilesModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    upsertAccessPolicy.mockReset();
     storeProfiles = [profile];
     API.createVODAccessPolicy.mockResolvedValue({
       ...profile,
@@ -385,6 +391,53 @@ describe('VODOutputProfilesModal', () => {
     expect(
       screen.getByText(/preparation usually about 1m 18s after it starts/)
     ).toBeInTheDocument();
+  });
+
+  it('uses automatic mode naming and simple suffix rules', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    await screen.findByDisplayValue('German HD');
+
+    expect(screen.queryByLabelText('Title source')).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Custom output title format (optional)')
+    ).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Add edition' }));
+
+    expect(screen.getByLabelText('Output suffix')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Edition')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Name match')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Expression')).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Case-sensitive expression')
+    ).not.toBeInTheDocument();
+  });
+
+  it('publishes visible pending progress as soon as save starts', async () => {
+    let finishSave;
+    API.updateVODAccessPolicy.mockReturnValue(
+      new Promise((resolve) => {
+        finishSave = resolve;
+      })
+    );
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    await screen.findByDisplayValue('German HD');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(upsertAccessPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 7,
+        selection_status: 'pending',
+        selection_progress: expect.objectContaining({
+          phase: 'Saving profile and publishing catalog update',
+          percent: 0,
+        }),
+      })
+    );
+    finishSave(profile);
+    await waitFor(() =>
+      expect(upsertAccessPolicy).toHaveBeenLastCalledWith(profile)
+    );
   });
 
   it('does not overwrite an edited draft when profile status is polled', async () => {

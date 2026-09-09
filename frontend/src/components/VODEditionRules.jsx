@@ -34,12 +34,8 @@ import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import { RESOLUTION_LIMIT_OPTIONS } from '../utils/vodMetadataOptions.js';
 
 const RULE_DEFAULTS = {
-  name: '',
   title_suffix: '',
   enabled: true,
-  match_field: 'any',
-  regex_pattern: '',
-  case_sensitive: false,
   min_resolution: 0,
   max_resolution: 0,
   required_audio_languages: [],
@@ -61,8 +57,6 @@ const SortableEdition = ({ rule, update, remove }) => {
     transition,
     isDragging,
   } = useSortable({ id: rule.id });
-  const expressionDisabled = rule.match_field === 'any';
-
   return (
     <Paper
       ref={setNodeRef}
@@ -78,7 +72,7 @@ const SortableEdition = ({ rule, update, remove }) => {
     >
       <Group align="flex-end" wrap="wrap">
         <ActionIcon
-          aria-label={`Move edition ${rule.name || 'rule'}`}
+          aria-label={`Move edition ${rule.title_suffix || 'rule'}`}
           variant="subtle"
           color="gray"
           mb={3}
@@ -89,41 +83,14 @@ const SortableEdition = ({ rule, update, remove }) => {
           <GripVertical size={17} />
         </ActionIcon>
         <TextInput
-          label="Edition"
-          placeholder="For example 3D"
-          value={rule.name}
-          onChange={(event) => update({ name: event.currentTarget.value })}
-          w={170}
-        />
-        <TextInput
-          label="Title suffix"
-          placeholder="For example 3D"
+          label="Output suffix"
+          placeholder="For example 3D or 4K"
           value={rule.title_suffix}
           onChange={(event) =>
             update({ title_suffix: event.currentTarget.value })
           }
-          w={170}
-        />
-        <Select
-          label="Name match"
-          data={[
-            { value: 'any', label: 'No name condition' },
-            { value: 'category', label: 'Source category' },
-            { value: 'stream', label: 'Source title' },
-          ]}
-          value={rule.match_field}
-          onChange={(match_field) => update({ match_field })}
-          w={175}
-        />
-        <TextInput
-          label="Expression"
-          placeholder={expressionDisabled ? 'Not used' : 'Regular expression'}
-          disabled={expressionDisabled}
-          value={rule.regex_pattern}
-          onChange={(event) =>
-            update({ regex_pattern: event.currentTarget.value })
-          }
-          style={{ flex: 1, minWidth: 190 }}
+          required
+          style={{ flex: 1, minWidth: 220 }}
         />
         <Select
           label="Minimum"
@@ -140,7 +107,7 @@ const SortableEdition = ({ rule, update, remove }) => {
           w={120}
         />
         <ActionIcon
-          aria-label={`Delete edition ${rule.name || 'rule'}`}
+          aria-label={`Delete edition ${rule.title_suffix || 'rule'}`}
           color="red"
           variant="subtle"
           mb={3}
@@ -173,15 +140,6 @@ const SortableEdition = ({ rule, update, remove }) => {
             update({ required_video_features })
           }
           emptyLabel="Any feature"
-        />
-        <Switch
-          label="Case-sensitive expression"
-          disabled={expressionDisabled}
-          checked={rule.case_sensitive}
-          onChange={(event) =>
-            update({ case_sensitive: event.currentTarget.checked })
-          }
-          mb={8}
         />
         <Switch
           label="Enabled"
@@ -222,8 +180,9 @@ const VODEditionRules = ({ value = [], onChange }) => {
         <Alert icon={<Info size={16} />} color="blue" variant="light">
           <Text size="sm">
             <strong>First match wins.</strong> Compact creates one client entry
-            per canonical title and matched edition. Failover stays inside that
-            edition. Unmatched sources share the title&apos;s default edition.
+            per canonical title and suffix. Every split stays in the
+            title&apos;s output category, and failover stays inside the matching
+            suffix. Unmatched sources use the canonical title without a suffix.
           </Text>
         </Alert>
         <Button
@@ -237,7 +196,7 @@ const VODEditionRules = ({ value = [], onChange }) => {
       </Group>
       {!rules.length ? (
         <Alert color="gray">
-          No edition rules. Compact keeps one entry per canonical title.
+          No suffix rules. Compact keeps one entry per canonical title.
         </Alert>
       ) : (
         <DndContext

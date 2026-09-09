@@ -728,6 +728,10 @@ class VODSourceManagementTests(TestCase):
                 ("UHD", "Avatar (2005) 4K"),
             ],
         )
+        self.assertEqual(
+            len(set(selections.values_list("category_id", flat=True))),
+            1,
+        )
 
         admin = get_user_model().objects.create_user(
             username="edition-preview-admin",
@@ -1717,12 +1721,60 @@ class VODSourceManagementTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("edition_rules", serializer.errors)
 
+    def test_profile_editions_use_suffix_and_metadata_conditions_only(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Simple editions",
+                "edition_rules": [
+                    {
+                        "id": "uhd",
+                        "title_suffix": "4K",
+                        "match_field": "stream",
+                        "regex_pattern": "legacy expression",
+                        "case_sensitive": True,
+                        "min_resolution": 2160,
+                    }
+                ],
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["edition_rules"],
+            [
+                {
+                    "id": "uhd",
+                    "name": "4K",
+                    "title_suffix": "4K",
+                    "enabled": True,
+                    "min_resolution": 2160,
+                    "max_resolution": 0,
+                    "required_audio_languages": [],
+                    "required_subtitle_languages": [],
+                    "required_video_features": [],
+                }
+            ],
+        )
+
     def test_profile_rejects_unknown_title_template_placeholders(self):
         serializer = VODAccessPolicySerializer(
             data={
                 "name": "Invalid title template",
                 "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
                 "name_template": "{canonical} {unknown_value}",
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("name_template", serializer.errors)
+
+    def test_compact_template_rejects_source_specific_fields(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Unsafe Compact naming",
+                "export_mode": VODAccessPolicy.ExportMode.COMPACT,
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": "{canonical} {provider}",
             }
         )
 

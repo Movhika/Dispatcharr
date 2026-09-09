@@ -606,12 +606,61 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             )
         return template
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        export_mode = attrs.get(
+            "export_mode",
+            getattr(
+                self.instance,
+                "export_mode",
+                VODAccessPolicy.ExportMode.COMPACT,
+            ),
+        )
+        naming_mode = attrs.get(
+            "naming_mode",
+            getattr(
+                self.instance,
+                "naming_mode",
+                VODAccessPolicy.NamingMode.MODE_DEFAULT,
+            ),
+        )
+        template = attrs.get(
+            "name_template",
+            getattr(self.instance, "name_template", ""),
+        )
+        if naming_mode != VODAccessPolicy.NamingMode.TEMPLATE:
+            return attrs
+        if not template:
+            raise serializers.ValidationError(
+                {"name_template": "Enter a custom output title format"}
+            )
+        if export_mode == VODAccessPolicy.ExportMode.COMPACT:
+            fields = {
+                field_name
+                for _literal, field_name, _format_spec, _conversion in (
+                    string.Formatter().parse(template)
+                )
+                if field_name
+            }
+            compact_fields = {"canonical", "title", "year", "edition"}
+            if fields - compact_fields:
+                raise serializers.ValidationError(
+                    {
+                        "name_template": (
+                            "Compact output supports only {canonical}, {title}, "
+                            "{year}, and {edition}"
+                        )
+                    }
+                )
+        return attrs
+
     def validate_edition_rules(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("Must be an ordered list")
         normalized = []
         seen_ids = set()
         seen_matches = set()
+        seen_suffixes = set()
         for index, raw_rule in enumerate(value):
             if not isinstance(raw_rule, dict):
                 raise serializers.ValidationError(
@@ -621,18 +670,19 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             if rule_id in seen_ids:
                 raise serializers.ValidationError({index: "Duplicate rule ID"})
             seen_ids.add(rule_id)
-            match_field = str(raw_rule.get("match_field") or "any")
-            if match_field not in {"any", "category", "stream"}:
+            suffix = str(
+                raw_rule.get("title_suffix") or raw_rule.get("name") or ""
+            ).strip()[:120]
+            if not suffix:
                 raise serializers.ValidationError(
-                    {index: {"match_field": "Use any, category, or stream"}}
+                    {index: {"title_suffix": "Enter an output suffix"}}
                 )
-            regex_pattern = str(raw_rule.get("regex_pattern") or "")
-            try:
-                re.compile(regex_pattern)
-            except re.error as exc:
+            suffix_key = suffix.casefold()
+            if suffix_key in seen_suffixes:
                 raise serializers.ValidationError(
-                    {index: {"regex_pattern": str(exc)}}
+                    {index: {"title_suffix": "Use a unique output suffix"}}
                 )
+            seen_suffixes.add(suffix_key)
             try:
                 min_resolution = max(
                     0, int(raw_rule.get("min_resolution") or 0)
@@ -664,9 +714,6 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 raw_rule.get("required_video_features") or []
             )
             duplicate_key = (
-                match_field,
-                regex_pattern,
-                bool(raw_rule.get("case_sensitive", False)),
                 min_resolution,
                 max_resolution,
                 tuple(audio),
@@ -681,12 +728,9 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             normalized.append(
                 {
                     "id": rule_id,
-                    "name": str(raw_rule.get("name") or f"Edition {index + 1}")[:120],
-                    "title_suffix": str(raw_rule.get("title_suffix") or "")[:120],
+                    "name": suffix,
+                    "title_suffix": suffix,
                     "enabled": bool(raw_rule.get("enabled", True)),
-                    "match_field": match_field,
-                    "regex_pattern": regex_pattern,
-                    "case_sensitive": bool(raw_rule.get("case_sensitive", False)),
                     "min_resolution": min_resolution,
                     "max_resolution": max_resolution,
                     "required_audio_languages": audio,

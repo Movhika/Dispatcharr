@@ -221,23 +221,6 @@ def _edition_match_relation(relation):
 
 
 def _edition_rule_matches(relation, rule, metadata):
-    match_field = str(rule.get("match_field") or "any")
-    expression = str(rule.get("regex_pattern") or "")
-    if match_field in {"category", "stream"} and expression:
-        flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
-        try:
-            pattern = re.compile(expression, flags)
-        except re.error:
-            return False
-        category = relation_category(relation)
-        target = (
-            getattr(category, "name", "") or ""
-            if match_field == "category"
-            else _relation_source_name(relation)
-        )
-        if pattern.search(target) is None:
-            return False
-
     min_resolution = _constraint_int(rule, "min_resolution")
     max_resolution = _constraint_int(rule, "max_resolution")
     resolution = _vertical_resolution(metadata)
@@ -304,8 +287,12 @@ def relation_edition(
         return {
             "key": key,
             "rule_id": rule_id,
-            "name": str(rule.get("name") or "")[:120],
-            "suffix": str(rule.get("title_suffix") or "")[:120],
+            "name": str(
+                rule.get("title_suffix") or rule.get("name") or ""
+            )[:120],
+            "suffix": str(
+                rule.get("title_suffix") or rule.get("name") or ""
+            )[:120],
         }
     return dict(DEFAULT_EDITION)
 
@@ -813,12 +800,15 @@ def select_relation_ids_for_policy(
     stats=None,
     progress_callback=None,
     progress_interval=5000,
+    output_category_ids=None,
 ):
     """Stream relations and retain only the winning ID for each output entry.
 
     This is the cold-cache XC path. Keeping compact winner tuples instead of a
     list of every ORM object prevents large VOD libraries from being duplicated
-    in memory while policy constraints and ranking are evaluated.
+    in memory while policy constraints and ranking are evaluated. Compact
+    callers may pass ``output_category_ids`` to keep every suffix split for a
+    canonical title in one existing source category.
     """
     if not policy:
         relation_ids = [relation.id for relation in relations]
@@ -868,7 +858,37 @@ def select_relation_ids_for_policy(
         )
         current = selected.get(key)
         if current is None or rank > current[0]:
-            selected[key] = (rank, relation.id)
+            selected[key] = (
+                rank,
+                relation.id,
+                relation_category_id(relation),
+            )
+
+    if (
+        output_category_ids is not None
+        and policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
+    ):
+        category_winners = {}
+        for key, entry in selected.items():
+            canonical_id = key[1]
+            is_default = key[2] == DEFAULT_EDITION["key"]
+            current = category_winners.get(canonical_id)
+            if (
+                current is None
+                or (is_default and not current[0])
+                or (is_default == current[0] and entry[0] > current[1])
+            ):
+                category_winners[canonical_id] = (
+                    is_default,
+                    entry[0],
+                    entry[2],
+                )
+        output_category_ids.update(
+            {
+                canonical_id: entry[2]
+                for canonical_id, entry in category_winners.items()
+            }
+        )
 
     relation_ids = [entry[1] for entry in selected.values()]
     if stats is not None:

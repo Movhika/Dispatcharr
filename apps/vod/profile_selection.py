@@ -310,10 +310,12 @@ def _selection_rows_for_canonical_ids(
         )
         .order_by("pk")
     )
+    output_category_ids = {}
     selected_ids = select_relation_ids_for_policy(
         candidates.iterator(chunk_size=500),
         policy,
         canonical_field,
+        output_category_ids=output_category_ids,
     )
     relations = relation_model.objects.filter(pk__in=selected_ids).select_related(
         "m3u_account",
@@ -334,7 +336,9 @@ def _selection_rows_for_canonical_ids(
                 policy=policy,
                 generation=generation,
                 relation=relation,
-                category_id=relation.category_id,
+                category_id=output_category_ids.get(
+                    getattr(relation, canonical_field), relation.category_id
+                ),
                 **{canonical_field: getattr(relation, canonical_field)},
                 **_metadata_columns(metadata, relation),
                 **_edition_columns(
@@ -628,6 +632,7 @@ def _build_type(
 
     report_scan(0)
     stats = {}
+    output_category_ids = {}
     selected_ids = select_relation_ids_for_policy(
         candidates.iterator(chunk_size=BUILD_CHUNK_SIZE),
         policy,
@@ -635,6 +640,7 @@ def _build_type(
         stats=stats,
         progress_callback=report_scan,
         progress_interval=PROGRESS_SCAN_INTERVAL,
+        output_category_ids=output_category_ids,
     )
     report_scan(candidate_total)
     canonical_ids = set()
@@ -691,7 +697,9 @@ def _build_type(
                 "policy": policy,
                 "generation": generation,
                 "relation": relation,
-                "category_id": relation.category_id,
+                "category_id": output_category_ids.get(
+                    canonical_id, relation.category_id
+                ),
                 canonical: canonical_id,
                 **metadata_columns,
                 **_edition_columns(

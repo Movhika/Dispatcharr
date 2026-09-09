@@ -62,7 +62,7 @@ const EMPTY_PROFILE = {
   provider_order: [],
   edition_rules: [],
   naming_mode: 'mode_default',
-  name_template: '{canonical} {edition}',
+  name_template: '',
   category_rules: [],
 };
 
@@ -165,7 +165,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       provider_order: source.provider_order || [],
       edition_rules: source.edition_rules || [],
       naming_mode: source.naming_mode || 'mode_default',
-      name_template: source.name_template || '{canonical} {edition}',
+      name_template:
+        source.naming_mode === 'template' ? source.name_template || '' : '',
       category_rules: source.category_rules || [],
     });
   };
@@ -350,7 +351,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             (providerId) => Number.isInteger(providerId) && providerId > 0
           ),
         edition_rules: (draft.edition_rules || []).map((rule) => ({
-          ...rule,
+          id: rule.id,
+          name: rule.title_suffix.trim(),
+          title_suffix: rule.title_suffix.trim(),
+          enabled: rule.enabled !== false,
+          min_resolution: Number(rule.min_resolution || 0),
+          max_resolution: Number(rule.max_resolution || 0),
           required_audio_languages: normalizeLanguageCodes(
             rule.required_audio_languages || []
           ),
@@ -359,14 +365,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ),
           required_video_features: rule.required_video_features || [],
         })),
-        naming_mode: draft.naming_mode,
-        name_template: draft.name_template,
+        naming_mode: draft.name_template.trim() ? 'template' : 'mode_default',
+        name_template: draft.name_template.trim(),
         category_rules: relationIds(draft).map((category_relation) => ({
           category_relation: Number(category_relation),
           enabled: true,
           priority: 0,
         })),
       };
+      const previousProfile = selectedProfile;
+      if (profileId && previousProfile?.is_active) {
+        upsertAccessPolicy({
+          ...previousProfile,
+          ...payload,
+          selection_status: 'pending',
+          selection_current: false,
+          selection_started_at: new Date().toISOString(),
+          selection_progress: {
+            phase: 'Saving profile and publishing catalog update',
+            percent: 0,
+            target_export_mode: payload.export_mode,
+            queued_at: new Date().toISOString(),
+          },
+        });
+      }
       const saved = profileId
         ? await API.updateVODAccessPolicy(profileId, payload)
         : await API.createVODAccessPolicy(payload);
@@ -374,10 +396,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       resetDraft(saved);
       setCreating(false);
       setProfileId(String(saved.id));
-      // Keep the mutation response selected immediately. Polling can now
-      // start from its persisted pending state while this background refresh
-      // reconciles task id and progress without blanking the selector.
-      fetchProfiles();
       showNotification({
         title: 'VOD output profile saved',
         message:
@@ -385,6 +403,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         color: 'green',
       });
     } catch (error) {
+      if (profileId && selectedProfile) upsertAccessPolicy(selectedProfile);
       showNotification({
         title: 'VOD output profile was not saved',
         message: error?.message || 'Please check the values and retry.',
@@ -776,7 +795,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       data={[
                         {
                           value: 'compact',
-                          label: 'Compact — one preferred edition per title',
+                          label:
+                            'Compact — one entry per canonical title and suffix',
                         },
                         {
                           value: 'variants',
@@ -886,46 +906,31 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   >
                     <Stack>
                       <Text fw={700}>Output naming</Text>
-                      <Select
-                        label="Title source"
-                        data={[
-                          {
-                            value: 'mode_default',
-                            label:
-                              'Mode default — canonical for Compact, provider title for Variants',
-                          },
-                          {
-                            value: 'provider',
-                            label:
-                              'Provider title — unchanged original source name',
-                          },
-                          {
-                            value: 'canonical',
-                            label: 'Canonical title + edition suffix',
-                          },
-                          {
-                            value: 'template',
-                            label: 'Custom template',
-                          },
-                        ]}
-                        value={draft.naming_mode}
-                        onChange={(naming_mode) =>
-                          setDraft({ ...draft, naming_mode })
+                      <Text size="sm" c="dimmed">
+                        Without a custom format, Compact uses the canonical
+                        title plus its matched suffix; Variants keeps the
+                        original provider title.
+                      </Text>
+                      <TextInput
+                        label="Custom output title format (optional)"
+                        placeholder={
+                          draft.export_mode === 'compact'
+                            ? '{canonical} {edition}'
+                            : '{source}'
+                        }
+                        description={
+                          draft.export_mode === 'compact'
+                            ? 'Compact: {canonical}, {title}, {year}, {edition}'
+                            : 'Variants: {canonical}, {title}, {year}, {edition}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}'
+                        }
+                        value={draft.name_template}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            name_template: event.currentTarget.value,
+                          })
                         }
                       />
-                      {draft.naming_mode === 'template' && (
-                        <TextInput
-                          label="Name template"
-                          description="Available: {canonical}, {title}, {year}, {edition}, {edition_name}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}"
-                          value={draft.name_template}
-                          onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              name_template: event.currentTarget.value,
-                            })
-                          }
-                        />
-                      )}
                     </Stack>
                   </Paper>
                   <Paper withBorder p="lg" radius="md">
@@ -1086,7 +1091,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <TableThead>
                       <TableTr>
                         <TableTh>Title</TableTh>
-                        <TableTh>Edition</TableTh>
                         <TableTh>Source</TableTh>
                         <TableTh>Category</TableTh>
                         <TableTh>DUB</TableTh>
@@ -1100,7 +1104,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <TableTbody>
                       {!previewLoading && preview.results?.length === 0 && (
                         <TableTr>
-                          <TableTd colSpan={activeMode === 'compact' ? 10 : 9}>
+                          <TableTd colSpan={activeMode === 'compact' ? 9 : 8}>
                             <Text ta="center" c="dimmed" py="lg">
                               No prepared output matches the current filters.
                             </Text>
@@ -1110,7 +1114,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       {(preview.results || []).map((row) => (
                         <TableTr key={row.id}>
                           <TableTd>{row.name}</TableTd>
-                          <TableTd>{row.edition_name || 'Default'}</TableTd>
                           <TableTd>
                             {row.m3u_account_name} — {row.source_name}
                           </TableTd>
