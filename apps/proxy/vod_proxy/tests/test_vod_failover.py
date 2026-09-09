@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from django.http import HttpResponse
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
 from apps.vod.models import (
@@ -31,6 +31,9 @@ from apps.vod.models import (
     M3USeriesRelation,
     Movie,
     Series,
+    VODAccessPolicy,
+    VODCategory,
+    M3UVODCategoryRelation,
 )
 
 from apps.proxy.vod_proxy.multi_worker_connection_manager import (
@@ -46,6 +49,7 @@ from apps.proxy.vod_proxy.views import (
     stream_vod,
     stream_xc_episode,
     stream_xc_movie,
+    switch_vod_source,
 )
 
 
@@ -190,6 +194,146 @@ class TestLogicalSessionSourcePinning(SimpleTestCase):
 
         self.assertIs(selected['relation'], pinned)
         get_stream_url.assert_called_once_with(pinned)
+
+
+class TestManualVODSourceSwitch(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.admin = get_user_model().objects.create_user(
+            username='source-switch-admin',
+            user_level=10,
+        )
+        self.movie = Movie.objects.create(name='Switchable Movie')
+        self.category = VODCategory.objects.create(
+            name='Hindi Movies', category_type='movie'
+        )
+        self.account_a = M3UAccount.objects.create(
+            name='Provider A',
+            account_type=M3UAccount.Types.XC,
+            server_url='https://a.example',
+            username='a',
+            password='secret',
+        )
+        self.account_b = M3UAccount.objects.create(
+            name='Provider B',
+            account_type=M3UAccount.Types.XC,
+            server_url='https://b.example',
+            username='b',
+            password='secret',
+        )
+        self.category_relation_a = M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=self.category,
+            enabled=True,
+            metadata_defaults={'audio_languages': ['hin']},
+        )
+        self.category_relation_b = M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_b,
+            category=self.category,
+            enabled=True,
+            metadata_defaults={'audio_languages': ['hin']},
+        )
+        self.current = M3UMovieRelation.objects.create(
+            m3u_account=self.account_a,
+            movie=self.movie,
+            category=self.category,
+            stream_id='current',
+        )
+        self.target = M3UMovieRelation.objects.create(
+            m3u_account=self.account_b,
+            movie=self.movie,
+            category=self.category,
+            stream_id='target',
+        )
+        self.policy = VODAccessPolicy.objects.create(
+            name='Hindi compact',
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            hard_constraints={
+                'required_audio_languages': ['hin'],
+                'allow_unknown_metadata': False,
+            },
+        )
+
+    @patch(
+        'apps.proxy.vod_proxy.views.MultiWorkerVODConnectionManager.get_instance'
+    )
+    def test_switch_now_validates_and_queues_exact_source(self, get_manager):
+        redis_client = MagicMock()
+        redis_client.hgetall.return_value = {
+            'content_obj_type': 'movie',
+            'content_uuid': str(self.movie.uuid),
+            'source_key': f'movie:{self.account_a.id}:current',
+            'source_metadata': (
+                '{"access_policy_id": %d, "access_policy_export_mode": "compact", '
+                '"relation_id": %d}'
+                % (self.policy.id, self.current.id)
+            ),
+            'user_id': str(self.admin.id),
+        }
+        manager = MagicMock(redis_client=redis_client)
+        get_manager.return_value = manager
+        request = self.factory.post(
+            '/proxy/vod/switch_source/',
+            {
+                'client_id': 'logical-session',
+                'relation_id': self.target.id,
+                'mode': 'now',
+            },
+            format='json',
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = switch_vod_source(request)
+
+        self.assertEqual(response.status_code, 200)
+        redis_client.setex.assert_called_once()
+        key, ttl, raw_payload = redis_client.setex.call_args.args
+        self.assertEqual(key, 'vod_proxy:source_switch:logical-session')
+        self.assertEqual(ttl, 600)
+        self.assertIn(f'"relation_id":{self.target.id}', raw_payload)
+        self.assertIn(
+            f'"source_key":"movie:{self.account_b.id}:target"', raw_payload
+        )
+        manager.stop_logical_session.assert_called_once_with(
+            'logical-session', reason='manual_source_switch'
+        )
+        manager._trigger_vod_stats_update.assert_called_once()
+
+    @patch(
+        'apps.proxy.vod_proxy.views.MultiWorkerVODConnectionManager.get_instance'
+    )
+    def test_switch_is_rejected_outside_compact_mode(self, get_manager):
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.save(update_fields=['export_mode'])
+        redis_client = MagicMock()
+        redis_client.hgetall.return_value = {
+            'content_obj_type': 'movie',
+            'content_uuid': str(self.movie.uuid),
+            'source_key': f'movie:{self.account_a.id}:current',
+            'source_metadata': (
+                '{"access_policy_id": %d, "relation_id": %d}'
+                % (self.policy.id, self.current.id)
+            ),
+            'user_id': str(self.admin.id),
+        }
+        manager = MagicMock(redis_client=redis_client)
+        get_manager.return_value = manager
+        request = self.factory.post(
+            '/proxy/vod/switch_source/',
+            {
+                'client_id': 'logical-session',
+                'relation_id': self.target.id,
+                'mode': 'next_request',
+            },
+            format='json',
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = switch_vod_source(request)
+
+        self.assertEqual(response.status_code, 409)
+        redis_client.setex.assert_not_called()
+        manager.stop_logical_session.assert_not_called()
 
 
 class TestCategoryScopedCandidates(TestCase):

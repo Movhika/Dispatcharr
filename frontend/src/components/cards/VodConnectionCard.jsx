@@ -23,6 +23,7 @@ import {
 import {
   ChevronDown,
   HardDriveUpload,
+  Shuffle,
   SquareX,
   Timer,
   Video,
@@ -37,6 +38,7 @@ import {
   getMovieSubtitle,
 } from '../../utils/cards/VodConnectionCardUtils.js';
 import useUsersStore from '../../store/users.jsx';
+import VODCandidateSourcesModal from '../VODCandidateSourcesModal.jsx';
 
 const ClientDetails = ({ connection, connectionStartTime }) => {
   const technical = connection.technical_metadata || {};
@@ -90,6 +92,35 @@ const ClientDetails = ({ connection, connectionStartTime }) => {
           </Text>
           <Text size="xs">
             {toFriendlyDuration(connection.duration, 'seconds')}
+          </Text>
+        </Group>
+      )}
+
+      {typeof connection.provider_connection_active === 'boolean' && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Provider HTTP:
+          </Text>
+          <Text size="xs">
+            {connection.provider_connection_active ? 'Connected' : 'Closed'}
+          </Text>
+        </Group>
+      )}
+
+      {connection.slot_reserved && (
+        <Group gap={8}>
+          <Text size="xs" fw={500} c="dimmed" miw={80}>
+            Provider slot:
+          </Text>
+          <Text size="xs">
+            Reserved
+            {connection.reconnect_seconds_remaining !== null &&
+            connection.reconnect_seconds_remaining !== undefined
+              ? ` · up to ${toFriendlyDuration(
+                  connection.reconnect_seconds_remaining,
+                  'seconds'
+                )}`
+              : ''}
           </Text>
         </Group>
       )}
@@ -246,9 +277,10 @@ const ConnectionProgress = ({ connection, durationSecs }) => {
 };
 
 // Create a VOD Card component similar to ChannelCard
-const VodConnectionCard = ({ vodContent, stopVODClient }) => {
+const VodConnectionCard = ({ vodContent, stopVODClient, switchVODSource }) => {
   const { fullDateTimeFormat } = useDateTimeFormat();
   const [isClientExpanded, setIsClientExpanded] = useState(false);
+  const [sourceOrderOpen, setSourceOrderOpen] = useState(false);
   const users = useUsersStore((s) => s.users);
   const usersMap = useMemo(() => {
     const map = {};
@@ -280,6 +312,19 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
     (vodContent.connections && vodContent.connections[0]);
   const source = connection?.source || {};
   const technical = connection?.technical_metadata || {};
+  const reconnectSecondsRemaining = connection?.reconnect_expires_at
+    ? Math.max(
+        0,
+        Math.ceil(connection.reconnect_expires_at - Date.now() / 1000)
+      )
+    : connection?.reconnect_seconds_remaining;
+  const canInspectSources = Boolean(
+    connection?.client_id &&
+    source.access_policy_id &&
+    source.access_policy_export_mode === 'compact' &&
+    source.canonical_id &&
+    source.relation_id
+  );
 
   // Get poster/logo URL
   const posterUrl = metadata.logo_url || logo;
@@ -366,11 +411,23 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
 
           <Group>
             {connection?.connection_state === 'reconnecting' && (
-              <Tooltip label="Waiting briefly for the player's next seek request">
+              <Tooltip
+                multiline
+                maw={360}
+                label={`The provider HTTP connection is closed. Dispatcharr keeps only the logical source and provider slot reserved for the player's next Range request${Number.isFinite(reconnectSecondsRemaining) ? ` for up to ${toFriendlyDuration(reconnectSecondsRemaining, 'seconds')}` : ''}.`}
+              >
                 <Badge color="yellow" variant="light">
-                  Seeking / reconnecting
+                  Buffered / reconnecting
+                  {Number.isFinite(reconnectSecondsRemaining)
+                    ? ` · ${toFriendlyDuration(reconnectSecondsRemaining, 'seconds')}`
+                    : ''}
                 </Badge>
               </Tooltip>
+            )}
+            {connection?.source_switch_pending && (
+              <Badge color="orange" variant="light">
+                Source switch pending
+              </Badge>
             )}
             {connection && (
               <Tooltip
@@ -391,6 +448,20 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
                     onClick={() => stopVODClient(connection.client_id)}
                   >
                     <SquareX size="24" />
+                  </ActionIcon>
+                </Tooltip>
+              </Center>
+            )}
+            {canInspectSources && switchVODSource && (
+              <Center>
+                <Tooltip label="View or switch Compact source">
+                  <ActionIcon
+                    variant="transparent"
+                    color="blue"
+                    aria-label="View or switch Compact source"
+                    onClick={() => setSourceOrderOpen(true)}
+                  >
+                    <Shuffle size="22" />
                   </ActionIcon>
                 </Tooltip>
               </Center>
@@ -567,6 +638,18 @@ const VodConnectionCard = ({ vodContent, stopVODClient }) => {
           </Stack>
         )}
       </Stack>
+      <VODCandidateSourcesModal
+        opened={sourceOrderOpen}
+        onClose={() => setSourceOrderOpen(false)}
+        profileId={source.access_policy_id}
+        contentType={contentType}
+        canonicalId={source.canonical_id}
+        currentRelationId={source.relation_id}
+        title={getDisplayTitle()}
+        onSwitch={(relationId, mode) =>
+          switchVODSource(connection.client_id, relationId, mode)
+        }
+      />
     </Card>
   );
 };

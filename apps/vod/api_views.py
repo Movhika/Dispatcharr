@@ -1244,6 +1244,207 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="candidates")
+    def candidates(self, request, pk=None):
+        """Return one title's sources in the exact Compact/failover order."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        policy = self.get_object()
+        content_type = request.query_params.get("type", "movie")
+        try:
+            canonical_id = int(request.query_params.get("canonical_id", ""))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "canonical_id must be an integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if content_type == "movie":
+            canonical = Movie.objects.filter(pk=canonical_id).first()
+            relations = list(
+                M3UMovieRelation.objects.filter(movie_id=canonical_id)
+                .select_related("movie", "m3u_account", "category", "source_asset")
+                .order_by("id")
+            )
+        elif content_type == "series":
+            canonical = Series.objects.filter(pk=canonical_id).first()
+            relations = list(
+                M3USeriesRelation.objects.filter(series_id=canonical_id)
+                .select_related("series", "m3u_account", "category", "source_asset")
+                .order_by("id")
+            )
+        elif content_type == "episode":
+            canonical = Episode.objects.select_related("series").filter(
+                pk=canonical_id
+            ).first()
+            relations = list(
+                M3UEpisodeRelation.objects.filter(episode_id=canonical_id)
+                .select_related(
+                    "episode__series",
+                    "m3u_account",
+                    "series_relation__category",
+                    "source_asset",
+                )
+                .order_by("id")
+            )
+        else:
+            return Response(
+                {"detail": "type must be movie, series, or episode"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if canonical is None:
+            return Response(
+                {"detail": "Content not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from .policies import (
+            policy_category_map,
+            relation_category,
+            relation_metadata,
+            relation_policy_evaluation,
+            relation_rank,
+        )
+        from .utils import canonical_output_name, get_vod_source_name
+
+        category_mapping = policy_category_map(policy)
+        evaluated = []
+        for relation in relations:
+            category = relation_category(relation)
+            category_relation = category_mapping.get(
+                (relation.m3u_account_id, getattr(category, "id", None))
+            )
+            metadata = relation_metadata(relation, category_relation)
+            evaluation = relation_policy_evaluation(
+                relation,
+                policy,
+                category_mapping=category_mapping,
+                metadata=metadata,
+            )
+            if not relation.m3u_account.is_active:
+                evaluation = {
+                    "allowed": False,
+                    "reason": "provider_inactive",
+                    "rule_id": "",
+                }
+            evaluated.append(
+                (
+                    relation_rank(
+                        relation,
+                        category_mapping,
+                        policy,
+                        metadata=metadata,
+                    ),
+                    relation,
+                    category,
+                    metadata,
+                    evaluation,
+                )
+            )
+
+        eligible = sorted(
+            (entry for entry in evaluated if entry[4]["allowed"]),
+            key=lambda entry: entry[0],
+            reverse=True,
+        )
+        excluded = sorted(
+            (entry for entry in evaluated if not entry[4]["allowed"]),
+            key=lambda entry: (
+                entry[1].m3u_account.name.lower(),
+                entry[1].id,
+            ),
+        )
+        current_relation_id = request.query_params.get("current_relation_id")
+        try:
+            current_relation_id = int(current_relation_id)
+        except (TypeError, ValueError):
+            current_relation_id = None
+
+        rows = []
+        for position, (_, relation, category, metadata, evaluation) in enumerate(
+            eligible + excluded,
+            start=1,
+        ):
+            allowed = evaluation["allowed"]
+            eligible_position = position if position <= len(eligible) else None
+            content_name = (
+                relation.movie.name
+                if content_type == "movie"
+                else relation.series.name
+                if content_type == "series"
+                else relation.episode.name
+            )
+            source_relation = (
+                relation.series_relation
+                if content_type == "episode" and relation.series_relation
+                else relation
+            )
+            source_name = get_vod_source_name(source_relation, content_name)
+            if content_type == "episode":
+                provider_episode = relation.custom_properties or {}
+                if not isinstance(provider_episode, dict):
+                    provider_episode = {}
+                provider_info = provider_episode.get("info") or {}
+                if not isinstance(provider_info, dict):
+                    provider_info = {}
+                source_name = (
+                    provider_episode.get("title")
+                    or provider_info.get("name")
+                    or content_name
+                )
+            rows.append(
+                {
+                    "relation_id": relation.id,
+                    "provider_asset_id": str(
+                        getattr(relation, "stream_id", None)
+                        or getattr(relation, "external_series_id", None)
+                        or ""
+                    ),
+                    "source_name": source_name,
+                    "m3u_account_id": relation.m3u_account_id,
+                    "m3u_account_name": relation.m3u_account.name,
+                    "category_id": getattr(category, "id", None),
+                    "category_name": getattr(category, "name", "") or "",
+                    "metadata": metadata,
+                    "container_extension": (
+                        getattr(relation, "container_extension", "")
+                        or metadata.get("container_extension")
+                        or ""
+                    ),
+                    "allowed": allowed,
+                    "position": eligible_position,
+                    "selected": bool(
+                        allowed
+                        and eligible_position == 1
+                        and policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
+                    ),
+                    "current": relation.id == current_relation_id,
+                    "reason": evaluation["reason"],
+                    "rule_id": evaluation["rule_id"],
+                }
+            )
+
+        canonical_name = canonical.name
+        if content_type in {"movie", "series"}:
+            canonical_name = canonical_output_name(
+                canonical.name,
+                display_name=canonical.display_name,
+            )
+        return Response(
+            {
+                "profile_id": policy.id,
+                "profile_name": policy.name,
+                "export_mode": policy.export_mode,
+                "content_type": content_type,
+                "canonical_id": canonical.id,
+                "canonical_name": canonical_name,
+                "count": len(rows),
+                "eligible_count": len(eligible),
+                "results": rows,
+            }
+        )
+
     @action(detail=False, methods=["post"], url_path="preview-stream-filter")
     def preview_stream_filter(self, request):
         """Evaluate one draft filter against the current source inventory.

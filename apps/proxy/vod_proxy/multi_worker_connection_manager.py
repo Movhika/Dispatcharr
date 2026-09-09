@@ -29,6 +29,28 @@ VOD_DISCONNECT_QUEUE_KEY = "vod_proxy:logical_disconnects"
 VOD_DISCONNECT_SWEEPER_LOCK_KEY = "vod_proxy:logical_disconnect_sweeper"
 VOD_DISCONNECT_SWEEP_INTERVAL_SECONDS = 5
 
+
+def vod_logical_session_idle_seconds():
+    """Return the configurable source/slot reconnect reservation window."""
+    try:
+        from apps.proxy.config import BaseConfig
+
+        value = BaseConfig.get_proxy_settings().get(
+            "vod_reconnect_grace_seconds",
+            VOD_LOGICAL_SESSION_IDLE_SECONDS,
+        )
+        return min(max(int(value), 0), 1800)
+    except (TypeError, ValueError):
+        return VOD_LOGICAL_SESSION_IDLE_SECONDS
+
+
+def disconnect_grace_deadline(token):
+    """Read the expiry timestamp embedded in new disconnect lease tokens."""
+    try:
+        return float(str(token or "").split("|", 1)[0])
+    except (TypeError, ValueError):
+        return None
+
 # Atomic active_streams mutations. These run as Redis Lua so INCR/DECR never
 # contend with the session metadata lock used for ownership, seek info, and
 # get_stream header updates. One EVALSHA round-trip each.
@@ -864,11 +886,13 @@ class RedisBackedVODConnection:
         if not self.redis_client:
             return None
         try:
-            token = f"{time.time_ns()}:{threading.get_ident()}"
+            seconds = max(int(seconds), 0)
+            deadline = time.time() + seconds
+            token = f"{deadline:.6f}|{time.time_ns()}:{threading.get_ident()}"
             self.redis_client.set(
                 self.disconnect_grace_key,
                 token,
-                ex=max(int(seconds) + 60, 60),
+                ex=max(seconds + 60, 60),
             )
             return token
         except Exception as exc:
@@ -1237,9 +1261,11 @@ class MultiWorkerVODConnectionManager:
         redis_connection,
         client_id,
         terminal_status,
-        delay_seconds=VOD_LOGICAL_SESSION_IDLE_SECONDS,
+        delay_seconds=None,
     ):
         """Queue idle cleanup without creating one sleeping thread per Range."""
+        if delay_seconds is None:
+            delay_seconds = vod_logical_session_idle_seconds()
         delay_seconds = max(int(delay_seconds), 0)
         token = redis_connection.begin_disconnect_grace(delay_seconds)
         if not token or not self.redis_client:
@@ -1863,7 +1889,7 @@ class MultiWorkerVODConnectionManager:
                             delay_seconds=(
                                 0
                                 if stop_signal_detected
-                                else VOD_LOGICAL_SESSION_IDLE_SECONDS
+                                else None
                             ),
                         )
 

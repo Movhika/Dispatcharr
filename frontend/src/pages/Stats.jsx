@@ -33,6 +33,7 @@ import {
   stopClient,
   stopTimeshiftSession,
   stopVODClient,
+  switchVODSource,
 } from '../utils/pages/StatsUtils.js';
 import {
   computeCatchupArchivePositionSecs,
@@ -55,6 +56,7 @@ const Connections = ({
   channelsByUUID,
   channels,
   handleStopVODClient,
+  handleSwitchVODSource,
   handleStopTimeshiftSession,
   currentPrograms,
   catchupPrograms,
@@ -94,6 +96,7 @@ const Connections = ({
                 key={connection.id}
                 vodContent={connection.data}
                 stopVODClient={handleStopVODClient}
+                switchVODSource={handleSwitchVODSource}
               />
             );
           } else if (connection.type === 'timeshift') {
@@ -201,6 +204,12 @@ const StatsPage = () => {
   const handleStopVODClient = async (clientId) => {
     await stopVODClient(clientId);
     fetchAllStats();
+  };
+
+  const handleSwitchVODSource = async (clientId, relationId, mode) => {
+    const response = await switchVODSource(clientId, relationId, mode);
+    await fetchAllStats();
+    return response;
   };
 
   const handleStopTimeshiftSession = async (sessionId) => {
@@ -353,7 +362,9 @@ const StatsPage = () => {
   // do cheap local checks until the next boundary.
   const timeshiftProgrammeKey = useMemo(() => {
     return timeshiftSessions
-      .map((session) => `${session.session_id}:${session.programme_start || ''}`)
+      .map(
+        (session) => `${session.session_id}:${session.programme_start || ''}`
+      )
       .sort()
       .join(',');
   }, [timeshiftSessions]);
@@ -619,6 +630,7 @@ const StatsPage = () => {
               channelsByUUID={channelsByUUID}
               channels={channels}
               handleStopVODClient={handleStopVODClient}
+              handleSwitchVODSource={handleSwitchVODSource}
               handleStopTimeshiftSession={handleStopTimeshiftSession}
               currentPrograms={currentPrograms}
               catchupPrograms={catchupPrograms}

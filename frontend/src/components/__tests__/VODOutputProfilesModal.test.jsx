@@ -27,6 +27,10 @@ vi.mock('../VODFailoverRanking.jsx', () => ({
     </div>
   ),
 }));
+vi.mock('../VODCandidateSourcesModal.jsx', () => ({
+  default: ({ opened, title }) =>
+    opened ? <div>Source order: {title}</div> : null,
+}));
 vi.mock('../VideoFeaturePicker.jsx', () => ({
   default: ({ label }) => <div>{label}</div>,
 }));
@@ -34,6 +38,7 @@ vi.mock('lucide-react', () => ({
   Eye: () => null,
   GripVertical: () => null,
   Info: () => null,
+  ListOrdered: () => null,
   Plus: () => null,
   RefreshCw: () => null,
   Save: () => null,

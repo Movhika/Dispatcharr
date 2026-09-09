@@ -16,7 +16,11 @@ from django.views.decorators.csrf import csrf_exempt
 from apps.vod.models import Movie, Series, Episode, M3UMovieRelation, M3UEpisodeRelation
 from apps.vod.utils import is_vod_movies_enabled, is_vod_series_enabled
 from apps.m3u.models import M3UAccountProfile
-from apps.proxy.vod_proxy.multi_worker_connection_manager import MultiWorkerVODConnectionManager, infer_content_type_from_url, get_vod_client_stop_key
+from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+    MultiWorkerVODConnectionManager,
+    disconnect_grace_deadline,
+    infer_content_type_from_url,
+)
 from .utils import get_client_info
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
@@ -279,6 +283,14 @@ def _select_vod_stream(
             cand_account.priority,
         )
         failover_chain.append(failover_step(cand, "selected"))
+        source_metadata = _build_vod_source_metadata_best_effort(
+            content_type,
+            content_obj,
+            cand,
+        )
+        if policy:
+            source_metadata["access_policy_id"] = policy.id
+            source_metadata["access_policy_export_mode"] = policy.export_mode
         return {
             "content_obj": content_obj,
             "m3u_account": cand_account,
@@ -287,11 +299,7 @@ def _select_vod_stream(
             "final_stream_url": final_stream_url,
             "relation": cand,
             "failover_chain": failover_chain,
-            "source_metadata": _build_vod_source_metadata_best_effort(
-                content_type,
-                content_obj,
-                cand,
-            ),
+            "source_metadata": source_metadata,
         }
 
     return None
@@ -312,7 +320,10 @@ def _session_pinned_source_key(session_id):
         )
         if isinstance(value, bytes):
             value = value.decode()
-        return value or None
+        if value:
+            return value
+        pending = _pending_vod_source_switch(redis_client, session_id)
+        return pending.get("source_key") if pending else None
     except Exception as exc:
         logger.warning(
             "[VOD-SESSION] Could not read pinned source for %s: %s",
@@ -320,6 +331,55 @@ def _session_pinned_source_key(session_id):
             exc,
         )
         return None
+
+
+def _vod_source_switch_key(session_id):
+    return f"vod_proxy:source_switch:{session_id}"
+
+
+def _pending_vod_source_switch(redis_client, session_id):
+    """Return a validated pending manual source choice, if one exists."""
+    if not redis_client or not session_id:
+        return None
+    try:
+        raw = redis_client.get(_vod_source_switch_key(session_id))
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        value = json.loads(raw or "{}")
+        if not isinstance(value, dict) or not value.get("source_key"):
+            return None
+        return value
+    except (TypeError, ValueError):
+        return None
+
+
+def _prepare_pending_vod_source_switch(connection_manager, session_id):
+    """Retire an idle source lease before the player's next Range request.
+
+    An active provider response is never replaced underneath its generator.
+    Immediate switches first signal that generator to stop; either mode is
+    applied only once the old physical request is idle.
+    """
+    redis_client = connection_manager.redis_client
+    pending = _pending_vod_source_switch(redis_client, session_id)
+    if not pending:
+        return None
+    connection_key = f"vod_persistent_connection:{session_id}"
+    if not redis_client.exists(connection_key):
+        return pending
+    try:
+        active_streams = int(
+            redis_client.hget(connection_key, "active_streams") or 0
+        )
+    except (TypeError, ValueError):
+        active_streams = 0
+    if active_streams > 0:
+        return None
+    if connection_manager.stop_logical_session(
+        session_id, reason="manual_source_switch"
+    ):
+        return pending
+    return None
 
 
 def _get_content_and_relation(
@@ -681,6 +741,7 @@ def _build_vod_source_metadata(content_type, content_obj, relation):
     return {
         'key': _vod_source_key(content_type, relation),
         'relation_id': relation.id,
+        'canonical_id': content_obj.id,
         'account_id': relation.m3u_account_id,
         'account_name': account_name,
         'category_id': category.id if category else None,
@@ -719,6 +780,7 @@ def _build_vod_source_metadata_best_effort(content_type, content_obj, relation):
         return {
             "key": _vod_source_key(content_type, relation),
             "relation_id": getattr(relation, "id", None),
+            "canonical_id": getattr(content_obj, "id", None),
             "account_id": getattr(relation, "m3u_account_id", None),
             "account_name": account_name,
             "category_id": getattr(category, "id", None),
@@ -1149,6 +1211,10 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             user_id=user.id if user else None,
             keep_session_id=session_id,
         )
+        pending_source_switch = _prepare_pending_vod_source_switch(
+            connection_manager,
+            session_id,
+        )
 
         if user:
             if not check_user_stream_limits(user, session_id, media_id=content_id):
@@ -1211,6 +1277,18 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
             source_metadata=source_metadata,
         )
 
+        if response.status_code < 400 and pending_source_switch:
+            try:
+                connection_manager.redis_client.delete(
+                    _vod_source_switch_key(session_id)
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[VOD-SWITCH] Could not clear applied switch for %s: %s",
+                    session_id,
+                    exc,
+                )
+
         selected_relation = selected.get("relation")
         if selected_relation is not None and response.status_code < 400:
             from apps.vod.models import VODPlaybackSession
@@ -1229,6 +1307,12 @@ def stream_vod(request, content_type, content_id, session_id=None, profile_id=No
                         "technical_metadata", {}
                     ),
                     "episode_name": source_metadata.get("episode_name", ""),
+                    "manual_source_switch": bool(pending_source_switch),
+                    "previous_relation_id": (
+                        pending_source_switch.get("from_relation_id")
+                        if pending_source_switch
+                        else None
+                    ),
                 },
             )
 
@@ -1554,10 +1638,17 @@ def build_vod_stats_data(redis_client):
                         active_streams = int(
                             combined_data.get('active_streams', 0) or 0
                         )
-                        reconnecting = bool(
-                            redis_client.exists(
-                                f"vod_proxy:disconnect_grace:{session_id}"
-                            )
+                        grace_key = f"vod_proxy:disconnect_grace:{session_id}"
+                        grace_token = redis_client.get(grace_key)
+                        if isinstance(grace_token, bytes):
+                            grace_token = grace_token.decode()
+                        reconnecting = bool(grace_token)
+                        reconnect_expires_at = disconnect_grace_deadline(
+                            grace_token
+                        )
+                        pending_source_switch = _pending_vod_source_switch(
+                            redis_client,
+                            session_id,
                         )
 
                         # HEAD requests may pre-create provider/session state.
@@ -1757,6 +1848,23 @@ def build_vod_stats_data(redis_client):
                             'connection_state': (
                                 'streaming' if active_streams > 0 else 'reconnecting'
                             ),
+                            'provider_connection_active': active_streams > 0,
+                            'slot_reserved': True,
+                            'reconnect_expires_at': reconnect_expires_at,
+                            'reconnect_seconds_remaining': (
+                                max(
+                                    0,
+                                    int(reconnect_expires_at - current_time),
+                                )
+                                if reconnect_expires_at is not None
+                                else None
+                            ),
+                            'source_switch_pending': bool(pending_source_switch),
+                            'requested_relation_id': (
+                                pending_source_switch.get('relation_id')
+                                if pending_source_switch
+                                else None
+                            ),
                             'client_ip': combined_data.get('client_ip', 'Unknown'),
                             'user_id': combined_data.get('user_id', '0'),
                             'user_agent': combined_data.get('client_user_agent', 'Unknown'),
@@ -1893,21 +2001,188 @@ def stop_vod_client(request):
             logger.warning(f"VOD connection not found: {client_id}")
             return JsonResponse({'error': 'Connection not found'}, status=404)
 
-        # Set a stop signal key that the worker will check
-        stop_key = get_vod_client_stop_key(client_id)
-        redis_client.setex(stop_key, 60, "true")  # 60 second TTL
+        if not connection_manager.stop_logical_session(client_id):
+            return JsonResponse({'error': 'Connection not found'}, status=404)
 
-        logger.info(f"Set stop signal for VOD client: {client_id}")
+        logger.info(f"Stopped or signalled VOD client: {client_id}")
 
         return JsonResponse({
             'message': 'VOD client stop signal sent',
             'client_id': client_id,
-            'stop_key': stop_key
         })
 
     except Exception as e:
         logger.error(f"Error stopping VOD client: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def switch_vod_source(request):
+    """Queue one eligible Compact source for an existing logical playback."""
+    client_id = str(request.data.get("client_id") or "").strip()
+    mode = str(request.data.get("mode") or "next_request").strip()
+    try:
+        relation_id = int(request.data.get("relation_id"))
+    except (TypeError, ValueError):
+        relation_id = 0
+    if not client_id or relation_id <= 0:
+        return JsonResponse(
+            {"error": "client_id and relation_id are required"}, status=400
+        )
+    if mode not in {"next_request", "now"}:
+        return JsonResponse(
+            {"error": "mode must be next_request or now"}, status=400
+        )
+
+    connection_manager = MultiWorkerVODConnectionManager.get_instance()
+    redis_client = connection_manager.redis_client
+    if not redis_client:
+        return JsonResponse({"error": "Redis not available"}, status=500)
+    raw_state = redis_client.hgetall(
+        f"vod_persistent_connection:{client_id}"
+    )
+    if not raw_state:
+        return JsonResponse({"error": "Connection not found"}, status=404)
+    state = {
+        (key.decode() if isinstance(key, bytes) else key): (
+            value.decode() if isinstance(value, bytes) else value
+        )
+        for key, value in raw_state.items()
+    }
+    content_type = state.get("content_obj_type")
+    content_uuid = state.get("content_uuid")
+    if content_type == "movie":
+        relation = (
+            M3UMovieRelation.objects.select_related(
+                "movie", "m3u_account", "category", "source_asset"
+            )
+            .filter(
+                pk=relation_id,
+                movie__uuid=content_uuid,
+                m3u_account__is_active=True,
+            )
+            .first()
+        )
+    elif content_type == "episode":
+        relation = (
+            M3UEpisodeRelation.objects.select_related(
+                "episode",
+                "m3u_account",
+                "series_relation__category",
+                "source_asset",
+            )
+            .filter(
+                pk=relation_id,
+                episode__uuid=content_uuid,
+                m3u_account__is_active=True,
+            )
+            .first()
+        )
+    else:
+        relation = None
+    if relation is None:
+        return JsonResponse(
+            {"error": "Source does not belong to this playback"}, status=404
+        )
+
+    try:
+        source_metadata = json.loads(state.get("source_metadata") or "{}")
+        if not isinstance(source_metadata, dict):
+            source_metadata = {}
+    except (TypeError, ValueError):
+        source_metadata = {}
+    current_source_key = state.get("source_key") or ""
+    requested_source_key = _vod_source_key(content_type, relation)
+    if current_source_key == requested_source_key:
+        return JsonResponse({"error": "Source is already active"}, status=400)
+
+    from apps.vod.models import VODAccessPolicy
+    from apps.vod.policies import (
+        policy_category_map,
+        policy_for_user,
+        relation_category_id,
+        relation_metadata,
+        relation_policy_evaluation,
+    )
+
+    policy = None
+    policy_id = source_metadata.get("access_policy_id")
+    if policy_id:
+        policy = VODAccessPolicy.objects.filter(pk=policy_id).first()
+    if policy is None:
+        try:
+            playback_user_id = int(state.get("user_id") or 0)
+        except (TypeError, ValueError):
+            playback_user_id = 0
+        playback_user = (
+            User.objects.filter(pk=playback_user_id).first()
+            if playback_user_id
+            else None
+        )
+        policy = policy_for_user(playback_user)
+    if policy is None:
+        return JsonResponse(
+            {"error": "This playback has no VOD output profile"}, status=409
+        )
+    if policy.export_mode != VODAccessPolicy.ExportMode.COMPACT:
+        return JsonResponse(
+            {"error": "Manual source switching is available in Compact mode"},
+            status=409,
+        )
+
+    category_mapping = policy_category_map(policy)
+    metadata = relation_metadata(
+        relation,
+        category_mapping.get(
+            (relation.m3u_account_id, relation_category_id(relation))
+        ),
+    )
+    evaluation = relation_policy_evaluation(
+        relation,
+        policy,
+        category_mapping=category_mapping,
+        metadata=metadata,
+    )
+    if not evaluation["allowed"]:
+        return JsonResponse(
+            {
+                "error": "Source is excluded by the VOD output profile",
+                "reason": evaluation["reason"],
+            },
+            status=409,
+        )
+
+    pending = {
+        "relation_id": relation.id,
+        "source_key": requested_source_key,
+        "from_relation_id": source_metadata.get("relation_id"),
+        "mode": mode,
+        "requested_at": time.time(),
+    }
+    redis_client.setex(
+        _vod_source_switch_key(client_id),
+        600,
+        json.dumps(pending, separators=(",", ":")),
+    )
+    if mode == "now":
+        connection_manager.stop_logical_session(
+            client_id, reason="manual_source_switch"
+        )
+    connection_manager._trigger_vod_stats_update()
+    return JsonResponse(
+        {
+            "message": (
+                "Source switch requested now"
+                if mode == "now"
+                else "Source will change on the next provider request"
+            ),
+            "client_id": client_id,
+            "relation_id": relation.id,
+            "mode": mode,
+        }
+    )
 
 @api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])

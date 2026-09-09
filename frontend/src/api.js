@@ -1589,6 +1589,13 @@ export default class API {
     );
   }
 
+  static async getVODAccessPolicyCandidates(id, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/access-policies/${id}/candidates/${query ? `?${query}` : ''}`
+    );
+  }
+
   static async getVODPlaybackSessions(params = {}) {
     const query = new URLSearchParams(params).toString();
     return await request(
@@ -1711,10 +1718,9 @@ export default class API {
   }
   static async refreshLivePlaylist(id) {
     try {
-      return await request(
-        `${host}/api/m3u/refresh/${id}/?include_vod=false`,
-        { method: 'POST' }
-      );
+      return await request(`${host}/api/m3u/refresh/${id}/?include_vod=false`, {
+        method: 'POST',
+      });
     } catch (e) {
       errorNotification('Failed to refresh Live TV', e);
       throw e;
@@ -2844,6 +2850,17 @@ export default class API {
     } catch (e) {
       errorNotification('Failed to stop VOD client', e);
     }
+  }
+
+  static async switchVODSource(clientId, relationId, mode = 'next_request') {
+    return await request(`${host}/proxy/vod/switch_source/`, {
+      method: 'POST',
+      body: {
+        client_id: clientId,
+        relation_id: relationId,
+        mode,
+      },
+    });
   }
 
   static async stopChannel(id) {

@@ -41,6 +41,7 @@ from apps.vod.models import (
 from apps.vod.policies import (
     ordered_failover_candidates,
     relation_allowed,
+    relation_policy_evaluation,
     select_relation_ids_for_policy,
     select_relations_for_policy,
 )
@@ -952,6 +953,61 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             response.data["results"][0]["metadata"]["audio_languages"],
             ["ger"],
+        )
+
+    def test_compact_candidate_preview_uses_production_order_and_reasons(self):
+        admin = get_user_model().objects.create_user(
+            username="candidate-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/candidates/",
+            {
+                "type": "movie",
+                "canonical_id": self.movie.id,
+                "current_relation_id": self.english_relation.id,
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "candidates"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["eligible_count"], 1)
+        rows = response.data["results"]
+        self.assertEqual(
+            [row["relation_id"] for row in rows],
+            [self.german_relation.id, self.english_relation.id],
+        )
+        self.assertTrue(rows[0]["allowed"])
+        self.assertTrue(rows[0]["selected"])
+        self.assertEqual(rows[0]["position"], 1)
+        self.assertFalse(rows[1]["allowed"])
+        self.assertTrue(rows[1]["current"])
+        self.assertEqual(rows[1]["reason"], "language_not_matched")
+
+    def test_policy_evaluation_explains_feature_exclusion(self):
+        self.english_category.metadata_defaults = {
+            **self.english_category.metadata_defaults,
+            "video_features": ["3d"],
+        }
+        self.english_category.save(update_fields=["metadata_defaults"])
+        self.policy.hard_constraints = {
+            "excluded_video_features": ["3d"],
+        }
+
+        result = relation_policy_evaluation(
+            self.english_relation,
+            self.policy,
+        )
+
+        self.assertEqual(
+            result,
+            {"allowed": False, "reason": "feature_excluded", "rule_id": ""},
         )
 
     def test_draft_stream_filter_preview_respects_order_and_category_scope(self):

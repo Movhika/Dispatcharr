@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -28,7 +29,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { ListOrdered, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -42,6 +43,7 @@ import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
 import VODSourceRules from './VODSourceRules.jsx';
+import VODCandidateSourcesModal from './VODCandidateSourcesModal.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
   normalizeVODFailoverRanking,
@@ -102,6 +104,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
+  const [candidateTarget, setCandidateTarget] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
@@ -170,6 +173,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     setCreating(false);
     setProfileId('');
     setActiveTab('settings');
+    setCandidateTarget(null);
   }, [opened]);
 
   useEffect(() => {
@@ -1002,12 +1006,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         <TableTh>Resolution</TableTh>
                         <TableTh>Format</TableTh>
                         <TableTh>Features</TableTh>
+                        {activeMode === 'compact' && <TableTh>Order</TableTh>}
                       </TableTr>
                     </TableThead>
                     <TableTbody>
                       {!previewLoading && preview.results?.length === 0 && (
                         <TableTr>
-                          <TableTd colSpan={8}>
+                          <TableTd colSpan={activeMode === 'compact' ? 9 : 8}>
                             <Text ta="center" c="dimmed" py="lg">
                               No prepared output matches the current filters.
                             </Text>
@@ -1037,6 +1042,19 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           <TableTd>
                             {metadataText(row.metadata, 'video_features')}
                           </TableTd>
+                          {activeMode === 'compact' && (
+                            <TableTd>
+                              <Tooltip label="Show Compact source order">
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label={`Show source order for ${row.name}`}
+                                  onClick={() => setCandidateTarget(row)}
+                                >
+                                  <ListOrdered size={17} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </TableTd>
+                          )}
                         </TableTr>
                       ))}
                     </TableTbody>
@@ -1073,6 +1091,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             })),
           }))
         }
+      />
+      <VODCandidateSourcesModal
+        opened={Boolean(candidateTarget)}
+        onClose={() => setCandidateTarget(null)}
+        profileId={selectedProfile?.id}
+        contentType={candidateTarget?.content_type || filters.type}
+        canonicalId={candidateTarget?.canonical_id}
+        title={candidateTarget?.name}
       />
     </>
   );

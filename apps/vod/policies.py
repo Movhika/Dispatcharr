@@ -312,20 +312,52 @@ def relation_allowed(
     category_mapping=None,
     metadata=_METADATA_NOT_PROVIDED,
 ):
+    return relation_policy_evaluation(
+        relation,
+        policy,
+        category_mapping=category_mapping,
+        metadata=metadata,
+    )["allowed"]
+
+
+def relation_policy_evaluation(
+    relation,
+    policy,
+    category_mapping=None,
+    metadata=_METADATA_NOT_PROVIDED,
+):
+    """Explain the same hard decision used by output and failover selection.
+
+    The compact-source preview must never maintain a second approximation of
+    the access rules.  Returning a stable reason code here lets every caller
+    use the production decision while still explaining why a source is greyed
+    out in the UI.
+    """
     if not policy:
-        return True
+        return {"allowed": True, "reason": "eligible", "rule_id": ""}
     category_mapping = category_mapping or policy_category_map(policy)
     category_relation = category_mapping.get(
         (relation.m3u_account_id, relation_category_id(relation))
     )
     if category_relation is None and category_mapping:
-        return False
+        return {
+            "allowed": False,
+            "reason": "category_not_allowed",
+            "rule_id": "",
+        }
 
     if metadata is _METADATA_NOT_PROVIDED:
         metadata = relation_metadata(relation, category_relation)
-    stream_filter_result = relation_stream_filter_result(relation, policy, metadata)
-    if stream_filter_result is not None:
-        return stream_filter_result
+    stream_filter_match = relation_stream_filter_match(relation, policy, metadata)
+    if stream_filter_match is not None:
+        rule_id, decision = stream_filter_match
+        return {
+            "allowed": decision,
+            "reason": (
+                "stream_filter_include" if decision else "stream_filter_exclude"
+            ),
+            "rule_id": rule_id,
+        }
     constraints = relation_constraints(relation, policy)
     allow_unknown = constraints.get("allow_unknown_metadata", True)
 
@@ -342,11 +374,15 @@ def relation_allowed(
         constraints.get("excluded_subtitle_languages")
     )
     if excluded_audio and not excluded_audio.isdisjoint(observed_audio):
-        return False
+        return {"allowed": False, "reason": "audio_excluded", "rule_id": ""}
     if excluded_subtitles and not excluded_subtitles.isdisjoint(
         observed_subtitles
     ):
-        return False
+        return {
+            "allowed": False,
+            "reason": "subtitle_excluded",
+            "rule_id": "",
+        }
     language_mode = constraints.get("language_match_mode", "all")
     language_checks = []
     if required_audio:
@@ -368,27 +404,55 @@ def relation_allowed(
             # another unknown field; this prevents ENG audio with unclassified
             # subtitles from leaking into a GER policy.
             if known_checks and not any(known_checks):
-                return False
+                return {
+                    "allowed": False,
+                    "reason": "language_not_matched",
+                    "rule_id": "",
+                }
             if not known_checks and not allow_unknown:
-                return False
+                return {
+                    "allowed": False,
+                    "reason": "language_unknown",
+                    "rule_id": "",
+                }
         else:
             if any(value is False for value in language_checks):
-                return False
+                return {
+                    "allowed": False,
+                    "reason": "language_not_matched",
+                    "rule_id": "",
+                }
             if (
                 any(value is None for value in language_checks)
                 and not allow_unknown
             ):
-                return False
+                return {
+                    "allowed": False,
+                    "reason": "language_unknown",
+                    "rule_id": "",
+                }
 
     resolution = _vertical_resolution(metadata)
     min_resolution = _constraint_int(constraints, "min_resolution")
     max_resolution = _constraint_int(constraints, "max_resolution")
     if min_resolution and not resolution and not allow_unknown:
-        return False
+        return {
+            "allowed": False,
+            "reason": "resolution_unknown",
+            "rule_id": "",
+        }
     if min_resolution and resolution and resolution < min_resolution:
-        return False
+        return {
+            "allowed": False,
+            "reason": "resolution_below_minimum",
+            "rule_id": "",
+        }
     if max_resolution and resolution and resolution > max_resolution:
-        return False
+        return {
+            "allowed": False,
+            "reason": "resolution_above_maximum",
+            "rule_id": "",
+        }
     required_features = set(
         normalize_video_features(constraints.get("required_video_features"))
     )
@@ -397,10 +461,14 @@ def relation_allowed(
         normalize_video_features(constraints.get("excluded_video_features"))
     )
     if excluded_features and not excluded_features.isdisjoint(observed_features):
-        return False
+        return {"allowed": False, "reason": "feature_excluded", "rule_id": ""}
     if required_features:
         if not observed_features and not allow_unknown:
-            return False
+            return {
+                "allowed": False,
+                "reason": "feature_unknown",
+                "rule_id": "",
+            }
         compatible_required = {
             compatible
             for required in required_features
@@ -408,8 +476,12 @@ def relation_allowed(
         }
         feature_match = not compatible_required.isdisjoint(observed_features)
         if observed_features and not feature_match:
-            return False
-    return True
+            return {
+                "allowed": False,
+                "reason": "feature_not_matched",
+                "rule_id": "",
+            }
+    return {"allowed": True, "reason": "eligible", "rule_id": ""}
 
 
 def _preference_score(observed, preferred):

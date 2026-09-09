@@ -1,5 +1,6 @@
 """VOD proxy must release geventpool checkouts after ORM on stream and stats paths."""
 
+import time
 from unittest.mock import MagicMock, patch
 
 from django.http import StreamingHttpResponse
@@ -173,7 +174,12 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
             "last_activity": "1001.0",
             "active_streams": "0",
         }
-        redis_client.exists.return_value = True
+        reconnect_deadline = time.time() + 120
+        redis_client.get.side_effect = lambda key: (
+            f"{reconnect_deadline:.6f}|test-token"
+            if key == "vod_proxy:disconnect_grace:seeking"
+            else None
+        )
         mock_movie.objects.select_related.return_value.get.return_value = MagicMock(
             name="Test Movie",
             logo=None,
@@ -193,6 +199,13 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
         connection = stats["vod_connections"][0]["connections"][0]
         self.assertEqual(connection["connection_state"], "reconnecting")
         self.assertEqual(connection["active_streams"], 0)
+        self.assertFalse(connection["provider_connection_active"])
+        self.assertTrue(connection["slot_reserved"])
+        self.assertAlmostEqual(
+            connection["reconnect_expires_at"], reconnect_deadline, places=3
+        )
+        self.assertGreaterEqual(connection["reconnect_seconds_remaining"], 118)
+        self.assertLessEqual(connection["reconnect_seconds_remaining"], 120)
         mock_close.assert_called_once()
 
     @patch("apps.proxy.vod_proxy.views.close_old_connections")

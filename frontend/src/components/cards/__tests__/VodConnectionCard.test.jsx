@@ -27,14 +27,29 @@ vi.mock('../../../utils/cards/VodConnectionCardUtils.js', () => ({
 
 // ── logo ──────────────────────────────────────────────────────────────────────
 vi.mock('../../../images/logo.png', () => ({ default: 'default-logo.png' }));
+vi.mock('../../VODCandidateSourcesModal.jsx', () => ({
+  default: ({ opened, onSwitch }) =>
+    opened ? (
+      <button onClick={() => onSwitch(22, 'now')}>
+        Candidate source modal
+      </button>
+    ) : null,
+}));
 
 // ── Mantine core ──────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  ActionIcon: ({ children, onClick, color, variant }) => (
+  ActionIcon: ({
+    children,
+    onClick,
+    color,
+    variant,
+    'aria-label': ariaLabel,
+  }) => (
     <button
       data-testid="action-icon"
       data-color={color}
       data-variant={variant}
+      aria-label={ariaLabel}
       onClick={onClick}
     >
       {children}
@@ -142,6 +157,7 @@ vi.mock('lucide-react', () => ({
     <svg data-testid="icon-chevron-down" data-size={size} style={style} />
   ),
   HardDriveUpload: () => <svg data-testid="icon-hdd-upload" />,
+  Shuffle: () => <svg data-testid="icon-shuffle" />,
   SquareX: () => <svg data-testid="icon-square-x" />,
   Timer: () => <svg data-testid="icon-timer" />,
 }));
@@ -308,13 +324,25 @@ describe('VodConnectionCard', () => {
           vodContent={makeMovieContent({
             individual_connection: makeConnection({
               connection_state: 'reconnecting',
+              provider_connection_active: false,
+              slot_reserved: true,
+              reconnect_seconds_remaining: 120,
             }),
           })}
           stopVODClient={vi.fn()}
         />
       );
 
-      expect(screen.getByText('Seeking / reconnecting')).toBeInTheDocument();
+      expect(
+        screen.getByText('Buffered / reconnecting · 120s')
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByText('Show Details').closest('[data-testid="group"]')
+      );
+      expect(screen.getByText('Provider HTTP:')).toBeInTheDocument();
+      expect(screen.getByText('Closed')).toBeInTheDocument();
+      expect(screen.getByText('Provider slot:')).toBeInTheDocument();
+      expect(screen.getByText('Reserved · up to 120s')).toBeInTheDocument();
     });
 
     it('renders the client IP in the connection section', () => {
@@ -344,6 +372,54 @@ describe('VodConnectionCard', () => {
 
       expect(screen.getByText('Provider — NICKELODEON')).toBeInTheDocument();
       expect(screen.getByText('Stream ID: 513301')).toBeInTheDocument();
+    });
+
+    it('opens and controls the Compact source picker', () => {
+      const switchVODSource = vi.fn();
+      render(
+        <VodConnectionCard
+          vodContent={makeMovieContent({
+            individual_connection: makeConnection({
+              source: {
+                access_policy_id: 7,
+                access_policy_export_mode: 'compact',
+                canonical_id: 3,
+                relation_id: 11,
+              },
+            }),
+          })}
+          stopVODClient={vi.fn()}
+          switchVODSource={switchVODSource}
+        />
+      );
+
+      fireEvent.click(screen.getByLabelText('View or switch Compact source'));
+      fireEvent.click(screen.getByText('Candidate source modal'));
+
+      expect(switchVODSource).toHaveBeenCalledWith('client-abc-123', 22, 'now');
+    });
+
+    it('does not offer source switching outside Compact mode', () => {
+      render(
+        <VodConnectionCard
+          vodContent={makeMovieContent({
+            individual_connection: makeConnection({
+              source: {
+                access_policy_id: 7,
+                access_policy_export_mode: 'variants',
+                canonical_id: 3,
+                relation_id: 11,
+              },
+            }),
+          })}
+          stopVODClient={vi.fn()}
+          switchVODSource={vi.fn()}
+        />
+      );
+
+      expect(
+        screen.queryByLabelText('View or switch Compact source')
+      ).not.toBeInTheDocument();
     });
 
     it('renders "Unknown IP" when client_ip is absent', () => {
