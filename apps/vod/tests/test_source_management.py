@@ -778,7 +778,7 @@ class VODSourceManagementTests(TestCase):
             [self.german_relation.id],
         )
 
-    def test_variants_can_use_canonical_edition_names_without_collapsing(self):
+    def test_variants_keep_provider_titles_and_ignore_compact_suffix_rules(self):
         self.german_category.metadata_defaults = {
             **self.german_category.metadata_defaults,
             "video_features": ["3d"],
@@ -797,6 +797,14 @@ class VODSourceManagementTests(TestCase):
                 "required_video_features": ["3d"],
             }
         ]
+        self.german_relation.custom_properties = {
+            "movie_data": {"name": "Provider A Avatar 3D"}
+        }
+        self.german_relation.save(update_fields=["custom_properties"])
+        self.english_relation.custom_properties = {
+            "movie_data": {"name": "Provider B Avatar UHD"}
+        }
+        self.english_relation.save(update_fields=["custom_properties"])
         self.policy.save()
 
         counts = build_vod_profile_selection(self.policy.id)
@@ -811,7 +819,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(counts["movies"]["output_entries"], 2)
         self.assertEqual(
             names,
-            {"Avatar (2005)", "Avatar (2005) 3D"},
+            {"Provider A Avatar 3D", "Provider B Avatar UHD"},
         )
 
     def test_switching_variants_to_compact_activates_compact_generation(self):
@@ -1111,6 +1119,58 @@ class VODSourceManagementTests(TestCase):
             response.data["results"][0]["metadata"]["audio_languages"],
             ["ger"],
         )
+
+    def test_compact_preview_reports_all_eligible_failover_sources(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="compact-source-count-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["source_count"], 2)
+
+    def test_preview_keeps_active_compact_shape_while_variants_builds(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+        build_vod_profile_selection(self.policy.id)
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        admin = get_user_model().objects.create_user(
+            username="active-compact-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["source_count"], 2)
 
     def test_compact_candidate_preview_uses_production_order_and_reasons(self):
         admin = get_user_model().objects.create_user(
@@ -1550,6 +1610,50 @@ class VODSourceManagementTests(TestCase):
         self.assertTrue(result["republished"])
         self.assertEqual(
             self.policy.selection_progress["task_id"], "replacement-task-id"
+        )
+        delay.assert_called_once_with()
+
+    def test_watchdog_recovers_a_build_without_a_recent_progress_heartbeat(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_started_at=timezone.now() - timedelta(hours=2),
+            selection_progress={
+                "phase": "Selecting movies sources",
+                "percent": 6,
+                "task_id": "interrupted-task-id",
+                "build_generation": "interrupted-generation",
+                "updated_at": (
+                    timezone.now() - timedelta(hours=1)
+                ).isoformat(),
+            },
+        )
+
+        with (
+            patch(
+                "django.core.cache.cache.get",
+                return_value="interrupted-task-id",
+            ),
+            patch("django.core.cache.cache.delete"),
+            patch("django.core.cache.cache.add", return_value=True),
+            patch("django.core.cache.cache.set"),
+            patch(
+                "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+            ) as delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            delay.return_value.id = "recovery-task-id"
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stalled_building"], [self.policy.pk])
+        self.assertTrue(result["republished"])
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(
+            self.policy.selection_progress["task_id"], "recovery-task-id"
         )
         delay.assert_called_once_with()
 

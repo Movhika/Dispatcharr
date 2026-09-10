@@ -9,7 +9,6 @@ import {
   Modal,
   Paper,
   Pagination,
-  Progress,
   ScrollArea,
   SegmentedControl,
   Select,
@@ -29,7 +28,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { ListOrdered, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -44,7 +43,8 @@ import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
 import VODSourceRules from './VODSourceRules.jsx';
 import VODEditionRules from './VODEditionRules.jsx';
-import VODCandidateSourcesModal from './VODCandidateSourcesModal.jsx';
+import VODModal from './VODModal.jsx';
+import SeriesModal from './SeriesModal.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
   normalizeVODFailoverRanking,
@@ -109,6 +109,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [candidateTarget, setCandidateTarget] = useState(null);
+  const [candidateData, setCandidateData] = useState(null);
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
@@ -216,6 +219,63 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     };
   }, [fetchProfiles, opened, selectedProfileId, selectedSelectionStatus]);
 
+  useEffect(() => {
+    if (!candidateTarget || !selectedProfile?.id) {
+      setCandidateData(null);
+      setCandidateError('');
+      return;
+    }
+    let cancelled = false;
+    setCandidateData(null);
+    setCandidateLoading(true);
+    setCandidateError('');
+    const previewMode =
+      selectedProfile.selection_active_mode ||
+      selectedProfile.selection_counts?.export_mode ||
+      selectedProfile.export_mode;
+    API.getVODAccessPolicyCandidates(selectedProfile.id, {
+      type: candidateTarget.content_type || filters.type,
+      canonical_id: candidateTarget.canonical_id,
+      ...(candidateTarget.relation_id
+        ? { current_relation_id: candidateTarget.relation_id }
+        : {}),
+      ...(previewMode === 'compact' && candidateTarget.edition_key
+        ? { edition_key: candidateTarget.edition_key }
+        : {}),
+    })
+      .then((response) => {
+        if (!cancelled) setCandidateData(response);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCandidateError(
+            error?.body?.detail ||
+              error?.message ||
+              'Could not load profile source information.'
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCandidateLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    candidateTarget,
+    filters.type,
+    selectedProfile?.export_mode,
+    selectedProfile?.id,
+    selectedProfile?.selection_active_mode,
+    selectedProfile?.selection_counts?.export_mode,
+  ]);
+
+  useEffect(() => {
+    if (draft.export_mode === 'variants' && activeTab === 'editions') {
+      setActiveTab('settings');
+    }
+  }, [activeTab, draft.export_mode]);
+
   const accountOptions = useMemo(
     () =>
       [
@@ -283,8 +343,20 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     }
     setPreviewLoading(true);
     try {
+      const previewMode =
+        selectedProfile?.selection_active_mode ||
+        selectedProfile?.selection_counts?.export_mode ||
+        selectedProfile?.export_mode;
+      const applicableFilters =
+        previewMode === 'compact'
+          ? {
+              type: filters.type,
+              search: filters.search,
+              category: filters.category,
+            }
+          : filters;
       const params = Object.fromEntries(
-        Object.entries({ ...filters, page, page_size: 50 }).filter(
+        Object.entries({ ...applicableFilters, page, page_size: 50 }).filter(
           ([, value]) => value !== ''
         )
       );
@@ -309,6 +381,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     opened,
     page,
     selectionAvailable,
+    selectedProfile?.id,
+    selectedProfile?.selection_active_mode,
     selectedProfile?.selection_completed_at,
   ]);
 
@@ -365,8 +439,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ),
           required_video_features: rule.required_video_features || [],
         })),
-        naming_mode: draft.name_template.trim() ? 'template' : 'mode_default',
-        name_template: draft.name_template.trim(),
+        naming_mode: 'mode_default',
+        name_template: '',
         category_rules: relationIds(draft).map((category_relation) => ({
           category_relation: Number(category_relation),
           enabled: true,
@@ -458,10 +532,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     (selectedProfile?.selection_current ? selectedProfile.export_mode : '');
   const targetMode =
     buildProgress.target_export_mode || selectedProfile?.export_mode || '';
-  const buildPercent = Math.max(
-    0,
-    Math.min(Number(buildProgress.percent) || 0, 100)
-  );
   const buildStartedAt =
     selectedProfile?.selection_status === 'pending'
       ? buildProgress.queued_at ||
@@ -471,25 +541,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const buildElapsedSeconds = buildStartedAt
     ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
     : 0;
-  const stageIndex = Math.max(Number(buildProgress.stage_index) || 0, 0);
-  const stageCount = Math.max(Number(buildProgress.stage_count) || 5, 1);
-  const stagePercent = Math.max(
-    0,
-    Math.min(Number(buildProgress.stage_percent) || 0, 100)
-  );
-  const phaseStartedAt = new Date(
-    buildProgress.phase_started_at || ''
-  ).getTime();
-  const phaseElapsedSeconds = Number.isFinite(phaseStartedAt)
-    ? Math.max((Date.now() - phaseStartedAt) / 1000, 0)
-    : 0;
-  const stageRemainingSeconds =
-    selectedProfile?.selection_status === 'building' &&
-    stagePercent >= 10 &&
-    stagePercent < 100 &&
-    phaseElapsedSeconds >= 5
-      ? (phaseElapsedSeconds / stagePercent) * (100 - stagePercent)
-      : null;
   const lastBuildSeconds = (() => {
     const measured = Number(counts.prepared_seconds);
     if (Number.isFinite(measured) && measured >= 0) return measured;
@@ -501,24 +552,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     ).getTime();
     if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
     return Math.max((completed - started) / 1000, 0);
-  })();
-  const typicalBuildSeconds = (() => {
-    const durations = profiles
-      .map((profile) => {
-        const measured = Number(profile.selection_counts?.prepared_seconds);
-        if (Number.isFinite(measured) && measured > 0) return measured;
-        const started = new Date(profile.selection_started_at || '').getTime();
-        const completed = new Date(
-          profile.selection_completed_at || ''
-        ).getTime();
-        return Number.isFinite(started) && Number.isFinite(completed)
-          ? Math.max((completed - started) / 1000, 0)
-          : null;
-      })
-      .filter((duration) => duration !== null && duration > 0)
-      .sort((left, right) => left - right);
-    if (!durations.length) return null;
-    return durations[Math.floor(durations.length / 2)];
   })();
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
@@ -684,34 +717,17 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           {['pending', 'building'].includes(
             selectedProfile?.selection_status
           ) && (
-            <Stack gap={5}>
-              <Group justify="space-between" gap="sm">
-                <Text size="sm" fw={500}>
-                  {selectedProfile.selection_status === 'building' &&
-                    stageIndex > 0 &&
-                    `Step ${Math.min(stageIndex, stageCount)} of ${stageCount} · `}
-                  {buildProgress.phase ||
-                    (selectedProfile.selection_status === 'pending'
-                      ? 'Waiting for worker'
-                      : 'Preparing catalog')}
-                  {Number.isFinite(Number(buildProgress.processed)) &&
-                    Number(buildProgress.total) > 0 &&
-                    ` — ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {selectedProfile.selection_status === 'pending'
-                    ? `Waiting for ${formatDuration(buildElapsedSeconds)}${
-                        typicalBuildSeconds !== null
-                          ? ` · preparation usually about ${formatDuration(typicalBuildSeconds)} after it starts`
-                          : ' · an estimate appears when preparation starts'
-                      }`
-                    : `${Math.round(stagePercent)}% of this step · ${formatDuration(buildElapsedSeconds)} total elapsed${
-                        stageRemainingSeconds !== null
-                          ? ` · current step about ${formatDuration(stageRemainingSeconds)} remaining`
-                          : ''
-                      }`}
-                </Text>
-              </Group>
+            <Stack gap={3}>
+              <Text size="sm" fw={500}>
+                {buildProgress.phase ||
+                  (selectedProfile.selection_status === 'pending'
+                    ? 'Waiting for worker'
+                    : 'Preparing catalog')}
+                {Number.isFinite(Number(buildProgress.processed)) &&
+                  Number(buildProgress.total) > 0 &&
+                  ` · ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
+                {` · ${formatDuration(buildElapsedSeconds)} elapsed`}
+              </Text>
               {selectedProfile.selection_status === 'pending' && (
                 <Text size="xs" c="dimmed">
                   Queue: {buildProgress.queue || 'celery'} · Task:{' '}
@@ -721,16 +737,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   the default queue.
                 </Text>
               )}
-              <Progress
-                value={buildPercent}
-                animated
-                color={
-                  selectedProfile.selection_status === 'pending'
-                    ? 'yellow'
-                    : 'blue'
-                }
-                aria-label="Catalog preparation progress"
-              />
             </Stack>
           )}
 
@@ -773,7 +779,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
               <TabsTab value="sources">Sources</TabsTab>
-              <TabsTab value="editions">Editions</TabsTab>
+              {draft.export_mode === 'compact' && (
+                <TabsTab value="editions">Editions</TabsTab>
+              )}
               <TabsTab value="failover">Failover</TabsTab>
               <TabsTab value="preview">Content preview</TabsTab>
             </TabsList>
@@ -895,44 +903,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
             <TabsPanel value="editions" pt="md">
               <ScrollArea h="calc(96vh - 270px)">
-                <Stack gap="lg">
-                  <Paper
-                    withBorder
-                    p="lg"
-                    radius="md"
-                    maw={1100}
-                    mx="auto"
-                    w="100%"
-                  >
-                    <Stack>
-                      <Text fw={700}>Output naming</Text>
-                      <Text size="sm" c="dimmed">
-                        Without a custom format, Compact uses the canonical
-                        title plus its matched suffix; Variants keeps the
-                        original provider title.
-                      </Text>
-                      <TextInput
-                        label="Custom output title format (optional)"
-                        placeholder={
-                          draft.export_mode === 'compact'
-                            ? '{canonical} {edition}'
-                            : '{source}'
-                        }
-                        description={
-                          draft.export_mode === 'compact'
-                            ? 'Compact: {canonical}, {title}, {year}, {edition}'
-                            : 'Variants: {canonical}, {title}, {year}, {edition}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}'
-                        }
-                        value={draft.name_template}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            name_template: event.currentTarget.value,
-                          })
-                        }
-                      />
-                    </Stack>
-                  </Paper>
+                {draft.export_mode === 'compact' && (
                   <Paper withBorder p="lg" radius="md">
                     <VODEditionRules
                       value={draft.edition_rules}
@@ -941,7 +912,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       }
                     />
                   </Paper>
-                </Stack>
+                )}
               </ScrollArea>
             </TabsPanel>
 
@@ -985,22 +956,24 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }}
                     miw={220}
                   />
-                  <Select
-                    label="M3U account"
-                    clearable
-                    searchable
-                    data={accountOptions}
-                    value={filters.m3u_account || null}
-                    onChange={(value) => {
-                      setFilters({
-                        ...filters,
-                        m3u_account: value || '',
-                        category: '',
-                      });
-                      setPage(1);
-                    }}
-                    miw={180}
-                  />
+                  {activeMode !== 'compact' && (
+                    <Select
+                      label="M3U account"
+                      clearable
+                      searchable
+                      data={accountOptions}
+                      value={filters.m3u_account || null}
+                      onChange={(value) => {
+                        setFilters({
+                          ...filters,
+                          m3u_account: value || '',
+                          category: '',
+                        });
+                        setPage(1);
+                      }}
+                      miw={180}
+                    />
+                  )}
                   <Select
                     label="Category"
                     clearable
@@ -1013,67 +986,71 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }}
                     miw={180}
                   />
-                  <LanguageSelect
-                    label="DUB"
-                    value={filters.audio_language}
-                    onChange={(value) =>
-                      setFilters({
-                        ...filters,
-                        audio_language: value,
-                      })
-                    }
-                    w={160}
-                  />
-                  <LanguageSelect
-                    label="SUB"
-                    value={filters.subtitle_language}
-                    onChange={(value) =>
-                      setFilters({
-                        ...filters,
-                        subtitle_language: value,
-                      })
-                    }
-                    w={160}
-                  />
-                  <Select
-                    label="Resolution"
-                    clearable
-                    data={RESOLUTION_VALUES}
-                    value={filters.resolution || null}
-                    onChange={(value) =>
-                      setFilters({ ...filters, resolution: value || '' })
-                    }
-                    w={120}
-                  />
-                  <Select
-                    label="Format"
-                    clearable
-                    data={CONTAINER_EXTENSION_OPTIONS}
-                    value={filters.container_extension || null}
-                    onChange={(value) =>
-                      setFilters({
-                        ...filters,
-                        container_extension: value || '',
-                      })
-                    }
-                    w={105}
-                  />
-                  <Box w={190}>
-                    <VideoFeaturePicker
-                      label="Features"
-                      emptyLabel="Any"
-                      value={
-                        filters.video_feature ? [filters.video_feature] : []
-                      }
-                      onChange={(value) => {
-                        setFilters({
-                          ...filters,
-                          video_feature: value[value.length - 1] || '',
-                        });
-                        setPage(1);
-                      }}
-                    />
-                  </Box>
+                  {activeMode !== 'compact' && (
+                    <>
+                      <LanguageSelect
+                        label="DUB"
+                        value={filters.audio_language}
+                        onChange={(value) =>
+                          setFilters({
+                            ...filters,
+                            audio_language: value,
+                          })
+                        }
+                        w={160}
+                      />
+                      <LanguageSelect
+                        label="SUB"
+                        value={filters.subtitle_language}
+                        onChange={(value) =>
+                          setFilters({
+                            ...filters,
+                            subtitle_language: value,
+                          })
+                        }
+                        w={160}
+                      />
+                      <Select
+                        label="Resolution"
+                        clearable
+                        data={RESOLUTION_VALUES}
+                        value={filters.resolution || null}
+                        onChange={(value) =>
+                          setFilters({ ...filters, resolution: value || '' })
+                        }
+                        w={120}
+                      />
+                      <Select
+                        label="Format"
+                        clearable
+                        data={CONTAINER_EXTENSION_OPTIONS}
+                        value={filters.container_extension || null}
+                        onChange={(value) =>
+                          setFilters({
+                            ...filters,
+                            container_extension: value || '',
+                          })
+                        }
+                        w={105}
+                      />
+                      <Box w={190}>
+                        <VideoFeaturePicker
+                          label="Features"
+                          emptyLabel="Any"
+                          value={
+                            filters.video_feature ? [filters.video_feature] : []
+                          }
+                          onChange={(value) => {
+                            setFilters({
+                              ...filters,
+                              video_feature: value[value.length - 1] || '',
+                            });
+                            setPage(1);
+                          }}
+                        />
+                      </Box>
+                    </>
+                  )}
                 </Group>
                 <Group justify="space-between">
                   <Text fw={500}>
@@ -1091,20 +1068,26 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <TableThead>
                       <TableTr>
                         <TableTh>Title</TableTh>
-                        <TableTh>Source</TableTh>
+                        <TableTh>
+                          {activeMode === 'compact' ? 'Sources' : 'Source'}
+                        </TableTh>
                         <TableTh>Category</TableTh>
-                        <TableTh>DUB</TableTh>
-                        <TableTh>SUB</TableTh>
-                        <TableTh>Resolution</TableTh>
-                        <TableTh>Format</TableTh>
-                        <TableTh>Features</TableTh>
-                        {activeMode === 'compact' && <TableTh>Order</TableTh>}
+                        {activeMode !== 'compact' && (
+                          <>
+                            <TableTh>DUB</TableTh>
+                            <TableTh>SUB</TableTh>
+                            <TableTh>Resolution</TableTh>
+                            <TableTh>Format</TableTh>
+                            <TableTh>Features</TableTh>
+                          </>
+                        )}
+                        <TableTh>Details</TableTh>
                       </TableTr>
                     </TableThead>
                     <TableTbody>
                       {!previewLoading && preview.results?.length === 0 && (
                         <TableTr>
-                          <TableTd colSpan={activeMode === 'compact' ? 9 : 8}>
+                          <TableTd colSpan={activeMode === 'compact' ? 4 : 9}>
                             <Text ta="center" c="dimmed" py="lg">
                               No prepared output matches the current filters.
                             </Text>
@@ -1115,35 +1098,44 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         <TableTr key={row.id}>
                           <TableTd>{row.name}</TableTd>
                           <TableTd>
-                            {row.m3u_account_name} — {row.source_name}
+                            {activeMode === 'compact'
+                              ? row.source_count
+                              : row.m3u_account_name}
                           </TableTd>
                           <TableTd>{row.category_name || '—'}</TableTd>
-                          <TableTd>
-                            {metadataText(row.metadata, 'audio_languages')}
-                          </TableTd>
-                          <TableTd>
-                            {metadataText(row.metadata, 'subtitle_languages')}
-                          </TableTd>
-                          <TableTd>
-                            {row.resolution ? `${row.resolution}p` : '—'}
-                          </TableTd>
-                          <TableTd>{row.container_extension || '—'}</TableTd>
-                          <TableTd>
-                            {metadataText(row.metadata, 'video_features')}
-                          </TableTd>
-                          {activeMode === 'compact' && (
-                            <TableTd>
-                              <Tooltip label="Show Compact source order">
-                                <ActionIcon
-                                  variant="subtle"
-                                  aria-label={`Show source order for ${row.name}`}
-                                  onClick={() => setCandidateTarget(row)}
-                                >
-                                  <ListOrdered size={17} />
-                                </ActionIcon>
-                              </Tooltip>
-                            </TableTd>
+                          {activeMode !== 'compact' && (
+                            <>
+                              <TableTd>
+                                {metadataText(row.metadata, 'audio_languages')}
+                              </TableTd>
+                              <TableTd>
+                                {metadataText(
+                                  row.metadata,
+                                  'subtitle_languages'
+                                )}
+                              </TableTd>
+                              <TableTd>
+                                {row.resolution ? `${row.resolution}p` : '—'}
+                              </TableTd>
+                              <TableTd>
+                                {row.container_extension || '—'}
+                              </TableTd>
+                              <TableTd>
+                                {metadataText(row.metadata, 'video_features')}
+                              </TableTd>
+                            </>
                           )}
+                          <TableTd>
+                            <Tooltip label="Open title and profile sources">
+                              <ActionIcon
+                                variant="subtle"
+                                aria-label={`Open details for ${row.name}`}
+                                onClick={() => setCandidateTarget(row)}
+                              >
+                                <Eye size={17} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </TableTd>
                         </TableTr>
                       ))}
                     </TableTbody>
@@ -1181,16 +1173,35 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           }))
         }
       />
-      <VODCandidateSourcesModal
-        opened={Boolean(candidateTarget)}
-        onClose={() => setCandidateTarget(null)}
-        profileId={selectedProfile?.id}
-        contentType={candidateTarget?.content_type || filters.type}
-        canonicalId={candidateTarget?.canonical_id}
-        currentRelationId={candidateTarget?.relation_id}
-        editionKey={candidateTarget?.edition_key}
-        title={candidateTarget?.name}
-      />
+      {candidateTarget?.content_type === 'series' ? (
+        <SeriesModal
+          series={{
+            id: candidateTarget.canonical_id,
+            name: candidateTarget.name,
+            year: candidateTarget.year,
+          }}
+          opened
+          onClose={() => setCandidateTarget(null)}
+          profileCandidates={candidateData}
+          profileCandidatesLoading={candidateLoading}
+          profileCandidatesError={candidateError}
+          onMetadataChanged={loadPreview}
+        />
+      ) : candidateTarget ? (
+        <VODModal
+          vod={{
+            id: candidateTarget.canonical_id,
+            name: candidateTarget.name,
+            year: candidateTarget.year,
+          }}
+          opened
+          onClose={() => setCandidateTarget(null)}
+          profileCandidates={candidateData}
+          profileCandidatesLoading={candidateLoading}
+          profileCandidatesError={candidateError}
+          onMetadataChanged={loadPreview}
+        />
+      ) : null}
     </>
   );
 };

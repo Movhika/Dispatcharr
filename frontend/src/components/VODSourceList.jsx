@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ActionIcon,
+  Alert,
   Badge,
   Group,
   ScrollArea,
@@ -13,6 +14,7 @@ import {
   TableTr,
   Text,
   Tooltip,
+  Loader,
 } from '@mantine/core';
 import { Copy, Play, Wrench } from 'lucide-react';
 import { videoFeatureLabel } from '../utils/vodMetadataOptions.js';
@@ -147,174 +149,241 @@ const VODSourceList = ({
   onEdit,
   onPlay,
   onCopy,
-}) => (
-  <ScrollArea type="auto">
-    <Table
-      striped
-      highlightOnHover
-      withTableBorder
-      layout="fixed"
-      miw={contentType === 'movie' ? 1120 : 820}
-      aria-label="Exact VOD sources"
-    >
-      <TableThead>
-        <TableTr>
-          <TableTh>
-            <Stack gap={0}>
-              <Text inherit fw={700}>
-                Source
-              </Text>
-              <Group gap={4} wrap="nowrap">
-                <Text size="xs" c="dimmed">
-                  M3U account
-                </Text>
-                <Text size="xs" c="dimmed">
-                  ·
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Category
-                </Text>
-                <Text size="xs" c="dimmed">
-                  · IDs
-                </Text>
-              </Group>
-            </Stack>
-          </TableTh>
-          <TableTh w={140}>DUB</TableTh>
-          <TableTh w={140}>SUB</TableTh>
-          <TableTh w={110}>Resolution</TableTh>
-          {contentType === 'movie' && <TableTh w={320}>Details</TableTh>}
-          <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
-        </TableTr>
-      </TableThead>
-      <TableTbody>
-        {providers.map((provider) => {
-          const values = valuesFor(
-            provider,
-            selectedProvider,
-            selectedSourceMetadata
-          );
-          const selected = selectedProvider?.id === provider.id;
-          return (
-            <TableTr
-              key={provider.id}
-              data-selected={selected || undefined}
-              onClick={() => onSelect?.(provider)}
-              style={{
-                cursor: 'pointer',
-                backgroundColor: selected
-                  ? 'var(--mantine-color-blue-light)'
-                  : undefined,
-                boxShadow: selected
-                  ? 'inset 3px 0 var(--mantine-color-blue-6)'
-                  : undefined,
-              }}
-            >
-              <TableTd>
-                <Stack gap={1}>
-                  <Text size="sm" fw={500} lineClamp={1}>
-                    {sourceName(provider, contentType)}
+  profileCandidates,
+  profileCandidatesLoading = false,
+  profileCandidatesError = '',
+}) => {
+  const candidateRows = profileCandidates?.results || [];
+  const candidateByRelation = new Map(
+    candidateRows.map((row) => [String(row.relation_id), row])
+  );
+  const candidateOrder = new Map(
+    candidateRows.map((row, index) => [String(row.relation_id), index])
+  );
+  const visibleProviders = candidateRows.length
+    ? [...providers].sort(
+        (left, right) =>
+          (candidateOrder.get(String(left.id)) ?? Number.MAX_SAFE_INTEGER) -
+          (candidateOrder.get(String(right.id)) ?? Number.MAX_SAFE_INTEGER)
+      )
+    : providers;
+
+  return (
+    <Stack gap="xs">
+      {profileCandidatesLoading && (
+        <Group gap="xs">
+          <Loader size="xs" />
+          <Text size="sm" c="dimmed">
+            Loading profile selection…
+          </Text>
+        </Group>
+      )}
+      {profileCandidatesError && (
+        <Alert color="red">{profileCandidatesError}</Alert>
+      )}
+      {profileCandidates && (
+        <Alert color="blue" variant="light">
+          Profile order and exclusions are shown on the same source rows. The
+          first eligible source is preferred; availability is checked again when
+          playback starts.
+        </Alert>
+      )}
+      <ScrollArea type="auto">
+        <Table
+          striped
+          highlightOnHover
+          withTableBorder
+          layout="fixed"
+          miw={contentType === 'movie' ? 1120 : 820}
+          aria-label="Exact VOD sources"
+        >
+          <TableThead>
+            <TableTr>
+              {profileCandidates && <TableTh w={125}>Profile</TableTh>}
+              <TableTh>
+                <Stack gap={0}>
+                  <Text inherit fw={700}>
+                    Source
                   </Text>
-                  <Group gap={4} wrap="wrap">
+                  <Group gap={4} wrap="nowrap">
                     <Text size="xs" c="dimmed">
-                      {provider.m3u_account?.name || 'Unknown'}
+                      M3U account
                     </Text>
                     <Text size="xs" c="dimmed">
                       ·
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {provider.category?.name || 'Uncategorized'}
+                      Category
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      · IDs
                     </Text>
                   </Group>
-                  <Text size="xs" c="dimmed">
-                    {contentType === 'movie'
-                      ? `Stream ID: ${provider.stream_id || '—'}`
-                      : `Provider series ID: ${provider.external_series_id || '—'}`}
-                    {' · '}Relation ID: {provider.id}
-                  </Text>
                 </Stack>
-              </TableTd>
-              <TableTd>
-                <LanguageBadges
-                  values={values}
-                  field="audio_languages"
-                  color="blue"
-                />
-              </TableTd>
-              <TableTd>
-                <LanguageBadges
-                  values={values}
-                  field="subtitle_languages"
-                  color="cyan"
-                />
-              </TableTd>
-              <TableTd>
-                <Badge color="teal" variant="light">
-                  {values.resolution ||
-                    (values.height ? `${values.height}p` : '—')}
-                </Badge>
-              </TableTd>
-              {contentType === 'movie' && (
-                <TableTd>
-                  <MovieDetails values={values} provider={provider} />
-                </TableTd>
-              )}
-              <TableTd>
-                <Group gap={5} wrap="nowrap">
+              </TableTh>
+              <TableTh w={140}>DUB</TableTh>
+              <TableTh w={140}>SUB</TableTh>
+              <TableTh w={110}>Resolution</TableTh>
+              {contentType === 'movie' && <TableTh w={320}>Details</TableTh>}
+              <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
+            </TableTr>
+          </TableThead>
+          <TableTbody>
+            {visibleProviders.map((provider) => {
+              const values = valuesFor(
+                provider,
+                selectedProvider,
+                selectedSourceMetadata
+              );
+              const selected = selectedProvider?.id === provider.id;
+              const profileRow = candidateByRelation.get(String(provider.id));
+              return (
+                <TableTr
+                  key={provider.id}
+                  data-selected={selected || undefined}
+                  onClick={() => onSelect?.(provider)}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: profileRow && !profileRow.allowed ? 0.48 : 1,
+                    backgroundColor: selected
+                      ? 'var(--mantine-color-blue-light)'
+                      : undefined,
+                    boxShadow: selected
+                      ? 'inset 3px 0 var(--mantine-color-blue-6)'
+                      : undefined,
+                  }}
+                >
+                  {profileCandidates && (
+                    <TableTd>
+                      <Stack gap={2}>
+                        {profileRow?.position ? (
+                          <Badge variant="light">#{profileRow.position}</Badge>
+                        ) : (
+                          <Badge color="gray" variant="outline">
+                            Excluded
+                          </Badge>
+                        )}
+                        {profileRow?.selected && (
+                          <Badge color="blue" variant="light">
+                            Preferred
+                          </Badge>
+                        )}
+                        {profileRow?.reason &&
+                          profileRow.reason !== 'eligible' && (
+                            <Text size="xs" c="dimmed">
+                              {profileRow.reason.replaceAll('_', ' ')}
+                            </Text>
+                          )}
+                      </Stack>
+                    </TableTd>
+                  )}
+                  <TableTd>
+                    <Stack gap={1}>
+                      <Text size="sm" fw={500} lineClamp={1}>
+                        {sourceName(provider, contentType)}
+                      </Text>
+                      <Group gap={4} wrap="wrap">
+                        <Text size="xs" c="dimmed">
+                          {provider.m3u_account?.name || 'Unknown'}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          ·
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {provider.category?.name || 'Uncategorized'}
+                        </Text>
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        {contentType === 'movie'
+                          ? `Stream ID: ${provider.stream_id || '—'}`
+                          : `Provider series ID: ${provider.external_series_id || '—'}`}
+                        {' · '}Relation ID: {provider.id}
+                      </Text>
+                    </Stack>
+                  </TableTd>
+                  <TableTd>
+                    <LanguageBadges
+                      values={values}
+                      field="audio_languages"
+                      color="blue"
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <LanguageBadges
+                      values={values}
+                      field="subtitle_languages"
+                      color="cyan"
+                    />
+                  </TableTd>
+                  <TableTd>
+                    <Badge color="teal" variant="light">
+                      {values.resolution ||
+                        (values.height ? `${values.height}p` : '—')}
+                    </Badge>
+                  </TableTd>
                   {contentType === 'movie' && (
-                    <>
-                      <Tooltip label="Play this exact source">
+                    <TableTd>
+                      <MovieDetails values={values} provider={provider} />
+                    </TableTd>
+                  )}
+                  <TableTd>
+                    <Group gap={5} wrap="nowrap">
+                      {contentType === 'movie' && (
+                        <>
+                          <Tooltip label="Play this exact source">
+                            <ActionIcon
+                              aria-label="Play exact source"
+                              variant="filled"
+                              color="blue"
+                              disabled={disabled}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onPlay?.(provider);
+                              }}
+                            >
+                              <Play size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Copy link for this exact source">
+                            <ActionIcon
+                              aria-label="Copy exact source link"
+                              variant="light"
+                              color="gray"
+                              disabled={disabled}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onCopy?.(provider);
+                              }}
+                            >
+                              <Copy size={15} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </>
+                      )}
+                      <Tooltip label="Edit this exact source">
                         <ActionIcon
-                          aria-label="Play exact source"
-                          variant="filled"
-                          color="blue"
-                          disabled={disabled}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onPlay?.(provider);
-                          }}
-                        >
-                          <Play size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Copy link for this exact source">
-                        <ActionIcon
-                          aria-label="Copy exact source link"
+                          aria-label="Edit exact source metadata"
                           variant="light"
                           color="gray"
                           disabled={disabled}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onCopy?.(provider);
+                            onEdit?.(provider);
                           }}
                         >
-                          <Copy size={15} />
+                          <Wrench size={15} />
                         </ActionIcon>
                       </Tooltip>
-                    </>
-                  )}
-                  <Tooltip label="Edit this exact source">
-                    <ActionIcon
-                      aria-label="Edit exact source metadata"
-                      variant="light"
-                      color="gray"
-                      disabled={disabled}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onEdit?.(provider);
-                      }}
-                    >
-                      <Wrench size={15} />
-                    </ActionIcon>
-                  </Tooltip>
-                </Group>
-              </TableTd>
-            </TableTr>
-          );
-        })}
-      </TableTbody>
-    </Table>
-  </ScrollArea>
-);
+                    </Group>
+                  </TableTd>
+                </TableTr>
+              );
+            })}
+          </TableTbody>
+        </Table>
+      </ScrollArea>
+    </Stack>
+  );
+};
 
 export default VODSourceList;

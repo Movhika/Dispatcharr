@@ -273,6 +273,7 @@ def reconcile_vod_profile_selection_queue():
     """
     from celery.result import AsyncResult
     from django.core.cache import cache
+    from django.utils.dateparse import parse_datetime
 
     from .catalog_cache import selection_catalog_generation
     from .models import VODAccessPolicy
@@ -340,21 +341,65 @@ def reconcile_vod_profile_selection_queue():
         if task_state in terminal_states:
             stranded.append((policy.pk, str(task_id)))
 
+    # A worker can be restarted after claiming a profile, leaving the database
+    # in Building forever. Progress writes carry a heartbeat; recover only
+    # builds with no heartbeat for a generous interval, and give the old build
+    # generation a token that prevents it from activating after recovery.
+    stalled_cutoff = timezone.now() - timedelta(minutes=15)
+    stalled_building = []
+    for policy in VODAccessPolicy.objects.filter(
+        is_active=True,
+        selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+    ):
+        progress = policy.selection_progress or {}
+        updated_at = parse_datetime(str(progress.get("updated_at") or ""))
+        if updated_at is not None and timezone.is_naive(updated_at):
+            updated_at = timezone.make_aware(updated_at)
+        heartbeat = updated_at or policy.selection_started_at
+        if heartbeat is None or heartbeat < stalled_cutoff:
+            stalled_building.append(
+                (policy.pk, str(progress.get("task_id") or ""))
+            )
+
+    if stalled_building:
+        VODAccessPolicy.objects.filter(
+            pk__in=[policy_id for policy_id, _ in stalled_building],
+            is_active=True,
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+        ).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now(),
+            selection_error="",
+            selection_progress=_progress_payload(
+                "Recovering interrupted catalog build",
+                0,
+                queue="celery",
+                build_generation=f"recovery-{time.time_ns()}",
+            ),
+        )
+
     republished = False
-    if stranded:
+    if stranded or stalled_building:
         try:
             lock_owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
-            recorded_task_ids = {task_id for _, task_id in stranded if task_id}
+            recorded_task_ids = {
+                task_id
+                for _, task_id in stranded + stalled_building
+                if task_id
+            }
             if lock_owner is None or str(lock_owner) in recorded_task_ids | {"1"}:
                 cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
         except Exception:
             pass
-    if repaired_ready or stranded:
+    if repaired_ready or stranded or stalled_building:
         republished = enqueue_all_profile_selection_rebuilds(pending_only=True)
 
     return {
         "stale_ready_requeued": repaired_ready,
         "stranded_pending": [policy_id for policy_id, _ in stranded],
+        "stalled_building": [
+            policy_id for policy_id, _ in stalled_building
+        ],
         "republished": republished,
     }
 

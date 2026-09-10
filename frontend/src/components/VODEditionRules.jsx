@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ActionIcon,
   Alert,
+  Box,
   Button,
   Group,
   Paper,
@@ -70,9 +71,9 @@ const SortableEdition = ({ rule, update, remove }) => {
         zIndex: isDragging ? 2 : 0,
       }}
     >
-      <Group align="flex-end" wrap="wrap">
+      <Group align="flex-end" wrap="nowrap">
         <ActionIcon
-          aria-label={`Move edition ${rule.title_suffix || 'rule'}`}
+          aria-label={`Move suffix rule ${rule.title_suffix || 'rule'}`}
           variant="subtle"
           color="gray"
           mb={3}
@@ -90,24 +91,61 @@ const SortableEdition = ({ rule, update, remove }) => {
             update({ title_suffix: event.currentTarget.value })
           }
           required
-          style={{ flex: 1, minWidth: 220 }}
+          w={150}
         />
         <Select
           label="Minimum"
           data={RESOLUTION_LIMIT_OPTIONS}
           value={String(rule.min_resolution || 0)}
           onChange={(value) => update({ min_resolution: Number(value || 0) })}
-          w={120}
+          w={112}
         />
         <Select
           label="Maximum"
           data={RESOLUTION_LIMIT_OPTIONS}
           value={String(rule.max_resolution || 0)}
           onChange={(value) => update({ max_resolution: Number(value || 0) })}
-          w={120}
+          w={112}
+        />
+        <Box w={210}>
+          <LanguagePicker
+            label="Required DUB"
+            size="xs"
+            value={rule.required_audio_languages}
+            onChange={(required_audio_languages) =>
+              update({ required_audio_languages })
+            }
+          />
+        </Box>
+        <Box w={210}>
+          <LanguagePicker
+            label="Required SUB"
+            size="xs"
+            value={rule.required_subtitle_languages}
+            onChange={(required_subtitle_languages) =>
+              update({ required_subtitle_languages })
+            }
+          />
+        </Box>
+        <Box w={210}>
+          <VideoFeaturePicker
+            label="Required features"
+            size="xs"
+            value={rule.required_video_features}
+            onChange={(required_video_features) =>
+              update({ required_video_features })
+            }
+            emptyLabel="Any feature"
+          />
+        </Box>
+        <Switch
+          label="Enabled"
+          checked={rule.enabled}
+          onChange={(event) => update({ enabled: event.currentTarget.checked })}
+          mb={8}
         />
         <ActionIcon
-          aria-label={`Delete edition ${rule.title_suffix || 'rule'}`}
+          aria-label={`Delete suffix rule ${rule.title_suffix || 'rule'}`}
           color="red"
           variant="subtle"
           mb={3}
@@ -115,38 +153,6 @@ const SortableEdition = ({ rule, update, remove }) => {
         >
           <Trash2 size={16} />
         </ActionIcon>
-      </Group>
-      <Group mt="sm" align="flex-end" wrap="wrap">
-        <LanguagePicker
-          label="Required DUB"
-          size="xs"
-          value={rule.required_audio_languages}
-          onChange={(required_audio_languages) =>
-            update({ required_audio_languages })
-          }
-        />
-        <LanguagePicker
-          label="Required SUB"
-          size="xs"
-          value={rule.required_subtitle_languages}
-          onChange={(required_subtitle_languages) =>
-            update({ required_subtitle_languages })
-          }
-        />
-        <VideoFeaturePicker
-          label="Required features"
-          value={rule.required_video_features}
-          onChange={(required_video_features) =>
-            update({ required_video_features })
-          }
-          emptyLabel="Any feature"
-        />
-        <Switch
-          label="Enabled"
-          checked={rule.enabled}
-          onChange={(event) => update({ enabled: event.currentTarget.checked })}
-          mb={8}
-        />
       </Group>
     </Paper>
   );
@@ -191,7 +197,7 @@ const VODEditionRules = ({ value = [], onChange }) => {
           leftSection={<Plus size={14} />}
           onClick={() => onChange([...rules, createRule()])}
         >
-          Add edition
+          Add suffix rule
         </Button>
       </Group>
       {!rules.length ? (

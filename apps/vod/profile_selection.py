@@ -27,7 +27,7 @@ from .policies import (
     relation_metadata,
     select_relation_ids_for_policy,
 )
-from .utils import policy_output_name
+from .utils import get_vod_source_name, policy_output_name
 
 logger = logging.getLogger(__name__)
 BUILD_CHUNK_SIZE = 5000
@@ -63,8 +63,36 @@ def _progress_payload(phase, percent, **details):
 
 def _set_profile_progress(policy_id, phase, percent, **details):
     """Persist coarse build progress without firing policy invalidation signals."""
-    VODAccessPolicy.objects.filter(pk=policy_id).update(
-        selection_progress=_progress_payload(phase, percent, **details)
+    current = (
+        VODAccessPolicy.objects.filter(pk=policy_id)
+        .values_list("selection_progress", flat=True)
+        .first()
+        or {}
+    )
+    build_generation = details.get("build_generation")
+    active_build_generation = current.get("build_generation")
+    if (
+        build_generation
+        and active_build_generation
+        and active_build_generation != build_generation
+    ):
+        # A watchdog or a newer delivery has superseded this worker. Do not let
+        # a late heartbeat replace the authoritative generation token.
+        return False
+    persistent = {
+        key: current[key]
+        for key in ("task_id", "queue", "queued_at", "batch")
+        if current.get(key) not in (None, "")
+    }
+    return bool(
+        VODAccessPolicy.objects.filter(
+            pk=policy_id,
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+        ).update(
+            selection_progress=_progress_payload(
+                phase, percent, **persistent, **details
+            )
+        )
     )
 
 
@@ -560,6 +588,13 @@ def _metadata_columns(metadata, relation):
 
 
 def _edition_columns(policy, relation, content, metadata, category_mapping):
+    if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
+        return {
+            "edition_key": "default",
+            "edition_name": "",
+            "edition_suffix": "",
+            "output_name": get_vod_source_name(relation, content.name)[:500],
+        }
     edition = relation_edition(
         relation,
         policy,
@@ -787,12 +822,22 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
             | Q(selection_started_at__isnull=True)
             | Q(selection_started_at__lt=stale_build)
         )
+    previous_progress = (
+        candidates.values_list("selection_progress", flat=True).first() or {}
+    )
+    task_details = {
+        key: previous_progress[key]
+        for key in ("task_id", "queue", "queued_at", "batch")
+        if previous_progress.get(key) not in (None, "")
+    }
     acquired = candidates.update(
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
         selection_started_at=now,
         selection_completed_at=None,
         selection_error="",
-        selection_progress=_progress_payload("Starting", 1),
+        selection_progress=_progress_payload(
+            "Starting", 1, build_generation=generation, **task_details
+        ),
     )
     if not acquired:
         current = VODAccessPolicy.objects.filter(
@@ -909,6 +954,17 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
                 raise CatalogChangedDuringBuild(
                     "The VOD profile rules changed while it was being prepared"
                 )
+            active_build_generation = (
+                locked_policy.selection_progress or {}
+            ).get("build_generation")
+            if (
+                locked_policy.selection_status
+                != VODAccessPolicy.SelectionStatus.BUILDING
+                or active_build_generation != generation
+            ):
+                raise CatalogChangedDuringBuild(
+                    "This catalog build was superseded by recovery work"
+                )
             completed_at = timezone.now()
             prepared_seconds = max((completed_at - now).total_seconds(), 0)
             counts["prepared_seconds"] = prepared_seconds
@@ -954,20 +1010,31 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
         VODSeriesProfileSelection.objects.filter(
             policy=policy, generation=generation
         ).delete()
-        VODAccessPolicy.objects.filter(pk=policy.pk).update(
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            selection_error=str(exc),
-            selection_progress=_progress_payload(
-                "Catalog changed; restarting",
-                0,
-                stage_index=0,
-                stage_count=BUILD_STAGE_COUNT,
-                stage_percent=0,
-                target_export_mode=policy.export_mode,
-                build_generation=generation,
-                restart_reason=str(exc),
-            ),
-        )
+        current_state = VODAccessPolicy.objects.filter(pk=policy.pk).values(
+            "selection_status", "selection_progress"
+        ).first()
+        if current_state and (
+            current_state["selection_status"]
+            == VODAccessPolicy.SelectionStatus.BUILDING
+            and (current_state["selection_progress"] or {}).get(
+                "build_generation"
+            )
+            == generation
+        ):
+            VODAccessPolicy.objects.filter(pk=policy.pk).update(
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+                selection_error=str(exc),
+                selection_progress=_progress_payload(
+                    "Catalog changed; restarting",
+                    0,
+                    stage_index=0,
+                    stage_count=BUILD_STAGE_COUNT,
+                    stage_percent=0,
+                    target_export_mode=policy.export_mode,
+                    build_generation=generation,
+                    restart_reason=str(exc),
+                ),
+            )
         raise
     except Exception as exc:
         logger.exception("Failed to build VOD profile selection %s", policy.pk)
@@ -977,12 +1044,23 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
         VODSeriesProfileSelection.objects.filter(
             policy=policy, generation=generation
         ).delete()
-        VODAccessPolicy.objects.filter(pk=policy.pk).update(
-            selection_status=VODAccessPolicy.SelectionStatus.FAILED,
-            selection_error=str(exc)[:2000],
-            selection_completed_at=timezone.now(),
-            selection_progress=_progress_payload("Failed", 100),
-        )
+        current_state = VODAccessPolicy.objects.filter(pk=policy.pk).values(
+            "selection_status", "selection_progress"
+        ).first()
+        if current_state and (
+            current_state["selection_status"]
+            == VODAccessPolicy.SelectionStatus.BUILDING
+            and (current_state["selection_progress"] or {}).get(
+                "build_generation"
+            )
+            == generation
+        ):
+            VODAccessPolicy.objects.filter(pk=policy.pk).update(
+                selection_status=VODAccessPolicy.SelectionStatus.FAILED,
+                selection_error=str(exc)[:2000],
+                selection_completed_at=timezone.now(),
+                selection_progress=_progress_payload("Failed", 100),
+            )
         raise
 
 

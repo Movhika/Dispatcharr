@@ -1167,6 +1167,57 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
 
         from .utils import canonical_output_name, get_vod_source_name
 
+        # The preview represents the last activated catalog while a newer
+        # configuration may already be building.  Base its presentation on
+        # that activated mode so switching Compact/Variants does not make the
+        # unchanged catalog briefly look like the newly saved mode.
+        preview_mode = (
+            selection_state.get("selection_active_mode") or policy.export_mode
+        )
+        compact_source_counts = {}
+        if preview_mode == VODAccessPolicy.ExportMode.COMPACT and rows:
+            from .policies import (
+                policy_category_map,
+                relation_edition,
+                relation_metadata,
+                relation_policy_evaluation,
+            )
+
+            category_mapping = policy_category_map(policy)
+            canonical_ids = {
+                getattr(row, f"{canonical}_id") for row in rows
+            }
+            relation_model = M3UMovieRelation if is_movie else M3USeriesRelation
+            candidate_relations = relation_model.objects.filter(
+                m3u_account__is_active=True,
+                **{f"{canonical}_id__in": canonical_ids},
+            ).select_related(
+                canonical,
+                "m3u_account",
+                "category",
+                "source_asset",
+            )
+            for candidate in candidate_relations.iterator(chunk_size=1000):
+                category_relation = category_mapping.get(
+                    (candidate.m3u_account_id, candidate.category_id)
+                )
+                metadata = relation_metadata(candidate, category_relation)
+                if not relation_policy_evaluation(
+                    candidate,
+                    policy,
+                    category_mapping=category_mapping,
+                    metadata=metadata,
+                )["allowed"]:
+                    continue
+                edition = relation_edition(
+                    candidate,
+                    policy,
+                    category_mapping=category_mapping,
+                    metadata=metadata,
+                )
+                key = (getattr(candidate, f"{canonical}_id"), edition["key"])
+                compact_source_counts[key] = compact_source_counts.get(key, 0) + 1
+
         results = []
         for row in rows:
             content = getattr(row, canonical)
@@ -1184,7 +1235,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                             display_name=content.display_name,
                             year=content.year,
                         )
-                        if policy.export_mode == VODAccessPolicy.ExportMode.COMPACT
+                        if preview_mode == VODAccessPolicy.ExportMode.COMPACT
                         else source_name
                     ),
                     "year": content.year,
@@ -1200,6 +1251,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "edition_key": row.edition_key,
                     "edition_name": row.edition_name,
                     "edition_suffix": row.edition_suffix,
+                    "source_count": compact_source_counts.get(
+                        (content.id, row.edition_key), 1
+                    ),
                 }
             )
         return Response(

@@ -5,11 +5,11 @@ import {
   Group,
   Modal,
   ScrollArea,
-  Select,
   Stack,
   Text,
   TextInput,
 } from '@mantine/core';
+import { Plus } from 'lucide-react';
 import {
   LANGUAGE_OPTIONS,
   normalizeLanguageCodes,
@@ -19,23 +19,14 @@ const labelForCode = (code) =>
   LANGUAGE_OPTIONS.find((option) => option.value === code)?.label ||
   String(code || '').toUpperCase();
 
-export const LanguageSelect = ({ value, onChange, ...props }) => (
-  <Select
-    searchable
-    clearable
-    data={LANGUAGE_OPTIONS}
-    value={value || null}
-    onChange={(next) => onChange?.(next || '')}
-    {...props}
-  />
-);
-
 const LanguagePicker = ({
   label,
   value = [],
   onChange,
   disabled = false,
   size,
+  emptyLabel = 'No languages selected',
+  single = false,
 }) => {
   const normalized = normalizeLanguageCodes(value);
   const [opened, setOpened] = useState(false);
@@ -56,19 +47,23 @@ const LanguagePicker = ({
   };
 
   const toggle = (code) =>
-    setPending((current) =>
-      current.includes(code)
-        ? current.filter((item) => item !== code)
-        : [...current, code]
-    );
+    setPending((current) => {
+      if (current.includes(code)) {
+        return current.filter((item) => item !== code);
+      }
+      return single ? [code] : [...current, code];
+    });
 
   const apply = () => {
-    onChange?.(normalizeLanguageCodes(pending));
+    const next = normalizeLanguageCodes(pending);
+    onChange?.(single ? next[0] || '' : next);
     setOpened(false);
   };
 
-  const remove = (code) =>
-    onChange?.(normalized.filter((current) => current !== code));
+  const remove = (code) => {
+    const next = normalized.filter((current) => current !== code);
+    onChange?.(single ? next[0] || '' : next);
+  };
 
   return (
     <Stack gap={5}>
@@ -77,8 +72,18 @@ const LanguagePicker = ({
           {label}
         </Text>
       )}
-      <Group gap={5} justify="space-between" align="flex-start">
-        <Group gap={5} style={{ flex: 1 }}>
+      <div
+        style={{
+          minHeight: size === 'xs' ? 30 : 36,
+          border: '1px solid var(--mantine-color-default-border)',
+          borderRadius: 'var(--mantine-radius-default)',
+          background: 'var(--mantine-color-default)',
+          display: 'flex',
+          alignItems: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        <Group gap={5} px="xs" py={3} style={{ flex: 1, minWidth: 0 }}>
           {normalized.length ? (
             normalized.map((code) => (
               <Button
@@ -94,22 +99,23 @@ const LanguagePicker = ({
               </Button>
             ))
           ) : (
-            <Text size="sm" c="dimmed">
-              No languages selected
+            <Text size={size === 'xs' ? 'xs' : 'sm'} c="dimmed">
+              {emptyLabel}
             </Text>
           )}
         </Group>
         <Button
           aria-label={label ? `Add ${label} language` : 'Add language'}
           disabled={disabled}
-          size={size || 'sm'}
-          px="sm"
-          variant="default"
+          size="compact-xs"
+          px={7}
+          m={2}
+          variant="subtle"
           onClick={openPicker}
         >
-          +
+          <Plus size={15} />
         </Button>
-      </Group>
+      </div>
 
       <Modal
         opened={opened}
@@ -148,5 +154,29 @@ const LanguagePicker = ({
     </Stack>
   );
 };
+
+export const LanguageSelect = ({
+  value,
+  onChange,
+  label,
+  placeholder = 'Any',
+  disabled = false,
+  size,
+  w,
+  miw,
+  style,
+}) => (
+  <div style={{ width: w, minWidth: miw, ...style }}>
+    <LanguagePicker
+      label={label}
+      value={value ? [value] : []}
+      onChange={onChange}
+      disabled={disabled}
+      size={size}
+      emptyLabel={placeholder}
+      single
+    />
+  </div>
+);
 
 export default LanguagePicker;

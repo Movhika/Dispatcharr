@@ -63,4 +63,47 @@ describe('VODSourceList', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText('MKV')).not.toBeInTheDocument();
   });
+
+  it('reuses the exact source table for profile order and exclusions', () => {
+    const excluded = {
+      ...provider,
+      id: 18,
+      stream_id: '607404',
+      m3u_account: { name: 'Provider B' },
+      movie: { name: 'Excluded edition' },
+    };
+    render(
+      <MantineProvider>
+        <VODSourceList
+          providers={[excluded, provider]}
+          selectedProvider={provider}
+          contentType="movie"
+          profileCandidates={{
+            results: [
+              {
+                relation_id: provider.id,
+                allowed: true,
+                position: 1,
+                selected: true,
+                reason: 'eligible',
+              },
+              {
+                relation_id: excluded.id,
+                allowed: false,
+                position: null,
+                selected: false,
+                reason: 'source_rule_exclude',
+              },
+            ],
+          }}
+        />
+      </MantineProvider>
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeVisible();
+    expect(screen.getByText('#1')).toBeVisible();
+    expect(screen.getByText('Preferred')).toBeVisible();
+    expect(screen.getByText('Excluded')).toBeVisible();
+    expect(screen.getByText('source rule exclude')).toBeVisible();
+  });
 });

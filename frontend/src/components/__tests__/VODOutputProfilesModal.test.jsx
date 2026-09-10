@@ -9,6 +9,7 @@ vi.mock('../../api', () => ({
     updateVODAccessPolicy: vi.fn(),
     deleteVODAccessPolicy: vi.fn(),
     getVODAccessPolicySelections: vi.fn(),
+    getVODAccessPolicyCandidates: vi.fn(),
   },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
@@ -27,9 +28,13 @@ vi.mock('../VODFailoverRanking.jsx', () => ({
     </div>
   ),
 }));
-vi.mock('../VODCandidateSourcesModal.jsx', () => ({
-  default: ({ opened, title }) =>
-    opened ? <div>Source order: {title}</div> : null,
+vi.mock('../VODModal.jsx', () => ({
+  default: ({ opened, vod }) =>
+    opened ? <div>Movie details: {vod?.name}</div> : null,
+}));
+vi.mock('../SeriesModal.jsx', () => ({
+  default: ({ opened, series }) =>
+    opened ? <div>Series details: {series?.name}</div> : null,
 }));
 vi.mock('../VideoFeaturePicker.jsx', () => ({
   default: ({ label }) => <div>{label}</div>,
@@ -387,10 +392,8 @@ describe('VODOutputProfilesModal', () => {
       expect.objectContaining({ id: 8, name: 'New profile' })
     );
     expect(screen.getByLabelText('Profile')).toHaveValue('8');
-    expect(screen.getByText('Publishing background task')).toBeInTheDocument();
-    expect(
-      screen.getByText(/preparation usually about 1m 18s after it starts/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Publishing background task/)).toBeInTheDocument();
+    expect(screen.getByText(/elapsed/)).toBeInTheDocument();
   });
 
   it('uses automatic mode naming and simple suffix rules', async () => {
@@ -399,9 +402,9 @@ describe('VODOutputProfilesModal', () => {
 
     expect(screen.queryByLabelText('Title source')).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText('Custom output title format (optional)')
-    ).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Add edition' }));
+      screen.queryByLabelText('Custom output title format (optional)')
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add suffix rule' }));
 
     expect(screen.getByLabelText('Output suffix')).toBeInTheDocument();
     expect(screen.queryByLabelText('Edition')).not.toBeInTheDocument();
@@ -512,11 +515,12 @@ describe('VODOutputProfilesModal', () => {
 
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
-    expect(await screen.findByText(/Step 2 of 5/)).toBeInTheDocument();
-    expect(screen.getByText(/50% of this step/)).toBeInTheDocument();
     expect(
-      screen.getByLabelText('Catalog preparation progress')
-    ).toHaveTextContent('36');
+      await screen.findByText(/Building movies output · 5,000 \/ 10,000/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Catalog preparation progress')
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/saved rules are not active in this preview yet/)
     ).toBeInTheDocument();

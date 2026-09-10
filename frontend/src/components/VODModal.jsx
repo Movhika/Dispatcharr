@@ -136,7 +136,15 @@ const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
   );
 };
 
-const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
+const VODModal = ({
+  vod,
+  opened,
+  onClose,
+  onMetadataChanged,
+  profileCandidates = null,
+  profileCandidatesLoading = false,
+  profileCandidatesError = '',
+}) => {
   const [detailedVOD, setDetailedVOD] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [trailerModalOpened, setTrailerModalOpened] = useState(false);
@@ -146,6 +154,7 @@ const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
   const [editingProvider, setEditingProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const detailsRequestIdRef = useRef(0);
+  const profilePreferenceAppliedRef = useRef('');
 
   const { fetchMovieDetailsFromProvider, fetchMovieProviders } = useVODStore();
   const showVideo = useVideoStore((s) => s.showVideo);
@@ -190,6 +199,7 @@ const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
   useEffect(() => {
     if (!opened) {
       detailsRequestIdRef.current += 1;
+      profilePreferenceAppliedRef.current = '';
       setDetailedVOD(null);
       setLoadingDetails(false);
       setTrailerModalOpened(false);
@@ -200,6 +210,39 @@ const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
       setLoadingProviders(false);
     }
   }, [opened]);
+
+  useEffect(() => {
+    if (!opened || !providers.length || !profileCandidates?.results?.length) {
+      return;
+    }
+    const preferred = profileCandidates.results.find(
+      (row) => row.allowed && row.position === 1
+    );
+    const signature = `${profileCandidates.profile_id}:${profileCandidates.canonical_id}:${profileCandidates.edition_key || ''}:${preferred?.relation_id || ''}`;
+    if (!preferred || profilePreferenceAppliedRef.current === signature) return;
+    const provider = providers.find(
+      (candidate) => String(candidate.id) === String(preferred.relation_id)
+    );
+    if (!provider) return;
+    profilePreferenceAppliedRef.current = signature;
+    setSelectedProvider(provider);
+    const requestId = ++detailsRequestIdRef.current;
+    setLoadingDetails(true);
+    fetchMovieDetailsFromProvider(vod.id, provider.id)
+      .then((details) => {
+        if (detailsRequestIdRef.current === requestId) setDetailedVOD(details);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (detailsRequestIdRef.current === requestId) setLoadingDetails(false);
+      });
+  }, [
+    fetchMovieDetailsFromProvider,
+    opened,
+    profileCandidates,
+    providers,
+    vod?.id,
+  ]);
 
   const onClickYouTubeTrailer = () => {
     setTrailerUrl(getYouTubeEmbedUrl(displayVOD.youtube_trailer));
@@ -406,6 +449,9 @@ const VODModal = ({ vod, opened, onClose, onMetadataChanged }) => {
                   onPlay={playProvider}
                   onCopy={copyProviderLink}
                   onEdit={setEditingProvider}
+                  profileCandidates={profileCandidates}
+                  profileCandidatesLoading={profileCandidatesLoading}
+                  profileCandidatesError={profileCandidatesError}
                 />
               ) : !loadingProviders ? (
                 <Text c="dimmed" ta="center" py="md">

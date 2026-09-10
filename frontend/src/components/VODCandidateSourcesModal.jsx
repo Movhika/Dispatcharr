@@ -166,7 +166,6 @@ const VODCandidateSourcesModal = ({
                 <TableTr>
                   <TableTh>Order</TableTh>
                   <TableTh>Source</TableTh>
-                  <TableTh>Edition</TableTh>
                   <TableTh>M3U account / category</TableTh>
                   <TableTh>DUB</TableTh>
                   <TableTh>SUB</TableTh>
@@ -180,7 +179,7 @@ const VODCandidateSourcesModal = ({
               <TableTbody>
                 {!data?.results?.length && (
                   <TableTr>
-                    <TableTd colSpan={onSwitch ? 11 : 10}>
+                    <TableTd colSpan={onSwitch ? 10 : 9}>
                       <Text ta="center" c="dimmed" py="lg">
                         No sources found for this title.
                       </Text>
@@ -219,14 +218,6 @@ const VODCandidateSourcesModal = ({
                             Provider ID: {row.provider_asset_id}
                           </Text>
                         )}
-                      </TableTd>
-                      <TableTd>
-                        <Badge
-                          variant="light"
-                          color={row.edition_name ? 'violet' : 'gray'}
-                        >
-                          {row.edition_name || 'Default'}
-                        </Badge>
                       </TableTd>
                       <TableTd>
                         <Text size="sm">{row.m3u_account_name}</Text>
