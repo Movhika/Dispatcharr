@@ -110,7 +110,7 @@ const SOURCES_TAB_HELP =
 const CONTENT_RULES_TAB_HELP =
   'Order matters. The first matching filter decides whether a source is included. The expression matches the source title and can be combined with known technical metadata. Unmatched sources remain available.';
 const EDITIONS_TAB_HELP =
-  'First match wins. Compact creates one client entry per canonical title and suffix. Every split stays in the title\'s output category, and failover stays inside the matching suffix. Unmatched sources use the canonical title without a suffix.';
+  "First match wins. Compact creates one client entry per canonical title and suffix. Every split stays in the title's output category, and failover stays inside the matching suffix. Unmatched sources use the canonical title without a suffix.";
 
 const buildPhaseDescription = (progress) => {
   const descriptions = {
@@ -825,7 +825,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         opened={opened}
         onClose={onClose}
         title="VOD output profiles"
-        size="80vw"
+        size="70vw"
         yOffset="2vh"
         lockScroll={false}
         styles={{

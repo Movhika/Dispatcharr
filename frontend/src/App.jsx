@@ -48,6 +48,58 @@ const LoginRedirect = () => {
   return <Navigate to={`/login${next}`} replace />;
 };
 
+const RoutedContent = ({ authReady, isCheckingAuth }) => {
+  const location = useLocation();
+  const hasOwnScroller =
+    authReady && ['/channels', '/vods'].includes(location.pathname);
+
+  return (
+    <Box
+      p={2}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        overflow: hasOwnScroller ? 'hidden' : 'auto',
+      }}
+    >
+      {isCheckingAuth ? (
+        <LoginLoadingCard />
+      ) : (
+        <Routes>
+          {authReady ? (
+            <>
+              <Route path="/channels" element={<Channels />} />
+              <Route path="/sources" element={<ContentSources />} />
+              <Route path="/guide" element={<Guide />} />
+              <Route path="/dvr" element={<DVR />} />
+              <Route path="/stats" element={<Stats />} />
+              <Route path="/plugins/browse" element={<PluginBrowsePage />} />
+              <Route path="/plugins" element={<PluginsPage />} />
+              <Route path="/connect" element={<ConnectPage />} />
+              <Route path="/users" element={<Users />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/logos" element={<LogosPage />} />
+              <Route path="/vods" element={<VODsPage />} />
+            </>
+          ) : (
+            <Route path="/login" element={<Login />} />
+          )}
+          <Route
+            path="*"
+            element={
+              authReady ? (
+                <Navigate to={defaultRoute} replace />
+              ) : (
+                <LoginRedirect />
+              )
+            }
+          />
+        </Routes>
+      )}
+    </Box>
+  );
+};
+
 const App = () => {
   const [open, setOpen] = useBrowserStorage('dispatcharr_sidebar_open', true);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -149,51 +201,15 @@ const App = () => {
                     // transition: 'margin-left 0.3s',
                     backgroundColor: '#18181b',
                     height: '100vh',
+                    minHeight: 0,
+                    overflow: 'hidden',
                     color: 'white',
                   }}
                 >
-                  <Box sx={{ p: 2, flex: 1, overflow: 'auto' }}>
-                    {isCheckingAuth ? (
-                      <LoginLoadingCard />
-                    ) : (
-                      <Routes>
-                        {authReady ? (
-                          <>
-                            <Route path="/channels" element={<Channels />} />
-                            <Route
-                              path="/sources"
-                              element={<ContentSources />}
-                            />
-                            <Route path="/guide" element={<Guide />} />
-                            <Route path="/dvr" element={<DVR />} />
-                            <Route path="/stats" element={<Stats />} />
-                            <Route
-                              path="/plugins/browse"
-                              element={<PluginBrowsePage />}
-                            />
-                            <Route path="/plugins" element={<PluginsPage />} />
-                            <Route path="/connect" element={<ConnectPage />} />
-                            <Route path="/users" element={<Users />} />
-                            <Route path="/settings" element={<Settings />} />
-                            <Route path="/logos" element={<LogosPage />} />
-                            <Route path="/vods" element={<VODsPage />} />
-                          </>
-                        ) : (
-                          <Route path="/login" element={<Login />} />
-                        )}
-                        <Route
-                          path="*"
-                          element={
-                            authReady ? (
-                              <Navigate to={defaultRoute} replace />
-                            ) : (
-                              <LoginRedirect />
-                            )
-                          }
-                        />
-                      </Routes>
-                    )}
-                  </Box>
+                  <RoutedContent
+                    authReady={authReady}
+                    isCheckingAuth={isCheckingAuth}
+                  />
                 </Box>
               </AppShell.Main>
             </AppShell>

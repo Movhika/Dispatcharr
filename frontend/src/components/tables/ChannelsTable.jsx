@@ -1321,7 +1321,14 @@ const ChannelsTable = ({ onReady }) => {
 
   return (
     <>
-      <Box>
+      <Box
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+        }}
+      >
         {/* Header Row: outside the Paper */}
         <Flex style={{ alignItems: 'center', paddingBottom: 10 }} gap={15}>
           <Text
@@ -1689,7 +1696,8 @@ const ChannelsTable = ({ onReady }) => {
           style={{
             display: 'flex',
             flexDirection: 'column',
-            height: 'calc(100vh - 60px)',
+            flex: 1,
+            minHeight: 0,
             backgroundColor: '#27272A',
           }}
         >
@@ -1725,7 +1733,8 @@ const ChannelsTable = ({ onReady }) => {
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                height: 'calc(100vh - 100px)',
+                flex: 1,
+                minHeight: 0,
               }}
             >
               <Box

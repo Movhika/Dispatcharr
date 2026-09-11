@@ -311,8 +311,13 @@ const VODsPage = () => {
   }
 
   return (
-    <Box p="md" id="vods-container">
-      <Stack gap="md">
+    <Box
+      p="md"
+      id="vods-container"
+      h="100%"
+      style={{ display: 'flex', minHeight: 0, overflow: 'hidden' }}
+    >
+      <Stack gap="md" h="100%" style={{ flex: 1, minHeight: 0 }}>
         <Group justify="space-between">
           <Group gap="md">
             <Title order={2}>Video on Demand</Title>
@@ -440,117 +445,138 @@ const VODsPage = () => {
           </Group>
         </Stack>
 
-        {initialLoad ? (
-          <Flex justify="center" py="xl">
-            <Loader size="lg" />
-          </Flex>
-        ) : (
-          <Table striped highlightOnHover withTableBorder stickyHeader>
-            <TableThead>
-              <TableTr>
-                {user?.user_level >= 10 && (
-                  <TableTh w={44}>
-                    <Checkbox
-                      aria-label="Select all filtered VODs"
-                      checked={allVisibleSelected}
-                      indeterminate={
-                        (selectAllMatching && selected.size > 0) ||
-                        (!selectAllMatching &&
-                          selected.size > 0 &&
-                          !allVisibleSelected)
-                      }
-                      onChange={(event) =>
-                        toggleAllMatching(event.currentTarget.checked)
-                      }
-                    />
-                  </TableTh>
-                )}
-                <TableTh w={62}>Artwork</TableTh>
-                <TableTh>Title</TableTh>
-                <TableTh w={100}>Type</TableTh>
-                <TableTh w={90}>Year</TableTh>
-                <TableTh w={85}>Sources</TableTh>
-                <TableTh>Genre</TableTh>
-                <TableTh w={125}>DUB</TableTh>
-                <TableTh w={125}>SUB</TableTh>
-                <TableTh w={130}>Resolution</TableTh>
-                <TableTh w={100}>Format</TableTh>
-                <TableTh w={160}>Features</TableTh>
-                <TableTh w={60}>Open</TableTh>
-              </TableTr>
-            </TableThead>
-            <TableTbody>
-              {items.map((item) => (
-                <TableTr key={itemKey(item)}>
+        <Box
+          data-testid="vod-list-scroll"
+          style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+        >
+          {initialLoad ? (
+            <Flex justify="center" py="xl">
+              <Loader size="lg" />
+            </Flex>
+          ) : (
+            <Table
+              striped
+              highlightOnHover
+              withTableBorder
+              stickyHeader
+              miw={1400}
+            >
+              <TableThead>
+                <TableTr>
                   {user?.user_level >= 10 && (
-                    <TableTd>
+                    <TableTh w={44}>
                       <Checkbox
-                        aria-label={`Select ${item.name}`}
-                        checked={
-                          selectAllMatching
-                            ? !selected.has(itemKey(item))
-                            : selected.has(itemKey(item))
+                        aria-label="Select all filtered VODs"
+                        checked={allVisibleSelected}
+                        indeterminate={
+                          (selectAllMatching && selected.size > 0) ||
+                          (!selectAllMatching &&
+                            selected.size > 0 &&
+                            !allVisibleSelected)
                         }
                         onChange={(event) =>
-                          toggleItem(itemKey(item), event.currentTarget.checked)
+                          toggleAllMatching(event.currentTarget.checked)
                         }
                       />
-                    </TableTd>
+                    </TableTh>
                   )}
-                  <TableTd>
-                    {logoUrl(item) ? (
-                      <Image src={logoUrl(item)} h={54} w={40} fit="contain" />
-                    ) : (
-                      <Box h={54} w={40} bg="dark.6" />
-                    )}
-                  </TableTd>
-                  <TableTd>
-                    <Text fw={500}>{item.name}</Text>
-                    {item.description && (
-                      <Text size="xs" c="dimmed" lineClamp={1}>
-                        {item.description}
-                      </Text>
-                    )}
-                  </TableTd>
-                  <TableTd>
-                    {item.contentType === 'series' ? 'Series' : 'Movie'}
-                  </TableTd>
-                  <TableTd>{item.year || '—'}</TableTd>
-                  <TableTd>{sourceCount(item)}</TableTd>
-                  <TableTd>{item.genre || '—'}</TableTd>
-                  <TableTd>
-                    {sourceMetadataValue(item, 'audio_languages')}
-                  </TableTd>
-                  <TableTd>
-                    {sourceMetadataValue(item, 'subtitle_languages')}
-                  </TableTd>
-                  <TableTd>{sourceMetadataValue(item, 'resolutions')}</TableTd>
-                  <TableTd>
-                    {item.contentType === 'series'
-                      ? ''
-                      : sourceMetadataValue(item, 'container_extensions')}
-                  </TableTd>
-                  <TableTd>
-                    {(item.source_metadata?.video_features || []).length
-                      ? item.source_metadata.video_features
-                          .map(videoFeatureLabel)
-                          .join(', ')
-                      : '—'}
-                  </TableTd>
-                  <TableTd>
-                    <ActionIcon
-                      aria-label={`Open ${item.name}`}
-                      variant="subtle"
-                      onClick={() => openItem(item)}
-                    >
-                      <Play size={16} />
-                    </ActionIcon>
-                  </TableTd>
+                  <TableTh w={62}>Artwork</TableTh>
+                  <TableTh>Title</TableTh>
+                  <TableTh w={100}>Type</TableTh>
+                  <TableTh w={90}>Year</TableTh>
+                  <TableTh w={85}>Sources</TableTh>
+                  <TableTh>Genre</TableTh>
+                  <TableTh w={125}>DUB</TableTh>
+                  <TableTh w={125}>SUB</TableTh>
+                  <TableTh w={130}>Resolution</TableTh>
+                  <TableTh w={100}>Format</TableTh>
+                  <TableTh w={160}>Features</TableTh>
+                  <TableTh w={60}>Open</TableTh>
                 </TableTr>
-              ))}
-            </TableTbody>
-          </Table>
-        )}
+              </TableThead>
+              <TableTbody>
+                {items.map((item) => (
+                  <TableTr key={itemKey(item)}>
+                    {user?.user_level >= 10 && (
+                      <TableTd>
+                        <Checkbox
+                          aria-label={`Select ${item.name}`}
+                          checked={
+                            selectAllMatching
+                              ? !selected.has(itemKey(item))
+                              : selected.has(itemKey(item))
+                          }
+                          onChange={(event) =>
+                            toggleItem(
+                              itemKey(item),
+                              event.currentTarget.checked
+                            )
+                          }
+                        />
+                      </TableTd>
+                    )}
+                    <TableTd>
+                      {logoUrl(item) ? (
+                        <Image
+                          src={logoUrl(item)}
+                          h={54}
+                          w={40}
+                          fit="contain"
+                        />
+                      ) : (
+                        <Box h={54} w={40} bg="dark.6" />
+                      )}
+                    </TableTd>
+                    <TableTd>
+                      <Text fw={500}>{item.name}</Text>
+                      {item.description && (
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {item.description}
+                        </Text>
+                      )}
+                    </TableTd>
+                    <TableTd>
+                      {item.contentType === 'series' ? 'Series' : 'Movie'}
+                    </TableTd>
+                    <TableTd>{item.year || '—'}</TableTd>
+                    <TableTd>{sourceCount(item)}</TableTd>
+                    <TableTd>{item.genre || '—'}</TableTd>
+                    <TableTd>
+                      {sourceMetadataValue(item, 'audio_languages')}
+                    </TableTd>
+                    <TableTd>
+                      {sourceMetadataValue(item, 'subtitle_languages')}
+                    </TableTd>
+                    <TableTd>
+                      {sourceMetadataValue(item, 'resolutions')}
+                    </TableTd>
+                    <TableTd>
+                      {item.contentType === 'series'
+                        ? ''
+                        : sourceMetadataValue(item, 'container_extensions')}
+                    </TableTd>
+                    <TableTd>
+                      {(item.source_metadata?.video_features || []).length
+                        ? item.source_metadata.video_features
+                            .map(videoFeatureLabel)
+                            .join(', ')
+                        : '—'}
+                    </TableTd>
+                    <TableTd>
+                      <ActionIcon
+                        aria-label={`Open ${item.name}`}
+                        variant="subtle"
+                        onClick={() => openItem(item)}
+                      >
+                        <Play size={16} />
+                      </ActionIcon>
+                    </TableTd>
+                  </TableTr>
+                ))}
+              </TableTbody>
+            </Table>
+          )}
+        </Box>
 
         <Group justify="space-between" align="flex-end">
           <Select
