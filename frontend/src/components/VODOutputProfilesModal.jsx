@@ -105,6 +105,13 @@ const outputModeLabel = (mode) =>
 const catalogModeLabel = (mode) =>
   mode === 'compact' ? 'Compact' : mode === 'variants' ? 'All' : 'Unknown';
 
+const SOURCES_TAB_HELP =
+  'Only categories enabled in the M3U account are available here. Manual Allow/Block choices override ordered import rules. Rule edits take effect after Save and apply; Save profile stores the complete profile and starts one rebuild. New provider categories are evaluated after their VOD refresh completes.';
+const CONTENT_RULES_TAB_HELP =
+  'Order matters. The first matching filter decides whether a source is included. The expression matches the source title and can be combined with known technical metadata. Unmatched sources remain available.';
+const EDITIONS_TAB_HELP =
+  'First match wins. Compact creates one client entry per canonical title and suffix. Every split stays in the title\'s output category, and failover stays inside the matching suffix. Unmatched sources use the canonical title without a suffix.';
+
 const buildPhaseDescription = (progress) => {
   const descriptions = {
     1: 'Movies: applying profile rules and ranking eligible sources',
@@ -818,7 +825,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         opened={opened}
         onClose={onClose}
         title="VOD output profiles"
-        size="96vw"
+        size="90vw"
         yOffset="2vh"
         lockScroll={false}
         scrollAreaComponent={Modal.NativeScrollArea}
@@ -850,35 +857,37 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 </Box>
               </Tooltip>
             )}
-            <Button
-              variant="default"
-              leftSection={<Plus size={15} />}
-              onClick={startNew}
-            >
-              New
-            </Button>
-            <Button
-              leftSection={<Save size={15} />}
-              loading={saving}
-              disabled={!canSave}
-              onClick={save}
-            >
-              Save profile
-            </Button>
-            <Tooltip label={deleteProfileHint}>
-              <Box>
-                <Button
-                  color="red"
-                  variant="light"
-                  leftSection={<Trash2 size={15} />}
-                  disabled={!canDeleteProfile}
-                  loading={deleting}
-                  onClick={remove}
-                >
-                  Delete
-                </Button>
-              </Box>
-            </Tooltip>
+            <Group gap="sm" wrap="nowrap" style={{ marginLeft: 'auto' }}>
+              <Button
+                variant="default"
+                leftSection={<Plus size={15} />}
+                onClick={startNew}
+              >
+                New
+              </Button>
+              <Button
+                leftSection={<Save size={15} />}
+                loading={saving}
+                disabled={!canSave}
+                onClick={save}
+              >
+                Save profile
+              </Button>
+              <Tooltip label={deleteProfileHint}>
+                <Box>
+                  <Button
+                    color="red"
+                    variant="light"
+                    leftSection={<Trash2 size={15} />}
+                    disabled={!canDeleteProfile}
+                    loading={deleting}
+                    onClick={remove}
+                  >
+                    Delete
+                  </Button>
+                </Box>
+              </Tooltip>
+            </Group>
           </Group>
 
           {selectedProfile && (
@@ -968,10 +977,34 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           >
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
-              <TabsTab value="sources">Sources</TabsTab>
-              <TabsTab value="content-rules">Content rules</TabsTab>
+              <Tooltip
+                label={SOURCES_TAB_HELP}
+                multiline
+                maw={420}
+                openDelay={350}
+                withArrow
+              >
+                <TabsTab value="sources">Sources</TabsTab>
+              </Tooltip>
+              <Tooltip
+                label={CONTENT_RULES_TAB_HELP}
+                multiline
+                maw={420}
+                openDelay={350}
+                withArrow
+              >
+                <TabsTab value="content-rules">Content rules</TabsTab>
+              </Tooltip>
               {draft.export_mode === 'compact' && (
-                <TabsTab value="editions">Editions</TabsTab>
+                <Tooltip
+                  label={EDITIONS_TAB_HELP}
+                  multiline
+                  maw={420}
+                  openDelay={350}
+                  withArrow
+                >
+                  <TabsTab value="editions">Editions</TabsTab>
+                </Tooltip>
               )}
               {draft.export_mode === 'compact' && (
                 <TabsTab value="failover">Failover</TabsTab>
@@ -1041,15 +1074,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               <ScrollArea h="calc(96vh - 270px)">
                 <Paper withBorder p="lg" radius="md">
                   <Stack>
-                    <Alert color="blue" variant="light">
-                      Only categories enabled in the M3U account are available
-                      here. This profile can narrow that shared catalog for its
-                      users. Manual Allow/Block choices override ordered import
-                      rules. Rule edits take effect in this editor only after
-                      Save and apply; Save profile stores the complete profile
-                      and starts one rebuild. New provider categories are
-                      evaluated after their VOD refresh completes.
-                    </Alert>
                     <Tabs defaultValue="movie">
                       <TabsList>
                         <TabsTab value="movie">VOD - Movies</TabsTab>

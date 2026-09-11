@@ -29,7 +29,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { GripVertical, Info, Plus, Trash2 } from 'lucide-react';
+import { GripVertical, Plus, Trash2 } from 'lucide-react';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import { RESOLUTION_LIMIT_OPTIONS } from '../utils/vodMetadataOptions.js';
@@ -182,15 +182,8 @@ const VODEditionRules = ({ value = [], onChange }) => {
 
   return (
     <Stack>
-      <Group justify="space-between" align="flex-start">
-        <Alert icon={<Info size={16} />} color="blue" variant="light">
-          <Text size="sm">
-            <strong>First match wins.</strong> Compact creates one client entry
-            per canonical title and suffix. Every split stays in the
-            title&apos;s output category, and failover stays inside the matching
-            suffix. Unmatched sources use the canonical title without a suffix.
-          </Text>
-        </Alert>
+      <Group justify="space-between" align="center" w="100%">
+        <Text fw={700}>Suffix rules</Text>
         <Button
           variant="default"
           size="xs"

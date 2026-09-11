@@ -37,7 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { Eye, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
+import { Eye, GripVertical, Plus, Trash2 } from 'lucide-react';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import API from '../api.js';
@@ -148,19 +148,8 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
 
   return (
     <Stack>
-      <Group justify="space-between" align="flex-start">
-        <Stack gap={4}>
-          <Text fw={700}>Content filters</Text>
-          <Alert icon={<Info size={16} />} color="blue" variant="light">
-            <Text size="sm">
-              <strong>Order matters.</strong> The first matching filter decides
-              whether a source is included. Categories and future provider
-              groups are selected in Sources. Here, the expression always
-              matches the source title and can be combined with known technical
-              metadata. Unmatched sources remain available.
-            </Text>
-          </Alert>
-        </Stack>
+      <Group justify="space-between" align="center" w="100%">
+        <Text fw={700}>Content filters</Text>
         <Button
           variant="default"
           size="xs"
