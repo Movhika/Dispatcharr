@@ -435,6 +435,109 @@ describe('useVODStore', () => {
     );
   });
 
+  it('ignores a delayed heartbeat from an older task after a newer task is ready', () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'ready',
+          active_selection_generation: 'new-catalog',
+          selection_completed_at: '2026-09-11T16:12:08Z',
+          selection_progress: {
+            task_id: 'new-task',
+            build_generation: 'new-catalog',
+            phase: 'Ready',
+            percent: 100,
+            updated_at: '2026-09-11T16:12:08Z',
+          },
+        },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.applyAccessPolicyProgress({
+        profile_id: 1,
+        selection_status: 'building',
+        selection_started_at: '2026-09-11T16:00:00Z',
+        selection_progress: {
+          task_id: 'old-task',
+          build_generation: 'old-build',
+          phase: 'Selecting movies sources',
+          percent: 24,
+          updated_at: '2026-09-11T16:11:51Z',
+        },
+      });
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        active_selection_generation: 'new-catalog',
+        selection_progress: expect.objectContaining({
+          task_id: 'new-task',
+          percent: 100,
+        }),
+      })
+    );
+  });
+
+  it('replaces a resurrected stale heartbeat with the newer API ready state', async () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          // A delayed event may have inherited the already activated catalog.
+          active_selection_generation: 'new-catalog',
+          selection_started_at: '2026-09-11T16:00:00Z',
+          selection_progress: {
+            task_id: 'old-task',
+            build_generation: 'old-build',
+            phase: 'Selecting movies sources',
+            percent: 24,
+            updated_at: '2026-09-11T16:11:51Z',
+          },
+        },
+      ],
+    });
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'ready',
+        selection_current: true,
+        active_selection_generation: 'new-catalog',
+        selection_completed_at: '2026-09-11T16:12:08Z',
+        selection_progress: {
+          task_id: 'new-task',
+          build_generation: 'new-catalog',
+          phase: 'Ready',
+          percent: 100,
+          updated_at: '2026-09-11T16:12:08Z',
+        },
+      },
+    ]);
+    const { result } = renderHook(() => useVODStore());
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        active_selection_generation: 'new-catalog',
+        selection_progress: expect.objectContaining({
+          task_id: 'new-task',
+          percent: 100,
+        }),
+      })
+    );
+  });
+
   it('does not let a stale save response replace its optimistic build status', () => {
     useVODStore.setState({
       accessPolicies: [

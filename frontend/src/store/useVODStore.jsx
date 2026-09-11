@@ -6,6 +6,23 @@ let accessPolicyFetchSequence = 0;
 const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
 const TERMINAL_PROFILE_BUILD_STATUSES = new Set(['ready', 'failed']);
 
+const lifecycleTimestamp = (profile, statusKind) => {
+  const progress = profile?.selection_progress || {};
+  const candidates =
+    statusKind === 'active'
+      ? [
+          progress.updated_at,
+          profile?.selection_started_at,
+          progress.queued_at,
+        ]
+      : [profile?.selection_completed_at, progress.updated_at];
+  for (const value of candidates) {
+    const timestamp = Date.parse(value || '');
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return null;
+};
+
 const keepNewerLocalProfileBuild = (current, incoming) => {
   const currentTaskId = current?.selection_progress?.task_id || '';
   const incomingTaskId = incoming?.selection_progress?.task_id || '';
@@ -18,6 +35,18 @@ const keepNewerLocalProfileBuild = (current, incoming) => {
     TERMINAL_PROFILE_BUILD_STATUSES.has(current?.selection_status) &&
     ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
   ) {
+    const completedAt = lifecycleTimestamp(current, 'terminal');
+    const heartbeatAt = lifecycleTimestamp(incoming, 'active');
+    if (
+      completedAt !== null &&
+      heartbeatAt !== null &&
+      heartbeatAt <= completedAt
+    ) {
+      // A delayed heartbeat from an older task can arrive after a different,
+      // newer task activated the catalog. Task identity alone cannot detect
+      // this cross-task ordering, but the persisted lifecycle timestamps can.
+      return true;
+    }
     // WebSocket heartbeats are delivered asynchronously. Once the terminal
     // event for one task/build was accepted, a delayed intermediate heartbeat
     // from that same run must never resurrect its progress bar.
@@ -34,6 +63,19 @@ const keepNewerLocalProfileBuild = (current, incoming) => {
     !ACTIVE_PROFILE_BUILD_STATUSES.has(current?.selection_status) ||
     ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
   ) {
+    return false;
+  }
+
+  const currentHeartbeatAt = lifecycleTimestamp(current, 'active');
+  const incomingCompletedAt = lifecycleTimestamp(incoming, 'terminal');
+  if (
+    incomingCompletedAt !== null &&
+    currentHeartbeatAt !== null &&
+    incomingCompletedAt >= currentHeartbeatAt
+  ) {
+    // The database/API terminal snapshot is newer than the last progress
+    // heartbeat. Accept it even when a stale heartbeat already copied the new
+    // active catalog generation into the local object.
     return false;
   }
 
