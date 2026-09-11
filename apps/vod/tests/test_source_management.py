@@ -1473,6 +1473,60 @@ class VODSourceManagementTests(TestCase):
             trigger_reason="M3U account VOD selection settings changed"
         )
 
+    def test_source_observation_refreshes_only_its_canonical_title(self):
+        asset = ensure_source_asset(self.german_relation)
+        asset.observed_metadata = {"resolution": "2160p"}
+        asset.last_observed_at = timezone.now()
+
+        with (
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ) as refresh_content,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_all,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            asset.save(
+                update_fields=[
+                    "observed_metadata",
+                    "last_observed_at",
+                    "updated_at",
+                ]
+            )
+
+        refresh_content.assert_called_once_with(
+            movie_ids={self.movie.id},
+            series_ids=set(),
+        )
+        enqueue_all.assert_not_called()
+
+    def test_relation_detail_metadata_does_not_queue_all_profiles(self):
+        self.german_relation.custom_properties = {
+            **(self.german_relation.custom_properties or {}),
+            "detailed_info": {"video": {"height": 2160}},
+        }
+        self.german_relation.last_advanced_refresh = timezone.now()
+
+        with (
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ) as refresh_content,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_all,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            self.german_relation.save(
+                update_fields=["custom_properties", "last_advanced_refresh"]
+            )
+
+        refresh_content.assert_called_once_with(
+            movie_ids={self.movie.id},
+            series_ids=set(),
+        )
+        enqueue_all.assert_not_called()
+
     def test_provider_profile_batch_waits_until_all_refreshes_finished(self):
         from django.core.cache import cache
 
@@ -1835,6 +1889,9 @@ class VODSourceManagementTests(TestCase):
                 "apps.vod.tasks.rebuild_vod_profile_selection.delay"
             ) as delay,
             patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_all,
+            patch(
                 "apps.vod.profile_selection.transaction.on_commit",
                 side_effect=lambda callback: callback(),
             ),
@@ -1863,6 +1920,7 @@ class VODSourceManagementTests(TestCase):
         self.assertIn("active_selection_generation", response.data)
         self.assertIn("selection_catalog_generation", response.data)
         delay.assert_called_once_with(self.policy.pk)
+        enqueue_all.assert_not_called()
 
     def test_deleting_default_profile_promotes_an_active_replacement(self):
         admin = get_user_model().objects.create_user(

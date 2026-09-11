@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from apps.m3u.models import M3UAccount
@@ -70,6 +71,64 @@ RELATION_SELECTION_FIELDS = {
     },
 }
 
+# Technical metadata learned for one concrete source can only change the
+# prepared rows for that movie/series.  Treating such observations like a
+# provider catalog replacement needlessly queues a full scan of every profile.
+SOURCE_ASSET_METADATA_FIELDS = {
+    "declared_metadata",
+    "observed_metadata",
+    "manual_metadata",
+    "locked_fields",
+    "last_observed_at",
+    "updated_at",
+}
+RELATION_INCREMENTAL_SELECTION_FIELDS = {
+    M3UMovieRelation: {
+        "container_extension",
+        "custom_properties",
+        "last_advanced_refresh",
+        "updated_at",
+    },
+    M3USeriesRelation: {
+        "custom_properties",
+        "last_episode_refresh",
+        "updated_at",
+    },
+}
+
+
+def refresh_vod_profiles_for_source_content(instance):
+    """Re-evaluate only canonical titles linked to a changed source row."""
+    movie_ids = set()
+    series_ids = set()
+    if isinstance(instance, M3UMovieRelation):
+        if instance.movie_id:
+            movie_ids.add(instance.movie_id)
+    elif isinstance(instance, M3USeriesRelation):
+        if instance.series_id:
+            series_ids.add(instance.series_id)
+    elif isinstance(instance, VODSourceAsset) and instance.pk:
+        movie_ids.update(
+            M3UMovieRelation.objects.filter(source_asset_id=instance.pk)
+            .values_list("movie_id", flat=True)
+        )
+        series_ids.update(
+            M3USeriesRelation.objects.filter(source_asset_id=instance.pk)
+            .values_list("series_id", flat=True)
+        )
+    if not movie_ids and not series_ids:
+        return
+
+    def refresh():
+        from .profile_selection import refresh_profile_selections_for_content
+
+        refresh_profile_selections_for_content(
+            movie_ids=movie_ids,
+            series_ids=series_ids,
+        )
+
+    transaction.on_commit(refresh)
+
 
 def invalidate_and_schedule_vod_profiles(trigger_reason=None):
     """Invalidate once, but never publish a profile batch mid-import."""
@@ -130,6 +189,14 @@ def invalidate_vod_catalog(
     if sender is VODSourceAsset and created:
         return
     if sender is VODSourceAsset:
+        changed_fields = set(update_fields or [])
+        if (
+            signal is post_save
+            and changed_fields
+            and changed_fields.issubset(SOURCE_ASSET_METADATA_FIELDS)
+        ):
+            refresh_vod_profiles_for_source_content(instance)
+            return
         invalidate_and_schedule_vod_profiles(
             "VOD source metadata was changed manually"
         )
@@ -191,10 +258,22 @@ def invalidate_vod_catalog(
         bump_catalog_generation(invalidate_selections=False)
         return
     if sender in SELECTION_CATALOG_MODELS:
+        if getattr(instance, "_skip_vod_profile_invalidation", False):
+            return
         relevant_fields = RELATION_SELECTION_FIELDS.get(sender)
         if relevant_fields and update_fields and set(update_fields).isdisjoint(
             relevant_fields
         ):
+            return
+        incremental_fields = RELATION_INCREMENTAL_SELECTION_FIELDS.get(sender)
+        if (
+            signal is post_save
+            and not created
+            and incremental_fields
+            and update_fields
+            and set(update_fields).issubset(incremental_fields)
+        ):
+            refresh_vod_profiles_for_source_content(instance)
             return
         invalidate_and_schedule_vod_profiles(
             "The selectable VOD source catalog changed"

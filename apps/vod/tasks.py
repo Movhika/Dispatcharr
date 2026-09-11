@@ -2484,7 +2484,14 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
             custom_props['detailed_fetched'] = True
             series_relation.custom_properties = custom_props
             series_relation.last_episode_refresh = timezone.now()
-            series_relation.save()
+            # ``sync_relation_declared_metadata`` below persists any technical
+            # metadata and then refreshes only this series in prepared output
+            # profiles. Do not let this operational detail fetch look like a
+            # replacement of the complete provider catalog.
+            series_relation._skip_vod_profile_invalidation = True
+            series_relation.save(
+                update_fields=["custom_properties", "last_episode_refresh"]
+            )
             from .metadata import sync_relation_declared_metadata
 
             sync_relation_declared_metadata(series_relation)
@@ -3475,6 +3482,9 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
 
                 relation.custom_properties = relation_custom_props
                 relation.last_advanced_refresh = now
+                # The source-asset update below performs a bounded refresh for
+                # this movie when relevant technical metadata actually changed.
+                relation._skip_vod_profile_invalidation = True
                 relation.save(update_fields=['custom_properties', 'last_advanced_refresh'])
                 from .metadata import sync_relation_declared_metadata
 
