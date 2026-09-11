@@ -111,6 +111,15 @@ const CONTENT_RULES_TAB_HELP =
   'Order matters. The first matching filter decides whether a source is included. The expression matches the source title and can be combined with known technical metadata. Unmatched sources remain available.';
 const EDITIONS_TAB_HELP =
   "First match wins. Compact creates one client entry per canonical title and suffix. Every split stays in the title's output category, and failover stays inside the matching suffix. Unmatched sources use the canonical title without a suffix.";
+const PREVIEW_PAGE_SIZES = [25, 50, 100, 200];
+const PREVIEW_PAGE_SIZE_STORAGE_KEY = 'vodOutputProfilePreviewPageSize';
+
+const initialPreviewPageSize = () => {
+  const stored = Number(
+    window.localStorage.getItem(PREVIEW_PAGE_SIZE_STORAGE_KEY)
+  );
+  return PREVIEW_PAGE_SIZES.includes(stored) ? stored : 50;
+};
 
 const buildPhaseDescription = (progress) => {
   const descriptions = {
@@ -245,6 +254,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [previewPageSize, setPreviewPageSize] = useState(
+    initialPreviewPageSize
+  );
   const [filters, setFilters] = useState({
     type: 'movie',
     search: '',
@@ -591,9 +603,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             }
           : filters;
       const params = Object.fromEntries(
-        Object.entries({ ...applicableFilters, page, page_size: 50 }).filter(
-          ([, value]) => value !== ''
-        )
+        Object.entries({
+          ...applicableFilters,
+          page,
+          page_size: previewPageSize,
+        }).filter(([, value]) => value !== '')
       );
       setPreview(
         await API.getVODAccessPolicySelections(selectedProfile.id, params)
@@ -615,6 +629,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     filters,
     opened,
     page,
+    previewPageSize,
     selectionAvailable,
     selectedProfile?.id,
     selectedProfile?.selection_active_mode,
@@ -826,14 +841,14 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         onClose={onClose}
         title="VOD output profiles"
         size="70vw"
-        yOffset="2vh"
+        yOffset="5vh"
         lockScroll={false}
         styles={{
           content: {
             display: 'flex',
             flexDirection: 'column',
-            height: '96vh',
-            maxHeight: '96vh',
+            height: '90vh',
+            maxHeight: '90vh',
             overflow: 'hidden',
           },
           body: {
@@ -1022,7 +1037,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </TabsList>
 
             <TabsPanel value="settings" pt="md">
-              <ScrollArea h="calc(96vh - 270px)">
+              <ScrollArea h="calc(90vh - 270px)">
                 <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
                   <Stack>
                     <TextInput
@@ -1080,7 +1095,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </TabsPanel>
 
             <TabsPanel value="sources" pt="md">
-              <ScrollArea h="calc(96vh - 270px)">
+              <ScrollArea h="calc(90vh - 270px)">
                 <Paper withBorder p="lg" radius="md">
                   <Stack>
                     <Tabs defaultValue="movie">
@@ -1145,7 +1160,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </TabsPanel>
 
             <TabsPanel value="content-rules" pt="md">
-              <ScrollArea h="calc(96vh - 270px)">
+              <ScrollArea h="calc(90vh - 270px)">
                 <Paper withBorder p="lg" radius="md">
                   <VODSourceRules
                     value={draft.hard_constraints.source_rules || []}
@@ -1160,7 +1175,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
             {draft.export_mode === 'compact' && (
               <TabsPanel value="failover" pt="md">
-                <ScrollArea h="calc(96vh - 270px)">
+                <ScrollArea h="calc(90vh - 270px)">
                   <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
                     <VODFailoverRanking
                       value={draft.ranking}
@@ -1182,7 +1197,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             )}
 
             <TabsPanel value="editions" pt="md">
-              <ScrollArea h="calc(96vh - 270px)">
+              <ScrollArea h="calc(90vh - 270px)">
                 {draft.export_mode === 'compact' && (
                   <Paper withBorder p="lg" radius="md">
                     <VODEditionRules
@@ -1271,23 +1286,25 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       <LanguageSelect
                         label="DUB"
                         value={filters.audio_language}
-                        onChange={(value) =>
+                        onChange={(value) => {
                           setFilters({
                             ...filters,
                             audio_language: value,
-                          })
-                        }
+                          });
+                          setPage(1);
+                        }}
                         w={160}
                       />
                       <LanguageSelect
                         label="SUB"
                         value={filters.subtitle_language}
-                        onChange={(value) =>
+                        onChange={(value) => {
                           setFilters({
                             ...filters,
                             subtitle_language: value,
-                          })
-                        }
+                          });
+                          setPage(1);
+                        }}
                         w={160}
                       />
                       <Select
@@ -1295,9 +1312,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         clearable
                         data={RESOLUTION_VALUES}
                         value={filters.resolution || null}
-                        onChange={(value) =>
-                          setFilters({ ...filters, resolution: value || '' })
-                        }
+                        onChange={(value) => {
+                          setFilters({ ...filters, resolution: value || '' });
+                          setPage(1);
+                        }}
                         w={120}
                       />
                       <Select
@@ -1305,12 +1323,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         clearable
                         data={CONTAINER_EXTENSION_OPTIONS}
                         value={filters.container_extension || null}
-                        onChange={(value) =>
+                        onChange={(value) => {
                           setFilters({
                             ...filters,
                             container_extension: value || '',
-                          })
-                        }
+                          });
+                          setPage(1);
+                        }}
                         w={105}
                       />
                       <Box w={190}>
@@ -1343,7 +1362,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     canonical titles in this profile
                   </Text>
                 </Group>
-                <ScrollArea h="calc(96vh - 390px)">
+                <ScrollArea h="calc(90vh - 390px)">
                   <Table striped highlightOnHover withTableBorder stickyHeader>
                     <TableThead>
                       <TableTr>
@@ -1421,14 +1440,44 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     </TableTbody>
                   </Table>
                 </ScrollArea>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Page {page} · {preview.results?.length || 0} shown
-                  </Text>
+                <Group justify="space-between" align="flex-end" wrap="wrap">
+                  <Group align="flex-end" wrap="nowrap">
+                    <Select
+                      label="Rows"
+                      value={String(previewPageSize)}
+                      data={PREVIEW_PAGE_SIZES.map((value) => ({
+                        value: String(value),
+                        label: String(value),
+                      }))}
+                      onChange={(value) => {
+                        const nextPageSize = Number(value) || 50;
+                        setPreviewPageSize(nextPageSize);
+                        setPage(1);
+                        window.localStorage.setItem(
+                          PREVIEW_PAGE_SIZE_STORAGE_KEY,
+                          String(nextPageSize)
+                        );
+                      }}
+                      allowDeselect={false}
+                      w={90}
+                    />
+                    <Text size="sm" c="dimmed" pb={7}>
+                      {preview.count
+                        ? `${(page - 1) * previewPageSize + 1}–${Math.min(
+                            page * previewPageSize,
+                            preview.count
+                          )} of ${preview.count}`
+                        : '0 of 0'}
+                    </Text>
+                  </Group>
                   <Pagination
                     value={page}
                     onChange={setPage}
-                    total={Math.max(1, Math.ceil((preview.count || 0) / 50))}
+                    total={Math.max(
+                      1,
+                      Math.ceil((preview.count || 0) / previewPageSize)
+                    )}
+                    withEdges
                   />
                 </Group>
               </Stack>
