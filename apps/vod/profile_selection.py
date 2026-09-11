@@ -102,13 +102,18 @@ def _set_pending_profiles_progress(
     updated = 0
     for position, row in enumerate(rows, start=1):
         context = _progress_context(row["selection_progress"])
-        context.update(
-            {
-                key: value
-                for key, value in details.items()
-                if value not in (None, "")
-            }
-        )
+        clean_details = {
+            key: value
+            for key, value in details.items()
+            if value not in (None, "")
+        }
+        trigger_reason = clean_details.pop("trigger_reason", None)
+        context.update(clean_details)
+        if trigger_reason:
+            # Debounced invalidations may revisit a profile that is already
+            # pending. Keep its original cause instead of replacing it with a
+            # later, less specific catalog change.
+            context.setdefault("trigger_reason", trigger_reason)
         if include_batch_position:
             context.update(
                 batch=True,
@@ -369,6 +374,7 @@ def enqueue_all_profile_selection_rebuilds(
                 ),
                 task_name=BATCH_PROFILE_TASK_NAME,
                 batch=True,
+                trigger_reason=trigger_reason,
             )
             return
         try:
@@ -393,6 +399,7 @@ def enqueue_all_profile_selection_rebuilds(
                 task_name=BATCH_PROFILE_TASK_NAME,
                 queued_at=timezone.now().isoformat(),
                 batch=True,
+                trigger_reason=trigger_reason,
             )
         except Exception as exc:
             try:
