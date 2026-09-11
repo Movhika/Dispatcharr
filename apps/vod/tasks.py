@@ -108,7 +108,12 @@ def _provider_vod_fingerprint(rows):
 
 
 def _remember_profile_rebuild_after_vod_refresh():
-    """Record one catalog invalidation without publishing a premature task."""
+    """Record one catalog invalidation without publishing a premature task.
+
+    The 60-second profile watchdog publishes this only after no provider is in
+    FETCHING/PARSING anymore. This also covers refresh jobs already waiting in
+    the same Celery queue, which have not set their account status yet.
+    """
     from .catalog_cache import safe_cache_set
 
     safe_cache_set(
@@ -763,7 +768,6 @@ def _refresh_vod_content_impl(account_id):
                 )
                 send_m3u_update(account_id, "vod_refresh", 100, status="error",
                                message=f"VOD refresh failed: {message}")
-                _enqueue_deferred_profile_rebuild_after_vod_refreshes()
                 return f"VOD refresh failed: {message}"
 
             movie_categories, series_categories = category_maps
@@ -906,7 +910,6 @@ def _refresh_vod_content_impl(account_id):
         )
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
                        message=success_message)
-        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
 
         return f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds"
 
@@ -923,7 +926,6 @@ def _refresh_vod_content_impl(account_id):
         )
         send_m3u_update(account_id, "vod_refresh", 100, status="error",
                        message=error_message)
-        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
 
         return f"VOD refresh failed: {str(e)}"
 
