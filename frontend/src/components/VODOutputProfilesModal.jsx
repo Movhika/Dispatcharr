@@ -809,6 +809,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 {buildProgress.trigger_reason ||
                   'not recorded by the previous version'}
               </Text>
+              {buildProgress.original_trigger_reason &&
+                buildProgress.original_trigger_reason !==
+                  buildProgress.trigger_reason && (
+                  <Text size="xs" c="dimmed">
+                    Original trigger: {buildProgress.original_trigger_reason}
+                  </Text>
+                )}
             </Stack>
           )}
 

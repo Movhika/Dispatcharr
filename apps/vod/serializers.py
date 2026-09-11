@@ -512,6 +512,12 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             VODAccessPolicy.SelectionStatus.BUILDING,
         }:
             return ""
+        # Database progress is authoritative for a claimed build. The Celery
+        # result backend may legitimately answer PENDING after the embedded
+        # Redis was restarted even while a recovered worker is actively
+        # writing progress heartbeats.
+        if obj.selection_status == VODAccessPolicy.SelectionStatus.BUILDING:
+            return "RUNNING"
         task_id = (obj.selection_progress or {}).get("task_id")
         if not task_id:
             return "UNPUBLISHED"

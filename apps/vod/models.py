@@ -329,6 +329,28 @@ class VODSourceAsset(models.Model):
         return changed
 
 
+class VODCatalogState(models.Model):
+    """Durable source generation used by prepared VOD output profiles.
+
+    Redis is an acceleration layer and the Celery broker, but it is recreated
+    on every all-in-one container start.  Keeping the authoritative generation
+    in PostgreSQL prevents a service restart from making otherwise valid
+    prepared profile catalogs look stale.
+    """
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True,
+        default=1,
+        editable=False,
+    )
+    selection_generation = models.CharField(max_length=64)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "VOD catalog state"
+        verbose_name_plural = "VOD catalog state"
+
+
 class VODAccessPolicy(models.Model):
     """Per-user XC visibility, compact selection and failover policy."""
 

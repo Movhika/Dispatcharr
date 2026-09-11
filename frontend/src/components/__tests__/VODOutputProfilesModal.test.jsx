@@ -550,6 +550,7 @@ describe('VODOutputProfilesModal', () => {
       {
         ...profile,
         selection_status: 'building',
+        selection_task_state: 'RUNNING',
         selection_current: false,
         selection_available: true,
         selection_started_at: new Date().toISOString(),
@@ -563,6 +564,9 @@ describe('VODOutputProfilesModal', () => {
           stage_percent: 50,
           phase_started_at: new Date(Date.now() - 30_000).toISOString(),
           target_export_mode: 'compact',
+          trigger_reason:
+            'Automatic recovery: the previous Celery task is no longer available after a service restart',
+          original_trigger_reason: 'A source metadata field changed',
         },
       },
     ];
@@ -579,6 +583,10 @@ describe('VODOutputProfilesModal', () => {
       screen.getByText(/saved rules are not active in this preview yet/)
     ).toBeInTheDocument();
     expect(screen.getByText(/No manual retry is required/)).toBeInTheDocument();
+    expect(screen.getByText(/State: RUNNING/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Original trigger: A source metadata field changed/)
+    ).toBeInTheDocument();
   });
 
   it('distinguishes an active variants catalog from saved compact settings', async () => {

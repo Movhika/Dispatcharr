@@ -357,6 +357,11 @@ def reconcile_vod_profile_selection_queue():
             ),
         )
 
+    try:
+        rebuild_lock_owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
+    except Exception:
+        rebuild_lock_owner = None
+
     terminal_states = {"SUCCESS", "FAILURE", "REVOKED"}
     cutoff = timezone.now() - timedelta(minutes=2)
     stranded = []
@@ -375,8 +380,50 @@ def reconcile_vod_profile_selection_queue():
             task_state = str(AsyncResult(task_id).state or "PENDING")
         except Exception:
             task_state = "UNKNOWN"
-        if task_state in terminal_states:
+        progress = policy.selection_progress or {}
+        is_batch = bool(progress.get("batch"))
+        lock_matches_task = str(rebuild_lock_owner or "") == str(task_id)
+        # In the AIO image both the broker and result backend live in an
+        # in-memory Redis process. After a container restart the database can
+        # still say Pending while Celery has forgotten both the message and
+        # its task result. A batch lock is written alongside publication, so a
+        # missing/mismatched lock plus PENDING is reliable restart evidence.
+        task_was_lost = (
+            task_state == "PENDING" and is_batch and not lock_matches_task
+        )
+        if task_state in terminal_states or task_was_lost:
             stranded.append((policy.pk, str(task_id)))
+
+    if stranded:
+        recovery_started_at = timezone.now()
+        for policy_id, _task_id in stranded:
+            policy = VODAccessPolicy.objects.filter(pk=policy_id).values(
+                "selection_progress"
+            ).first()
+            progress = (policy or {}).get("selection_progress") or {}
+            original_reason = progress.get(
+                "original_trigger_reason"
+            ) or progress.get("trigger_reason")
+            VODAccessPolicy.objects.filter(
+                pk=policy_id,
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            ).update(
+                selection_started_at=recovery_started_at,
+                selection_error="",
+                selection_progress=_progress_payload(
+                    "Recovering unpublished catalog task",
+                    0,
+                    queue="celery",
+                    task_name=BATCH_PROFILE_TASK_NAME,
+                    batch=True,
+                    trigger_reason=(
+                        "Automatic recovery: the previous Celery task is no "
+                        "longer available after a service restart"
+                    ),
+                    original_trigger_reason=original_reason,
+                ),
+            )
 
     # A worker can be restarted after claiming a profile, leaving the database
     # in Building forever. Progress writes carry a heartbeat; recover only
@@ -399,27 +446,36 @@ def reconcile_vod_profile_selection_queue():
             )
 
     if stalled_building:
-        VODAccessPolicy.objects.filter(
-            pk__in=[policy_id for policy_id, _ in stalled_building],
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
-        ).update(
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            selection_started_at=timezone.now(),
-            selection_error="",
-            selection_progress=_progress_payload(
-                "Recovering interrupted catalog build",
-                0,
-                queue="celery",
-                task_name=BATCH_PROFILE_TASK_NAME,
-                batch=True,
-                build_generation=f"recovery-{time.time_ns()}",
-                trigger_reason=(
-                    "Automatic recovery: the previous VOD profile build "
-                    "stopped reporting progress"
+        for policy_id, _task_id in stalled_building:
+            policy = VODAccessPolicy.objects.filter(pk=policy_id).values(
+                "selection_progress"
+            ).first()
+            progress = (policy or {}).get("selection_progress") or {}
+            original_reason = progress.get(
+                "original_trigger_reason"
+            ) or progress.get("trigger_reason")
+            VODAccessPolicy.objects.filter(
+                pk=policy_id,
+                is_active=True,
+                selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            ).update(
+                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+                selection_started_at=timezone.now(),
+                selection_error="",
+                selection_progress=_progress_payload(
+                    "Recovering interrupted catalog build",
+                    0,
+                    queue="celery",
+                    task_name=BATCH_PROFILE_TASK_NAME,
+                    batch=True,
+                    build_generation=f"recovery-{time.time_ns()}",
+                    trigger_reason=(
+                        "Automatic recovery: the previous VOD profile build "
+                        "stopped reporting progress"
+                    ),
+                    original_trigger_reason=original_reason,
                 ),
-            ),
-        )
+            )
 
     republished = False
     if stranded or stalled_building:

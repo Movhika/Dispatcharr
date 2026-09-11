@@ -32,6 +32,7 @@ from apps.vod.models import (
     Episode,
     Series,
     VODAccessPolicy,
+    VODCatalogState,
     VODMovieProfileSelection,
     VODPlaybackSession,
     VODPolicyCategory,
@@ -59,6 +60,7 @@ from apps.vod.catalog_cache import (
     selection_catalog_generation,
 )
 from apps.vod.profile_selection import (
+    PROFILE_REBUILD_ENQUEUE_KEY,
     ProfileBuildAlreadyRunning,
     build_vod_profile_selection,
     enqueue_all_profile_selection_rebuilds,
@@ -1102,6 +1104,52 @@ class VODSourceManagementTests(TestCase):
         cache.delete(SELECTION_GENERATION_KEY)
 
         self.assertEqual(str(selection_catalog_generation()), expected)
+        self.assertEqual(
+            VODCatalogState.objects.get(pk=1).selection_generation,
+            expected,
+        )
+
+    def test_durable_generation_wins_after_runtime_cache_restart(self):
+        from django.core.cache import cache
+
+        build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        expected = self.policy.selection_catalog_generation
+        newer_policy = VODAccessPolicy.objects.create(
+            name="Misleading newer completion",
+            is_active=False,
+        )
+        VODAccessPolicy.objects.filter(pk=newer_policy.pk).update(
+            selection_catalog_generation="not-the-source-generation",
+            selection_completed_at=timezone.now() + timedelta(days=1),
+        )
+
+        cache.delete(SELECTION_GENERATION_KEY)
+
+        self.assertEqual(str(selection_catalog_generation()), expected)
+
+    def test_cache_restart_does_not_requeue_a_ready_profile(self):
+        from django.core.cache import cache
+
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_active=False
+        )
+        build_vod_profile_selection(self.policy.id)
+        cache.delete(SELECTION_GENERATION_KEY)
+        cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stale_ready_requeued"], 0)
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        enqueue.assert_not_called()
 
     def test_profile_preview_filters_prepared_rows(self):
         build_vod_profile_selection(self.policy.id)
@@ -1575,7 +1623,9 @@ class VODSourceManagementTests(TestCase):
         self.assertTrue(first_policy.selection_progress["batch"])
 
     def test_catalog_invalidation_republishes_an_existing_pending_profile(self):
-        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_active=False
+        )
         started_at = timezone.now() - timedelta(minutes=2)
         progress = {
             "phase": "Waiting in Celery queue",
@@ -1707,6 +1757,76 @@ class VODSourceManagementTests(TestCase):
             "apps.vod.tasks.rebuild_all_vod_profile_selections",
         )
         delay.assert_called_once_with()
+
+    def test_watchdog_recovers_a_batch_task_lost_with_runtime_redis(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_active=False
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+            selection_started_at=timezone.now() - timedelta(minutes=5),
+            selection_progress={
+                "phase": "Waiting in Celery queue",
+                "percent": 0,
+                "task_id": "task-lost-on-restart",
+                "task_name": (
+                    "apps.vod.tasks.rebuild_all_vod_profile_selections"
+                ),
+                "batch": True,
+                "trigger_reason": "A source metadata field changed",
+            },
+        )
+
+        with (
+            patch("celery.result.AsyncResult") as async_result,
+            patch("django.core.cache.cache.get", return_value=None),
+            patch("django.core.cache.cache.delete"),
+            patch("django.core.cache.cache.add", return_value=True),
+            patch("django.core.cache.cache.set"),
+            patch(
+                "apps.vod.tasks.rebuild_all_vod_profile_selections.delay"
+            ) as delay,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            async_result.return_value.state = "PENDING"
+            delay.return_value.id = "recovered-task-id"
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stranded_pending"], [self.policy.pk])
+        self.assertTrue(result["republished"])
+        self.assertEqual(
+            self.policy.selection_progress["task_id"], "recovered-task-id"
+        )
+        self.assertEqual(
+            self.policy.selection_progress["trigger_reason"],
+            "Automatic recovery: the previous Celery task is no longer "
+            "available after a service restart",
+        )
+        self.assertEqual(
+            self.policy.selection_progress["original_trigger_reason"],
+            "A source metadata field changed",
+        )
+        delay.assert_called_once_with()
+
+    def test_building_profile_uses_database_heartbeat_as_running_state(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_progress={
+                "phase": "Selecting movies sources",
+                "processed": 5000,
+                "total": 80000,
+                "task_id": "backend-forgot-this-task",
+                "updated_at": timezone.now().isoformat(),
+            },
+        )
+        self.policy.refresh_from_db()
+
+        with patch("celery.result.AsyncResult") as async_result:
+            serialized = VODAccessPolicySerializer(self.policy).data
+
+        self.assertEqual(serialized["selection_task_state"], "RUNNING")
+        async_result.assert_not_called()
 
     def test_admin_can_create_a_reusable_vod_output_profile(self):
         admin = get_user_model().objects.create_user(

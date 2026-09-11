@@ -46,24 +46,50 @@ def selection_catalog_generation():
     """Version only source/metadata changes that affect prepared profiles."""
     generation = safe_cache_get(SELECTION_GENERATION_KEY)
     if generation is None:
-        # Redis/cache may be empty after a restart while the materialized
-        # profile rows in PostgreSQL are still valid. Recover the latest
-        # activated source generation when the schema is available.
+        # Redis is recreated when the all-in-one container starts. PostgreSQL
+        # is therefore the authority for whether prepared catalogs are still
+        # current; Redis only caches that durable value at runtime.
         generation = None
         try:
-            from .models import VODAccessPolicy
+            from .models import VODCatalogState
 
-            generation = (
-                VODAccessPolicy.objects.exclude(selection_catalog_generation="")
-                .order_by("-selection_completed_at")
-                .values_list("selection_catalog_generation", flat=True)
-                .first()
+            generation = VODCatalogState.objects.filter(pk=1).values_list(
+                "selection_generation", flat=True
+            ).first()
+            if not generation:
+                generation = str(time.time_ns())
+                state, _ = VODCatalogState.objects.get_or_create(
+                    pk=1,
+                    defaults={"selection_generation": generation},
+                )
+                generation = state.selection_generation
+        except Exception:
+            # App startup and migrations can call this before the table exists.
+            # Recovering from a prepared policy keeps upgrades from needlessly
+            # invalidating an existing catalog until the state row is created.
+            try:
+                from .models import VODAccessPolicy
+
+                generation = (
+                    VODAccessPolicy.objects.exclude(
+                        selection_catalog_generation=""
+                    )
+                    .order_by("-selection_completed_at")
+                    .values_list("selection_catalog_generation", flat=True)
+                    .first()
+                )
+            except Exception:
+                generation = None
+        generation = str(generation or time.time_ns())
+        try:
+            from .models import VODCatalogState
+
+            VODCatalogState.objects.update_or_create(
+                pk=1,
+                defaults={"selection_generation": generation},
             )
         except Exception:
-            # App startup and migrations can call this before the table or new
-            # columns exist. A fresh value is correct for that case.
             pass
-        generation = str(generation or time.time_ns())
         try:
             cache.add(SELECTION_GENERATION_KEY, generation, timeout=None)
         except Exception:
@@ -76,6 +102,16 @@ def bump_selection_catalog_generation():
     global _fallback_selection_generation
     generation = str(time.time_ns())
     _fallback_selection_generation = generation
+    try:
+        from .models import VODCatalogState
+
+        VODCatalogState.objects.update_or_create(
+            pk=1,
+            defaults={"selection_generation": generation},
+        )
+    except Exception as exc:
+        # Migrations and first-time setup may call this before the table exists.
+        logger.warning("Could not persist VOD selection generation: %s", exc)
     safe_cache_set(SELECTION_GENERATION_KEY, generation, timeout=None)
     return generation
 

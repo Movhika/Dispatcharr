@@ -49,6 +49,7 @@ PROGRESS_CONTEXT_KEYS = (
     "batch_position",
     "batch_total",
     "trigger_reason",
+    "original_trigger_reason",
 )
 
 
