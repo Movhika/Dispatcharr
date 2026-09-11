@@ -74,6 +74,8 @@ vi.mock('../../components/VideoFeaturePicker.jsx', () => ({
 vi.mock('lucide-react', () => ({
   DatabaseZap: () => null,
   History: () => null,
+  LayoutGrid: (props) => <span {...props}>Poster wall</span>,
+  List: (props) => <span {...props}>List view</span>,
   Play: () => null,
   Search: () => null,
   SlidersHorizontal: () => null,
@@ -257,6 +259,7 @@ describe('VODsPage list and bulk editing', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem('vodsViewMode');
     fetchContent.mockResolvedValue(undefined);
     fetchCategories.mockResolvedValue(undefined);
     API.bulkUpdateVODSourceMetadata.mockResolvedValue({ updated_sources: 3 });
@@ -291,6 +294,15 @@ describe('VODsPage list and bulk editing', () => {
     expect(await screen.findByTestId('series-modal')).toHaveTextContent(
       'Series B'
     );
+  });
+
+  it('switches to a paginated poster wall and remembers the view', async () => {
+    render(<VODsPage />);
+    await screen.findByText('Movie A');
+    fireEvent.click(screen.getByLabelText('Poster wall'));
+    expect(localStorage.getItem('vodsViewMode')).toBe('posters');
+    expect(screen.getByText('Movie · 2025 · 3 sources')).toBeInTheDocument();
+    expect(screen.getByTestId('pagination')).toBeInTheDocument();
   });
 
   it('bulk-updates every source behind selected titles', async () => {

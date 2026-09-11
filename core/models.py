@@ -774,6 +774,7 @@ class CoreSettings(models.Model):
             "tmdb_languages": ["de-DE", "en-US"],
             "tmdb_auto_enrich": True,
             "tmdb_match_missing": False,
+            "tmdb_prefer_artwork": True,
         })
 
     @classmethod
@@ -811,18 +812,26 @@ class CoreSettings(models.Model):
         return cls.get_vod_settings().get("tmdb_match_missing", False) is True
 
     @classmethod
+    def get_tmdb_prefer_artwork(cls):
+        return (
+            cls.get_vod_settings().get("tmdb_prefer_artwork", True) is not False
+        )
+
+    @classmethod
     def set_vod_metadata_settings(
         cls,
         *,
         languages,
         auto_enrich,
         match_missing,
+        prefer_artwork=True,
         api_token=None,
     ):
         updates = {
             "tmdb_languages": list(languages)[:2],
             "tmdb_auto_enrich": bool(auto_enrich),
             "tmdb_match_missing": bool(match_missing),
+            "tmdb_prefer_artwork": bool(prefer_artwork),
         }
         if api_token is not None:
             updates["tmdb_api_token"] = str(api_token).strip()

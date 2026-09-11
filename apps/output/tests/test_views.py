@@ -10,6 +10,7 @@ from apps.channels.models import Channel, ChannelGroup, ChannelOverride, Channel
 from apps.epg.models import EPGData, EPGSource
 from apps.accounts.models import User
 from apps.m3u.models import M3UAccount
+from core.models import CoreSettings
 from apps.output.views import (
     xc_get_live_streams,
     xc_get_series,
@@ -890,6 +891,39 @@ class XcVodSeriesRegressionTests(TestCase):
         self.assertIn("/image/", stream["stream_icon"])
         self.assertIn("kind=movie_image", stream["stream_icon"])
         self.assertNotIn(f"/{logo.id}/", stream["stream_icon"])
+
+    def test_vod_streams_can_prefer_tmdb_artwork_and_enriched_ids(self):
+        CoreSettings.set_vod_metadata_settings(
+            languages=["de-DE", "en-US"],
+            auto_enrich=True,
+            match_missing=False,
+            prefer_artwork=True,
+        )
+        account = self._account(f"acct-{uuid4().hex[:6]}")
+        movie = Movie.objects.create(
+            name="TMDB artwork movie",
+            tmdb_id="100",
+            tmdb_override_id="200",
+            tmdb_match_id="200",
+            tmdb_imdb_id="tt200",
+            tmdb_poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+        )
+        M3UMovieRelation.objects.create(
+            m3u_account=account,
+            movie=movie,
+            stream_id="tmdb-art-1",
+            custom_properties={
+                "basic_data": {
+                    "stream_icon": "https://cdn.example.com/provider.jpg",
+                },
+            },
+        )
+
+        stream = xc_get_vod_streams(self.request, self.user)[0]
+
+        self.assertIn("v=3ac5b3d0", stream["stream_icon"])
+        self.assertEqual(stream["tmdb_id"], "200")
+        self.assertEqual(stream["imdb_id"], "tt200")
 
     def test_vod_streams_stream_icon_ignores_blank_relation_image_keys(self):
         """basic_data is stored raw, so a blank key must not shadow a populated one."""

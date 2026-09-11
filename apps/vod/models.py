@@ -128,6 +128,16 @@ class Series(models.Model):
     # this snapshot belongs to the canonical title and can be reused by every
     # output profile.
     tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID; provider identity is preserved.",
+    )
+    tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_poster_url = models.CharField(max_length=500, blank=True)
+    tmdb_backdrop_url = models.CharField(max_length=500, blank=True)
     tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
     tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
     tmdb_enrichment_signature = models.CharField(
@@ -197,6 +207,16 @@ class Movie(models.Model):
 
     # Keep external enrichment isolated from the provider's original data.
     tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID; provider identity is preserved.",
+    )
+    tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_poster_url = models.CharField(max_length=500, blank=True)
+    tmdb_backdrop_url = models.CharField(max_length=500, blank=True)
     tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
     tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
     tmdb_enrichment_signature = models.CharField(
@@ -422,6 +442,7 @@ class VODMetadataState(models.Model):
     )
     task_id = models.CharField(max_length=255, blank=True)
     rebuild_profiles_after_completion = models.BooleanField(default=False)
+    rerun_requested = models.BooleanField(default=False)
     progress = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

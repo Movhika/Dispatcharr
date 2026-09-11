@@ -20,15 +20,14 @@ import useSettingsStore from '../store/settings';
 import {
   formatDuration,
   getYouTubeEmbedUrl,
-  imdbUrl,
-  tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
 import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import { getMovieStreamUrl } from '../utils/components/VODModalUtils.js';
+import VODExternalIds from './VODExternalIds.jsx';
 
-const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
+const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod, onTmdbSaved }) => {
   const displayVOD = detailedVOD || vod;
 
   return (
@@ -50,31 +49,14 @@ const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod }) => {
         {displayVOD.rating && <Badge color="yellow">{displayVOD.rating}</Badge>}
         {displayVOD.age && <Badge color="orange">{displayVOD.age}</Badge>}
         <Badge color="green">Movie</Badge>
-        {/* imdb_id and tmdb_id badges */}
-        {displayVOD.imdb_id && (
-          <Badge
-            color="yellow"
-            component="a"
-            href={imdbUrl(displayVOD.imdb_id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ cursor: 'pointer' }}
-          >
-            IMDb
-          </Badge>
-        )}
-        {displayVOD.tmdb_id && (
-          <Badge
-            color="cyan"
-            component="a"
-            href={tmdbUrl(displayVOD.tmdb_id, 'movie')}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ cursor: 'pointer' }}
-          >
-            TMDb
-          </Badge>
-        )}
+        <VODExternalIds
+          contentType="movie"
+          contentId={displayVOD.id}
+          tmdb={displayVOD.tmdb}
+          tmdbId={displayVOD.tmdb_id}
+          imdbId={displayVOD.imdb_id}
+          onSaved={onTmdbSaved}
+        />
       </Group>
 
       {/* Release date */}
@@ -317,6 +299,16 @@ const VODModal = ({
     onMetadataChanged?.();
   };
 
+  const updateTmdbMatch = (tmdb) => {
+    setDetailedVOD((current) => ({
+      ...(current || vod),
+      tmdb,
+      tmdb_id: tmdb?.id || '',
+      imdb_id: tmdb?.external_ids?.imdb_id || '',
+    }));
+    onMetadataChanged?.();
+  };
+
   if (!vod) return null;
 
   // Use detailed data if available, otherwise use basic vod data
@@ -447,6 +439,7 @@ const VODModal = ({
                   detailedVOD={detailedVOD}
                   vod={vod}
                   onClickYouTubeTrailer={onClickYouTubeTrailer}
+                  onTmdbSaved={updateTmdbMatch}
                 />
               </Flex>
 

@@ -96,6 +96,7 @@ const response = {
     languages: ['de-DE', 'en-US'],
     auto_enrich: true,
     match_missing: false,
+    prefer_artwork: true,
   },
   catalog: {
     movies: 100,
@@ -128,6 +129,7 @@ describe('VODMetadataModal', () => {
         languages: ['de-DE', 'en-US'],
         auto_enrich: true,
         match_missing: false,
+        prefer_artwork: true,
         api_token: 'new-token',
       })
     );
@@ -139,13 +141,22 @@ describe('VODMetadataModal', () => {
       ...response,
       state: {
         status: 'running',
-        progress: { phase: 'Fetching TMDB metadata', percent: 32, processed: 32, total: 100 },
+        progress: {
+          phase: 'Fetching TMDB metadata',
+          percent: 32,
+          processed: 32,
+          total: 100,
+        },
       },
     });
     render(<VODMetadataModal opened onClose={vi.fn()} />);
 
-    expect(await screen.findByText('Fetching TMDB metadata')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save and refresh' })).toBeDisabled();
+    expect(
+      await screen.findByText('Fetching TMDB metadata')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Save and refresh' })
+    ).toBeDisabled();
     expect(screen.getByTestId('progress')).toHaveTextContent('32');
   });
 });

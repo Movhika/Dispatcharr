@@ -112,6 +112,7 @@ def _tmdb_content_signature(base_signature, content):
     identity = {
         "base": base_signature,
         "tmdb_id": str(value("tmdb_id") or ""),
+        "tmdb_override_id": str(value("tmdb_override_id") or ""),
         "imdb_id": str(value("imdb_id") or ""),
         "name": str(value("display_name") or value("name") or ""),
         "year": value("year"),
@@ -157,16 +158,22 @@ def enqueue_tmdb_enrichment(
         # Six hours is far beyond a normal batch but still permits recovery.
         fresh = state.updated_at and state.updated_at >= now - timedelta(hours=6)
         if active and fresh:
+            update_fields = ["updated_at"]
             if rebuild_profiles and not state.rebuild_profiles_after_completion:
                 state.rebuild_profiles_after_completion = True
-                state.save(update_fields=[
-                    "rebuild_profiles_after_completion",
-                    "updated_at",
-                ])
+                update_fields.append("rebuild_profiles_after_completion")
+            # The active worker has already snapshotted its work set. Record
+            # one follow-up pass so a provider refresh or manual ID correction
+            # arriving during that pass cannot be lost.
+            if not state.rerun_requested:
+                state.rerun_requested = True
+                update_fields.append("rerun_requested")
+            state.save(update_fields=update_fields)
             return {"queued": False, "task_id": state.task_id, "status": state.status}
         state.status = VODMetadataState.Status.QUEUED
         state.task_id = ""
         state.rebuild_profiles_after_completion = bool(rebuild_profiles)
+        state.rerun_requested = False
         state.progress = {
             "phase": "Waiting for worker",
             "percent": 0,
@@ -291,6 +298,7 @@ def enrich_vod_metadata(
     started_at = timezone.now()
     changed_movies = 0
     changed_series = 0
+    rerun_after = False
     try:
         token = CoreSettings.get_tmdb_api_token()
         if not token:
@@ -309,6 +317,7 @@ def enrich_vod_metadata(
             "display_name",
             "year",
             "tmdb_id",
+            "tmdb_override_id",
             "imdb_id",
             "tmdb_enrichment_signature",
         )
@@ -364,8 +373,14 @@ def enrich_vod_metadata(
         for model, media_type, content, signature in work:
             content_id = content["id"]
             content_name = content["name"]
-            tmdb_id = str(content["tmdb_id"] or "").strip()
-            match_method = "provider_tmdb_id" if tmdb_id else ""
+            tmdb_id = str(
+                content["tmdb_override_id"] or content["tmdb_id"] or ""
+            ).strip()
+            match_method = (
+                "manual_override"
+                if content["tmdb_override_id"]
+                else ("provider_tmdb_id" if tmdb_id else "")
+            )
             metadata = {}
             try:
                 if not tmdb_id and content["imdb_id"]:
@@ -437,6 +452,10 @@ def enrich_vod_metadata(
 
             update = {
                 "tmdb_metadata": metadata,
+                "tmdb_match_id": str(metadata.get("id") or ""),
+                "tmdb_imdb_id": str(metadata.get("imdb_id") or ""),
+                "tmdb_poster_url": str(metadata.get("poster_url") or ""),
+                "tmdb_backdrop_url": str(metadata.get("backdrop_url") or ""),
                 "tmdb_status": metadata.get("status") or "",
                 "tmdb_enriched_at": timezone.now(),
                 "tmdb_enrichment_signature": signature,
@@ -486,6 +505,17 @@ def enrich_vod_metadata(
             VODMetadataState.objects.filter(pk=1).update(
                 rebuild_profiles_after_completion=False
             )
+        if changed_movies or changed_series:
+            from .catalog_cache import bump_catalog_generation
+
+            # Artwork and external IDs change XC and VOD responses, but do not
+            # change profile membership.
+            bump_catalog_generation(invalidate_selections=False)
+        rerun_after = bool(
+            VODMetadataState.objects.filter(pk=1, rerun_requested=True).update(
+                rerun_requested=False
+            )
+        )
         return {
             **counters,
             "changed_movies": changed_movies,
@@ -517,10 +547,19 @@ def enrich_vod_metadata(
             VODMetadataState.objects.filter(pk=1).update(
                 rebuild_profiles_after_completion=False
             )
+        rerun_after = bool(
+            VODMetadataState.objects.filter(pk=1, rerun_requested=True).update(
+                rerun_requested=False
+            )
+        )
         raise
     finally:
         lock_renewer.stop()
         release_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID)
+        if rerun_after:
+            enqueue_tmdb_enrichment(
+                trigger_reason="VOD metadata changed during the previous TMDB pass",
+            )
 
 
 def _provider_vod_fingerprint(rows):

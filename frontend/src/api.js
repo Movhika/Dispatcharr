@@ -1572,6 +1572,14 @@ export default class API {
     });
   }
 
+  static async updateVODTmdbMatch(contentType, id, tmdbId) {
+    const resource = contentType === 'series' ? 'series' : 'movies';
+    return await request(`${host}/api/vod/${resource}/${id}/tmdb-match/`, {
+      method: 'PATCH',
+      body: { tmdb_id: tmdbId || '' },
+    });
+  }
+
   static async createVODAccessPolicy(values) {
     return await request(`${host}/api/vod/access-policies/`, {
       method: 'POST',

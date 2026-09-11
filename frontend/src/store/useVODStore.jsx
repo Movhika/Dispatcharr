@@ -196,6 +196,7 @@ const getMovieDetails = (response, movieId) => {
     country: response.country || '',
     tmdb_id: response.tmdb_id || '',
     imdb_id: response.imdb_id || '',
+    tmdb: response.tmdb || null,
     m3u_account: response.m3u_account || '',
   };
 };
@@ -216,6 +217,8 @@ const getMovieDetailsWithProvider = (response, movieId) => {
     actors: response.actors || response.cast || '',
     country: response.country || '',
     tmdb_id: response.tmdb_id || '',
+    imdb_id: response.imdb_id || '',
+    tmdb: response.tmdb || null,
     youtube_trailer: response.youtube_trailer || '',
     // Additional provider fields
     backdrop_path: response.backdrop_path || [],
@@ -246,6 +249,7 @@ const getSeriesDetails = (response, seriesId) => {
     country: response.country || '',
     tmdb_id: response.tmdb_id || '',
     imdb_id: response.imdb_id || '',
+    tmdb: response.tmdb || null,
     episode_count: response.episode_count || 0,
     // Additional provider fields
     backdrop_path: response.backdrop_path || [],

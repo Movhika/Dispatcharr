@@ -1090,6 +1090,8 @@ XC_MOVIE_VALUE_FIELDS = (
     'movie__id', 'movie__name', 'movie__display_name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
+    'movie__tmdb_override_id', 'movie__tmdb_match_id', 'movie__tmdb_imdb_id',
+    'movie__tmdb_poster_url', 'movie__tmdb_backdrop_url',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
     'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
@@ -1099,6 +1101,8 @@ XC_SERIES_VALUE_FIELDS = (
     'series__id', 'series__name', 'series__display_name', 'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
+    'series__tmdb_override_id', 'series__tmdb_match_id', 'series__tmdb_imdb_id',
+    'series__tmdb_poster_url', 'series__tmdb_backdrop_url',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
     'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
@@ -1170,7 +1174,9 @@ def _xc_annotate_relation_artwork(qs):
     )
 
 
-def _xc_relation_artwork_from_row(row, object_custom_properties):
+def _xc_relation_artwork_from_row(
+    row, object_custom_properties, *, prefix, prefer_tmdb
+):
     """Build prefer_relation_artwork input from lean list-row extracts."""
     return prefer_relation_artwork(
         {
@@ -1178,6 +1184,9 @@ def _xc_relation_artwork_from_row(row, object_custom_properties):
             'backdrop_path': row.get('rel_backdrop') or [],
         },
         object_custom_properties,
+        tmdb_poster_url=row.get(f'{prefix}__tmdb_poster_url') or '',
+        tmdb_backdrop_url=row.get(f'{prefix}__tmdb_backdrop_url') or '',
+        prefer_tmdb=prefer_tmdb,
     )
 
 
@@ -1435,6 +1444,7 @@ def xc_get_vod_streams(request, user, category_id=None):
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for the fallback-icon proxy rewrites below.
     _movie_image_parts = vod_image_url_parts(request, "movie")
+    _prefer_tmdb_artwork = CoreSettings.get_tmdb_prefer_artwork()
 
     streams = []
     append = streams.append
@@ -1444,7 +1454,12 @@ def xc_get_vod_streams(request, user, category_id=None):
         category_id_str = str(category_id) if category_id else "0"
         category_id_list = [category_id] if category_id else []
         rating = row['movie__rating']
-        artwork = _xc_relation_artwork_from_row(row, custom_props)
+        artwork = _xc_relation_artwork_from_row(
+            row,
+            custom_props,
+            prefix='movie',
+            prefer_tmdb=_prefer_tmdb_artwork,
+        )
 
         append({
             "num": num,
@@ -1472,8 +1487,13 @@ def xc_get_vod_streams(request, user, category_id=None):
             "rating_5based": round(float(rating or 0) / 2, 2) if rating else 0,
             "added": str(int(row['movie__created_at'].timestamp())),
             "is_adult": int(bool(row['movie__is_adult'])),
-            "tmdb_id": row['movie__tmdb_id'] or "",
-            "imdb_id": row['movie__imdb_id'] or "",
+            "tmdb_id": (
+                row['movie__tmdb_override_id']
+                or row['movie__tmdb_match_id']
+                or row['movie__tmdb_id']
+                or ""
+            ),
+            "imdb_id": row['movie__tmdb_imdb_id'] or row['movie__imdb_id'] or "",
             "trailer": custom_props.get('youtube_trailer') or "",
             "plot": row['movie__description'] or "",
             "genre": row['movie__genre'] or "",
@@ -1587,13 +1607,19 @@ def xc_get_series(request, user, category_id=None):
 
     series_list = []
     append = series_list.append
+    _prefer_tmdb_artwork = CoreSettings.get_tmdb_prefer_artwork()
     for num, row in enumerate(relations, 1):
         custom_props = row['series__custom_properties'] or {}
         category_id = row['category_id']
         rating = row['series__rating']
         year_str = str(row['series__year']) if row['series__year'] else ""
         release_date = custom_props.get('release_date', year_str)
-        artwork = _xc_relation_artwork_from_row(row, custom_props)
+        artwork = _xc_relation_artwork_from_row(
+            row,
+            custom_props,
+            prefix='series',
+            prefer_tmdb=_prefer_tmdb_artwork,
+        )
 
         append({
             "num": num,
@@ -1636,8 +1662,13 @@ def xc_get_series(request, user, category_id=None):
             "episode_run_time": custom_props.get('episode_run_time', ''),
             "category_id": str(category_id) if category_id else "0",
             "category_ids": [category_id] if category_id else [],
-            "tmdb_id": row['series__tmdb_id'] or "",
-            "imdb_id": row['series__imdb_id'] or "",
+            "tmdb_id": (
+                row['series__tmdb_override_id']
+                or row['series__tmdb_match_id']
+                or row['series__tmdb_id']
+                or ""
+            ),
+            "imdb_id": row['series__tmdb_imdb_id'] or row['series__imdb_id'] or "",
             "edition": row.get("profile_edition_name", ""),
             "edition_suffix": row.get("profile_edition_suffix", ""),
         })
@@ -1911,6 +1942,9 @@ def xc_get_series_info(request, user, series_id):
     series_artwork = prefer_relation_artwork(
         series_relation.custom_properties,
         series.custom_properties,
+        tmdb_poster_url=series.tmdb_poster_url,
+        tmdb_backdrop_url=series.tmdb_backdrop_url,
+        prefer_tmdb=CoreSettings.get_tmdb_prefer_artwork(),
     )
     if is_proxyable_image_url(series_artwork['movie_image']):
         series_cover = rewrite_single_image_url(
@@ -1969,8 +2003,17 @@ def xc_get_series_info(request, user, series_id):
                 series_artwork['backdrop_path'],
             ),
             "youtube_trailer": series_data['youtube_trailer'],
-            "imdb": str(series.imdb_id) if series.imdb_id else "",
-            "tmdb": str(series.tmdb_id) if series.tmdb_id else "",
+            "imdb": str(
+                (series.tmdb_metadata or {}).get("imdb_id")
+                or series.imdb_id
+                or ""
+            ),
+            "tmdb": str(
+                series.tmdb_override_id
+                or series.tmdb_match_id
+                or series.tmdb_id
+                or ""
+            ),
             "episode_run_time": str(series_data['episode_run_time']),
             "category_id": str(series_relation.category.id) if series_relation.category else "0",
             "category_ids": [int(series_relation.category.id)] if series_relation.category else [],
@@ -2109,6 +2152,9 @@ def xc_get_vod_info(request, user, vod_id):
     movie_artwork = prefer_relation_artwork(
         movie_relation.custom_properties,
         movie.custom_properties,
+        tmdb_poster_url=movie.tmdb_poster_url,
+        tmdb_backdrop_url=movie.tmdb_backdrop_url,
+        prefer_tmdb=CoreSettings.get_tmdb_prefer_artwork(),
     )
     if is_proxyable_image_url(movie_artwork['movie_image']):
         movie_cover = rewrite_single_image_url(
@@ -2157,8 +2203,15 @@ def xc_get_vod_info(request, user, vod_id):
             'cast': movie_data.get('actors', ''),
             'country': movie_data.get('country', ''),
             'rating': movie_data.get('rating', 0),
-            'imdb_id': movie_data.get('imdb_id', ''),
-            "tmdb_id": movie_data.get('tmdb_id', ''),
+            'imdb_id': (
+                (movie.tmdb_metadata or {}).get('imdb_id')
+                or movie_data.get('imdb_id', '')
+            ),
+            "tmdb_id": (
+                movie.tmdb_override_id
+                or movie.tmdb_match_id
+                or movie_data.get('tmdb_id', '')
+            ),
             'youtube_trailer': movie_data.get('youtube_trailer', ''),
             'backdrop_path': rewrite_backdrop_paths(
                 request,

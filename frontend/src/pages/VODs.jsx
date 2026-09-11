@@ -28,6 +28,8 @@ import {
 import {
   DatabaseZap,
   History,
+  LayoutGrid,
+  List,
   Play,
   Search,
   SlidersHorizontal,
@@ -73,7 +75,11 @@ const VODMetadataModal = React.lazy(
 
 const itemKey = (item) => `${item.contentType}:${item.id}`;
 const logoUrl = (item) =>
-  item.logo?.cache_url || item.logo?.url || item.logo_url || null;
+  item.artwork_url ||
+  item.logo?.cache_url ||
+  item.logo?.url ||
+  item.logo_url ||
+  null;
 const sourceMetadataValue = (item, field) => {
   const values = item.source_metadata?.[field] || [];
   return Array.isArray(values) && values.length ? values.join(', ') : '—';
@@ -117,6 +123,9 @@ const VODsPage = () => {
     replacement: '',
   });
   const [initialLoad, setInitialLoad] = useState(true);
+  const [viewMode, setViewMode] = useState(() =>
+    localStorage.getItem('vodsViewMode') === 'posters' ? 'posters' : 'list'
+  );
   const [categories, setCategories] = useState({});
   const [seriesModalOpened, seriesModalHandlers] = useDisclosure(false);
   const [vodModalOpened, vodModalHandlers] = useDisclosure(false);
@@ -336,39 +345,59 @@ const VODsPage = () => {
               {selectedCount} selected · {totalCount} matching
             </Text>
           </Group>
-          {user?.user_level >= 10 && (
-            <Group>
-              <Button
-                variant="default"
-                leftSection={<DatabaseZap size={16} />}
-                onClick={metadataHandlers.open}
-              >
-                Metadata
-              </Button>
-              <Button
-                variant="default"
-                leftSection={<SlidersHorizontal size={16} />}
-                onClick={profilesHandlers.open}
-              >
-                Output profiles
-              </Button>
-              <Button
-                variant="default"
-                leftSection={<Wrench size={16} />}
-                disabled={selectedCount === 0}
-                onClick={bulkEditorHandlers.open}
-              >
-                Edit selected ({selectedCount})
-              </Button>
-              <Button
-                variant="default"
-                leftSection={<History size={16} />}
-                onClick={sourceManagerHandlers.open}
-              >
-                Playback history
-              </Button>
-            </Group>
-          )}
+          <Group>
+            <SegmentedControl
+              aria-label="VOD view"
+              value={viewMode}
+              onChange={(value) => {
+                setViewMode(value);
+                localStorage.setItem('vodsViewMode', value);
+              }}
+              data={[
+                {
+                  value: 'list',
+                  label: <List aria-label="List view" size={16} />,
+                },
+                {
+                  value: 'posters',
+                  label: <LayoutGrid aria-label="Poster wall" size={16} />,
+                },
+              ]}
+            />
+            {user?.user_level >= 10 && (
+              <>
+                <Button
+                  variant="default"
+                  leftSection={<DatabaseZap size={16} />}
+                  onClick={metadataHandlers.open}
+                >
+                  Metadata
+                </Button>
+                <Button
+                  variant="default"
+                  leftSection={<SlidersHorizontal size={16} />}
+                  onClick={profilesHandlers.open}
+                >
+                  Output profiles
+                </Button>
+                <Button
+                  variant="default"
+                  leftSection={<Wrench size={16} />}
+                  disabled={selectedCount === 0}
+                  onClick={bulkEditorHandlers.open}
+                >
+                  Edit selected ({selectedCount})
+                </Button>
+                <Button
+                  variant="default"
+                  leftSection={<History size={16} />}
+                  onClick={sourceManagerHandlers.open}
+                >
+                  Playback history
+                </Button>
+              </>
+            )}
+          </Group>
         </Group>
 
         <Stack gap="xs">
@@ -471,7 +500,7 @@ const VODsPage = () => {
             <Flex justify="center" py="xl">
               <Loader size="lg" />
             </Flex>
-          ) : (
+          ) : viewMode === 'list' ? (
             <Table
               striped
               highlightOnHover
@@ -537,6 +566,7 @@ const VODsPage = () => {
                       {logoUrl(item) ? (
                         <Image
                           src={logoUrl(item)}
+                          loading="lazy"
                           h={54}
                           w={40}
                           fit="contain"
@@ -593,6 +623,93 @@ const VODsPage = () => {
                 ))}
               </TableTbody>
             </Table>
+          ) : (
+            <Box
+              p="xs"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gap: 'var(--mantine-spacing-md)',
+              }}
+            >
+              {items.map((item) => (
+                <Box
+                  key={itemKey(item)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open ${item.name}`}
+                  onClick={() => openItem(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openItem(item);
+                    }
+                  }}
+                  style={{
+                    position: 'relative',
+                    padding: 0,
+                    border: '1px solid var(--mantine-color-dark-4)',
+                    borderRadius: 'var(--mantine-radius-md)',
+                    overflow: 'hidden',
+                    background: 'var(--mantine-color-dark-7)',
+                    color: 'inherit',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {user?.user_level >= 10 && (
+                    <Checkbox
+                      aria-label={`Select ${item.name}`}
+                      checked={
+                        selectAllMatching
+                          ? !selected.has(itemKey(item))
+                          : selected.has(itemKey(item))
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onChange={(event) =>
+                        toggleItem(itemKey(item), event.currentTarget.checked)
+                      }
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        left: 8,
+                        zIndex: 2,
+                      }}
+                    />
+                  )}
+                  {logoUrl(item) ? (
+                    <Image
+                      src={logoUrl(item)}
+                      alt=""
+                      loading="lazy"
+                      w="100%"
+                      style={{ aspectRatio: '2 / 3' }}
+                      fit="cover"
+                    />
+                  ) : (
+                    <Flex
+                      align="center"
+                      justify="center"
+                      bg="dark.6"
+                      style={{ aspectRatio: '2 / 3' }}
+                    >
+                      <Play size={36} color="var(--mantine-color-dimmed)" />
+                    </Flex>
+                  )}
+                  <Stack gap={2} p="xs">
+                    <Text fw={600} size="sm" lineClamp={2}>
+                      {item.name}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {item.contentType === 'series' ? 'Series' : 'Movie'}
+                      {item.year ? ` · ${item.year}` : ''}
+                      {` · ${sourceCount(item)} sources`}
+                    </Text>
+                  </Stack>
+                </Box>
+              ))}
+            </Box>
           )}
         </Box>
 

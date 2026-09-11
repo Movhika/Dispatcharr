@@ -11,7 +11,8 @@ import requests
 
 
 TMDB_API_ROOT = "https://api.themoviedb.org/3"
-TMDB_METADATA_SCHEMA = 1
+TMDB_IMAGE_ROOT = "https://image.tmdb.org/t/p"
+TMDB_METADATA_SCHEMA = 2
 
 
 class TMDBError(RuntimeError):
@@ -127,11 +128,27 @@ def _provider_rows(payload, regions=None):
     return normalized
 
 
+def image_url(path, size):
+    path = str(path or "").strip()
+    return f"{TMDB_IMAGE_ROOT}/{size}/{path.lstrip('/')}" if path else ""
+
+
 def normalize_details(payload, media_type, languages, *, match_method):
     title_key = "title" if media_type == "movie" else "name"
     original_key = "original_title" if media_type == "movie" else "original_name"
     date_key = "release_date" if media_type == "movie" else "first_air_date"
     external_ids = payload.get("external_ids") or {}
+    normalized_external_ids = {
+        key: str(value or "").strip()
+        for key, value in {
+            "imdb_id": payload.get("imdb_id") or external_ids.get("imdb_id"),
+            "tvdb_id": external_ids.get("tvdb_id"),
+            "wikidata_id": external_ids.get("wikidata_id"),
+        }.items()
+        if value not in (None, "")
+    }
+    poster_path = payload.get("poster_path") or ""
+    backdrop_path = payload.get("backdrop_path") or ""
     return {
         "schema": TMDB_METADATA_SCHEMA,
         "id": str(payload.get("id") or ""),
@@ -179,9 +196,14 @@ def normalize_details(payload, media_type, languages, *, match_method):
             payload,
             [language.partition("-")[2] for language in languages],
         ),
-        "poster_path": payload.get("poster_path") or "",
-        "backdrop_path": payload.get("backdrop_path") or "",
-        "imdb_id": str(payload.get("imdb_id") or external_ids.get("imdb_id") or ""),
+        "poster_path": poster_path,
+        "poster_url": image_url(poster_path, "w500"),
+        "backdrop_path": backdrop_path,
+        "backdrop_url": image_url(backdrop_path, "w1280"),
+        "external_ids": normalized_external_ids,
+        "imdb_id": normalized_external_ids.get("imdb_id", ""),
+        "tvdb_id": normalized_external_ids.get("tvdb_id", ""),
+        "wikidata_id": normalized_external_ids.get("wikidata_id", ""),
         "homepage": str(payload.get("homepage") or ""),
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }

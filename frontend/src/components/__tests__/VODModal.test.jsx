@@ -9,6 +9,16 @@ import useSettingsStore from '../../store/settings';
 vi.mock('../../store/useVODStore');
 vi.mock('../../store/useVideoStore');
 vi.mock('../../store/settings');
+vi.mock('../VODExternalIds.jsx', () => ({
+  default: ({ tmdbId, imdbId }) => (
+    <div>
+      {imdbId && <a href={`https://www.imdb.com/title/${imdbId}`}>IMDb</a>}
+      {tmdbId && (
+        <a href={`https://www.themoviedb.org/movie/${tmdbId}`}>TMDb</a>
+      )}
+    </div>
+  ),
+}));
 
 // Mock utils
 vi.mock('../../utils', () => ({

@@ -39,13 +39,13 @@ import {
   imdbUrl,
   sortBySeasonNumber,
   sortEpisodesList,
-  tmdbUrl,
 } from '../utils/components/SeriesModalUtils.js';
 import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
 import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
+import VODExternalIds from './VODExternalIds.jsx';
 
-const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
+const Series = ({ displaySeries, onClickYouTubeTrailer, onTmdbSaved }) => {
   return (
     <Flex gap="md" wrap="wrap">
       {displaySeries.series_image ||
@@ -107,31 +107,14 @@ const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
           {displaySeries.episode_count && (
             <Badge color="gray">{displaySeries.episode_count} episodes</Badge>
           )}
-          {/* imdb_id and tmdb_id badges */}
-          {displaySeries.imdb_id && (
-            <Badge
-              color="yellow"
-              component="a"
-              href={imdbUrl(displaySeries.imdb_id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ cursor: 'pointer' }}
-            >
-              IMDb
-            </Badge>
-          )}
-          {displaySeries.tmdb_id && (
-            <Badge
-              color="cyan"
-              component="a"
-              href={tmdbUrl(displaySeries.tmdb_id, 'tv')}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ cursor: 'pointer' }}
-            >
-              TMDb
-            </Badge>
-          )}
+          <VODExternalIds
+            contentType="series"
+            contentId={displaySeries.id}
+            tmdb={displaySeries.tmdb}
+            tmdbId={displaySeries.tmdb_id}
+            imdbId={displaySeries.imdb_id}
+            onSaved={onTmdbSaved}
+          />
         </Group>
 
         {/* Release date */}
@@ -564,6 +547,16 @@ const SeriesModal = ({
     onMetadataChanged?.();
   };
 
+  const updateTmdbMatch = (tmdb) => {
+    setDetailedSeries((current) => ({
+      ...(current || series),
+      tmdb,
+      tmdb_id: tmdb?.id || '',
+      imdb_id: tmdb?.external_ids?.imdb_id || '',
+    }));
+    onMetadataChanged?.();
+  };
+
   if (!series) return null;
 
   // Use detailed data if available, otherwise use basic series data
@@ -659,6 +652,7 @@ const SeriesModal = ({
               <Series
                 displaySeries={displaySeries}
                 onClickYouTubeTrailer={onClickYouTubeTrailer}
+                onTmdbSaved={updateTmdbMatch}
               />
 
               <Group gap="xs" mt="md">

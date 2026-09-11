@@ -72,6 +72,86 @@ logger = logging.getLogger(__name__)
 PLAYBACK_METADATA_INLINE_TITLE_LIMIT = 25
 
 
+def _tmdb_content_payload(content):
+    """Public, provider-safe TMDB projection for movie/series detail views."""
+    metadata = (
+        content.tmdb_metadata if isinstance(content.tmdb_metadata, dict) else {}
+    )
+    external_ids = metadata.get("external_ids") or {}
+    effective_id = str(
+        content.tmdb_override_id
+        or content.tmdb_match_id
+        or metadata.get("id")
+        or content.tmdb_id
+        or ""
+    )
+    return {
+        "id": effective_id,
+        "provider_id": str(content.tmdb_id or ""),
+        "override_id": str(content.tmdb_override_id or ""),
+        "match_method": metadata.get("match_method") or "",
+        "status": content.tmdb_status or "",
+        "external_ids": {
+            "imdb_id": str(
+                external_ids.get("imdb_id")
+                or metadata.get("imdb_id")
+                or content.imdb_id
+                or ""
+            ),
+            "tvdb_id": str(
+                external_ids.get("tvdb_id") or metadata.get("tvdb_id") or ""
+            ),
+            "wikidata_id": str(
+                external_ids.get("wikidata_id")
+                or metadata.get("wikidata_id")
+                or ""
+            ),
+        },
+        "original_title": metadata.get("original_title") or "",
+        "localized": metadata.get("localized") or {},
+    }
+
+
+def _update_tmdb_override(request, content):
+    if not _is_admin(request.user):
+        raise PermissionDenied("Only administrators can change TMDB matches.")
+    override_id = str(request.data.get("tmdb_id", "") or "").strip()
+    if override_id and (not override_id.isdigit() or int(override_id) < 1):
+        raise DRFValidationError(
+            {"tmdb_id": "Enter a positive numeric TMDB ID, or leave it empty."}
+        )
+    content.__class__.objects.filter(pk=content.pk).update(
+        tmdb_override_id=override_id,
+        tmdb_match_id="",
+        tmdb_imdb_id="",
+        tmdb_poster_url="",
+        tmdb_backdrop_url="",
+        tmdb_metadata={},
+        tmdb_status="",
+        tmdb_enriched_at=None,
+        tmdb_enrichment_signature="",
+    )
+    content.refresh_from_db()
+    from .catalog_cache import bump_catalog_generation
+
+    bump_catalog_generation(invalidate_selections=False)
+    refresh = {"queued": False, "status": "token_not_configured"}
+    if CoreSettings.get_tmdb_api_token():
+        from .tasks import enqueue_tmdb_enrichment
+
+        refresh = enqueue_tmdb_enrichment(
+            trigger_reason="A TMDB match was corrected manually",
+        )
+    return Response(
+        {"tmdb": _tmdb_content_payload(content), "refresh": refresh},
+        status=(
+            status.HTTP_202_ACCEPTED
+            if refresh.get("queued")
+            else status.HTTP_200_OK
+        ),
+    )
+
+
 def _vod_metadata_state_payload():
     state, _ = VODMetadataState.objects.get_or_create(pk=1)
     return {
@@ -1011,6 +1091,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     "languages": CoreSettings.get_tmdb_languages(),
                     "auto_enrich": CoreSettings.get_tmdb_auto_enrich(),
                     "match_missing": CoreSettings.get_tmdb_match_missing(),
+                    "prefer_artwork": CoreSettings.get_tmdb_prefer_artwork(),
                 },
                 "catalog": {
                     "movies": movie_total,
@@ -1054,12 +1135,20 @@ class VODMetadataViewSet(viewsets.ViewSet):
             token = ""
         elif "api_token" in request.data:
             token = str(request.data.get("api_token") or "").strip()
+        previous_prefer_artwork = CoreSettings.get_tmdb_prefer_artwork()
         CoreSettings.set_vod_metadata_settings(
             api_token=token,
             languages=languages,
             auto_enrich=request.data.get("auto_enrich") is True,
             match_missing=request.data.get("match_missing") is True,
+            prefer_artwork=request.data.get(
+                "prefer_artwork", previous_prefer_artwork
+            ) is not False,
         )
+        if previous_prefer_artwork != CoreSettings.get_tmdb_prefer_artwork():
+            from .catalog_cache import bump_catalog_generation
+
+            bump_catalog_generation(invalidate_selections=False)
         return self.list(request)
 
     @action(detail=False, methods=["post"], url_path="refresh")
@@ -2368,7 +2457,13 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         movie_data = custom_props.get('movie_data', {})
 
         movie_props = movie.custom_properties or {}
-        artwork = prefer_relation_artwork(custom_props, movie_props)
+        artwork = prefer_relation_artwork(
+            custom_props,
+            movie_props,
+            tmdb_poster_url=movie.tmdb_poster_url,
+            tmdb_backdrop_url=movie.tmdb_backdrop_url,
+            prefer_tmdb=CoreSettings.get_tmdb_prefer_artwork(),
+        )
         account_id = relation.m3u_account_id
         backdrop_path = rewrite_backdrop_paths(
             request,
@@ -2391,6 +2486,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             movie_image = vodlogo_cache_url(request, movie.logo)
         else:
             movie_image = ''
+        tmdb = _tmdb_content_payload(movie)
 
         # Build response with available data
         response_data = {
@@ -2408,8 +2504,12 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             'actors': (movie.custom_properties or {}).get('actors') or info.get('actors', ''),
             'country': (movie.custom_properties or {}).get('country') or info.get('country', ''),
             'rating': movie.rating or info.get('rating', movie.rating or 0),
-            'tmdb_id': movie.tmdb_id or info.get('tmdb_id', ''),
-            'imdb_id': movie.imdb_id or info.get('imdb_id', ''),
+            'tmdb_id': tmdb['id'] or info.get('tmdb_id', ''),
+            'imdb_id': (
+                tmdb['external_ids']['imdb_id']
+                or info.get('imdb_id', '')
+            ),
+            'tmdb': tmdb,
             'youtube_trailer': (movie.custom_properties or {}).get('youtube_trailer') or info.get('youtube_trailer') or info.get('trailer', ''),
             'duration_secs': movie.duration_secs or info.get('duration_secs'),
             'age': info.get('age', ''),
@@ -2434,6 +2534,10 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             }
         }
         return Response(response_data)
+
+    @action(detail=True, methods=['patch'], url_path='tmdb-match')
+    def tmdb_match(self, request, pk=None):
+        return _update_tmdb_override(request, self.get_object())
 
     @action(detail=True, methods=['get'], url_path='image', permission_classes=[AllowAny])
     def image(self, request, pk=None):
@@ -2683,7 +2787,13 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             # Return the database data (which should now be fresh)
             custom_props = relation.custom_properties or {}
             series_props = series.custom_properties or {}
-            series_artwork = prefer_relation_artwork(custom_props, series_props)
+            series_artwork = prefer_relation_artwork(
+                custom_props,
+                series_props,
+                tmdb_poster_url=series.tmdb_poster_url,
+                tmdb_backdrop_url=series.tmdb_backdrop_url,
+                prefer_tmdb=CoreSettings.get_tmdb_prefer_artwork(),
+            )
             account_id = relation.m3u_account_id
             # Relation/object cover first; synced VODLogo object only as fallback
             # (UI expects the logo-shaped cover payload when a VODLogo exists).
@@ -2711,6 +2821,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                 }
             else:
                 cover = None
+            tmdb = _tmdb_content_payload(series)
 
             response_data = {
                 'id': series.id,
@@ -2720,8 +2831,9 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                 'year': series.year,
                 'genre': series.genre,
                 'rating': series.rating,
-                'tmdb_id': series.tmdb_id,
-                'imdb_id': series.imdb_id,
+                'tmdb_id': tmdb['id'],
+                'imdb_id': tmdb['external_ids']['imdb_id'],
+                'tmdb': tmdb,
                 'category_id': relation.category.id if relation.category else None,
                 'category_name': relation.category.name if relation.category else None,
                 'cover': cover,
@@ -2840,6 +2952,10 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': f'Failed to fetch series information: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['patch'], url_path='tmdb-match')
+    def tmdb_match(self, request, pk=None):
+        return _update_tmdb_override(request, self.get_object())
 
     @action(detail=True, methods=['get'], url_path='image', permission_classes=[AllowAny])
     def image(self, request, pk=None):
@@ -3101,6 +3217,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     movies.created_at,
                     movies.updated_at,
                     movies.custom_properties,
+                    movies.tmdb_poster_url,
+                    movies.tmdb_backdrop_url,
                     movies.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3124,6 +3242,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     series.created_at,
                     series.updated_at,
                     series.custom_properties,
+                    series.tmdb_poster_url,
+                    series.tmdb_backdrop_url,
                     series.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3180,6 +3300,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         'created_at': item_dict['created_at'].isoformat() if item_dict['created_at'] else None,
                         'updated_at': item_dict['updated_at'].isoformat() if item_dict['updated_at'] else None,
                         'custom_properties': item_dict['custom_properties'] or {},
+                        '_tmdb_poster_url': item_dict['tmdb_poster_url'] or '',
+                        '_tmdb_backdrop_url': item_dict['tmdb_backdrop_url'] or '',
                         'logo': logo_data,
                         'content_type': item_dict['content_type']
                     }
@@ -3206,7 +3328,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 for relation in M3UMovieRelation.objects.filter(
                     _filtered_vod_relation_query(list_filters, "movie"),
                     movie_id__in=movie_ids,
-                ).select_related("source_asset"):
+                ).select_related("source_asset", "m3u_account").order_by(
+                    "movie_id", "-m3u_account__priority", "id"
+                ):
                     relations_by_content[("movie", relation.movie_id)].append(
                         relation
                     )
@@ -3215,7 +3339,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 for relation in M3USeriesRelation.objects.filter(
                     _filtered_vod_relation_query(list_filters, "series"),
                     series_id__in=series_ids,
-                ).select_related("source_asset"):
+                ).select_related("source_asset", "m3u_account").order_by(
+                    "series_id", "-m3u_account__priority", "id"
+                ):
                     relations_by_content[("series", relation.series_id)].append(
                         relation
                     )
@@ -3231,6 +3357,11 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         ("series", relation.episode.series_id)
                     ].append(relation)
             category_mapping = enabled_category_map()
+            prefer_tmdb_artwork = CoreSettings.get_tmdb_prefer_artwork()
+            image_parts = {
+                "movie": vod_image_url_parts(request, "movie"),
+                "series": vod_image_url_parts(request, "series"),
+            }
             for item in results:
                 key = (item["content_type"], item["id"])
                 item["source_metadata"] = summarize_relation_metadata(
@@ -3241,6 +3372,33 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 # not every episode source used to summarize its formats.
                 item["source_count"] = edition_counts[key]
                 item["source_metadata"]["source_count"] = edition_counts[key]
+                first_relation = (
+                    relations_by_content[key][0]
+                    if relations_by_content[key]
+                    else None
+                )
+                art = prefer_relation_artwork(
+                    first_relation.custom_properties if first_relation else {},
+                    item["custom_properties"],
+                    tmdb_poster_url=item.pop("_tmdb_poster_url", ""),
+                    tmdb_backdrop_url=item.pop("_tmdb_backdrop_url", ""),
+                    prefer_tmdb=prefer_tmdb_artwork,
+                )
+                item["artwork_url"] = ""
+                if is_proxyable_image_url(art["movie_image"]):
+                    item["artwork_url"] = rewrite_single_image_url(
+                        request,
+                        item["content_type"],
+                        item["id"],
+                        "movie_image",
+                        art["movie_image"],
+                        url_parts=image_parts[item["content_type"]],
+                        m3u_account_id=(
+                            first_relation.m3u_account_id if first_relation else None
+                        ),
+                    )
+                elif item["logo"]:
+                    item["artwork_url"] = item["logo"]["cache_url"]
 
             # Get total count estimate (for pagination info)
             # Use a separate efficient count query
