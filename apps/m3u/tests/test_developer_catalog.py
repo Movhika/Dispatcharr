@@ -4,7 +4,13 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.api_views import M3UAccountViewSet
 from apps.m3u.models import M3UAccount
-from apps.vod.models import M3UMovieRelation, Movie, VODCategory
+from apps.vod.models import (
+    M3UMovieRelation,
+    M3USeriesRelation,
+    Movie,
+    Series,
+    VODCategory,
+)
 
 
 class M3UDeveloperCatalogTests(TestCase):
@@ -54,6 +60,55 @@ class M3UDeveloperCatalogTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["provider_id"], "1234")
         self.assertEqual(response.data["results"][0]["group"], "GERMANY MOVIES")
+
+    def test_movie_catalog_uses_the_relation_provider_title(self):
+        self.relation.custom_properties = {
+            "basic_data": {"name": "| HI | Avatar Provider Release"}
+        }
+        self.relation.save(update_fields=["custom_properties"])
+        request = self.factory.get(
+            "/api/m3u/accounts/1/developer-catalog/",
+            {"scope": "movie", "search": "Provider Release"},
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = self.view(request, pk=self.account.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["name"],
+            "| HI | Avatar Provider Release",
+        )
+
+    def test_series_catalog_uses_the_relation_provider_title(self):
+        category = VODCategory.objects.create(
+            name="HINDI SERIES", category_type="series"
+        )
+        series = Series.objects.create(name="Shared canonical series", year=2025)
+        M3USeriesRelation.objects.create(
+            m3u_account=self.account,
+            series=series,
+            category=category,
+            external_series_id="series-4321",
+            custom_properties={
+                "basic_data": {"name": "| HI | Original Provider Series"}
+            },
+        )
+        request = self.factory.get(
+            "/api/m3u/accounts/1/developer-catalog/",
+            {"scope": "series", "search": "Original Provider"},
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = self.view(request, pk=self.account.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["name"],
+            "| HI | Original Provider Series",
+        )
 
     def test_movie_catalog_searches_provider_id_and_exposes_category_filter(self):
         other_category = VODCategory.objects.create(

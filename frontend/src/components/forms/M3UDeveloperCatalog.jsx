@@ -82,8 +82,8 @@ const M3UDeveloperCatalog = ({
         variant="light"
       >
         {summaryOnly
-          ? 'Read-only title preview of content stored by the last completed import.'
-          : 'This is a read-only view of the catalog stored after the last import.'}
+          ? 'Read-only preview of the original names stored for this provider and category by the last completed import.'
+          : 'This read-only catalog shows the original provider names and stored provider properties from the last import.'}
       </Alert>
       <Group justify="space-between" align="end">
         {!lockedScope && (
@@ -101,8 +101,10 @@ const M3UDeveloperCatalog = ({
           />
         )}
         <TextInput
-          label={summaryOnly ? 'Search title' : 'Search name or provider ID'}
-          placeholder={summaryOnly ? 'Title' : 'Name or provider ID'}
+          label={
+            summaryOnly ? 'Search provider name' : 'Search provider name or ID'
+          }
+          placeholder="Provider name or ID"
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
           style={{ flex: 1 }}
@@ -142,7 +144,7 @@ const M3UDeveloperCatalog = ({
         >
           <TableThead>
             <TableTr>
-              <TableTh>{summaryOnly ? 'Title' : 'Name'}</TableTh>
+              <TableTh>Original provider name</TableTh>
               {!summaryOnly && nameTransform && <TableTh>Output name</TableTh>}
               {!summaryOnly && <TableTh w="55%">Properties</TableTh>}
             </TableTr>

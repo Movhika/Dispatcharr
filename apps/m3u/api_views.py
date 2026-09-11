@@ -191,6 +191,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             ]
         elif scope == "movie":
             from apps.vod.models import M3UMovieRelation
+            from apps.vod.utils import get_vod_source_name
 
             queryset = M3UMovieRelation.objects.filter(
                 m3u_account=account
@@ -205,7 +206,10 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(category_id=category_id)
             if search:
                 queryset = queryset.filter(
-                    Q(movie__name__icontains=search)
+                    Q(custom_properties__basic_data__name__icontains=search)
+                    | Q(custom_properties__movie_data__name__icontains=search)
+                    | Q(custom_properties__detailed_info__name__icontains=search)
+                    | Q(movie__name__icontains=search)
                     | Q(stream_id__icontains=search)
                 )
             total = queryset.count()
@@ -213,7 +217,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 {
                     "id": row.id,
                     "provider_id": row.stream_id,
-                    "name": row.movie.name,
+                    "name": get_vod_source_name(row, row.movie.name),
                     "group_id": row.category_id,
                     "group": row.category.name if row.category else "",
                     "url": row.get_stream_url(),
@@ -225,6 +229,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             ]
         elif scope == "series":
             from apps.vod.models import M3USeriesRelation
+            from apps.vod.utils import get_vod_source_name
 
             queryset = M3USeriesRelation.objects.filter(
                 m3u_account=account
@@ -239,7 +244,10 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(category_id=category_id)
             if search:
                 queryset = queryset.filter(
-                    Q(series__name__icontains=search)
+                    Q(custom_properties__basic_data__name__icontains=search)
+                    | Q(custom_properties__movie_data__name__icontains=search)
+                    | Q(custom_properties__detailed_info__name__icontains=search)
+                    | Q(series__name__icontains=search)
                     | Q(external_series_id__icontains=search)
                 )
             total = queryset.count()
@@ -247,7 +255,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 {
                     "id": row.id,
                     "provider_id": row.external_series_id,
-                    "name": row.series.name,
+                    "name": get_vod_source_name(row, row.series.name),
                     "group_id": row.category_id,
                     "group": row.category.name if row.category else "",
                     "url": "",
