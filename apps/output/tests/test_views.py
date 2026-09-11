@@ -686,14 +686,14 @@ XC_VOD_STREAM_KEYS = frozenset({
     "rating_5based", "added", "is_adult", "tmdb_id", "imdb_id", "trailer",
     "plot", "genre", "year", "director", "cast", "release_date", "category_id",
     "category_ids", "container_extension", "custom_sid", "direct_source",
-    "edition",
+    "edition", "edition_suffix",
 })
 
 XC_SERIES_KEYS = frozenset({
     "num", "name", "series_id", "cover", "plot", "cast", "director", "genre",
     "release_date", "releaseDate", "last_modified", "rating", "rating_5based",
     "backdrop_path", "youtube_trailer", "episode_run_time", "category_id",
-    "category_ids", "tmdb_id", "imdb_id", "edition",
+    "category_ids", "tmdb_id", "imdb_id", "edition", "edition_suffix",
 })
 
 
