@@ -5,7 +5,12 @@ from django.db.models import Q
 from apps.m3u.models import M3UAccount
 from apps.m3u.utils import parse_is_adult
 from core.xtream_codes import Client as XtreamCodesClient
-from core.utils import acquire_task_lock, release_task_lock, TaskLockRenewer
+from core.utils import (
+    TaskLockRenewer,
+    acquire_task_lock,
+    is_task_lock_held,
+    release_task_lock,
+)
 from .models import (
     VODCategory, Series, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
@@ -22,6 +27,10 @@ logger = logging.getLogger(__name__)
 VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY = (
     "vod_profile_selection:rebuild_after_provider_refresh"
 )
+
+TMDB_ENRICHMENT_LOCK_NAME = "vod_tmdb_enrichment"
+TMDB_ENRICHMENT_LOCK_ID = "global"
+TMDB_PROGRESS_INTERVAL = 25
 
 
 VOD_PROFILE_FINGERPRINT_FIELDS = (
@@ -78,6 +87,442 @@ def cleanup_vod_playback_history():
     return {"retention_days": retention_days, "deleted_sessions": deleted}
 
 
+def _tmdb_settings_signature(languages, match_missing):
+    from .tmdb import TMDB_METADATA_SCHEMA
+
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "schema": TMDB_METADATA_SCHEMA,
+                "languages": languages,
+                "match_missing": bool(match_missing),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _tmdb_content_signature(base_signature, content):
+    def value(field):
+        if isinstance(content, dict):
+            return content.get(field)
+        return getattr(content, field, None)
+
+    identity = {
+        "base": base_signature,
+        "tmdb_id": str(value("tmdb_id") or ""),
+        "imdb_id": str(value("imdb_id") or ""),
+        "name": str(value("display_name") or value("name") or ""),
+        "year": value("year"),
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _set_tmdb_state(status, *, task_id=None, progress=None, error=None, **dates):
+    from .models import VODMetadataState
+
+    defaults = {"status": status}
+    if task_id is not None:
+        defaults["task_id"] = task_id
+    if progress is not None:
+        defaults["progress"] = progress
+    if error is not None:
+        defaults["error"] = error
+    defaults.update(dates)
+    VODMetadataState.objects.update_or_create(pk=1, defaults=defaults)
+
+
+def enqueue_tmdb_enrichment(
+    *,
+    force=False,
+    rebuild_profiles=False,
+    trigger_reason="Manual TMDB metadata refresh",
+):
+    """Publish at most one durable global enrichment task."""
+    from .models import VODMetadataState
+
+    now = timezone.now()
+    with transaction.atomic():
+        state, _ = VODMetadataState.objects.select_for_update().get_or_create(pk=1)
+        active = state.status in {
+            VODMetadataState.Status.QUEUED,
+            VODMetadataState.Status.RUNNING,
+        }
+        # A worker/container may disappear without writing a terminal state.
+        # Six hours is far beyond a normal batch but still permits recovery.
+        fresh = state.updated_at and state.updated_at >= now - timedelta(hours=6)
+        if active and fresh:
+            if rebuild_profiles and not state.rebuild_profiles_after_completion:
+                state.rebuild_profiles_after_completion = True
+                state.save(update_fields=[
+                    "rebuild_profiles_after_completion",
+                    "updated_at",
+                ])
+            return {"queued": False, "task_id": state.task_id, "status": state.status}
+        state.status = VODMetadataState.Status.QUEUED
+        state.task_id = ""
+        state.rebuild_profiles_after_completion = bool(rebuild_profiles)
+        state.progress = {
+            "phase": "Waiting for worker",
+            "percent": 0,
+            "trigger_reason": trigger_reason,
+        }
+        state.started_at = now
+        state.completed_at = None
+        state.error = ""
+        state.save()
+
+        def publish():
+            try:
+                result = enrich_vod_metadata.delay(
+                    force=force,
+                    rebuild_profiles=rebuild_profiles,
+                    trigger_reason=trigger_reason,
+                )
+                VODMetadataState.objects.filter(
+                    pk=1,
+                    status=VODMetadataState.Status.QUEUED,
+                ).update(task_id=result.id)
+            except Exception as exc:
+                logger.exception("Could not enqueue TMDB metadata enrichment")
+                _set_tmdb_state(
+                    VODMetadataState.Status.FAILED,
+                    progress={"phase": "Could not publish background task", "percent": 100},
+                    error=str(exc)[:2000],
+                    completed_at=timezone.now(),
+                )
+
+        transaction.on_commit(publish)
+    return {"queued": True, "task_id": "", "status": "queued"}
+
+
+@shared_task
+def reconcile_vod_metadata_queue():
+    """End a stale TMDB status after a worker or broker restart.
+
+    This task only repairs durable status. It never starts enrichment merely
+    because an administrator opened the VOD page.
+    """
+    from celery.result import AsyncResult
+    from .models import VODMetadataState
+
+    state = VODMetadataState.objects.filter(pk=1).first()
+    if state is None or state.status not in {
+        VODMetadataState.Status.QUEUED,
+        VODMetadataState.Status.RUNNING,
+    }:
+        return {"repaired": False}
+
+    now = timezone.now()
+    task_state = ""
+    if state.task_id:
+        try:
+            task_state = str(AsyncResult(state.task_id).state or "")
+        except Exception:
+            task_state = "UNKNOWN"
+    terminal = task_state in {"SUCCESS", "FAILURE", "REVOKED"}
+    unpublished = (
+        state.status == VODMetadataState.Status.QUEUED
+        and not state.task_id
+        and state.updated_at < now - timedelta(minutes=2)
+    )
+    lost_running_worker = False
+    if (
+        state.status == VODMetadataState.Status.RUNNING
+        and state.updated_at < now - timedelta(minutes=10)
+    ):
+        try:
+            lost_running_worker = not is_task_lock_held(
+                TMDB_ENRICHMENT_LOCK_NAME,
+                TMDB_ENRICHMENT_LOCK_ID,
+            )
+        except Exception:
+            # An unavailable Redis instance is not evidence that the worker
+            # disappeared; leave the durable state untouched and retry later.
+            lost_running_worker = False
+    if not (terminal or unpublished or lost_running_worker):
+        return {"repaired": False, "task_state": task_state}
+
+    reason = (
+        "The TMDB background task ended without recording completion. "
+        "Start the metadata refresh again; already enriched titles will be skipped."
+    )
+    _set_tmdb_state(
+        VODMetadataState.Status.FAILED,
+        task_id=state.task_id,
+        progress={"phase": "TMDB metadata refresh was interrupted", "percent": 100},
+        error=reason,
+        completed_at=now,
+    )
+    return {"repaired": True, "task_state": task_state}
+
+
+@shared_task(bind=True, track_started=True)
+def enrich_vod_metadata(
+    self,
+    *,
+    force=False,
+    rebuild_profiles=False,
+    trigger_reason="Manual TMDB metadata refresh",
+):
+    """Enrich canonical movies and series in one resumable TMDB batch."""
+    from core.models import CoreSettings
+    from .models import Movie, Series, VODMetadataState
+    from .tmdb import (
+        Client as TMDBClient,
+        TMDBAuthenticationError,
+        TMDBError,
+        TMDBNotFound,
+    )
+    from .utils import canonical_output_name
+
+    if not acquire_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID):
+        return {"skipped": "TMDB enrichment is already running"}
+    lock_renewer = TaskLockRenewer(
+        TMDB_ENRICHMENT_LOCK_NAME,
+        TMDB_ENRICHMENT_LOCK_ID,
+    )
+    lock_renewer.start()
+    started_at = timezone.now()
+    changed_movies = 0
+    changed_series = 0
+    try:
+        token = CoreSettings.get_tmdb_api_token()
+        if not token:
+            raise ValueError("Configure a TMDB API read access token first")
+        languages = CoreSettings.get_tmdb_languages()
+        match_missing = CoreSettings.get_tmdb_match_missing()
+        base_signature = _tmdb_settings_signature(languages, match_missing)
+
+        # Keep only the lightweight identity columns in memory. In particular,
+        # do not load every existing tmdb_metadata JSON document just to find
+        # the relatively small incremental work set.
+        work = []
+        query_fields = (
+            "id",
+            "name",
+            "display_name",
+            "year",
+            "tmdb_id",
+            "imdb_id",
+            "tmdb_enrichment_signature",
+        )
+        for model, media_type, relation_name in (
+            (Movie, "movie", "m3u_relations"),
+            (Series, "tv", "m3u_relations"),
+        ):
+            queryset = (
+                model.objects.filter(
+                    **{f"{relation_name}__m3u_account__is_active": True}
+                )
+                .distinct()
+                .values(*query_fields)
+                .order_by("id")
+            )
+            for content in queryset.iterator(chunk_size=1000):
+                signature = _tmdb_content_signature(base_signature, content)
+                if force or content["tmdb_enrichment_signature"] != signature:
+                    work.append((model, media_type, content, signature))
+
+        total = len(work)
+        counters = {
+            "processed": 0,
+            "total": total,
+            "matched": 0,
+            "enriched": 0,
+            "not_found": 0,
+            "missing_id": 0,
+            "errors": 0,
+        }
+
+        def progress(phase, current=None):
+            processed = counters["processed"]
+            percent = round((processed / total) * 100) if total else 100
+            _set_tmdb_state(
+                VODMetadataState.Status.RUNNING,
+                task_id=str(self.request.id or ""),
+                progress={
+                    "phase": phase,
+                    "percent": percent,
+                    "current": current or "",
+                    "trigger_reason": trigger_reason,
+                    **counters,
+                },
+                error="",
+                started_at=started_at,
+                completed_at=None,
+            )
+
+        progress("Preparing TMDB metadata batch")
+        client = TMDBClient(token)
+        consecutive_errors = 0
+        for model, media_type, content, signature in work:
+            content_id = content["id"]
+            content_name = content["name"]
+            tmdb_id = str(content["tmdb_id"] or "").strip()
+            match_method = "provider_tmdb_id" if tmdb_id else ""
+            metadata = {}
+            try:
+                if not tmdb_id and content["imdb_id"]:
+                    tmdb_id = client.find_by_imdb(content["imdb_id"], media_type)
+                    if tmdb_id:
+                        match_method = "imdb_id"
+                if not tmdb_id and match_missing:
+                    query = canonical_output_name(
+                        content_name,
+                        display_name=content["display_name"],
+                    )
+                    tmdb_id = client.search(
+                        query,
+                        content["year"],
+                        media_type,
+                        languages[0],
+                    )
+                    if tmdb_id:
+                        match_method = "exact_title_year"
+                if not tmdb_id:
+                    metadata = {
+                        "schema": 1,
+                        "status": "missing_id",
+                        "localized": {},
+                        "fetched_at": timezone.now().isoformat(),
+                    }
+                    counters["missing_id"] += 1
+                else:
+                    metadata = client.details(
+                        tmdb_id,
+                        media_type,
+                        languages,
+                        match_method=match_method,
+                    )
+                    metadata["status"] = "matched"
+                    counters["matched"] += int(not content["tmdb_id"])
+                    counters["enriched"] += 1
+                consecutive_errors = 0
+            except TMDBNotFound:
+                metadata = {
+                    "schema": 1,
+                    "status": "not_found",
+                    "id": tmdb_id,
+                    "localized": {},
+                    "fetched_at": timezone.now().isoformat(),
+                }
+                counters["not_found"] += 1
+                consecutive_errors = 0
+            except TMDBAuthenticationError:
+                raise
+            except TMDBError as exc:
+                # Request failures remain retryable on the next automatic run.
+                counters["errors"] += 1
+                counters["processed"] += 1
+                consecutive_errors += 1
+                if counters["processed"] % TMDB_PROGRESS_INTERVAL == 0:
+                    progress("Fetching TMDB metadata", content_name)
+                logger.warning(
+                    "TMDB enrichment failed for %s %s: %s",
+                    media_type,
+                    content_id,
+                    exc,
+                )
+                if consecutive_errors >= 10:
+                    raise RuntimeError(
+                        "TMDB failed repeatedly; stopping the batch for a later retry"
+                    ) from exc
+                continue
+
+            update = {
+                "tmdb_metadata": metadata,
+                "tmdb_status": metadata.get("status") or "",
+                "tmdb_enriched_at": timezone.now(),
+                "tmdb_enrichment_signature": signature,
+            }
+            # IDs discovered through IMDb/title matching stay inside the TMDB
+            # snapshot. The canonical tmdb_id/imdb_id fields describe provider
+            # identity and changing them here would alter later import matching.
+            model.objects.filter(pk=content_id).update(**update)
+            if media_type == "movie":
+                changed_movies += 1
+            else:
+                changed_series += 1
+            counters["processed"] += 1
+            if (
+                counters["processed"] % TMDB_PROGRESS_INTERVAL == 0
+                or counters["processed"] == total
+            ):
+                progress("Fetching TMDB metadata", content_name)
+
+        completed_at = timezone.now()
+        _set_tmdb_state(
+            VODMetadataState.Status.COMPLETE,
+            task_id=str(self.request.id or ""),
+            progress={
+                "phase": "TMDB metadata is up to date",
+                "percent": 100,
+                "trigger_reason": trigger_reason,
+                **counters,
+            },
+            error="",
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+        must_rebuild_profiles = bool(
+            rebuild_profiles
+            or VODMetadataState.objects.filter(
+                pk=1,
+                rebuild_profiles_after_completion=True,
+            ).exists()
+        )
+        if must_rebuild_profiles:
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason="A changed provider catalog was enriched with TMDB metadata"
+            )
+            VODMetadataState.objects.filter(pk=1).update(
+                rebuild_profiles_after_completion=False
+            )
+        return {
+            **counters,
+            "changed_movies": changed_movies,
+            "changed_series": changed_series,
+        }
+    except Exception as exc:
+        logger.exception("TMDB metadata enrichment failed")
+        _set_tmdb_state(
+            VODMetadataState.Status.FAILED,
+            task_id=str(self.request.id or ""),
+            progress={"phase": "TMDB metadata refresh failed", "percent": 100},
+            error=str(exc)[:2000],
+            started_at=started_at,
+            completed_at=timezone.now(),
+        )
+        must_rebuild_profiles = bool(
+            rebuild_profiles
+            or VODMetadataState.objects.filter(
+                pk=1,
+                rebuild_profiles_after_completion=True,
+            ).exists()
+        )
+        if must_rebuild_profiles:
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason="Provider catalog changed; TMDB enrichment failed"
+            )
+            VODMetadataState.objects.filter(pk=1).update(
+                rebuild_profiles_after_completion=False
+            )
+        raise
+    finally:
+        lock_renewer.stop()
+        release_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID)
+
+
 def _provider_vod_fingerprint(rows):
     """Return an order-independent digest of output-relevant provider rows.
 
@@ -124,7 +569,7 @@ def _remember_profile_rebuild_after_vod_refresh():
 
 
 def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
-    """Publish one profile batch after every currently running refresh ended."""
+    """Publish profile and enrichment work after every running refresh ended."""
     from django.core.cache import cache
 
     from .catalog_cache import safe_cache_get
@@ -142,14 +587,30 @@ def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
     except Exception:
         pass
 
+    from core.models import CoreSettings
+
     from .profile_selection import enqueue_all_profile_selection_rebuilds
 
-    return enqueue_all_profile_selection_rebuilds(
+    # Provider/Compact catalogs do not consume TMDB data. Rebuild them first
+    # so a first-time TMDB bootstrap cannot hold visible provider changes for
+    # tens of minutes. Metadata enrichment is incremental and follows as its
+    # own durable task; future clean-title profiles can request a second,
+    # targeted rebuild when their consumed metadata changes.
+    profile_queued = enqueue_all_profile_selection_rebuilds(
         trigger_reason=(
             "One or more completed VOD provider refreshes changed the source "
             "catalog"
         )
     )
+    metadata_queued = False
+    if (
+        CoreSettings.get_tmdb_auto_enrich()
+        and CoreSettings.get_tmdb_api_token()
+    ):
+        metadata_queued = enqueue_tmdb_enrichment(
+            trigger_reason="A completed provider VOD refresh changed the catalog",
+        )["queued"]
+    return profile_queued or metadata_queued
 
 
 @shared_task(bind=True, max_retries=180, track_started=True)

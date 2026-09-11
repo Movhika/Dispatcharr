@@ -25,7 +25,14 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { History, Play, Search, SlidersHorizontal, Wrench } from 'lucide-react';
+import {
+  DatabaseZap,
+  History,
+  Play,
+  Search,
+  SlidersHorizontal,
+  Wrench,
+} from 'lucide-react';
 import { useDisclosure } from '@mantine/hooks';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
@@ -59,6 +66,9 @@ const VODSourceManagerModal = React.lazy(
 );
 const VODOutputProfilesModal = React.lazy(
   () => import('../components/VODOutputProfilesModal')
+);
+const VODMetadataModal = React.lazy(
+  () => import('../components/VODMetadataModal')
 );
 
 const itemKey = (item) => `${item.contentType}:${item.id}`;
@@ -112,6 +122,7 @@ const VODsPage = () => {
   const [vodModalOpened, vodModalHandlers] = useDisclosure(false);
   const [sourceManagerOpened, sourceManagerHandlers] = useDisclosure(false);
   const [profilesOpened, profilesHandlers] = useDisclosure(false);
+  const [metadataOpened, metadataHandlers] = useDisclosure(false);
   const [bulkEditorOpened, bulkEditorHandlers] = useDisclosure(false);
 
   const items = useMemo(
@@ -327,6 +338,13 @@ const VODsPage = () => {
           </Group>
           {user?.user_level >= 10 && (
             <Group>
+              <Button
+                variant="default"
+                leftSection={<DatabaseZap size={16} />}
+                onClick={metadataHandlers.open}
+              >
+                Metadata
+              </Button>
               <Button
                 variant="default"
                 leftSection={<SlidersHorizontal size={16} />}
@@ -695,6 +713,15 @@ const VODsPage = () => {
             opened={seriesModalOpened}
             onClose={seriesModalHandlers.close}
             onMetadataChanged={fetchContent}
+          />
+        </Suspense>
+      </ErrorBoundary>
+      <ErrorBoundary>
+        <Suspense fallback={<LoadingOverlay />}>
+          <VODMetadataModal
+            opened={metadataOpened}
+            onClose={metadataHandlers.close}
+            onUpdated={fetchContent}
           />
         </Suspense>
       </ErrorBoundary>

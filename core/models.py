@@ -1,6 +1,8 @@
 # core/models.py
 
 import logging
+import os
+import re
 import time
 from shlex import split as shlex_split
 
@@ -768,7 +770,63 @@ class CoreSettings(models.Model):
         """Get lightweight VOD library and playback-history settings."""
         return cls._get_group(VOD_SETTINGS_KEY, {
             "playback_history_retention_days": 0,
+            "tmdb_api_token": "",
+            "tmdb_languages": ["de-DE", "en-US"],
+            "tmdb_auto_enrich": True,
+            "tmdb_match_missing": False,
         })
+
+    @classmethod
+    def get_tmdb_api_token(cls):
+        """Return an environment token first, then the stored VOD token."""
+        return (
+            os.environ.get("TMDB_API_READ_ACCESS_TOKEN", "").strip()
+            or os.environ.get("TMDB_API_KEY", "").strip()
+            or str(cls.get_vod_settings().get("tmdb_api_token") or "").strip()
+        )
+
+    @classmethod
+    def get_tmdb_languages(cls):
+        """Return at most two stable TMDB IETF language tags."""
+        raw = cls.get_vod_settings().get("tmdb_languages") or []
+        if not isinstance(raw, list):
+            raw = []
+        languages = []
+        for value in raw:
+            language = str(value or "").strip()
+            if not re.fullmatch(r"[a-z]{2}(?:-[A-Z]{2})?", language):
+                continue
+            if language not in languages:
+                languages.append(language)
+            if len(languages) == 2:
+                break
+        return languages or ["de-DE", "en-US"]
+
+    @classmethod
+    def get_tmdb_auto_enrich(cls):
+        return cls.get_vod_settings().get("tmdb_auto_enrich", True) is not False
+
+    @classmethod
+    def get_tmdb_match_missing(cls):
+        return cls.get_vod_settings().get("tmdb_match_missing", False) is True
+
+    @classmethod
+    def set_vod_metadata_settings(
+        cls,
+        *,
+        languages,
+        auto_enrich,
+        match_missing,
+        api_token=None,
+    ):
+        updates = {
+            "tmdb_languages": list(languages)[:2],
+            "tmdb_auto_enrich": bool(auto_enrich),
+            "tmdb_match_missing": bool(match_missing),
+        }
+        if api_token is not None:
+            updates["tmdb_api_token"] = str(api_token).strip()
+        return cls._update_group(VOD_SETTINGS_KEY, "VOD Settings", updates)
 
     @classmethod
     def get_vod_playback_history_retention_days(cls):

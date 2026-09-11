@@ -148,7 +148,7 @@ class SeriesSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Series
-        fields = '__all__'
+        exclude = ["tmdb_metadata", "tmdb_enrichment_signature"]
 
     def get_episode_count(self, obj):
         return obj.episodes.count()
@@ -163,7 +163,7 @@ class MovieSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Movie
-        fields = '__all__'
+        exclude = ["tmdb_metadata", "tmdb_enrichment_signature"]
 
     def get_source_metadata(self, obj):
         return summarize_relation_metadata(obj.m3u_relations.all())

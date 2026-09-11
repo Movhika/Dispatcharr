@@ -1552,6 +1552,26 @@ export default class API {
     });
   }
 
+  static async getVODMetadataStatus() {
+    return await request(`${host}/api/vod/metadata/`, {
+      cache: 'no-store',
+    });
+  }
+
+  static async updateVODMetadataSettings(values) {
+    return await request(`${host}/api/vod/metadata/settings/`, {
+      method: 'PUT',
+      body: values,
+    });
+  }
+
+  static async refreshVODMetadata(force = false) {
+    return await request(`${host}/api/vod/metadata/refresh/`, {
+      method: 'POST',
+      body: { force },
+    });
+  }
+
   static async createVODAccessPolicy(values) {
     return await request(`${host}/api/vod/access-policies/`, {
       method: 'POST',

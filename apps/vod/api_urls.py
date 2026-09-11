@@ -9,6 +9,7 @@ from .api_views import (
     VODLogoViewSet,
     VODSourceAssetViewSet,
     VODAccessPolicyViewSet,
+    VODMetadataViewSet,
     VODPlaybackSessionViewSet,
     M3UVODCategoryRelationViewSet,
 )
@@ -24,6 +25,7 @@ router.register(r'all', UnifiedContentViewSet, basename='unified-content')
 router.register(r'vodlogos', VODLogoViewSet, basename='vodlogo')
 router.register(r'source-assets', VODSourceAssetViewSet, basename='vod-source-asset')
 router.register(r'access-policies', VODAccessPolicyViewSet, basename='vod-access-policy')
+router.register(r'metadata', VODMetadataViewSet, basename='vod-metadata')
 router.register(r'playback-sessions', VODPlaybackSessionViewSet, basename='vod-playback-session')
 router.register(r'category-relations', M3UVODCategoryRelationViewSet, basename='vod-category-relation')
 

@@ -3,7 +3,15 @@ import json
 import ipaddress
 
 from rest_framework import serializers
-from .models import CoreSettings, UserAgent, StreamProfile, OutputProfile, DVR_SETTINGS_KEY, NETWORK_ACCESS_KEY
+from .models import (
+    CoreSettings,
+    UserAgent,
+    StreamProfile,
+    OutputProfile,
+    DVR_SETTINGS_KEY,
+    NETWORK_ACCESS_KEY,
+    VOD_SETTINGS_KEY,
+)
 
 
 class UserAgentSerializer(serializers.ModelSerializer):
@@ -45,7 +53,32 @@ class CoreSettingsSerializer(serializers.ModelSerializer):
         model = CoreSettings
         fields = "__all__"
 
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if instance.key == VOD_SETTINGS_KEY:
+            value = dict(representation.get("value") or {})
+            # The dedicated VOD metadata endpoint exposes only whether a token
+            # exists. Never return a stored TMDB credential through the generic
+            # settings collection.
+            value.pop("tmdb_api_token", None)
+            representation["value"] = value
+        return representation
+
     def update(self, instance, validated_data):
+        if instance.key == VOD_SETTINGS_KEY:
+            value = validated_data.get("value")
+            existing = instance.value if isinstance(instance.value, dict) else {}
+            if (
+                isinstance(value, dict)
+                and "tmdb_api_token" not in value
+                and existing.get("tmdb_api_token")
+            ):
+                # Generic settings clients only receive the redacted value.
+                # Their ordinary round-trip must not erase the stored secret.
+                validated_data["value"] = {
+                    **value,
+                    "tmdb_api_token": existing["tmdb_api_token"],
+                }
         if instance.key == NETWORK_ACCESS_KEY:
             errors = False
             invalid = {}

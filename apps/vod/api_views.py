@@ -15,6 +15,8 @@ from django.db.models.expressions import RawSQL
 from django.utils.dateparse import parse_date, parse_datetime
 import django_filters
 import logging
+import os
+import re
 from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from apps.accounts.permissions import (
@@ -26,7 +28,7 @@ from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
     VODSourceAsset, VODAccessPolicy, VODPlaybackSession,
-    VODMovieProfileSelection, VODSeriesProfileSelection,
+    VODMovieProfileSelection, VODSeriesProfileSelection, VODMetadataState,
 )
 from .serializers import (
     MovieSerializer,
@@ -68,6 +70,19 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 PLAYBACK_METADATA_INLINE_TITLE_LIMIT = 25
+
+
+def _vod_metadata_state_payload():
+    state, _ = VODMetadataState.objects.get_or_create(pk=1)
+    return {
+        "status": state.status,
+        "task_id": state.task_id,
+        "progress": state.progress or {},
+        "started_at": state.started_at,
+        "completed_at": state.completed_at,
+        "error": state.error,
+        "updated_at": state.updated_at,
+    }
 
 
 def _canonical_content_ids_for_source_assets(asset_ids, *, limit):
@@ -960,6 +975,110 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         bump_catalog_generation()
         enqueue_all_profile_selection_rebuilds()
         return Response({"updated_categories": len(relations)})
+
+
+class VODMetadataViewSet(viewsets.ViewSet):
+    """Configure and monitor canonical TMDB enrichment."""
+
+    permission_classes = [Authenticated]
+
+    def _admin_only(self, request):
+        if not _is_admin(request.user):
+            raise PermissionDenied(
+                "Only administrators can manage VOD metadata enrichment."
+            )
+
+    def list(self, request):
+        self._admin_only(request)
+        settings = CoreSettings.get_vod_settings()
+        env_configured = bool(
+            os.environ.get("TMDB_API_READ_ACCESS_TOKEN")
+            or os.environ.get("TMDB_API_KEY")
+        )
+        movie_total = Movie.objects.filter(
+            m3u_relations__m3u_account__is_active=True
+        ).distinct().count()
+        series_total = Series.objects.filter(
+            m3u_relations__m3u_account__is_active=True
+        ).distinct().count()
+        return Response(
+            {
+                "settings": {
+                    "token_configured": bool(CoreSettings.get_tmdb_api_token()),
+                    "token_source": "environment" if env_configured else (
+                        "stored" if settings.get("tmdb_api_token") else ""
+                    ),
+                    "languages": CoreSettings.get_tmdb_languages(),
+                    "auto_enrich": CoreSettings.get_tmdb_auto_enrich(),
+                    "match_missing": CoreSettings.get_tmdb_match_missing(),
+                },
+                "catalog": {
+                    "movies": movie_total,
+                    "series": series_total,
+                    "enriched_movies": Movie.objects.filter(
+                        m3u_relations__m3u_account__is_active=True,
+                        tmdb_status="matched",
+                    ).distinct().count(),
+                    "enriched_series": Series.objects.filter(
+                        m3u_relations__m3u_account__is_active=True,
+                        tmdb_status="matched",
+                    ).distinct().count(),
+                },
+                "state": _vod_metadata_state_payload(),
+            }
+        )
+
+    @action(detail=False, methods=["put"], url_path="settings")
+    def settings(self, request):
+        self._admin_only(request)
+        raw_languages = request.data.get("languages", ["de-DE", "en-US"])
+        if not isinstance(raw_languages, list) or not 1 <= len(raw_languages) <= 2:
+            raise DRFValidationError(
+                {"languages": "Choose one or two TMDB language-region codes."}
+            )
+        languages = []
+        for raw in raw_languages:
+            value = str(raw or "").strip()
+            match = re.fullmatch(r"([A-Za-z]{2})(?:-([A-Za-z]{2}))?", value)
+            if not match:
+                raise DRFValidationError(
+                    {"languages": f"Invalid TMDB language code: {value}"}
+                )
+            value = match.group(1).lower() + (
+                f"-{match.group(2).upper()}" if match.group(2) else ""
+            )
+            if value not in languages:
+                languages.append(value)
+        token = None
+        if request.data.get("clear_api_token") is True:
+            token = ""
+        elif "api_token" in request.data:
+            token = str(request.data.get("api_token") or "").strip()
+        CoreSettings.set_vod_metadata_settings(
+            api_token=token,
+            languages=languages,
+            auto_enrich=request.data.get("auto_enrich") is True,
+            match_missing=request.data.get("match_missing") is True,
+        )
+        return self.list(request)
+
+    @action(detail=False, methods=["post"], url_path="refresh")
+    def refresh(self, request):
+        self._admin_only(request)
+        if not CoreSettings.get_tmdb_api_token():
+            raise DRFValidationError(
+                {"api_token": "Configure a TMDB API read access token first."}
+            )
+        from .tasks import enqueue_tmdb_enrichment
+
+        result = enqueue_tmdb_enrichment(
+            force=request.data.get("force") is True,
+            trigger_reason="Manual TMDB metadata refresh",
+        )
+        return Response(
+            {**result, "state": _vod_metadata_state_payload()},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class VODAccessPolicyViewSet(viewsets.ModelViewSet):

@@ -1558,6 +1558,47 @@ class VODSourceManagementTests(TestCase):
         )
         self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))
 
+    def test_changed_provider_catalog_updates_profiles_and_queues_auto_tmdb(self):
+        from django.core.cache import cache
+
+        _remember_profile_rebuild_after_vod_refresh()
+        with (
+            patch.object(
+                CoreSettings,
+                "get_tmdb_auto_enrich",
+                return_value=True,
+            ),
+            patch.object(
+                CoreSettings,
+                "get_tmdb_api_token",
+                return_value="configured-token",
+            ),
+            patch(
+                "apps.vod.tasks.enqueue_tmdb_enrichment",
+                return_value={"queued": True, "status": "queued", "task_id": ""},
+            ) as enqueue_tmdb,
+            patch(
+                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+            ) as enqueue_profiles,
+        ):
+            enqueue_profiles.return_value = True
+            self.assertTrue(
+                _enqueue_deferred_profile_rebuild_after_vod_refreshes()
+            )
+
+        enqueue_tmdb.assert_called_once_with(
+            trigger_reason=(
+                "A completed provider VOD refresh changed the catalog"
+            ),
+        )
+        enqueue_profiles.assert_called_once_with(
+            trigger_reason=(
+                "One or more completed VOD provider refreshes changed the "
+                "source catalog"
+            )
+        )
+        self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))
+
     def test_profile_preview_filters_prepared_rows(self):
         build_vod_profile_selection(self.policy.id)
         admin = get_user_model().objects.create_user(

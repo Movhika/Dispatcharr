@@ -123,6 +123,20 @@ class Series(models.Model):
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the series')
 
+    # Curated metadata is deliberately kept separate from provider payloads.
+    # Provider refreshes may replace ``custom_properties`` at any time, while
+    # this snapshot belongs to the canonical title and can be reused by every
+    # output profile.
+    tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
+    tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    tmdb_enrichment_signature = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="TMDB schema/language signature used for the last enrichment.",
+    )
+
     library_added_at = models.DateTimeField(
         default=timezone.now,
         db_index=True,
@@ -180,6 +194,17 @@ class Movie(models.Model):
 
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the movie')
+
+    # Keep external enrichment isolated from the provider's original data.
+    tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
+    tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    tmdb_enrichment_signature = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="TMDB schema/language signature used for the last enrichment.",
+    )
 
     library_added_at = models.DateTimeField(
         default=timezone.now,
@@ -373,6 +398,39 @@ class VODCatalogState(models.Model):
     class Meta:
         verbose_name = "VOD catalog state"
         verbose_name_plural = "VOD catalog state"
+
+
+class VODMetadataState(models.Model):
+    """Durable progress for the single global TMDB enrichment worker."""
+
+    class Status(models.TextChoices):
+        IDLE = "idle", "Idle"
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        COMPLETE = "complete", "Complete"
+        FAILED = "failed", "Failed"
+
+    id = models.PositiveSmallIntegerField(
+        primary_key=True,
+        default=1,
+        editable=False,
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.IDLE,
+    )
+    task_id = models.CharField(max_length=255, blank=True)
+    rebuild_profiles_after_completion = models.BooleanField(default=False)
+    progress = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "VOD metadata state"
+        verbose_name_plural = "VOD metadata state"
 
 
 class VODAccessPolicy(models.Model):
