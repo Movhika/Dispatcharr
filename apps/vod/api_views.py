@@ -2094,6 +2094,12 @@ class MovieFilter(django_filters.FilterSet):
     year_gte = django_filters.NumberFilter(field_name="year", lookup_expr="gte")
     year_lte = django_filters.NumberFilter(field_name="year", lookup_expr="lte")
     is_adult = django_filters.BooleanFilter()
+    library_added_after = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="gte"
+    )
+    library_added_before = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="lte"
+    )
 
     class Meta:
         model = Movie
@@ -2125,7 +2131,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = MovieFilter
     search_fields = ['name', 'description', 'genre']
-    ordering_fields = ['name', 'year', 'created_at']
+    ordering_fields = ['name', 'year', 'created_at', 'library_added_at']
     ordering = ['name']
 
     def get_permissions(self):
@@ -2322,6 +2328,12 @@ class EpisodeFilter(django_filters.FilterSet):
     m3u_account = django_filters.NumberFilter(field_name="m3u_relations__m3u_account__id")
     season_number = django_filters.NumberFilter()
     episode_number = django_filters.NumberFilter()
+    library_added_after = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="gte"
+    )
+    library_added_before = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="lte"
+    )
 
     class Meta:
         model = Episode
@@ -2335,6 +2347,12 @@ class SeriesFilter(django_filters.FilterSet):
     year = django_filters.NumberFilter()
     year_gte = django_filters.NumberFilter(field_name="year", lookup_expr="gte")
     year_lte = django_filters.NumberFilter(field_name="year", lookup_expr="lte")
+    library_added_after = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="gte"
+    )
+    library_added_before = django_filters.IsoDateTimeFilter(
+        field_name="library_added_at", lookup_expr="lte"
+    )
 
     class Meta:
         model = Series
@@ -2366,7 +2384,10 @@ class EpisodeViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = EpisodeFilter
     search_fields = ['name', 'description']
-    ordering_fields = ['name', 'season_number', 'episode_number', 'created_at']
+    ordering_fields = [
+        'name', 'season_number', 'episode_number', 'created_at',
+        'library_added_at',
+    ]
     ordering = ['series__name', 'season_number', 'episode_number']
 
     def get_permissions(self):
@@ -2401,7 +2422,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SeriesFilter
     search_fields = ['name', 'description', 'genre']
-    ordering_fields = ['name', 'year', 'created_at']
+    ordering_fields = ['name', 'year', 'created_at', 'library_added_at']
     ordering = ['name']
 
     def get_permissions(self):
@@ -2808,7 +2829,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['name', 'description', 'genre']
-    ordering_fields = ['name', 'year', 'created_at']
+    ordering_fields = ['name', 'year', 'created_at', 'library_added_at']
     ordering = ['name']
 
     def get_permissions(self):
@@ -2915,6 +2936,33 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     where_conditions[1] += " AND LOWER(series.name) LIKE %s"
                     series_params.append(search_param)
 
+            library_bounds = (
+                ("library_added_after", ">="),
+                ("library_added_before", "<="),
+            )
+            for parameter, operator in library_bounds:
+                raw_value = request.query_params.get(parameter, "")
+                if not raw_value:
+                    continue
+                parsed_value = parse_datetime(raw_value)
+                if parsed_value is None:
+                    return Response(
+                        {parameter: "Enter a valid ISO 8601 date and time."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if timezone.is_naive(parsed_value):
+                    parsed_value = timezone.make_aware(parsed_value)
+                if movie_enabled and movies_allowed:
+                    where_conditions[0] += (
+                        f" AND movies.library_added_at {operator} %s"
+                    )
+                    movie_params.append(parsed_value)
+                if series_enabled and series_allowed:
+                    where_conditions[1] += (
+                        f" AND series.library_added_at {operator} %s"
+                    )
+                    series_params.append(parsed_value)
+
             params = movie_params + series_params
 
             # Use UNION ALL with ORDER BY and LIMIT/OFFSET for true unified pagination
@@ -2930,6 +2978,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     movies.rating,
                     movies.genre,
                     movies.duration_secs as duration,
+                    movies.library_added_at,
                     movies.created_at,
                     movies.updated_at,
                     movies.custom_properties,
@@ -2952,6 +3001,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     series.rating,
                     series.genre,
                     NULL as duration,
+                    series.library_added_at,
                     series.created_at,
                     series.updated_at,
                     series.custom_properties,
@@ -3007,6 +3057,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         'rating': float(item_dict['rating']) if item_dict['rating'] else 0.0,
                         'genre': item_dict['genre'] or '',
                         'duration': item_dict['duration'],
+                        'library_added_at': item_dict['library_added_at'].isoformat() if item_dict['library_added_at'] else None,
                         'created_at': item_dict['created_at'].isoformat() if item_dict['created_at'] else None,
                         'updated_at': item_dict['updated_at'].isoformat() if item_dict['updated_at'] else None,
                         'custom_properties': item_dict['custom_properties'] or {},

@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
@@ -3697,6 +3698,49 @@ class VODSourceManagementTests(TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.data["count"], 0)
             self.assertEqual(response.data["results"], [])
+
+    def test_library_added_date_filters_standard_and_unified_lists(self):
+        cutoff = timezone.now() - timedelta(days=7)
+        self.movie.library_added_at = cutoff - timedelta(days=1)
+        self.movie.save(update_fields=["library_added_at"])
+        recent_movie = Movie.objects.create(
+            name="Recently imported",
+            library_added_at=cutoff + timedelta(days=1),
+        )
+        M3UMovieRelation.objects.create(
+            m3u_account=self.account_a,
+            movie=recent_movie,
+            category=self.german,
+            stream_id="recently-imported",
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-library-date-admin",
+            password="test-password",
+            user_level=10,
+        )
+        query = {
+            "type": "movies",
+            "library_added_after": cutoff.isoformat(),
+            "page_size": 24,
+        }
+
+        for viewset in (MovieViewSet, UnifiedContentViewSet):
+            request = APIRequestFactory().get("/api/vod/", query)
+            force_authenticate(request, user=admin)
+            response = viewset.as_view({"get": "list"})(request)
+
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["count"], 1)
+            self.assertEqual(
+                response.data["results"][0]["name"],
+                recent_movie.name,
+            )
+            self.assertEqual(
+                parse_datetime(
+                    response.data["results"][0]["library_added_at"]
+                ),
+                recent_movie.library_added_at,
+            )
 
     def test_unified_list_reports_movie_and_series_edition_counts(self):
         series = Series.objects.create(name="Avatar Series", year=2005)

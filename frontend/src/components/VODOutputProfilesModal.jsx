@@ -825,13 +825,22 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         opened={opened}
         onClose={onClose}
         title="VOD output profiles"
-        size="90vw"
+        size="80vw"
         yOffset="2vh"
         lockScroll={false}
-        scrollAreaComponent={Modal.NativeScrollArea}
         styles={{
-          content: { height: '96vh', overflowX: 'hidden' },
-          body: { height: 'calc(96vh - 60px)', overflowX: 'hidden' },
+          content: {
+            display: 'flex',
+            flexDirection: 'column',
+            height: '96vh',
+            maxHeight: '96vh',
+            overflow: 'hidden',
+          },
+          body: {
+            flex: 1,
+            minHeight: 0,
+            overflow: 'hidden',
+          },
         }}
       >
         <Stack h="100%" gap="sm">

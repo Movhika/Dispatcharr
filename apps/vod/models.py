@@ -123,6 +123,14 @@ class Series(models.Model):
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the series')
 
+    library_added_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text=(
+            "First time this canonical series was imported into the VOD "
+            "library. Provider refreshes must not change this value."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -173,6 +181,14 @@ class Movie(models.Model):
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the movie')
 
+    library_added_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text=(
+            "First time this canonical movie was imported into the VOD "
+            "library. Provider refreshes must not change this value."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -215,6 +231,14 @@ class Episode(models.Model):
     # Custom properties for episode
     custom_properties = models.JSONField(blank=True, null=True, help_text="Custom properties for this episode")
 
+    library_added_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text=(
+            "First time this canonical episode was imported into the VOD "
+            "library. Provider refreshes must not change this value."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
