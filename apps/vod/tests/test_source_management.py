@@ -954,6 +954,36 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(self.policy.selection_progress["processed"], 35000)
         self.assertEqual(self.policy.selection_progress["percent"], 20)
 
+    def test_profile_progress_percent_cannot_regress_when_phase_text_changes(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_progress={
+                "phase": "Selecting movies sources",
+                "percent": 28,
+                "processed": 65000,
+                "total": 83733,
+                "stage_index": 1,
+                "stage_count": 5,
+                "build_generation": "active-build",
+            },
+        )
+
+        updated = _set_profile_progress(
+            self.policy.pk,
+            "Selecting movie sources",
+            2,
+            processed=0,
+            total=83733,
+            stage_index=1,
+            stage_count=5,
+            build_generation="active-build",
+        )
+
+        self.assertFalse(updated)
+        self.policy.refresh_from_db()
+        self.assertEqual(self.policy.selection_progress["processed"], 65000)
+        self.assertEqual(self.policy.selection_progress["percent"], 28)
+
     def test_duplicate_task_does_not_rebuild_an_already_ready_profile(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
             selection_status=VODAccessPolicy.SelectionStatus.READY,
@@ -1565,6 +1595,8 @@ class VODSourceManagementTests(TestCase):
             response.data["selection_progress"]["task_name"],
             "apps.vod.tasks.rebuild_vod_profile_selection",
         )
+        self.assertIn("active_selection_generation", response.data)
+        self.assertIn("selection_catalog_generation", response.data)
         delay.assert_called_once_with(self.policy.pk)
 
     def test_deleting_default_profile_promotes_an_active_replacement(self):

@@ -138,47 +138,63 @@ def _set_pending_profiles_progress(
 
 def _set_profile_progress(policy_id, phase, percent, **details):
     """Persist coarse build progress without firing policy invalidation signals."""
-    current = (
-        VODAccessPolicy.objects.filter(pk=policy_id)
-        .values_list("selection_progress", flat=True)
-        .first()
-        or {}
-    )
-    build_generation = details.get("build_generation")
-    active_build_generation = current.get("build_generation")
-    if (
-        build_generation
-        and active_build_generation
-        and active_build_generation != build_generation
-    ):
-        # A watchdog or a newer delivery has superseded this worker. Do not let
-        # a late heartbeat replace the authoritative generation token.
-        return False
-    if build_generation and active_build_generation == build_generation:
-        current_stage = int(current.get("stage_index") or 0)
-        next_stage = int(details.get("stage_index") or 0)
-        current_processed = int(current.get("processed") or 0)
-        next_processed = int(details.get("processed") or 0)
-        if next_stage < current_stage or (
-            next_stage == current_stage
-            and current.get("phase") == phase
-            and next_processed < current_processed
+    # Progress is read and written by background workers while the API polls
+    # the same row. Serialize writers so a delayed heartbeat cannot win the
+    # read/update race and make one build appear to run backwards.
+    with transaction.atomic():
+        row = (
+            VODAccessPolicy.objects.select_for_update()
+            .filter(pk=policy_id)
+            .values("selection_status", "selection_progress")
+            .first()
+        )
+        if not row or (
+            row["selection_status"]
+            != VODAccessPolicy.SelectionStatus.BUILDING
         ):
-            # A delayed duplicate heartbeat must never make one build appear
-            # to run backwards. A genuine Celery retry uses a new generation
-            # and is surfaced as a separate attempt instead.
             return False
-    persistent = _progress_context(current)
-    return bool(
-        VODAccessPolicy.objects.filter(
-            pk=policy_id,
-            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
-        ).update(
-            selection_progress=_progress_payload(
-                phase, percent, **persistent, **details
+        current = row["selection_progress"] or {}
+        build_generation = details.get("build_generation")
+        active_build_generation = current.get("build_generation")
+        if (
+            build_generation
+            and active_build_generation
+            and active_build_generation != build_generation
+        ):
+            # A watchdog or a newer delivery has superseded this worker. Do not
+            # let a late heartbeat replace the authoritative generation token.
+            return False
+        if build_generation and active_build_generation == build_generation:
+            current_stage = int(current.get("stage_index") or 0)
+            next_stage = int(details.get("stage_index") or 0)
+            current_processed = int(current.get("processed") or 0)
+            next_processed = int(details.get("processed") or 0)
+            current_percent = int(current.get("percent") or 0)
+            next_percent = max(0, min(int(percent), 100))
+            if (
+                next_percent < current_percent
+                or next_stage < current_stage
+                or (
+                    next_stage == current_stage
+                    and current.get("phase") == phase
+                    and next_processed < current_processed
+                )
+            ):
+                # A delayed duplicate heartbeat must never make one build
+                # appear to run backwards. A genuine Celery retry uses a new
+                # generation and is surfaced as a separate attempt instead.
+                return False
+        persistent = _progress_context(current)
+        return bool(
+            VODAccessPolicy.objects.filter(
+                pk=policy_id,
+                selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            ).update(
+                selection_progress=_progress_payload(
+                    phase, percent, **persistent, **details
+                )
             )
         )
-    )
 
 
 def profile_selection_signature(policy):

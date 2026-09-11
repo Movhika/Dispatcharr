@@ -256,6 +256,91 @@ describe('useVODStore', () => {
     );
   });
 
+  it('does not let progress move backwards within the same catalog task', async () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          selection_progress: {
+            task_id: 'catalog-task',
+            build_generation: 'catalog-build',
+            percent: 28,
+            phase: 'Selecting movies sources',
+          },
+        },
+      ],
+    });
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'building',
+        selection_progress: {
+          task_id: 'catalog-task',
+          build_generation: 'catalog-build',
+          percent: 2,
+          phase: 'Selecting movies sources',
+        },
+      },
+    ]);
+    const { result } = renderHook(() => useVODStore());
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0].selection_progress).toEqual(
+      expect.objectContaining({
+        task_id: 'catalog-task',
+        build_generation: 'catalog-build',
+        percent: 28,
+      })
+    );
+  });
+
+  it('accepts ready when the API reports a newly activated snapshot', async () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          active_selection_generation: 'old-catalog',
+          selection_progress: {
+            task_id: 'catalog-task',
+            build_generation: 'catalog-build',
+            percent: 28,
+          },
+        },
+      ],
+    });
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'ready',
+        selection_current: true,
+        active_selection_generation: 'new-catalog',
+        selection_progress: { phase: 'Ready', percent: 100 },
+      },
+    ]);
+    const { result } = renderHook(() => useVODStore());
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        active_selection_generation: 'new-catalog',
+        selection_progress: expect.objectContaining({ percent: 100 }),
+      })
+    );
+  });
+
   it('does not let a stale save response replace its optimistic build status', () => {
     useVODStore.setState({
       accessPolicies: [

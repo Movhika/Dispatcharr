@@ -447,12 +447,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",
             "selection_counts", "selection_progress",
+            "active_selection_generation", "selection_catalog_generation",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "selection_status", "selection_current",
             "selection_available", "selection_task_state", "selection_counts", "selection_progress",
+            "active_selection_generation", "selection_catalog_generation",
             "selection_started_at", "selection_completed_at", "selection_error",
             "created_at", "updated_at",
         ]

@@ -49,6 +49,49 @@ const keepNewerLocalProfileBuild = (current, incoming) => {
   return true;
 };
 
+const mergeAccessPolicyState = (current, incoming) => {
+  if (!current) return incoming;
+  if (keepNewerLocalProfileBuild(current, incoming)) return current;
+
+  if (
+    ACTIVE_PROFILE_BUILD_STATUSES.has(current?.selection_status) &&
+    ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
+  ) {
+    const currentProgress = current.selection_progress || {};
+    const incomingProgress = incoming.selection_progress || {};
+    const currentTaskId = currentProgress.task_id || '';
+    const incomingTaskId = incomingProgress.task_id || '';
+    const currentBuildGeneration = currentProgress.build_generation || '';
+    const incomingBuildGeneration = incomingProgress.build_generation || '';
+    const sameBuild =
+      (currentBuildGeneration &&
+        currentBuildGeneration === incomingBuildGeneration) ||
+      (currentTaskId && currentTaskId === incomingTaskId);
+    const currentPercent = Number(currentProgress.percent);
+    const incomingPercent = Number(incomingProgress.percent);
+
+    // A profile list poll is a status snapshot, not an event stream. Preserve
+    // the newest heartbeat when an older response for the same task/build is
+    // delivered later by the browser or reverse proxy.
+    if (
+      sameBuild &&
+      Number.isFinite(currentPercent) &&
+      Number.isFinite(incomingPercent) &&
+      incomingPercent < currentPercent
+    ) {
+      return {
+        ...incoming,
+        selection_status: current.selection_status,
+        selection_started_at:
+          current.selection_started_at || incoming.selection_started_at,
+        selection_progress: currentProgress,
+      };
+    }
+  }
+
+  return incoming;
+};
+
 const getFetchContentParams = (state) => {
   const params = new URLSearchParams();
   params.append('page', state.currentPage);
@@ -357,9 +400,7 @@ const useVODStore = create((set, get) => ({
                 const current = state.accessPolicies.find(
                   (profile) => String(profile.id) === String(incoming.id)
                 );
-                return current && keepNewerLocalProfileBuild(current, incoming)
-                  ? current
-                  : incoming;
+                return mergeAccessPolicyState(current, incoming);
               })
             : [],
         }));
@@ -386,8 +427,8 @@ const useVODStore = create((set, get) => ({
       const accessPolicies = exists
         ? state.accessPolicies.map((current) =>
             String(current.id) === String(policy.id)
-              ? !force && keepNewerLocalProfileBuild(current, policy)
-                ? current
+              ? !force
+                ? mergeAccessPolicyState(current, policy)
                 : policy
               : current
           )
