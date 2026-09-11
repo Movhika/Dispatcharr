@@ -342,20 +342,11 @@ const useVODStore = create((set, get) => ({
       const response = await api.getVODAccessPolicies();
       const results = response.results || response;
       if (requestSequence === accessPolicyFetchSequence) {
-        set((state) => {
-          const incoming = Array.isArray(results) ? results : [];
-          const currentById = new Map(
-            state.accessPolicies.map((policy) => [String(policy.id), policy])
-          );
-          return {
-            accessPolicies: incoming.map((policy) => {
-              const current = currentById.get(String(policy.id));
-              return keepNewerLocalProfileBuild(current, policy)
-                ? current
-                : policy;
-            }),
-          };
-        });
+        // This is the newest no-store response requested after the last local
+        // mutation, so the database state is authoritative. Comparing its
+        // timestamps with an optimistic browser timestamp can otherwise keep
+        // a completed build stuck on Building when the two clocks differ.
+        set({ accessPolicies: Array.isArray(results) ? results : [] });
       }
       return results;
     } catch (error) {

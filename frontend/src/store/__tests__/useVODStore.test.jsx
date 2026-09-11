@@ -169,7 +169,7 @@ describe('useVODStore', () => {
     );
   });
 
-  it('keeps a newer build status until a matching terminal result arrives', async () => {
+  it('accepts the latest authoritative terminal poll despite clock skew', async () => {
     useVODStore.setState({
       accessPolicies: [
         {
@@ -198,27 +198,8 @@ describe('useVODStore', () => {
 
     expect(result.current.accessPolicies[0]).toEqual(
       expect.objectContaining({
-        selection_status: 'building',
-        selection_progress: { task_id: 'current-task' },
-      })
-    );
-
-    api.getVODAccessPolicies.mockResolvedValueOnce([
-      {
-        id: 1,
-        name: 'English',
         selection_status: 'ready',
-        selection_completed_at: '2026-09-11T09:01:00Z',
-      },
-    ]);
-    await act(async () => {
-      await result.current.fetchAccessPolicies();
-    });
-
-    expect(result.current.accessPolicies[0]).toEqual(
-      expect.objectContaining({
-        selection_status: 'ready',
-        selection_completed_at: '2026-09-11T09:01:00Z',
+        selection_completed_at: '2026-09-11T08:00:00Z',
       })
     );
   });
