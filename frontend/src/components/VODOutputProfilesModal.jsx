@@ -1485,40 +1485,32 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   </Box>
                 </ScrollArea>
                 <Group
-                  justify="space-between"
-                  align="flex-end"
-                  wrap="wrap"
+                  gap={5}
+                  justify="center"
+                  wrap="nowrap"
                   style={{ flexShrink: 0, paddingBottom: 2 }}
                 >
-                  <Group align="flex-end" wrap="nowrap">
-                    <Select
-                      label="Rows"
-                      value={String(previewPageSize)}
-                      data={PREVIEW_PAGE_SIZES.map((value) => ({
-                        value: String(value),
-                        label: String(value),
-                      }))}
-                      onChange={(value) => {
-                        const nextPageSize = Number(value) || 50;
-                        setPreviewPageSize(nextPageSize);
-                        setPage(1);
-                        window.localStorage.setItem(
-                          PREVIEW_PAGE_SIZE_STORAGE_KEY,
-                          String(nextPageSize)
-                        );
-                      }}
-                      allowDeselect={false}
-                      w={90}
-                    />
-                    <Text size="sm" c="dimmed" pb={7}>
-                      {preview.count
-                        ? `${(page - 1) * previewPageSize + 1}–${Math.min(
-                            page * previewPageSize,
-                            preview.count
-                          )} of ${preview.count}`
-                        : '0 of 0'}
-                    </Text>
-                  </Group>
+                  <Text size="xs">Rows</Text>
+                  <Select
+                    aria-label="Rows"
+                    size="xs"
+                    value={String(previewPageSize)}
+                    data={PREVIEW_PAGE_SIZES.map((value) => ({
+                      value: String(value),
+                      label: String(value),
+                    }))}
+                    onChange={(value) => {
+                      const nextPageSize = Number(value) || 50;
+                      setPreviewPageSize(nextPageSize);
+                      setPage(1);
+                      window.localStorage.setItem(
+                        PREVIEW_PAGE_SIZE_STORAGE_KEY,
+                        String(nextPageSize)
+                      );
+                    }}
+                    allowDeselect={false}
+                    w={70}
+                  />
                   <Pagination
                     value={page}
                     onChange={setPage}
@@ -1526,8 +1518,17 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       1,
                       Math.ceil((preview.count || 0) / previewPageSize)
                     )}
+                    size="xs"
                     withEdges
                   />
+                  <Text size="xs" c="dimmed">
+                    {preview.count
+                      ? `${(page - 1) * previewPageSize + 1}–${Math.min(
+                          page * previewPageSize,
+                          preview.count
+                        )} of ${preview.count}`
+                      : '0 of 0'}
+                  </Text>
                 </Group>
               </Stack>
             </TabsPanel>
