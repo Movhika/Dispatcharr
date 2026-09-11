@@ -500,9 +500,20 @@ def reconcile_vod_profile_selection_queue():
     if stranded or stalled_building:
         republished = enqueue_all_profile_selection_rebuilds(pending_only=True)
 
-    deferred_refresh_published = (
-        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
-    )
+    if republished:
+        # The recovered global batch already consumes the newest catalog
+        # generation, including any provider changes remembered while the old
+        # task was stranded. Publishing a second batch here would duplicate
+        # the same work and overwrite its task identity in the UI.
+        try:
+            cache.delete(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY)
+        except Exception:
+            pass
+        deferred_refresh_published = False
+    else:
+        deferred_refresh_published = (
+            _enqueue_deferred_profile_rebuild_after_vod_refreshes()
+        )
 
     return {
         "stale_ready_requeued": repaired_ready,
