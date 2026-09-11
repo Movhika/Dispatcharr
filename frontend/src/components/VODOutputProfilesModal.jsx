@@ -849,16 +849,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             flexDirection: 'column',
             height: '90vh',
             maxHeight: '90vh',
+            minWidth: 0,
             overflow: 'hidden',
           },
           body: {
             flex: 1,
             minHeight: 0,
+            minWidth: 0,
             overflow: 'hidden',
           },
         }}
       >
-        <Stack h="100%" gap="sm">
+        <Stack h="100%" gap="sm" style={{ minWidth: 0 }}>
           <Group align="flex-end" wrap="wrap">
             <Select
               label="Profile"
@@ -997,7 +999,23 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           <Tabs
             value={activeTab}
             onChange={setActiveTab}
-            style={{ flex: 1, minHeight: 0 }}
+            style={{
+              display: 'flex',
+              flex: 1,
+              flexDirection: 'column',
+              minHeight: 0,
+              minWidth: 0,
+              overflow: 'hidden',
+            }}
+            styles={{
+              list: { flexShrink: 0 },
+              panel: {
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                overflow: 'hidden',
+              },
+            }}
           >
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
@@ -1037,182 +1055,198 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </TabsList>
 
             <TabsPanel value="settings" pt="md">
-              <ScrollArea h="calc(90vh - 270px)">
-                <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
-                  <Stack>
-                    <TextInput
-                      label="Profile name"
-                      required
-                      value={draft.name}
-                      onChange={(event) =>
-                        setDraft({ ...draft, name: event.currentTarget.value })
-                      }
-                    />
-                    <Select
-                      label="XC VOD output"
-                      data={[
-                        {
-                          value: 'compact',
-                          label:
-                            'Compact — one entry per canonical title and suffix',
-                        },
-                        {
-                          value: 'variants',
-                          label:
-                            'Provider data — every allowed provider source unchanged',
-                        },
-                      ]}
-                      value={draft.export_mode}
-                      onChange={(value) =>
-                        setDraft({ ...draft, export_mode: value })
-                      }
-                    />
-                    <Group grow>
-                      <Switch
-                        label="Active"
-                        checked={draft.is_active}
+              <ScrollArea h="100%">
+                <Box pb="xs">
+                  <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                    <Stack>
+                      <TextInput
+                        label="Profile name"
+                        required
+                        value={draft.name}
                         onChange={(event) =>
                           setDraft({
                             ...draft,
-                            is_active: event.currentTarget.checked,
+                            name: event.currentTarget.value,
                           })
                         }
                       />
-                      <Switch
-                        label="Default profile"
-                        checked={draft.is_default}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            is_default: event.currentTarget.checked,
-                          })
+                      <Select
+                        label="XC VOD output"
+                        data={[
+                          {
+                            value: 'compact',
+                            label:
+                              'Compact — one entry per canonical title and suffix',
+                          },
+                          {
+                            value: 'variants',
+                            label:
+                              'Provider data — every allowed provider source unchanged',
+                          },
+                        ]}
+                        value={draft.export_mode}
+                        onChange={(value) =>
+                          setDraft({ ...draft, export_mode: value })
                         }
                       />
-                    </Group>
-                  </Stack>
-                </Paper>
+                      <Group grow>
+                        <Switch
+                          label="Active"
+                          checked={draft.is_active}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              is_active: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                        <Switch
+                          label="Default profile"
+                          checked={draft.is_default}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              is_default: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                      </Group>
+                    </Stack>
+                  </Paper>
+                </Box>
               </ScrollArea>
             </TabsPanel>
 
             <TabsPanel value="sources" pt="md">
-              <ScrollArea h="calc(90vh - 270px)">
-                <Paper withBorder p="lg" radius="md">
-                  <Stack>
-                    <Tabs defaultValue="movie">
-                      <TabsList>
-                        <TabsTab value="movie">VOD - Movies</TabsTab>
-                        <TabsTab value="series">VOD - Series</TabsTab>
-                      </TabsList>
-                      <TabsPanel value="movie">
-                        <VODCategoryFilter
-                          mode="profile"
-                          categoryStates={movieCategoryStates}
-                          setCategoryStates={updateProfileCategoryStates(
-                            movieCategoryStates
-                          )}
-                          type="movie"
-                          rules={(
-                            draft.hard_constraints.category_import_rules || []
-                          ).filter((rule) => rule.scope === 'movie')}
-                          onRulesChange={(rules) =>
-                            updateProfileCategoryRules('movie', rules)
-                          }
-                          defaultAction={
-                            draft.hard_constraints.category_default_actions
-                              ?.movie || 'enable'
-                          }
-                          onDefaultActionChange={(action) =>
-                            updateProfileCategoryDefault('movie', action)
-                          }
-                          accountOptions={accountOptions}
-                          onClearOverrides={clearProfileCategoryOverrides}
-                        />
-                      </TabsPanel>
-                      <TabsPanel value="series">
-                        <VODCategoryFilter
-                          mode="profile"
-                          categoryStates={seriesCategoryStates}
-                          setCategoryStates={updateProfileCategoryStates(
-                            seriesCategoryStates
-                          )}
-                          type="series"
-                          rules={(
-                            draft.hard_constraints.category_import_rules || []
-                          ).filter((rule) => rule.scope === 'series')}
-                          onRulesChange={(rules) =>
-                            updateProfileCategoryRules('series', rules)
-                          }
-                          defaultAction={
-                            draft.hard_constraints.category_default_actions
-                              ?.series || 'enable'
-                          }
-                          onDefaultActionChange={(action) =>
-                            updateProfileCategoryDefault('series', action)
-                          }
-                          accountOptions={accountOptions}
-                          onClearOverrides={clearProfileCategoryOverrides}
-                        />
-                      </TabsPanel>
-                    </Tabs>
-                  </Stack>
-                </Paper>
+              <ScrollArea h="100%">
+                <Box pb="xs">
+                  <Paper withBorder p="lg" radius="md">
+                    <Stack>
+                      <Tabs defaultValue="movie">
+                        <TabsList>
+                          <TabsTab value="movie">VOD - Movies</TabsTab>
+                          <TabsTab value="series">VOD - Series</TabsTab>
+                        </TabsList>
+                        <TabsPanel value="movie">
+                          <VODCategoryFilter
+                            mode="profile"
+                            categoryStates={movieCategoryStates}
+                            setCategoryStates={updateProfileCategoryStates(
+                              movieCategoryStates
+                            )}
+                            type="movie"
+                            rules={(
+                              draft.hard_constraints.category_import_rules || []
+                            ).filter((rule) => rule.scope === 'movie')}
+                            onRulesChange={(rules) =>
+                              updateProfileCategoryRules('movie', rules)
+                            }
+                            defaultAction={
+                              draft.hard_constraints.category_default_actions
+                                ?.movie || 'enable'
+                            }
+                            onDefaultActionChange={(action) =>
+                              updateProfileCategoryDefault('movie', action)
+                            }
+                            accountOptions={accountOptions}
+                            onClearOverrides={clearProfileCategoryOverrides}
+                          />
+                        </TabsPanel>
+                        <TabsPanel value="series">
+                          <VODCategoryFilter
+                            mode="profile"
+                            categoryStates={seriesCategoryStates}
+                            setCategoryStates={updateProfileCategoryStates(
+                              seriesCategoryStates
+                            )}
+                            type="series"
+                            rules={(
+                              draft.hard_constraints.category_import_rules || []
+                            ).filter((rule) => rule.scope === 'series')}
+                            onRulesChange={(rules) =>
+                              updateProfileCategoryRules('series', rules)
+                            }
+                            defaultAction={
+                              draft.hard_constraints.category_default_actions
+                                ?.series || 'enable'
+                            }
+                            onDefaultActionChange={(action) =>
+                              updateProfileCategoryDefault('series', action)
+                            }
+                            accountOptions={accountOptions}
+                            onClearOverrides={clearProfileCategoryOverrides}
+                          />
+                        </TabsPanel>
+                      </Tabs>
+                    </Stack>
+                  </Paper>
+                </Box>
               </ScrollArea>
             </TabsPanel>
 
             <TabsPanel value="content-rules" pt="md">
-              <ScrollArea h="calc(90vh - 270px)">
-                <Paper withBorder p="lg" radius="md">
-                  <VODSourceRules
-                    value={draft.hard_constraints.source_rules || []}
-                    onChange={(value) =>
-                      updateConstraint('source_rules', value)
-                    }
-                    categoryRelationIds={selectedCategoryIds}
-                  />
-                </Paper>
+              <ScrollArea h="100%">
+                <Box pb="xs">
+                  <Paper withBorder p="lg" radius="md">
+                    <VODSourceRules
+                      value={draft.hard_constraints.source_rules || []}
+                      onChange={(value) =>
+                        updateConstraint('source_rules', value)
+                      }
+                      categoryRelationIds={selectedCategoryIds}
+                    />
+                  </Paper>
+                </Box>
               </ScrollArea>
             </TabsPanel>
 
             {draft.export_mode === 'compact' && (
               <TabsPanel value="failover" pt="md">
-                <ScrollArea h="calc(90vh - 270px)">
-                  <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
-                    <VODFailoverRanking
-                      value={draft.ranking}
-                      providerOrder={draft.provider_order}
-                      providerOptions={failoverAccountOptions}
-                      onChange={(ranking) =>
-                        setDraft((current) => ({ ...current, ranking }))
-                      }
-                      onProviderOrderChange={(providerOrder) =>
-                        setDraft((current) => ({
-                          ...current,
-                          provider_order: providerOrder,
-                        }))
-                      }
-                    />
-                  </Paper>
+                <ScrollArea h="100%">
+                  <Box pb="xs">
+                    <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                      <VODFailoverRanking
+                        value={draft.ranking}
+                        providerOrder={draft.provider_order}
+                        providerOptions={failoverAccountOptions}
+                        onChange={(ranking) =>
+                          setDraft((current) => ({ ...current, ranking }))
+                        }
+                        onProviderOrderChange={(providerOrder) =>
+                          setDraft((current) => ({
+                            ...current,
+                            provider_order: providerOrder,
+                          }))
+                        }
+                      />
+                    </Paper>
+                  </Box>
                 </ScrollArea>
               </TabsPanel>
             )}
 
             <TabsPanel value="editions" pt="md">
-              <ScrollArea h="calc(90vh - 270px)">
-                {draft.export_mode === 'compact' && (
-                  <Paper withBorder p="lg" radius="md">
-                    <VODEditionRules
-                      value={draft.edition_rules}
-                      onChange={(edition_rules) =>
-                        setDraft((current) => ({ ...current, edition_rules }))
-                      }
-                    />
-                  </Paper>
-                )}
+              <ScrollArea h="100%">
+                <Box pb="xs">
+                  {draft.export_mode === 'compact' && (
+                    <Paper withBorder p="lg" radius="md">
+                      <VODEditionRules
+                        value={draft.edition_rules}
+                        onChange={(edition_rules) =>
+                          setDraft((current) => ({
+                            ...current,
+                            edition_rules,
+                          }))
+                        }
+                      />
+                    </Paper>
+                  )}
+                </Box>
               </ScrollArea>
             </TabsPanel>
 
             <TabsPanel value="preview" pt="md">
-              <Stack>
+              <Stack h="100%" style={{ minHeight: 0, overflow: 'hidden' }}>
                 {!selectionAvailable && (
                   <Alert color="yellow">
                     This profile has no completed catalog yet. Its content can
@@ -1362,85 +1396,100 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     canonical titles in this profile
                   </Text>
                 </Group>
-                <ScrollArea h="calc(90vh - 390px)">
-                  <Table striped highlightOnHover withTableBorder stickyHeader>
-                    <TableThead>
-                      <TableTr>
-                        <TableTh>Title</TableTh>
-                        <TableTh>
-                          {activeMode === 'compact' ? 'Sources' : 'Source'}
-                        </TableTh>
-                        <TableTh>Category</TableTh>
-                        {activeMode !== 'compact' && (
-                          <>
-                            <TableTh>DUB</TableTh>
-                            <TableTh>SUB</TableTh>
-                            <TableTh>Resolution</TableTh>
-                            <TableTh>Format</TableTh>
-                            <TableTh>Features</TableTh>
-                          </>
-                        )}
-                        <TableTh>Details</TableTh>
-                      </TableTr>
-                    </TableThead>
-                    <TableTbody>
-                      {!previewLoading && preview.results?.length === 0 && (
+                <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+                  <Box pb="xs">
+                    <Table
+                      striped
+                      highlightOnHover
+                      withTableBorder
+                      stickyHeader
+                    >
+                      <TableThead>
                         <TableTr>
-                          <TableTd colSpan={activeMode === 'compact' ? 4 : 9}>
-                            <Text ta="center" c="dimmed" py="lg">
-                              No prepared output matches the current filters.
-                            </Text>
-                          </TableTd>
-                        </TableTr>
-                      )}
-                      {(preview.results || []).map((row) => (
-                        <TableTr key={row.id}>
-                          <TableTd>{row.name}</TableTd>
-                          <TableTd>
-                            {activeMode === 'compact'
-                              ? row.source_count
-                              : row.m3u_account_name}
-                          </TableTd>
-                          <TableTd>{row.category_name || '—'}</TableTd>
+                          <TableTh>Title</TableTh>
+                          <TableTh>
+                            {activeMode === 'compact' ? 'Sources' : 'Source'}
+                          </TableTh>
+                          <TableTh>Category</TableTh>
                           {activeMode !== 'compact' && (
                             <>
-                              <TableTd>
-                                {metadataText(row.metadata, 'audio_languages')}
-                              </TableTd>
-                              <TableTd>
-                                {metadataText(
-                                  row.metadata,
-                                  'subtitle_languages'
-                                )}
-                              </TableTd>
-                              <TableTd>
-                                {row.resolution ? `${row.resolution}p` : '—'}
-                              </TableTd>
-                              <TableTd>
-                                {row.container_extension || '—'}
-                              </TableTd>
-                              <TableTd>
-                                {metadataText(row.metadata, 'video_features')}
-                              </TableTd>
+                              <TableTh>DUB</TableTh>
+                              <TableTh>SUB</TableTh>
+                              <TableTh>Resolution</TableTh>
+                              <TableTh>Format</TableTh>
+                              <TableTh>Features</TableTh>
                             </>
                           )}
-                          <TableTd>
-                            <Tooltip label="Open title and profile sources">
-                              <ActionIcon
-                                variant="subtle"
-                                aria-label={`Open details for ${row.name}`}
-                                onClick={() => setCandidateTarget(row)}
-                              >
-                                <Eye size={17} />
-                              </ActionIcon>
-                            </Tooltip>
-                          </TableTd>
+                          <TableTh>Details</TableTh>
                         </TableTr>
-                      ))}
-                    </TableTbody>
-                  </Table>
+                      </TableThead>
+                      <TableTbody>
+                        {!previewLoading && preview.results?.length === 0 && (
+                          <TableTr>
+                            <TableTd colSpan={activeMode === 'compact' ? 4 : 9}>
+                              <Text ta="center" c="dimmed" py="lg">
+                                No prepared output matches the current filters.
+                              </Text>
+                            </TableTd>
+                          </TableTr>
+                        )}
+                        {(preview.results || []).map((row) => (
+                          <TableTr key={row.id}>
+                            <TableTd>{row.name}</TableTd>
+                            <TableTd>
+                              {activeMode === 'compact'
+                                ? row.source_count
+                                : row.m3u_account_name}
+                            </TableTd>
+                            <TableTd>{row.category_name || '—'}</TableTd>
+                            {activeMode !== 'compact' && (
+                              <>
+                                <TableTd>
+                                  {metadataText(
+                                    row.metadata,
+                                    'audio_languages'
+                                  )}
+                                </TableTd>
+                                <TableTd>
+                                  {metadataText(
+                                    row.metadata,
+                                    'subtitle_languages'
+                                  )}
+                                </TableTd>
+                                <TableTd>
+                                  {row.resolution ? `${row.resolution}p` : '—'}
+                                </TableTd>
+                                <TableTd>
+                                  {row.container_extension || '—'}
+                                </TableTd>
+                                <TableTd>
+                                  {metadataText(row.metadata, 'video_features')}
+                                </TableTd>
+                              </>
+                            )}
+                            <TableTd>
+                              <Tooltip label="Open title and profile sources">
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label={`Open details for ${row.name}`}
+                                  onClick={() => setCandidateTarget(row)}
+                                >
+                                  <Eye size={17} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </TableTd>
+                          </TableTr>
+                        ))}
+                      </TableTbody>
+                    </Table>
+                  </Box>
                 </ScrollArea>
-                <Group justify="space-between" align="flex-end" wrap="wrap">
+                <Group
+                  justify="space-between"
+                  align="flex-end"
+                  wrap="wrap"
+                  style={{ flexShrink: 0, paddingBottom: 2 }}
+                >
                   <Group align="flex-end" wrap="nowrap">
                     <Select
                       label="Rows"
