@@ -512,7 +512,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         color: 'green',
       });
     } catch (error) {
-      if (profileId && selectedProfile) upsertAccessPolicy(selectedProfile);
+      if (profileId && selectedProfile) {
+        upsertAccessPolicy(selectedProfile, { force: true });
+      }
       showNotification({
         title: 'VOD output profile was not saved',
         message: error?.message || 'Please check the values and retry.',

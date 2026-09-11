@@ -653,6 +653,15 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(ids, [self.german_relation.id])
 
     def test_profile_build_materializes_compact_output_and_normalizes_metadata(self):
+        self.policy.selection_progress = {
+            "task_id": "profile-build-task",
+            "task_name": "apps.vod.tasks.rebuild_vod_profile_selection",
+            "queue": "celery",
+            "trigger_reason": "Profile settings were saved",
+        }
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_progress=self.policy.selection_progress
+        )
         counts = build_vod_profile_selection(self.policy.id)
 
         self.policy.refresh_from_db()
@@ -673,6 +682,13 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(self.policy.selection_progress["phase"], "Ready")
         self.assertEqual(self.policy.selection_progress["percent"], 100)
         self.assertEqual(self.policy.selection_progress["stage_index"], 5)
+        self.assertEqual(
+            self.policy.selection_progress["task_id"], "profile-build-task"
+        )
+        self.assertEqual(
+            self.policy.selection_progress["trigger_reason"],
+            "Profile settings were saved",
+        )
         self.assertEqual(
             self.policy.selection_progress["target_export_mode"], "compact"
         )

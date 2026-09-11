@@ -169,6 +169,102 @@ describe('useVODStore', () => {
     );
   });
 
+  it('keeps a newer build status until a matching terminal result arrives', async () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          selection_started_at: '2026-09-11T09:00:00Z',
+          selection_completed_at: '2026-09-11T08:00:00Z',
+          selection_progress: { task_id: 'current-task' },
+        },
+      ],
+    });
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'ready',
+        selection_completed_at: '2026-09-11T08:00:00Z',
+      },
+    ]);
+    const { result } = renderHook(() => useVODStore());
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'building',
+        selection_progress: { task_id: 'current-task' },
+      })
+    );
+
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'ready',
+        selection_completed_at: '2026-09-11T09:01:00Z',
+      },
+    ]);
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        selection_completed_at: '2026-09-11T09:01:00Z',
+      })
+    );
+  });
+
+  it('does not let a stale save response replace its optimistic build status', () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English updated',
+          selection_status: 'pending',
+          selection_started_at: '2026-09-11T09:00:00Z',
+          selection_completed_at: '2026-09-11T08:00:00Z',
+        },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.upsertAccessPolicy({
+        id: 1,
+        name: 'English updated',
+        selection_status: 'ready',
+        selection_completed_at: '2026-09-11T08:00:00Z',
+      });
+    });
+
+    expect(result.current.accessPolicies[0].selection_status).toBe('pending');
+
+    act(() => {
+      result.current.upsertAccessPolicy(
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'ready',
+          selection_completed_at: '2026-09-11T08:00:00Z',
+        },
+        { force: true }
+      );
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({ name: 'English', selection_status: 'ready' })
+    );
+  });
+
   it('should fetch all content successfully', async () => {
     const mockResponse = {
       results: [

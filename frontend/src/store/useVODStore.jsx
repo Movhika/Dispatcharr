@@ -3,6 +3,43 @@ import api from '../api';
 
 let accessPolicyFetchSequence = 0;
 
+const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
+
+const profileStatusTimestamp = (value) => {
+  const timestamp = new Date(value || '').getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const keepNewerLocalProfileBuild = (current, incoming) => {
+  if (
+    !ACTIVE_PROFILE_BUILD_STATUSES.has(current?.selection_status) ||
+    ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
+  ) {
+    return false;
+  }
+
+  const startedAt = profileStatusTimestamp(
+    current.selection_started_at ||
+      current.selection_progress?.queued_at ||
+      current.selection_progress?.updated_at
+  );
+  const previousCompletedAt = profileStatusTimestamp(
+    current.selection_completed_at
+  );
+  const completedAt = profileStatusTimestamp(incoming?.selection_completed_at);
+
+  // Only a terminal state produced after this build started may replace its
+  // live status. Prefer the server's previous completion marker so this also
+  // remains correct when the browser and server clocks differ.
+  return (
+    completedAt === null ||
+    (previousCompletedAt !== null && completedAt <= previousCompletedAt) ||
+    (previousCompletedAt === null &&
+      startedAt !== null &&
+      completedAt < startedAt)
+  );
+};
+
 const getFetchContentParams = (state) => {
   const params = new URLSearchParams();
   params.append('page', state.currentPage);
@@ -305,7 +342,20 @@ const useVODStore = create((set, get) => ({
       const response = await api.getVODAccessPolicies();
       const results = response.results || response;
       if (requestSequence === accessPolicyFetchSequence) {
-        set({ accessPolicies: Array.isArray(results) ? results : [] });
+        set((state) => {
+          const incoming = Array.isArray(results) ? results : [];
+          const currentById = new Map(
+            state.accessPolicies.map((policy) => [String(policy.id), policy])
+          );
+          return {
+            accessPolicies: incoming.map((policy) => {
+              const current = currentById.get(String(policy.id));
+              return keepNewerLocalProfileBuild(current, policy)
+                ? current
+                : policy;
+            }),
+          };
+        });
       }
       return results;
     } catch (error) {
@@ -317,7 +367,7 @@ const useVODStore = create((set, get) => ({
     }
   },
 
-  upsertAccessPolicy: (policy) => {
+  upsertAccessPolicy: (policy, { force = false } = {}) => {
     if (!policy?.id) return;
     // A response requested before this mutation must not restore stale status
     // or category rules after the mutation response has been applied.
@@ -328,7 +378,11 @@ const useVODStore = create((set, get) => ({
       );
       const accessPolicies = exists
         ? state.accessPolicies.map((current) =>
-            String(current.id) === String(policy.id) ? policy : current
+            String(current.id) === String(policy.id)
+              ? !force && keepNewerLocalProfileBuild(current, policy)
+                ? current
+                : policy
+              : current
           )
         : [...state.accessPolicies, policy];
       return {

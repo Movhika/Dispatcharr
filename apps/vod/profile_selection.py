@@ -1089,6 +1089,7 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
                 selection_progress=_progress_payload(
                     "Ready",
                     100,
+                    **task_details,
                     stage_index=BUILD_STAGE_COUNT,
                     stage_count=BUILD_STAGE_COUNT,
                     stage_percent=100,
