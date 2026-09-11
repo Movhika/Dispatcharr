@@ -609,7 +609,7 @@ describe('VODOutputProfilesModal', () => {
       screen.getByLabelText('Catalog preparation progress')
     ).toHaveTextContent('36');
     expect(
-      screen.getByText(/saved rules are not active in this preview yet/)
+      screen.getByText(/last completed catalog remains available/)
     ).toBeInTheDocument();
     expect(screen.getByText(/No manual retry is required/)).toBeInTheDocument();
     expect(screen.getByText(/State: RUNNING/)).toBeInTheDocument();

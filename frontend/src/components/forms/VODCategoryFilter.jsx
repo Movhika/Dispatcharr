@@ -316,7 +316,6 @@ const VODCategoryFilter = ({
               {profileMode && <TableTh>M3U account</TableTh>}
               <TableTh>Category</TableTh>
               <TableTh w={110}>{profileMode ? 'Allowed' : 'Enabled'}</TableTh>
-              {profileMode && <TableTh w={130}>Decision</TableTh>}
               <TableTh>
                 <Group gap={4} wrap="nowrap">
                   DUB
@@ -393,13 +392,6 @@ const VODCategoryFilter = ({
                         : 'Inactive'}
                   </Button>
                 </TableTd>
-                {profileMode && (
-                  <TableTd>
-                    <Text size="xs" c="dimmed">
-                      {category.decision_source}
-                    </Text>
-                  </TableTd>
-                )}
                 <TableTd>
                   {(category.metadata_defaults?.audio_languages || []).join(
                     ', '
@@ -419,7 +411,7 @@ const VODCategoryFilter = ({
                   ) || '—'}
                 </TableTd>
                 <TableTd ta="center">
-                  <Tooltip label="Preview imported sources" withArrow>
+                  <Tooltip label="Preview imported content" withArrow>
                     <ActionIcon
                       variant="subtle"
                       aria-label={`Preview ${category.name}`}
@@ -476,7 +468,7 @@ const VODCategoryFilter = ({
       <Modal
         opened={!!previewCategory}
         onClose={() => setPreviewCategory(null)}
-        title={`${type === 'movie' ? 'Movie' : 'Series'} sources`}
+        title={`Preview imported ${type === 'movie' ? 'movies' : 'series'}`}
         size="85vw"
       >
         {previewCategory && (
@@ -487,6 +479,7 @@ const VODCategoryFilter = ({
             initialCategory={String(
               previewCategory.category_id ?? previewCategory.id
             )}
+            summaryOnly
           />
         )}
       </Modal>
@@ -504,6 +497,7 @@ const VODCategoryFilter = ({
           mode={mode}
           value={rules}
           onChange={onRulesChange}
+          onApplied={() => setRulesOpen(false)}
           accountOptions={accountOptions}
           categoryRows={categoryStates}
         />

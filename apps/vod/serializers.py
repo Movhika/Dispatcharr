@@ -460,11 +460,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         ]
 
     def get_selection_current(self, obj):
-        from .profile_selection import profile_selection_signature
-
         active_mode = self.get_selection_active_mode(obj)
-        counts = obj.selection_counts or {}
-        active_signature = counts.get("profile_signature")
 
         # ``selection_status`` is the lifecycle authority. Every source
         # invalidation either moves a profile to Pending (and publishes a
@@ -473,16 +469,13 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         # consistent state machine: a catalog which was just activated as
         # Ready can then be presented as Outdated even though its rows and
         # counts are complete. Generation comparisons still protect atomic
-        # activation inside the builder; the periodic watchdog only repairs
-        # semantic profile mismatches and lost lifecycle transitions.
+        # activation inside the builder. Code upgrades must not create an
+        # implicit rebuild just because a newly calculated implementation
+        # signature differs from a catalog prepared by the previous version.
         return bool(
             obj.selection_status == VODAccessPolicy.SelectionStatus.READY
             and obj.active_selection_generation
             and (not active_mode or active_mode == obj.export_mode)
-            and (
-                not active_signature
-                or active_signature == profile_selection_signature(obj)
-            )
         )
 
     def get_selection_active_mode(self, obj):

@@ -287,4 +287,45 @@ describe('M3UGroupRules', () => {
       );
     });
   });
+
+  it('keeps profile import rules as a draft until Save and apply', () => {
+    const onChange = vi.fn();
+    const onApplied = vi.fn();
+    render(
+      <M3UGroupRules
+        mode="profile"
+        scope="movie"
+        value={[
+          {
+            id: 'profile-rule-1',
+            scope: 'movie',
+            m3u_account_id: null,
+            regex_pattern: '^GERMANY',
+            action: 'enable',
+            case_sensitive: false,
+            enabled: true,
+            order: 0,
+          },
+        ]}
+        onChange={onChange}
+        onApplied={onApplied}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('Include regular expression'), {
+      target: { value: '^HINDI' },
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Save and apply'));
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'profile-rule-1',
+        regex_pattern: '^HINDI',
+        action: 'enable',
+        order: 0,
+      }),
+    ]);
+    expect(onApplied).toHaveBeenCalledOnce();
+  });
 });

@@ -154,9 +154,10 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
           <Alert icon={<Info size={16} />} color="blue" variant="light">
             <Text size="sm">
               <strong>Order matters.</strong> The first matching filter decides
-              whether a source is included. Category discovery belongs to the
-              Sources tab; these filters narrow the selected catalog by source
-              title and technical metadata. Unmatched sources remain available.
+              whether a source is included. Categories and future provider
+              groups are selected in Sources. Here, the expression always
+              matches the source title and can be combined with known technical
+              metadata. Unmatched sources remain available.
             </Text>
           </Alert>
         </Stack>
@@ -184,11 +185,10 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
             strategy={verticalListSortingStrategy}
           >
             <ScrollArea type="auto">
-              <Table striped withTableBorder miw={1180} verticalSpacing="xs">
+              <Table striped withTableBorder miw={1040} verticalSpacing="xs">
                 <TableThead>
                   <TableTr>
                     <TableTh w={46} aria-label="Filter order" />
-                    <TableTh w={135}>Field</TableTh>
                     <TableTh>Expression</TableTh>
                     <TableTh w={190}>DUB</TableTh>
                     <TableTh w={190}>SUB</TableTh>
@@ -201,33 +201,13 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
                   {normalized.map((rule) => (
                     <SortableRuleRow key={rule.id} ruleId={rule.id}>
                       <TableTd>
-                        <Select
-                          size="xs"
-                          aria-label="VOD stream filter field"
-                          data={[
-                            { value: 'stream', label: 'Source title' },
-                            ...(rule.match_field === 'category'
-                              ? [
-                                  {
-                                    value: 'category',
-                                    label: 'Category (legacy)',
-                                  },
-                                ]
-                              : []),
-                          ]}
-                          value={rule.match_field}
-                          onChange={(match_field) =>
-                            update(rule.id, { match_field })
-                          }
-                        />
-                      </TableTd>
-                      <TableTd>
                         <TextInput
                           size="xs"
                           aria-label="VOD stream filter expression"
                           value={rule.regex_pattern}
                           onChange={(event) =>
                             update(rule.id, {
+                              match_field: 'stream',
                               regex_pattern: event.currentTarget.value,
                             })
                           }

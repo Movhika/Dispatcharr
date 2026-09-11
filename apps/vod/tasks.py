@@ -19,6 +19,10 @@ import time
 
 logger = logging.getLogger(__name__)
 
+VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY = (
+    "vod_profile_selection:rebuild_after_provider_refresh"
+)
+
 
 VOD_PROFILE_FINGERPRINT_FIELDS = (
     "stream_id",
@@ -101,6 +105,46 @@ def _provider_vod_fingerprint(rows):
         for index, value in enumerate(row_digest):
             digest[index] ^= value
     return f"{len(rows)}:{bytes(digest).hex()}"
+
+
+def _remember_profile_rebuild_after_vod_refresh():
+    """Record one catalog invalidation without publishing a premature task."""
+    from .catalog_cache import safe_cache_set
+
+    safe_cache_set(
+        VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY,
+        True,
+        timeout=6 * 60 * 60,
+    )
+
+
+def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
+    """Publish one profile batch after every currently running refresh ended."""
+    from django.core.cache import cache
+
+    from .catalog_cache import safe_cache_get
+
+    if M3UAccount.objects.filter(
+        is_active=True,
+        status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
+    ).exists():
+        return False
+    if not safe_cache_get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY, False):
+        return False
+
+    try:
+        cache.delete(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY)
+    except Exception:
+        pass
+
+    from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+    return enqueue_all_profile_selection_rebuilds(
+        trigger_reason=(
+            "One or more completed VOD provider refreshes changed the source "
+            "catalog"
+        )
+    )
 
 
 @shared_task(bind=True, max_retries=180, track_started=True)
@@ -311,51 +355,14 @@ def reconcile_vod_profile_selection_queue():
         PROFILE_REBUILD_ENQUEUE_KEY,
         _progress_payload,
         enqueue_all_profile_selection_rebuilds,
-        profile_selection_signature,
     )
-    from .serializers import VODAccessPolicySerializer
 
-    stale_ready = []
-    mode_reader = VODAccessPolicySerializer()
-    for policy in VODAccessPolicy.objects.filter(
-        is_active=True,
-        selection_status=VODAccessPolicy.SelectionStatus.READY,
-    ):
-        counts = policy.selection_counts or {}
-        active_mode = mode_reader.get_selection_active_mode(policy)
-        active_signature = counts.get("profile_signature")
-        reasons = []
-        if not policy.active_selection_generation:
-            reasons.append("no prepared catalog generation exists")
-        if active_mode and active_mode != policy.export_mode:
-            reasons.append("the saved Compact/Variants mode changed")
-        if (
-            active_signature
-            and active_signature != profile_selection_signature(policy)
-        ):
-            reasons.append("the saved profile rules changed")
-        if reasons:
-            stale_ready.append((policy.pk, "; ".join(reasons)))
-
+    # READY is authoritative. Code/schema changes must not masquerade as a
+    # user save merely because a newly calculated signature differs from the
+    # signature stored by an older version. Profile saves and completed VOD
+    # imports explicitly move affected profiles to Pending; this watchdog only
+    # recovers work which was already Pending/Building and then got stranded.
     repaired_ready = 0
-    for policy_id, reason in stale_ready:
-        repaired_ready += VODAccessPolicy.objects.filter(
-            pk=policy_id,
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.READY,
-        ).update(
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            selection_started_at=timezone.now(),
-            selection_error="",
-            selection_progress=_progress_payload(
-                "Waiting for worker",
-                0,
-                queue="celery",
-                task_name=BATCH_PROFILE_TASK_NAME,
-                batch=True,
-                trigger_reason=f"Automatic repair: {reason}",
-            ),
-        )
 
     try:
         rebuild_lock_owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
@@ -490,8 +497,12 @@ def reconcile_vod_profile_selection_queue():
                 cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
         except Exception:
             pass
-    if repaired_ready or stranded or stalled_building:
+    if stranded or stalled_building:
         republished = enqueue_all_profile_selection_rebuilds(pending_only=True)
+
+    deferred_refresh_published = (
+        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
+    )
 
     return {
         "stale_ready_requeued": repaired_ready,
@@ -500,6 +511,7 @@ def reconcile_vod_profile_selection_queue():
             policy_id for policy_id, _ in stalled_building
         ],
         "republished": republished,
+        "deferred_refresh_published": deferred_refresh_published,
     }
 
 
@@ -740,6 +752,7 @@ def _refresh_vod_content_impl(account_id):
                 )
                 send_m3u_update(account_id, "vod_refresh", 100, status="error",
                                message=f"VOD refresh failed: {message}")
+                _enqueue_deferred_profile_rebuild_after_vod_refreshes()
                 return f"VOD refresh failed: {message}"
 
             movie_categories, series_categories = category_maps
@@ -843,15 +856,8 @@ def _refresh_vod_content_impl(account_id):
             # Most import writes use bulk_create/bulk_update and intentionally
             # skip model signals. Invalidate once per changed completed scan.
             from apps.vod.catalog_cache import bump_catalog_generation
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
-
             bump_catalog_generation()
-            enqueue_all_profile_selection_rebuilds(
-                trigger_reason=(
-                    f'VOD refresh for M3U account "{account.name}" changed '
-                    "the source catalog"
-                )
-            )
+            _remember_profile_rebuild_after_vod_refresh()
         else:
             logger.info(
                 "VOD output catalog for account %s is unchanged; profile rebuild skipped",
@@ -889,6 +895,7 @@ def _refresh_vod_content_impl(account_id):
         )
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
                        message=success_message)
+        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
 
         return f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds"
 
@@ -905,6 +912,7 @@ def _refresh_vod_content_impl(account_id):
         )
         send_m3u_update(account_id, "vod_refresh", 100, status="error",
                        message=error_message)
+        _enqueue_deferred_profile_rebuild_after_vod_refreshes()
 
         return f"VOD refresh failed: {str(e)}"
 

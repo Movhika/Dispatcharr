@@ -87,6 +87,7 @@ const M3UGroupRules = ({
   mode = 'account',
   value = [],
   onChange,
+  onApplied,
   accountOptions = [],
   categoryRows = [],
 }) => {
@@ -121,7 +122,6 @@ const M3UGroupRules = ({
 
   const commitRules = (next) => {
     setRules(next);
-    if (profileMode) onChange?.(next);
   };
 
   const updateLocal = (id, values) => {
@@ -206,6 +206,21 @@ const M3UGroupRules = ({
     };
   };
 
+  const applyProfileDraft = () => {
+    const applied = rules.map((rule, index) => ({
+      ...rulePayload(rule),
+      order: index,
+    }));
+    onChange?.(applied);
+    showNotification({
+      title: 'Import rules applied to profile draft',
+      message:
+        'Review the resulting source selection, then save the VOD profile to rebuild its output catalog.',
+      color: 'green',
+    });
+    onApplied?.();
+  };
+
   const saveRule = async (rule, notify = true) => {
     const payload = rulePayload(rule);
     if (!payload) return null;
@@ -239,7 +254,9 @@ const M3UGroupRules = ({
             name: row.categoryName,
             account_name: row.accountName,
             currently_enabled: row.enabled,
-            would_enable: payload.action === 'enable',
+            would_enable: row.explicit
+              ? row.enabled
+              : payload.action === 'enable',
             item_count: row.item_count || 0,
           }));
         setPreview({ count: results.length, results });
@@ -344,25 +361,36 @@ const M3UGroupRules = ({
           </Text>
           <Text c="dimmed" size="xs">
             {profileMode
-              ? 'First matching rule wins. These rules select globally enabled provider categories now and after future refreshes. They are stored when the VOD profile is saved.'
+              ? 'First matching rule wins. Changes remain a local rule draft until Save and apply is selected. The main Save profile button then stores the profile and starts one catalog rebuild.'
               : 'First matching rule wins. Use an earlier disable or ignore rule for exclusions. Existing choices and learned or manual metadata are not changed unless you preview and explicitly apply a rule.'}
           </Text>
         </div>
-        <Button
-          size="xs"
-          variant="default"
-          leftSection={<Plus size={14} />}
-          onClick={addRule}
-          loading={loading}
-        >
-          Add rule
-        </Button>
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            leftSection={<Plus size={14} />}
+            onClick={addRule}
+            loading={loading}
+          >
+            Add rule
+          </Button>
+          {profileMode && (
+            <Button
+              size="xs"
+              leftSection={<Save size={14} />}
+              onClick={applyProfileDraft}
+            >
+              Save and apply
+            </Button>
+          )}
+        </Group>
       </Group>
 
       {rules.length === 0 ? (
         <Alert color="gray" variant="light">
           {profileMode
-            ? 'No rule configured. The profile default decides unmatched categories.'
+            ? 'No rule configured. Save and apply an empty draft to clear existing profile rules; the profile default decides unmatched categories.'
             : 'No rule configured. New unmatched groups are imported inactive.'}
         </Alert>
       ) : (
@@ -637,8 +665,9 @@ const M3UGroupRules = ({
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            This preview evaluates the complete ordered rule set. Only rows for
-            which this rule is the first match are shown.
+            This preview evaluates the complete ordered draft without changing
+            the profile. Only rows for which this rule is the first match are
+            shown.
           </Text>
           <Text fw={600}>
             {previewLoading

@@ -1111,10 +1111,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 <Paper withBorder p="lg" radius="md">
                   <Stack>
                     <Alert color="blue" variant="light">
-                      The M3U account selection is the global source boundary.
-                      This profile can narrow those categories per account and
-                      keeps applying its ordered import rules when providers add
-                      new categories.
+                      Only categories enabled in the M3U account are available
+                      here. This profile can narrow that shared catalog for its
+                      users. Manual Allow/Block choices override ordered import
+                      rules. Rule edits take effect in this editor only after
+                      Save and apply; Save profile stores the complete profile
+                      and starts one rebuild. New provider categories are
+                      evaluated after their VOD refresh completes.
                     </Alert>
                     <Tabs defaultValue="movie">
                       <TabsList>
@@ -1239,10 +1242,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 )}
                 {selectionAvailable && !selectedProfile?.selection_current && (
                   <Alert color="blue">
-                    Your saved rules are not active in this preview yet. It is
-                    showing the last completed catalog while the update runs, so
-                    newly excluded sources can remain visible temporarily. No
-                    manual retry is required.
+                    The last completed catalog remains available while this
+                    profile's recorded background task prepares the saved
+                    changes. The preview switches atomically when that task
+                    completes. No manual retry is required.
                   </Alert>
                 )}
                 <Group align="flex-end" wrap="wrap">

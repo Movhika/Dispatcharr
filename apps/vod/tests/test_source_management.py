@@ -70,6 +70,9 @@ from apps.vod.profile_selection import (
     prepared_relation_ids,
 )
 from apps.vod.tasks import (
+    VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY,
+    _enqueue_deferred_profile_rebuild_after_vod_refreshes,
+    _remember_profile_rebuild_after_vod_refresh,
     rebuild_all_vod_profile_selections,
     rebuild_vod_profile_selection,
     reconcile_vod_profile_selection_queue,
@@ -1406,6 +1409,64 @@ class VODSourceManagementTests(TestCase):
             VODAccessPolicy.SelectionStatus.READY,
         )
         enqueue.assert_not_called()
+
+    def test_watchdog_does_not_treat_code_signature_as_a_profile_save(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_active=False
+        )
+        build_vod_profile_selection(self.policy.id)
+        self.policy.refresh_from_db()
+        counts = {**self.policy.selection_counts}
+        counts["profile_signature"] = "prepared-by-an-older-version"
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_counts=counts
+        )
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stale_ready_requeued"], 0)
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        self.assertTrue(
+            VODAccessPolicySerializer(self.policy).data["selection_current"]
+        )
+        enqueue.assert_not_called()
+
+    def test_provider_profile_batch_waits_until_all_refreshes_finished(self):
+        from django.core.cache import cache
+
+        self.account_a.status = M3UAccount.Status.PARSING
+        self.account_a.save(update_fields=["status"])
+        _remember_profile_rebuild_after_vod_refresh()
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            self.assertFalse(
+                _enqueue_deferred_profile_rebuild_after_vod_refreshes()
+            )
+            enqueue.assert_not_called()
+
+            self.account_a.status = M3UAccount.Status.SUCCESS
+            self.account_a.save(update_fields=["status"])
+            enqueue.return_value = True
+            self.assertTrue(
+                _enqueue_deferred_profile_rebuild_after_vod_refreshes()
+            )
+
+        enqueue.assert_called_once_with(
+            trigger_reason=(
+                "One or more completed VOD provider refreshes changed the "
+                "source catalog"
+            )
+        )
+        self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))
 
     def test_profile_preview_filters_prepared_rows(self):
         build_vod_profile_selection(self.policy.id)

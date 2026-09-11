@@ -27,6 +27,7 @@ const M3UDeveloperCatalog = ({
   lockedScope = false,
   initialCategory = '',
   nameTransform = null,
+  summaryOnly = false,
 }) => {
   const [scope, setScope] = useState(initialScope);
   const [search, setSearch] = useState('');
@@ -75,8 +76,14 @@ const M3UDeveloperCatalog = ({
 
   return (
     <Stack pt="md">
-      <Alert icon={<Info size={16} />} color="yellow" variant="light">
-        This is a read-only view of the catalog stored after the last import.
+      <Alert
+        icon={<Info size={16} />}
+        color={summaryOnly ? 'blue' : 'yellow'}
+        variant="light"
+      >
+        {summaryOnly
+          ? 'Read-only title preview of content stored by the last completed import.'
+          : 'This is a read-only view of the catalog stored after the last import.'}
       </Alert>
       <Group justify="space-between" align="end">
         {!lockedScope && (
@@ -94,8 +101,8 @@ const M3UDeveloperCatalog = ({
           />
         )}
         <TextInput
-          label="Search name or provider ID"
-          placeholder="Name or provider ID"
+          label={summaryOnly ? 'Search title' : 'Search name or provider ID'}
+          placeholder={summaryOnly ? 'Title' : 'Name or provider ID'}
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
           style={{ flex: 1 }}
@@ -122,42 +129,52 @@ const M3UDeveloperCatalog = ({
         </Button>
       </Group>
       <Text size="sm" c="dimmed">
-        {result.count || 0} parsed entries
+        {result.count || 0}{' '}
+        {summaryOnly ? 'imported content entries' : 'parsed entries'}
       </Text>
       <ScrollArea h={lockedScope ? '62vh' : '55vh'}>
-        <Table striped highlightOnHover withTableBorder stickyHeader miw={760}>
+        <Table
+          striped
+          highlightOnHover
+          withTableBorder
+          stickyHeader
+          miw={summaryOnly ? 420 : 760}
+        >
           <TableThead>
             <TableTr>
-              <TableTh>Name</TableTh>
-              {nameTransform && <TableTh>Output name</TableTh>}
-              <TableTh w="55%">Properties</TableTh>
+              <TableTh>{summaryOnly ? 'Title' : 'Name'}</TableTh>
+              {!summaryOnly && nameTransform && <TableTh>Output name</TableTh>}
+              {!summaryOnly && <TableTh w="55%">Properties</TableTh>}
             </TableTr>
           </TableThead>
           <TableTbody>
             {(result.results || []).map((row, index, rows) => (
               <React.Fragment key={`${scope}:${row.id}`}>
-                {(index === 0 || rows[index - 1]?.group !== row.group) && (
-                  <TableTr
-                    style={{
-                      position: 'sticky',
-                      top: 40,
-                      zIndex: 2,
-                      background: 'var(--mantine-color-dark-6)',
-                    }}
-                  >
-                    <TableTh colSpan={nameTransform ? 3 : 2}>
-                      {row.group || 'Uncategorized'}
-                    </TableTh>
-                  </TableTr>
-                )}
+                {!summaryOnly &&
+                  (index === 0 || rows[index - 1]?.group !== row.group) && (
+                    <TableTr
+                      style={{
+                        position: 'sticky',
+                        top: 40,
+                        zIndex: 2,
+                        background: 'var(--mantine-color-dark-6)',
+                      }}
+                    >
+                      <TableTh colSpan={nameTransform ? 3 : 2}>
+                        {row.group || 'Uncategorized'}
+                      </TableTh>
+                    </TableTr>
+                  )}
                 <TableTr>
                   <TableTd>
                     <Text fw={500}>{row.name || '—'}</Text>
-                    <Text size="xs" c="dimmed">
-                      Provider ID: {row.provider_id || '—'} · Internal ID:{' '}
-                      {row.id}
-                    </Text>
-                    {row.url && (
+                    {!summaryOnly && (
+                      <Text size="xs" c="dimmed">
+                        Provider ID: {row.provider_id || '—'} · Internal ID:{' '}
+                        {row.id}
+                      </Text>
+                    )}
+                    {!summaryOnly && row.url && (
                       <Code
                         fz="xs"
                         style={{ wordBreak: 'break-all', whiteSpace: 'normal' }}
@@ -166,20 +183,22 @@ const M3UDeveloperCatalog = ({
                       </Code>
                     )}
                   </TableTd>
-                  {nameTransform && (
+                  {!summaryOnly && nameTransform && (
                     <TableTd>{nameTransform(row.name || '', row)}</TableTd>
                   )}
-                  <TableTd>
-                    <Code block>
-                      {JSON.stringify(row.properties || {}, null, 2)}
-                    </Code>
-                  </TableTd>
+                  {!summaryOnly && (
+                    <TableTd>
+                      <Code block>
+                        {JSON.stringify(row.properties || {}, null, 2)}
+                      </Code>
+                    </TableTd>
+                  )}
                 </TableTr>
               </React.Fragment>
             ))}
             {!loading && (result.results || []).length === 0 && (
               <TableTr>
-                <TableTd colSpan={nameTransform ? 3 : 2}>
+                <TableTd colSpan={summaryOnly ? 1 : nameTransform ? 3 : 2}>
                   <Text ta="center" c="dimmed" py="xl">
                     No parsed entries found.
                   </Text>

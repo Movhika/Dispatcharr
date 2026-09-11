@@ -59,6 +59,23 @@ RELATION_SELECTION_FIELDS = {
 }
 
 
+def invalidate_and_schedule_vod_profiles(trigger_reason=None):
+    """Invalidate once, but never publish a profile batch mid-import."""
+    bump_catalog_generation()
+    if M3UAccount.objects.filter(
+        is_active=True,
+        status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
+    ).exists():
+        from .tasks import _remember_profile_rebuild_after_vod_refresh
+
+        _remember_profile_rebuild_after_vod_refresh()
+        return
+
+    from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+    enqueue_all_profile_selection_rebuilds(trigger_reason=trigger_reason)
+
+
 @receiver(pre_save, sender=M3UAccount)
 def remember_m3u_selection_changes(sender, instance, **kwargs):
     """Detect relevant changes even when callers use a full model save."""
@@ -90,10 +107,9 @@ def invalidate_vod_catalog(
     if sender is VODSourceAsset and created:
         return
     if sender is VODSourceAsset:
-        bump_catalog_generation()
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-        enqueue_all_profile_selection_rebuilds()
+        invalidate_and_schedule_vod_profiles(
+            "VOD source metadata was changed manually"
+        )
         return
     if sender in (M3UMovieRelation, M3USeriesRelation, M3UEpisodeRelation) and (
         update_fields and set(update_fields) == {"source_asset"}
@@ -108,10 +124,9 @@ def invalidate_vod_catalog(
         return
     if sender is M3UAccount:
         if signal is post_delete:
-            bump_catalog_generation()
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-            enqueue_all_profile_selection_rebuilds()
+            invalidate_and_schedule_vod_profiles(
+                "An M3U account containing VOD sources was deleted"
+            )
             return
         changed_fields = set(update_fields or [])
         if changed_fields and changed_fields.isdisjoint(M3U_SELECTION_FIELDS):
@@ -122,10 +137,9 @@ def invalidate_vod_catalog(
             instance, "_vod_selection_changed", True
         ):
             return
-        bump_catalog_generation()
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-        enqueue_all_profile_selection_rebuilds()
+        invalidate_and_schedule_vod_profiles(
+            "M3U account VOD selection settings changed"
+        )
         return
     if sender is M3UEpisodeRelation:
         # Episode inventory and playback metadata change the normal XC response,
@@ -161,10 +175,9 @@ def invalidate_vod_catalog(
             relevant_fields
         ):
             return
-        bump_catalog_generation()
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-        enqueue_all_profile_selection_rebuilds()
+        invalidate_and_schedule_vod_profiles(
+            "The selectable VOD source catalog changed"
+        )
 
 
 @receiver(m2m_changed, sender=VODAccessPolicy.users.through)

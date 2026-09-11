@@ -111,19 +111,6 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
     ? groupStates.find((group) => group.channel_group === previewGroupId)
     : null;
 
-  const previewOutputName = (name) => {
-    const properties = previewGroup?.custom_properties || {};
-    const pattern = properties.name_regex_pattern || '';
-    if (!pattern) return name;
-    try {
-      return name.replace(
-        new RegExp(pattern, 'g'),
-        properties.name_replace_pattern ?? ''
-      );
-    } catch {
-      return name;
-    }
-  };
   const applyGroupChange = (nextGroupState) => {
     setGroupStates((prev) =>
       prev.map((state) =>
@@ -764,7 +751,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
               </TableTd>
               <TableTd>
                 <Group gap={4} justify="center" wrap="nowrap">
-                  <Tooltip label="Preview imported streams" withArrow>
+                  <Tooltip label="Preview imported content" withArrow>
                     <ActionIcon
                       variant="subtle"
                       onClick={() => setPreviewGroupId(group.channel_group)}
@@ -801,7 +788,11 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
       <Modal
         opened={!!previewGroup}
         onClose={() => setPreviewGroupId(null)}
-        title={previewGroup ? `${previewGroup.name} streams` : 'Group streams'}
+        title={
+          previewGroup
+            ? `Preview imported content: ${previewGroup.name}`
+            : 'Preview imported content'
+        }
         size="85vw"
       >
         {previewGroup && (
@@ -810,7 +801,7 @@ const LiveGroupFilter = ({ playlist, groupStates, setGroupStates }) => {
             initialScope="live"
             lockedScope
             initialCategory={String(previewGroup.channel_group)}
-            nameTransform={previewOutputName}
+            summaryOnly
           />
         )}
       </Modal>
