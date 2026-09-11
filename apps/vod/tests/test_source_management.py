@@ -909,7 +909,10 @@ class VODSourceManagementTests(TestCase):
             response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertTrue(response.data[0]["selection_current"])
+        serialized_policy = next(
+            row for row in response.data if row["id"] == self.policy.pk
+        )
+        self.assertTrue(serialized_policy["selection_current"])
         enqueue.assert_not_called()
 
     def test_profile_build_does_not_overlap_an_active_build(self):
