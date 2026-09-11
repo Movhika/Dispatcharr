@@ -29,7 +29,19 @@ SELECTION_CATALOG_MODELS = (
     M3UVODCategoryRelation,
 )
 
-M3U_SELECTION_FIELDS = {"is_active", "priority", "custom_properties"}
+M3U_SELECTION_SCALAR_FIELDS = {"is_active", "priority"}
+M3U_SELECTION_FIELDS = {*M3U_SELECTION_SCALAR_FIELDS, "custom_properties"}
+# Live and VOD account state intentionally share one JSON field.  Compare only
+# settings which can affect whether VOD is imported/selected; refresh timings,
+# live catalog counters and other operational metadata must never invalidate
+# every prepared VOD output profile.
+M3U_VOD_SELECTION_PROPERTY_KEYS = {
+    "enable_vod",
+    "auto_enable_new_groups_vod",
+    "auto_enable_new_groups_series",
+    "use_group_rules_movie",
+    "use_group_rules_series",
+}
 RELATION_SELECTION_FIELDS = {
     M3UMovieRelation: {
         "m3u_account",
@@ -85,10 +97,21 @@ def remember_m3u_selection_changes(sender, instance, **kwargs):
     previous = sender.objects.filter(pk=instance.pk).values(
         *M3U_SELECTION_FIELDS
     ).first()
-    instance._vod_selection_changed = previous is None or any(
+    if previous is None:
+        instance._vod_selection_changed = True
+        return
+
+    scalar_changed = any(
         previous[field] != getattr(instance, field)
-        for field in M3U_SELECTION_FIELDS
+        for field in M3U_SELECTION_SCALAR_FIELDS
     )
+    previous_properties = previous.get("custom_properties") or {}
+    current_properties = instance.custom_properties or {}
+    vod_properties_changed = any(
+        previous_properties.get(key) != current_properties.get(key)
+        for key in M3U_VOD_SELECTION_PROPERTY_KEYS
+    )
+    instance._vod_selection_changed = scalar_changed or vod_properties_changed
 
 
 @receiver(post_save)
@@ -133,9 +156,7 @@ def invalidate_vod_catalog(
             # Playback counters and refresh status/last_message updates are
             # frequent and do not change VOD visibility or ranking.
             return
-        if not changed_fields and not getattr(
-            instance, "_vod_selection_changed", True
-        ):
+        if not getattr(instance, "_vod_selection_changed", True):
             return
         invalidate_and_schedule_vod_profiles(
             "M3U account VOD selection settings changed"

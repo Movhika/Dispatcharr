@@ -1438,6 +1438,41 @@ class VODSourceManagementTests(TestCase):
         )
         enqueue.assert_not_called()
 
+    def test_live_refresh_account_metadata_does_not_rebuild_vod_profiles(self):
+        self.account_a.custom_properties = {
+            **(self.account_a.custom_properties or {}),
+            "live_catalog_counts": {
+                "provider_total": 120,
+                "selected_total": 100,
+            },
+            "refresh_timings": {
+                "live_seconds": 4.2,
+                "live_completed_at": timezone.now().isoformat(),
+            },
+        }
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            self.account_a.save(update_fields=["custom_properties"])
+
+        enqueue.assert_not_called()
+
+    def test_vod_account_setting_still_rebuilds_vod_profiles(self):
+        self.account_a.custom_properties = {
+            **(self.account_a.custom_properties or {}),
+            "enable_vod": True,
+        }
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            self.account_a.save(update_fields=["custom_properties"])
+
+        enqueue.assert_called_once_with(
+            trigger_reason="M3U account VOD selection settings changed"
+        )
+
     def test_provider_profile_batch_waits_until_all_refreshes_finished(self):
         from django.core.cache import cache
 

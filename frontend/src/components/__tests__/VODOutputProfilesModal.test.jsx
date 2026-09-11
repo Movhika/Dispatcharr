@@ -271,7 +271,11 @@ describe('VODOutputProfilesModal', () => {
     expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
     expect(screen.getByText(/Movies: 78 output entries/)).toBeInTheDocument();
     expect(screen.getByText(/Series: 42 output entries/)).toBeInTheDocument();
-    expect(screen.getByText(/Catalog ready · Compact/)).toBeInTheDocument();
+    expect(screen.getByText('Compact')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated:/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Currently active catalog:/)
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Retry catalog update' })
     ).not.toBeInTheDocument();
@@ -528,7 +532,7 @@ describe('VODOutputProfilesModal', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('identifies a running catalog batch and why this profile is pending', async () => {
+  it('shows only user-facing progress for a running catalog batch', async () => {
     storeProfiles = [
       {
         ...profile,
@@ -554,17 +558,14 @@ describe('VODOutputProfilesModal', () => {
 
     expect(
       await screen.findByText(
-        /catalog batch is running; this profile is waiting for its turn · profile 2 of 3/
+        /catalog batch is running; this profile is waiting for its turn · Profile 2 of 3/
       )
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Assigned Celery task:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Trigger:/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Assigned Celery task: apps\.vod\.tasks\.rebuild_all_vod_profile_selections/
-      )
-    ).toHaveTextContent(/Task ID: catalog-batch-task-id · State: STARTED/);
-    expect(
-      screen.getByText(/Trigger: Automatic recovery:/)
-    ).toBeInTheDocument();
+      screen.queryByText(/Movies: 78 output entries/)
+    ).not.toBeInTheDocument();
   });
 
   it('shows catalog build progress while a previous generation stays available', async () => {
@@ -599,11 +600,8 @@ describe('VODOutputProfilesModal', () => {
 
     expect(
       await screen.findByText(
-        /Movies: writing the selected output catalog in database batches · phase 2 of 5 · attempt 2 · 36% overall/
+        /Movies: writing the selected output catalog in database batches · 36% complete/
       )
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Restarted because: The VOD catalog changed/)
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText('Catalog preparation progress')
@@ -612,10 +610,8 @@ describe('VODOutputProfilesModal', () => {
       screen.getByText(/last completed catalog remains available/)
     ).toBeInTheDocument();
     expect(screen.getByText(/No manual retry is required/)).toBeInTheDocument();
-    expect(screen.getByText(/State: RUNNING/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Original trigger: A source metadata field changed/)
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/State: RUNNING/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Original trigger:/)).not.toBeInTheDocument();
   });
 
   it('distinguishes an active variants catalog from saved compact settings', async () => {

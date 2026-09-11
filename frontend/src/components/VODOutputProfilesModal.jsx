@@ -102,6 +102,9 @@ const outputModeLabel = (mode) =>
       ? 'Provider data'
       : 'Unknown mode';
 
+const catalogModeLabel = (mode) =>
+  mode === 'compact' ? 'Compact' : mode === 'variants' ? 'All' : 'Unknown';
+
 const buildPhaseDescription = (progress) => {
   const descriptions = {
     1: 'Movies: applying profile rules and ranking eligible sources',
@@ -722,6 +725,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
+  const selectionUpdating = ['pending', 'building'].includes(
+    selectedProfile?.selection_status
+  );
   const buildPhase = buildPhaseDescription(buildProgress);
   const buildPercent = (() => {
     const value = Number(buildProgress.percent);
@@ -732,8 +738,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     selectedProfile?.selection_active_mode ||
     counts.export_mode ||
     (selectedProfile?.selection_current ? selectedProfile.export_mode : '');
-  const targetMode =
-    buildProgress.target_export_mode || selectedProfile?.export_mode || '';
   const buildStartedAt =
     selectedProfile?.selection_status === 'pending'
       ? buildProgress.queued_at ||
@@ -743,18 +747,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const buildElapsedSeconds = buildStartedAt
     ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
     : 0;
-  const lastBuildSeconds = (() => {
-    const measured = Number(counts.prepared_seconds);
-    if (Number.isFinite(measured) && measured >= 0) return measured;
-    const started = new Date(
-      selectedProfile?.selection_started_at || ''
-    ).getTime();
-    const completed = new Date(
-      selectedProfile?.selection_completed_at || ''
-    ).getTime();
-    if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
-    return Math.max((completed - started) / 1000, 0);
-  })();
+  const lastUpdatedAt =
+    counts.completed_at || selectedProfile?.selection_completed_at || '';
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
@@ -801,13 +795,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         'The prepared XC catalog no longer matches the source state.',
     };
   })();
-  const taskName =
-    buildProgress.task_name ||
-    (buildProgress.batch === true
-      ? 'apps.vod.tasks.rebuild_all_vod_profile_selections'
-      : buildProgress.batch === false
-        ? 'apps.vod.tasks.rebuild_vod_profile_selection'
-        : 'not recorded by the previous version');
   const batchWaitingForTurn = Boolean(
     selectedProfile?.selection_status === 'pending' &&
     buildProgress.batch &&
@@ -852,7 +839,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 setCreating(false);
                 setProfileId(value || '');
               }}
-              style={{ flex: 1, minWidth: 260 }}
+              style={{ flex: '0 1 460px', minWidth: 260 }}
             />
             {selectedProfile && (
               <Tooltip label={selectionState.description} multiline maw={360}>
@@ -894,55 +881,43 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             </Tooltip>
           </Group>
 
-          <Group gap="xs" wrap="wrap">
-            <Text size="sm" fw={500}>
-              {['pending', 'building'].includes(
-                selectedProfile?.selection_status
-              )
-                ? 'Currently active catalog:'
-                : 'Active catalog:'}
-            </Text>
-            {selectionAvailable ? (
-              <Badge variant="light" color="gray">
-                {outputModeLabel(activeMode)}
-              </Badge>
-            ) : (
-              <Text size="sm" c="dimmed">
-                None yet
-              </Text>
-            )}
-            {['pending', 'building'].includes(
-              selectedProfile?.selection_status
-            ) && (
-              <>
-                <Text size="sm" c="dimmed">
-                  · Building:
-                </Text>
-                <Badge variant="light" color="blue">
-                  {outputModeLabel(targetMode)}
+          {selectedProfile && (
+            <Group gap="xs" wrap="wrap">
+              {selectionAvailable ? (
+                <Badge variant="light" color="gray">
+                  {catalogModeLabel(activeMode)}
                 </Badge>
-              </>
-            )}
-          </Group>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No catalog prepared yet
+                </Text>
+              )}
+              {lastUpdatedAt && (
+                <Text size="sm" c="dimmed">
+                  Last updated: {new Date(lastUpdatedAt).toLocaleString()}
+                </Text>
+              )}
+            </Group>
+          )}
 
-          <Group gap="lg" wrap="wrap">
-            <Text size="sm">
-              Movies: {counts.movies?.output_entries || 0} output entries ·{' '}
-              {counts.movies?.canonical_titles || 0} titles
-            </Text>
-            <Text size="sm">
-              Series: {counts.series?.output_entries || 0} output entries ·{' '}
-              {counts.series?.canonical_titles || 0} titles
-            </Text>
-            <Text size="sm">
-              Eligible sources: {counts.eligible_sources || 0} · Unknown
-              metadata: {counts.unknown_metadata || 0}
-            </Text>
-          </Group>
+          {!selectionUpdating && (
+            <Group gap="lg" wrap="wrap">
+              <Text size="sm">
+                Movies: {counts.movies?.output_entries || 0} output entries ·{' '}
+                {counts.movies?.canonical_titles || 0} titles
+              </Text>
+              <Text size="sm">
+                Series: {counts.series?.output_entries || 0} output entries ·{' '}
+                {counts.series?.canonical_titles || 0} titles
+              </Text>
+              <Text size="sm">
+                Eligible sources: {counts.eligible_sources || 0} · Unknown
+                metadata: {counts.unknown_metadata || 0}
+              </Text>
+            </Group>
+          )}
 
-          {['pending', 'building'].includes(
-            selectedProfile?.selection_status
-          ) && (
+          {selectionUpdating && (
             <Stack gap={3}>
               <Text size="sm" fw={500}>
                 {batchWaitingForTurn
@@ -951,17 +926,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     (selectedProfile.selection_status === 'pending'
                       ? 'Waiting for worker'
                       : 'Preparing catalog')}
-                {buildProgress.stage_index && buildProgress.stage_count
-                  ? ` · phase ${buildProgress.stage_index} of ${buildProgress.stage_count}`
-                  : ''}
                 {buildProgress.batch_position && buildProgress.batch_total
-                  ? ` · profile ${buildProgress.batch_position} of ${buildProgress.batch_total}`
-                  : ''}
-                {Number(buildProgress.attempt) > 1
-                  ? ` · attempt ${Number(buildProgress.attempt)}`
+                  ? ` · Profile ${buildProgress.batch_position} of ${buildProgress.batch_total}`
                   : ''}
                 {buildPercent !== null
-                  ? ` · ${Math.round(buildPercent)}% overall`
+                  ? ` · ${Math.round(buildPercent)}% complete`
                   : ''}
                 {` · ${formatDuration(buildElapsedSeconds)} elapsed`}
               </Text>
@@ -973,46 +942,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                   size="sm"
                 />
               )}
-              <Text size="xs" c="dimmed">
-                Assigned Celery task: {taskName} · Queue:{' '}
-                {buildProgress.queue || 'celery'} · Task ID:{' '}
-                {buildProgress.task_id || 'not published yet'} · State:{' '}
-                {selectedProfile.selection_task_state || 'unknown'}
-              </Text>
-              <Text size="xs" c="dimmed">
-                Trigger:{' '}
-                {buildProgress.trigger_reason ||
-                  'not recorded by the previous version'}
-              </Text>
-              {buildProgress.restart_reason && (
-                <Text size="xs" c="yellow">
-                  Restarted because: {buildProgress.restart_reason}
-                </Text>
-              )}
-              {buildProgress.original_trigger_reason &&
-                buildProgress.original_trigger_reason !==
-                  buildProgress.trigger_reason && (
-                  <Text size="xs" c="dimmed">
-                    Original trigger: {buildProgress.original_trigger_reason}
-                  </Text>
-                )}
             </Stack>
           )}
-
-          {selectedProfile?.selection_status === 'ready' &&
-            lastBuildSeconds !== null && (
-              <Text size="sm" c="dimmed">
-                Catalog ready · {outputModeLabel(activeMode)} · prepared in{' '}
-                {formatDuration(lastBuildSeconds)}
-                {counts.completed_at || selectedProfile.selection_completed_at
-                  ? ` · completed ${new Date(
-                      counts.completed_at ||
-                        selectedProfile.selection_completed_at
-                    ).toLocaleString()}`
-                  : ''}
-                .
-              </Text>
-            )}
 
           {selectedProfile?.selection_status === 'ready' &&
             selectionAvailable &&

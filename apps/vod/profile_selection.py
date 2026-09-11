@@ -336,6 +336,12 @@ def enqueue_profile_selection_rebuild(
 
         try:
             result = rebuild_vod_profile_selection.delay(policy_id)
+            logger.info(
+                "Queued VOD profile selection task %s for profile %s (%s)",
+                result.id,
+                policy_id,
+                trigger_reason,
+            )
             queued_at = timezone.now().isoformat()
             VODAccessPolicy.objects.filter(
                 pk=policy_id,
@@ -452,6 +458,11 @@ def enqueue_all_profile_selection_rebuilds(
             return
         try:
             result = rebuild_all_vod_profile_selections.delay()
+            logger.info(
+                "Queued VOD profile catalog batch %s (%s)",
+                result.id,
+                trigger_reason,
+            )
             try:
                 cache.set(
                     PROFILE_REBUILD_ENQUEUE_KEY,
