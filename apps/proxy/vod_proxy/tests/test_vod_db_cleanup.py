@@ -142,6 +142,7 @@ class BuildVodStatsDbCleanupTests(SimpleTestCase):
             "content_uuid": "movie-uuid",
             "active_streams": "0",
         }
+        redis_client.get.return_value = None
         redis_client.exists.return_value = False
 
         from apps.proxy.vod_proxy.views import build_vod_stats_data

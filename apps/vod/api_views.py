@@ -1110,7 +1110,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
         )
 
     @action(detail=False, methods=["put"], url_path="settings")
-    def settings(self, request):
+    def update_settings(self, request):
         self._admin_only(request)
         raw_languages = request.data.get("languages", ["de-DE", "en-US"])
         if not isinstance(raw_languages, list) or not 1 <= len(raw_languages) <= 2:

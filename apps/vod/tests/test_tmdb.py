@@ -176,7 +176,7 @@ class VODMetadataAPITests(TestCase):
         )
         force_authenticate(request, user=self.admin)
 
-        response = VODMetadataViewSet.as_view({"put": "settings"})(request)
+        response = VODMetadataViewSet.as_view({"put": "update_settings"})(request)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["settings"]["languages"], ["de-DE", "en-US"])
