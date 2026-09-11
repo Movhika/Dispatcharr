@@ -391,6 +391,50 @@ describe('useVODStore', () => {
     );
   });
 
+  it('ignores a delayed heartbeat after the same task is already ready', () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'ready',
+          active_selection_generation: 'catalog-build',
+          selection_progress: {
+            task_id: 'catalog-task',
+            build_generation: 'catalog-build',
+            phase: 'Ready',
+            percent: 100,
+          },
+        },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.applyAccessPolicyProgress({
+        profile_id: 1,
+        selection_status: 'building',
+        selection_progress: {
+          task_id: 'catalog-task',
+          build_generation: 'catalog-build',
+          phase: 'Selecting movies sources',
+          percent: 20,
+        },
+      });
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        active_selection_generation: 'catalog-build',
+        selection_progress: expect.objectContaining({
+          phase: 'Ready',
+          percent: 100,
+        }),
+      })
+    );
+  });
+
   it('does not let a stale save response replace its optimistic build status', () => {
     useVODStore.setState({
       accessPolicies: [

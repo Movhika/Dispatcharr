@@ -98,6 +98,17 @@ const outputModeLabel = (mode) =>
       ? 'Variants'
       : 'Unknown mode';
 
+const buildPhaseDescription = (progress) => {
+  const descriptions = {
+    1: 'Movies: applying profile rules and ranking eligible sources',
+    2: 'Movies: writing the selected output catalog in database batches',
+    3: 'Series: applying profile rules and ranking eligible sources',
+    4: 'Series: writing the selected output catalog in database batches',
+    5: 'Activating the completed catalog for clients',
+  };
+  return descriptions[Number(progress?.stage_index)] || progress?.phase || '';
+};
+
 const profilePayload = (profile) => ({
   name: profile.name.trim(),
   export_mode: profile.export_mode,
@@ -568,6 +579,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
+  const buildPhase = buildPhaseDescription(buildProgress);
   const buildPercent = (() => {
     const value = Number(buildProgress.percent);
     if (!Number.isFinite(value)) return null;
@@ -790,15 +802,15 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ) && (
             <Stack gap={3}>
               <Text size="sm" fw={500}>
-                {buildProgress.stage_index && buildProgress.stage_count
-                  ? `Step ${buildProgress.stage_index} of ${buildProgress.stage_count} · `
-                  : ''}
                 {batchWaitingForTurn
                   ? 'VOD profile catalog batch is running; this profile is waiting for its turn'
-                  : buildProgress.phase ||
+                  : buildPhase ||
                     (selectedProfile.selection_status === 'pending'
                       ? 'Waiting for worker'
                       : 'Preparing catalog')}
+                {buildProgress.stage_index && buildProgress.stage_count
+                  ? ` · phase ${buildProgress.stage_index} of ${buildProgress.stage_count}`
+                  : ''}
                 {buildProgress.batch_position && buildProgress.batch_total
                   ? ` · profile ${buildProgress.batch_position} of ${buildProgress.batch_total}`
                   : ''}

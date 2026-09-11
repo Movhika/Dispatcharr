@@ -577,7 +577,7 @@ describe('VODOutputProfilesModal', () => {
 
     expect(
       await screen.findByText(
-        /Step 2 of 5 · Building movies output · attempt 2 · 36% overall/
+        /Movies: writing the selected output catalog in database batches · phase 2 of 5 · attempt 2 · 36% overall/
       )
     ).toBeInTheDocument();
     expect(

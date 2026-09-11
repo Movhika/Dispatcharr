@@ -4,21 +4,38 @@ import api from '../api';
 let accessPolicyFetchSequence = 0;
 
 const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
+const TERMINAL_PROFILE_BUILD_STATUSES = new Set(['ready', 'failed']);
 
 const keepNewerLocalProfileBuild = (current, incoming) => {
+  const currentTaskId = current?.selection_progress?.task_id || '';
+  const incomingTaskId = incoming?.selection_progress?.task_id || '';
+  const currentBuildGeneration =
+    current?.selection_progress?.build_generation || '';
+  const incomingBuildGeneration =
+    incoming?.selection_progress?.build_generation || '';
+
+  if (
+    TERMINAL_PROFILE_BUILD_STATUSES.has(current?.selection_status) &&
+    ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
+  ) {
+    // WebSocket heartbeats are delivered asynchronously. Once the terminal
+    // event for one task/build was accepted, a delayed intermediate heartbeat
+    // from that same run must never resurrect its progress bar.
+    return Boolean(
+      (currentTaskId && currentTaskId === incomingTaskId) ||
+      (currentBuildGeneration &&
+        currentBuildGeneration === incomingBuildGeneration) ||
+      (current?.active_selection_generation &&
+        current.active_selection_generation === incomingBuildGeneration)
+    );
+  }
+
   if (
     !ACTIVE_PROFILE_BUILD_STATUSES.has(current?.selection_status) ||
     ACTIVE_PROFILE_BUILD_STATUSES.has(incoming?.selection_status)
   ) {
     return false;
   }
-
-  const currentTaskId = current.selection_progress?.task_id || '';
-  const incomingTaskId = incoming?.selection_progress?.task_id || '';
-  const currentBuildGeneration =
-    current.selection_progress?.build_generation || '';
-  const incomingBuildGeneration =
-    incoming?.selection_progress?.build_generation || '';
 
   // A terminal result carrying the same task/build identity is authoritative.
   // This also accepts failures, which do not activate a new catalog generation.
