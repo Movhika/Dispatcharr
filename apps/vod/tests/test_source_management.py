@@ -1541,6 +1541,11 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             first_policy.selection_progress["task_id"], "followup-task-id"
         )
+        self.assertEqual(
+            first_policy.selection_progress["task_name"],
+            "apps.vod.tasks.rebuild_all_vod_profile_selections",
+        )
+        self.assertTrue(first_policy.selection_progress["batch"])
 
     def test_catalog_invalidation_republishes_an_existing_pending_profile(self):
         VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(is_active=False)
@@ -1576,6 +1581,16 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             self.policy.selection_progress["task_id"], "replacement-task-id"
         )
+        self.assertEqual(
+            self.policy.selection_progress["task_name"],
+            "apps.vod.tasks.rebuild_all_vod_profile_selections",
+        )
+        self.assertEqual(
+            self.policy.selection_progress["trigger_reason"],
+            "The VOD source catalog or source metadata changed",
+        )
+        self.assertEqual(self.policy.selection_progress["batch_position"], 1)
+        self.assertEqual(self.policy.selection_progress["batch_total"], 1)
         delay.assert_called_once_with()
 
     def test_watchdog_republishes_pending_profile_with_completed_task(self):
@@ -1654,6 +1669,15 @@ class VODSourceManagementTests(TestCase):
         )
         self.assertEqual(
             self.policy.selection_progress["task_id"], "recovery-task-id"
+        )
+        self.assertEqual(
+            self.policy.selection_progress["trigger_reason"],
+            "Automatic recovery: the previous VOD profile build stopped "
+            "reporting progress",
+        )
+        self.assertEqual(
+            self.policy.selection_progress["task_name"],
+            "apps.vod.tasks.rebuild_all_vod_profile_selections",
         )
         delay.assert_called_once_with()
 

@@ -507,7 +507,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         return bool(obj.active_selection_generation)
 
     def get_selection_task_state(self, obj):
-        if obj.selection_status != VODAccessPolicy.SelectionStatus.PENDING:
+        if obj.selection_status not in {
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+        }:
             return ""
         task_id = (obj.selection_progress or {}).get("task_id")
         if not task_id:
@@ -951,7 +954,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         self._replace_category_rules(policy, rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
-        enqueue_profile_selection_rebuild(policy.pk)
+        enqueue_profile_selection_rebuild(
+            policy.pk,
+            trigger_reason="A new VOD output profile was created",
+        )
         # The enqueue helper persists the initial queue status with a queryset
         # update. Refresh before DRF serializes the POST response so a newly
         # created profile is immediately visible as pending, including its
@@ -969,7 +975,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         self._replace_category_rules(instance, rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
-        enqueue_profile_selection_rebuild(instance.pk)
+        enqueue_profile_selection_rebuild(
+            instance.pk,
+            trigger_reason="VOD output profile settings were saved",
+        )
         # enqueue_profile_selection_rebuild updates status/progress with a
         # queryset update, so refresh both those fields and any prefetched
         # category rules before DRF serializes the mutation response.

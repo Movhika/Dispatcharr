@@ -491,6 +491,45 @@ describe('VODOutputProfilesModal', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('identifies a running catalog batch and why this profile is pending', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        selection_status: 'pending',
+        selection_current: false,
+        selection_task_state: 'STARTED',
+        selection_progress: {
+          phase: 'VOD profile catalog batch started',
+          percent: 0,
+          task_id: 'catalog-batch-task-id',
+          task_name: 'apps.vod.tasks.rebuild_all_vod_profile_selections',
+          queue: 'celery',
+          batch: true,
+          batch_position: 2,
+          batch_total: 3,
+          trigger_reason:
+            'Automatic recovery: the previous VOD profile build stopped reporting progress',
+        },
+      },
+    ];
+
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(
+      await screen.findByText(
+        /catalog batch is running; this profile is waiting for its turn · profile 2 of 3/
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Assigned Celery task: apps\.vod\.tasks\.rebuild_all_vod_profile_selections/
+      )
+    ).toHaveTextContent(/Task ID: catalog-batch-task-id · State: STARTED/);
+    expect(
+      screen.getByText(/Trigger: Automatic recovery:/)
+    ).toBeInTheDocument();
+  });
+
   it('shows catalog build progress while a previous generation stays available', async () => {
     storeProfiles = [
       {

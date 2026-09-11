@@ -107,21 +107,34 @@ def _provider_vod_fingerprint(rows):
 def rebuild_vod_profile_selection(self, policy_id):
     """Prepare one reusable VOD output profile outside request handling."""
     from apps.m3u.models import M3UAccount
+    from .models import VODAccessPolicy
+    from .profile_selection import (
+        SINGLE_PROFILE_TASK_NAME,
+        _set_pending_profiles_progress,
+    )
+
+    _set_pending_profiles_progress(
+        VODAccessPolicy.objects.filter(pk=policy_id),
+        "Starting VOD profile catalog build",
+        0,
+        queue="celery",
+        task_id=str(self.request.id or ""),
+        task_name=SINGLE_PROFILE_TASK_NAME,
+        batch=False,
+    )
 
     if M3UAccount.objects.filter(
         is_active=True,
         status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
     ).exists():
-        from .models import VODAccessPolicy
-        from .profile_selection import _progress_payload
-
-        VODAccessPolicy.objects.filter(
-            pk=policy_id,
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-        ).update(
-            selection_progress=_progress_payload(
-                "Waiting for M3U/VOD refresh", 0, queue="celery"
-            )
+        _set_pending_profiles_progress(
+            VODAccessPolicy.objects.filter(pk=policy_id),
+            "Waiting for an active M3U/VOD refresh",
+            0,
+            queue="celery",
+            task_id=str(self.request.id or ""),
+            task_name=SINGLE_PROFILE_TASK_NAME,
+            batch=False,
         )
         raise self.retry(countdown=10)
     from .profile_selection import (
@@ -145,32 +158,47 @@ def rebuild_vod_profile_selection(self, policy_id):
 def rebuild_all_vod_profile_selections(self):
     """Refresh all active VOD profiles after a completed catalog import."""
     from apps.m3u.models import M3UAccount
+    from .models import VODAccessPolicy
+    from .profile_selection import (
+        BATCH_PROFILE_TASK_NAME,
+        _set_pending_profiles_progress,
+    )
+
+    _set_pending_profiles_progress(
+        VODAccessPolicy.objects.filter(is_active=True),
+        "VOD profile catalog batch started",
+        0,
+        include_batch_position=True,
+        queue="celery",
+        task_id=str(self.request.id or ""),
+        task_name=BATCH_PROFILE_TASK_NAME,
+        batch=True,
+    )
 
     if M3UAccount.objects.filter(
         is_active=True,
         status__in=[M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING],
     ).exists():
-        from .models import VODAccessPolicy
-        from .profile_selection import _progress_payload
-
-        VODAccessPolicy.objects.filter(
-            is_active=True,
-            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-        ).update(
-            selection_progress=_progress_payload(
-                "Waiting for M3U/VOD refresh", 0, queue="celery"
-            )
+        _set_pending_profiles_progress(
+            VODAccessPolicy.objects.filter(is_active=True),
+            "Waiting for an active M3U/VOD refresh",
+            0,
+            include_batch_position=True,
+            queue="celery",
+            task_id=str(self.request.id or ""),
+            task_name=BATCH_PROFILE_TASK_NAME,
+            batch=True,
         )
         raise self.retry(countdown=10)
-    from .models import VODAccessPolicy
     from django.core.cache import cache
     from .profile_selection import (
+        BATCH_PROFILE_TASK_NAME,
         CatalogChangedDuringBuild,
         PROFILE_REBUILD_ENQUEUE_KEY,
         PROFILE_REBUILD_LOCK_TIMEOUT,
         ProfileBuildAlreadyRunning,
         ProfileBuildNotPending,
-        _progress_payload,
+        _set_pending_profiles_progress,
         build_vod_profile_selection,
     )
 
@@ -247,18 +275,16 @@ def rebuild_all_vod_profile_selections(self):
                 )
             except Exception:
                 pass
-            VODAccessPolicy.objects.filter(
-                is_active=True,
-                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            ).update(
-                selection_progress=_progress_payload(
-                    "Waiting in Celery queue",
-                    0,
-                    queue="celery",
-                    task_id=result.id,
-                    queued_at=timezone.now().isoformat(),
-                    batch=True,
-                )
+            _set_pending_profiles_progress(
+                VODAccessPolicy.objects.filter(is_active=True),
+                "Waiting in Celery queue",
+                0,
+                include_batch_position=True,
+                queue="celery",
+                task_id=result.id,
+                task_name=BATCH_PROFILE_TASK_NAME,
+                queued_at=timezone.now().isoformat(),
+                batch=True,
             )
     return results
 
@@ -278,6 +304,7 @@ def reconcile_vod_profile_selection_queue():
     from .catalog_cache import selection_catalog_generation
     from .models import VODAccessPolicy
     from .profile_selection import (
+        BATCH_PROFILE_TASK_NAME,
         PROFILE_REBUILD_ENQUEUE_KEY,
         _progress_payload,
         enqueue_all_profile_selection_rebuilds,
@@ -285,7 +312,7 @@ def reconcile_vod_profile_selection_queue():
     )
     from .serializers import VODAccessPolicySerializer
 
-    stale_ready_ids = []
+    stale_ready = []
     current_generation = str(selection_catalog_generation())
     mode_reader = VODAccessPolicySerializer()
     for policy in VODAccessPolicy.objects.filter(
@@ -295,29 +322,39 @@ def reconcile_vod_profile_selection_queue():
         counts = policy.selection_counts or {}
         active_mode = mode_reader.get_selection_active_mode(policy)
         active_signature = counts.get("profile_signature")
-        stale = bool(
-            not policy.active_selection_generation
-            or policy.selection_catalog_generation != current_generation
-            or (active_mode and active_mode != policy.export_mode)
-            or (
-                active_signature
-                and active_signature != profile_selection_signature(policy)
-            )
-        )
-        if stale:
-            stale_ready_ids.append(policy.pk)
+        reasons = []
+        if not policy.active_selection_generation:
+            reasons.append("no prepared catalog generation exists")
+        if policy.selection_catalog_generation != current_generation:
+            reasons.append("the VOD source catalog changed")
+        if active_mode and active_mode != policy.export_mode:
+            reasons.append("the saved Compact/Variants mode changed")
+        if (
+            active_signature
+            and active_signature != profile_selection_signature(policy)
+        ):
+            reasons.append("the saved profile rules changed")
+        if reasons:
+            stale_ready.append((policy.pk, "; ".join(reasons)))
 
     repaired_ready = 0
-    if stale_ready_ids:
-        repaired_ready = VODAccessPolicy.objects.filter(
-            pk__in=stale_ready_ids,
+    for policy_id, reason in stale_ready:
+        repaired_ready += VODAccessPolicy.objects.filter(
+            pk=policy_id,
             is_active=True,
             selection_status=VODAccessPolicy.SelectionStatus.READY,
         ).update(
             selection_status=VODAccessPolicy.SelectionStatus.PENDING,
             selection_started_at=timezone.now(),
             selection_error="",
-            selection_progress=_progress_payload("Waiting for worker", 0),
+            selection_progress=_progress_payload(
+                "Waiting for worker",
+                0,
+                queue="celery",
+                task_name=BATCH_PROFILE_TASK_NAME,
+                batch=True,
+                trigger_reason=f"Automatic repair: {reason}",
+            ),
         )
 
     terminal_states = {"SUCCESS", "FAILURE", "REVOKED"}
@@ -374,7 +411,13 @@ def reconcile_vod_profile_selection_queue():
                 "Recovering interrupted catalog build",
                 0,
                 queue="celery",
+                task_name=BATCH_PROFILE_TASK_NAME,
+                batch=True,
                 build_generation=f"recovery-{time.time_ns()}",
+                trigger_reason=(
+                    "Automatic recovery: the previous VOD profile build "
+                    "stopped reporting progress"
+                ),
             ),
         )
 
@@ -747,7 +790,12 @@ def _refresh_vod_content_impl(account_id):
             from .profile_selection import enqueue_all_profile_selection_rebuilds
 
             bump_catalog_generation()
-            enqueue_all_profile_selection_rebuilds()
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason=(
+                    f'VOD refresh for M3U account "{account.name}" changed '
+                    "the source catalog"
+                )
+            )
         else:
             logger.info(
                 "VOD output catalog for account %s is unchanged; profile rebuild skipped",

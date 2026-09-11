@@ -460,6 +460,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             percent: 0,
             target_export_mode: payload.export_mode,
             queued_at: new Date().toISOString(),
+            task_name: 'apps.vod.tasks.rebuild_vod_profile_selection',
+            batch: false,
+            trigger_reason: 'VOD output profile settings were saved',
           },
         });
       }
@@ -599,6 +602,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         'The prepared XC catalog no longer matches the source state.',
     };
   })();
+  const taskName =
+    buildProgress.task_name ||
+    (buildProgress.batch === true
+      ? 'apps.vod.tasks.rebuild_all_vod_profile_selections'
+      : buildProgress.batch === false
+        ? 'apps.vod.tasks.rebuild_vod_profile_selection'
+        : 'not recorded by the previous version');
+  const batchWaitingForTurn = Boolean(
+    selectedProfile?.selection_status === 'pending' &&
+    buildProgress.batch &&
+    selectedProfile.selection_task_state === 'STARTED' &&
+    !String(buildProgress.phase || '').includes('M3U/VOD refresh')
+  );
+  const candidateContent = useMemo(
+    () =>
+      candidateTarget
+        ? {
+            id: candidateTarget.canonical_id,
+            name: candidateTarget.name,
+            year: candidateTarget.year,
+          }
+        : null,
+    [candidateTarget]
+  );
   return (
     <>
       <Modal
@@ -719,24 +746,31 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ) && (
             <Stack gap={3}>
               <Text size="sm" fw={500}>
-                {buildProgress.phase ||
-                  (selectedProfile.selection_status === 'pending'
-                    ? 'Waiting for worker'
-                    : 'Preparing catalog')}
+                {batchWaitingForTurn
+                  ? 'VOD profile catalog batch is running; this profile is waiting for its turn'
+                  : buildProgress.phase ||
+                    (selectedProfile.selection_status === 'pending'
+                      ? 'Waiting for worker'
+                      : 'Preparing catalog')}
+                {buildProgress.batch_position && buildProgress.batch_total
+                  ? ` · profile ${buildProgress.batch_position} of ${buildProgress.batch_total}`
+                  : ''}
                 {Number.isFinite(Number(buildProgress.processed)) &&
                   Number(buildProgress.total) > 0 &&
                   ` · ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
                 {` · ${formatDuration(buildElapsedSeconds)} elapsed`}
               </Text>
-              {selectedProfile.selection_status === 'pending' && (
-                <Text size="xs" c="dimmed">
-                  Queue: {buildProgress.queue || 'celery'} · Task:{' '}
-                  {buildProgress.task_id || 'not published'} · Backend state:{' '}
-                  {selectedProfile.selection_task_state || 'unknown'}. The
-                  worker may first finish an M3U or VOD refresh already using
-                  the default queue.
-                </Text>
-              )}
+              <Text size="xs" c="dimmed">
+                Assigned Celery task: {taskName} · Queue:{' '}
+                {buildProgress.queue || 'celery'} · Task ID:{' '}
+                {buildProgress.task_id || 'not published yet'} · State:{' '}
+                {selectedProfile.selection_task_state || 'unknown'}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Trigger:{' '}
+                {buildProgress.trigger_reason ||
+                  'not recorded by the previous version'}
+              </Text>
             </Stack>
           )}
 
@@ -1175,11 +1209,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       />
       {candidateTarget?.content_type === 'series' ? (
         <SeriesModal
-          series={{
-            id: candidateTarget.canonical_id,
-            name: candidateTarget.name,
-            year: candidateTarget.year,
-          }}
+          series={candidateContent}
           opened
           onClose={() => setCandidateTarget(null)}
           profileCandidates={candidateData}
@@ -1189,11 +1219,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         />
       ) : candidateTarget ? (
         <VODModal
-          vod={{
-            id: candidateTarget.canonical_id,
-            name: candidateTarget.name,
-            year: candidateTarget.year,
-          }}
+          vod={candidateContent}
           opened
           onClose={() => setCandidateTarget(null)}
           profileCandidates={candidateData}

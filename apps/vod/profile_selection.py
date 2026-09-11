@@ -38,6 +38,18 @@ PROFILE_REBUILD_ENQUEUE_KEY = "vod_profile_selection:rebuild-all-enqueued"
 # window.  Keep one global catalog worker authoritative for the whole run so a
 # later invalidation cannot publish a duplicate task which races the first one.
 PROFILE_REBUILD_LOCK_TIMEOUT = 4 * 60 * 60
+SINGLE_PROFILE_TASK_NAME = "apps.vod.tasks.rebuild_vod_profile_selection"
+BATCH_PROFILE_TASK_NAME = "apps.vod.tasks.rebuild_all_vod_profile_selections"
+PROGRESS_CONTEXT_KEYS = (
+    "task_id",
+    "task_name",
+    "queue",
+    "queued_at",
+    "batch",
+    "batch_position",
+    "batch_total",
+    "trigger_reason",
+)
 
 
 class CatalogChangedDuringBuild(RuntimeError):
@@ -61,6 +73,61 @@ def _progress_payload(phase, percent, **details):
     }
 
 
+def _progress_context(progress):
+    progress = progress if isinstance(progress, dict) else {}
+    return {
+        key: progress[key]
+        for key in PROGRESS_CONTEXT_KEYS
+        if progress.get(key) not in (None, "")
+    }
+
+
+def _set_pending_profiles_progress(
+    queryset,
+    phase,
+    percent,
+    *,
+    include_batch_position=False,
+    **details,
+):
+    """Update queued profiles without discarding their task provenance."""
+    rows = list(
+        queryset.filter(
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING
+        )
+        .order_by("id")
+        .values("id", "selection_progress")
+    )
+    total = len(rows)
+    updated = 0
+    for position, row in enumerate(rows, start=1):
+        context = _progress_context(row["selection_progress"])
+        context.update(
+            {
+                key: value
+                for key, value in details.items()
+                if value not in (None, "")
+            }
+        )
+        if include_batch_position:
+            context.update(
+                batch=True,
+                batch_position=position,
+                batch_total=total,
+            )
+        updated += VODAccessPolicy.objects.filter(
+            pk=row["id"],
+            selection_status=VODAccessPolicy.SelectionStatus.PENDING,
+        ).update(
+            selection_progress=_progress_payload(
+                phase,
+                percent,
+                **context,
+            )
+        )
+    return updated
+
+
 def _set_profile_progress(policy_id, phase, percent, **details):
     """Persist coarse build progress without firing policy invalidation signals."""
     current = (
@@ -79,11 +146,7 @@ def _set_profile_progress(policy_id, phase, percent, **details):
         # A watchdog or a newer delivery has superseded this worker. Do not let
         # a late heartbeat replace the authoritative generation token.
         return False
-    persistent = {
-        key: current[key]
-        for key in ("task_id", "queue", "queued_at", "batch")
-        if current.get(key) not in (None, "")
-    }
+    persistent = _progress_context(current)
     return bool(
         VODAccessPolicy.objects.filter(
             pk=policy_id,
@@ -163,7 +226,11 @@ def _validate_selection_counts(policy, counts):
             )
 
 
-def enqueue_profile_selection_rebuild(policy_id):
+def enqueue_profile_selection_rebuild(
+    policy_id,
+    *,
+    trigger_reason="VOD output profile settings were saved",
+):
     """Mark a profile stale and enqueue its build after the transaction."""
     updated = VODAccessPolicy.objects.filter(
         pk=policy_id,
@@ -175,7 +242,12 @@ def enqueue_profile_selection_rebuild(policy_id):
         selection_started_at=timezone.now(),
         selection_error="",
         selection_progress=_progress_payload(
-            "Publishing background task", 0, queue="celery"
+            "Publishing background task",
+            0,
+            queue="celery",
+            task_name=SINGLE_PROFILE_TASK_NAME,
+            batch=False,
+            trigger_reason=trigger_reason,
         ),
     )
     if not updated:
@@ -196,7 +268,10 @@ def enqueue_profile_selection_rebuild(policy_id):
                     0,
                     queue="celery",
                     task_id=result.id,
+                    task_name=SINGLE_PROFILE_TASK_NAME,
                     queued_at=queued_at,
+                    batch=False,
+                    trigger_reason=trigger_reason,
                 )
             )
         except Exception as exc:
@@ -219,7 +294,11 @@ def enqueue_profile_selection_rebuild(policy_id):
     return True
 
 
-def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
+def enqueue_all_profile_selection_rebuilds(
+    *,
+    pending_only=False,
+    trigger_reason=None,
+):
     """Enqueue one debounced rebuild task for active profiles.
 
     Normal catalog invalidations mark every ready profile pending. Incremental
@@ -227,7 +306,16 @@ def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
     profile can be republished without invalidating profiles that were updated
     synchronously.
     """
-    queued_progress = _progress_payload("Waiting for worker", 0)
+    if trigger_reason is None and not pending_only:
+        trigger_reason = "The VOD source catalog or source metadata changed"
+    queued_progress = _progress_payload(
+        "Waiting for worker",
+        0,
+        queue="celery",
+        task_name=BATCH_PROFILE_TASK_NAME,
+        batch=True,
+        trigger_reason=trigger_reason,
+    )
     newly_pending = 0
     if not pending_only:
         newly_pending = VODAccessPolicy.objects.filter(is_active=True).exclude(
@@ -266,6 +354,22 @@ def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
         except Exception:
             acquired = True
         if not acquired:
+            try:
+                owner = cache.get(PROFILE_REBUILD_ENQUEUE_KEY)
+            except Exception:
+                owner = None
+            _set_pending_profiles_progress(
+                VODAccessPolicy.objects.filter(is_active=True),
+                "Waiting for the active VOD profile catalog batch",
+                0,
+                include_batch_position=True,
+                queue="celery",
+                task_id=(
+                    str(owner) if owner not in (None, "", "1") else None
+                ),
+                task_name=BATCH_PROFILE_TASK_NAME,
+                batch=True,
+            )
             return
         try:
             result = rebuild_all_vod_profile_selections.delay()
@@ -277,18 +381,18 @@ def enqueue_all_profile_selection_rebuilds(*, pending_only=False):
                 )
             except Exception:
                 pass
-            VODAccessPolicy.objects.filter(
-                is_active=True,
-                selection_status=VODAccessPolicy.SelectionStatus.PENDING,
-            ).update(
-                selection_progress=_progress_payload(
-                    "Waiting in Celery queue",
-                    0,
-                    queue="celery",
-                    task_id=result.id,
-                    queued_at=timezone.now().isoformat(),
-                    batch=True,
-                )
+            _set_pending_profiles_progress(
+                VODAccessPolicy.objects.filter(
+                    is_active=True,
+                ),
+                "Waiting in Celery queue",
+                0,
+                include_batch_position=True,
+                queue="celery",
+                task_id=result.id,
+                task_name=BATCH_PROFILE_TASK_NAME,
+                queued_at=timezone.now().isoformat(),
+                batch=True,
             )
         except Exception as exc:
             try:
@@ -825,11 +929,7 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
     previous_progress = (
         candidates.values_list("selection_progress", flat=True).first() or {}
     )
-    task_details = {
-        key: previous_progress[key]
-        for key in ("task_id", "queue", "queued_at", "batch")
-        if previous_progress.get(key) not in (None, "")
-    }
+    task_details = _progress_context(previous_progress)
     acquired = candidates.update(
         selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
         selection_started_at=now,
@@ -1021,12 +1121,14 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
             )
             == generation
         ):
+            context = _progress_context(current_state["selection_progress"])
             VODAccessPolicy.objects.filter(pk=policy.pk).update(
                 selection_status=VODAccessPolicy.SelectionStatus.PENDING,
                 selection_error=str(exc),
                 selection_progress=_progress_payload(
                     "Catalog changed; restarting",
                     0,
+                    **context,
                     stage_index=0,
                     stage_count=BUILD_STAGE_COUNT,
                     stage_percent=0,
@@ -1055,11 +1157,16 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
             )
             == generation
         ):
+            context = _progress_context(current_state["selection_progress"])
             VODAccessPolicy.objects.filter(pk=policy.pk).update(
                 selection_status=VODAccessPolicy.SelectionStatus.FAILED,
                 selection_error=str(exc)[:2000],
                 selection_completed_at=timezone.now(),
-                selection_progress=_progress_payload("Failed", 100),
+                selection_progress=_progress_payload(
+                    "Failed",
+                    100,
+                    **context,
+                ),
             )
         raise
 
