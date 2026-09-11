@@ -309,6 +309,8 @@ describe('VODsPage list and bulk editing', () => {
   it('updates search and pagination through the store', async () => {
     render(<VODsPage />);
     await screen.findByText('Movie A');
+    expect(screen.getByText('Rows')).toBeInTheDocument();
+    expect(screen.getByText('1–24 of 30')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('Search VODs...'), {
       target: { value: 'avatar' },
     });

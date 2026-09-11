@@ -578,9 +578,11 @@ const VODsPage = () => {
           )}
         </Box>
 
-        <Group justify="space-between" align="flex-end">
+        <Group gap={5} justify="center" wrap="nowrap">
+          <Text size="xs">Rows</Text>
           <Select
-            label="Rows"
+            aria-label="Rows"
+            size="xs"
             value={String(pageSize)}
             onChange={(value) => {
               setPageSize(Number(value));
@@ -591,18 +593,26 @@ const VODsPage = () => {
               value,
               label: value,
             }))}
-            w={100}
+            allowDeselect={false}
+            w={70}
           />
-          {totalPages > 1 ? (
+          {totalCount > 0 && (
             <Pagination
               value={currentPage}
               onChange={setPage}
-              total={totalPages}
+              total={Math.max(1, totalPages)}
+              size="xs"
+              withEdges
             />
-          ) : (
-            <div />
           )}
-          <div style={{ width: 100 }} />
+          <Text size="xs" c="dimmed">
+            {totalCount
+              ? `${(currentPage - 1) * pageSize + 1}–${Math.min(
+                  currentPage * pageSize,
+                  totalCount
+                )} of ${totalCount}`
+              : '0 of 0'}
+          </Text>
         </Group>
         {selectAllMatching && selectedCount > 0 && (
           <Text size="sm" c="blue" ta="center">
