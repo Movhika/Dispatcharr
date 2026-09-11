@@ -105,6 +105,17 @@ class XCGetSeriesInfoTests(TestCase):
         info = self._info(self.relation_a.id)
         self.assertEqual(info['episodes'][1][0]['container_extension'], 'mkv')
 
+    def test_tmdb_id_uses_the_selected_provider_source_override(self):
+        self.series.tmdb_id = '100'
+        self.series.tmdb_match_id = '100'
+        self.series.save(update_fields=['tmdb_id', 'tmdb_match_id'])
+        self.relation_a.tmdb_override_id = '200'
+        self.relation_a.save(update_fields=['tmdb_override_id'])
+
+        info = self._info(self.relation_a.id)
+
+        self.assertEqual(info['info']['tmdb'], '200')
+
     def test_uses_selected_relation_episode_metadata(self):
         relation = M3UEpisodeRelation.objects.get(
             series_relation=self.relation_a,

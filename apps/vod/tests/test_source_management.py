@@ -1587,16 +1587,12 @@ class VODSourceManagementTests(TestCase):
             )
 
         enqueue_tmdb.assert_called_once_with(
+            rebuild_profiles=True,
             trigger_reason=(
                 "A completed provider VOD refresh changed the catalog"
             ),
         )
-        enqueue_profiles.assert_called_once_with(
-            trigger_reason=(
-                "One or more completed VOD provider refreshes changed the "
-                "source catalog"
-            )
-        )
+        enqueue_profiles.assert_not_called()
         self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))
 
     def test_profile_preview_filters_prepared_rows(self):
@@ -3622,7 +3618,7 @@ class VODSourceManagementTests(TestCase):
             "1080p",
         )
 
-    def test_bulk_title_cleaning_updates_only_filtered_canonical_titles(self):
+    def test_bulk_source_metadata_does_not_edit_canonical_titles(self):
         self.movie.name = "┃DE┃ Avatar"
         self.movie.save(update_fields=["name"])
         other_movie = Movie.objects.create(name="┃DE┃ Unrelated title")
@@ -3654,11 +3650,10 @@ class VODSourceManagementTests(TestCase):
             {"patch": "bulk_manual_metadata"}
         )(request)
 
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["updated_titles"], 1)
+        self.assertEqual(response.status_code, 400, response.data)
         self.movie.refresh_from_db()
         other_movie.refresh_from_db()
-        self.assertEqual(self.movie.display_name, "Avatar")
+        self.assertEqual(self.movie.display_name, "")
         self.assertEqual(other_movie.display_name, "")
 
     def test_bulk_title_regex_requires_a_pattern(self):
@@ -3694,7 +3689,10 @@ class VODSourceManagementTests(TestCase):
             "/api/vod/source-assets/bulk-manual-metadata/",
             {
                 "selections": [
-                    {"content_type": "movie", "id": self.movie.id},
+                    {
+                        "content_type": "movie",
+                        "relation_id": self.german_relation.id,
+                    },
                 ],
                 "filters": {
                     "type": "movies",
@@ -3850,6 +3848,89 @@ class VODSourceManagementTests(TestCase):
         }
         self.assertEqual(counts[("movie", "Avatar")], 2)
         self.assertEqual(counts[("series", "Avatar Series")], 2)
+
+    def test_unified_variant_list_returns_each_exact_provider_source(self):
+        self.german_relation.custom_properties = {
+            "basic_data": {"name": "Provider A Avatar 1080p"}
+        }
+        self.german_relation.save(update_fields=["custom_properties"])
+        self.english_relation.custom_properties = {
+            "basic_data": {"name": "Provider B Avatar 4K"}
+        }
+        self.english_relation.save(update_fields=["custom_properties"])
+        self.movie.display_name = "Avatar (2005)"
+        self.movie.tmdb_match_id = "272"
+        self.movie.save(update_fields=["display_name", "tmdb_match_id"])
+        admin = get_user_model().objects.create_user(
+            username="vod-variant-list-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/",
+            {
+                "type": "movies",
+                "representation": "variants",
+                "page_size": 24,
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 2)
+        rows = {row["relation_id"]: row for row in response.data["results"]}
+        self.assertEqual(
+            rows[self.german_relation.id]["name"],
+            "Provider A Avatar 1080p",
+        )
+        self.assertEqual(
+            rows[self.english_relation.id]["name"],
+            "Provider B Avatar 4K",
+        )
+        self.assertEqual(
+            rows[self.german_relation.id]["canonical_name"],
+            "Avatar (2005)",
+        )
+        self.assertEqual(rows[self.german_relation.id]["tmdb_id"], "272")
+
+    def test_missing_external_ids_includes_tvdb_and_wikidata(self):
+        self.movie.tmdb_id = None
+        self.movie.imdb_id = None
+        self.movie.tmdb_match_id = ""
+        self.movie.tmdb_imdb_id = ""
+        self.movie.tmdb_metadata = {
+            "external_ids": {"tvdb_id": "1234", "wikidata_id": "Q42"}
+        }
+        self.movie.save(
+            update_fields=[
+                "tmdb_id",
+                "imdb_id",
+                "tmdb_match_id",
+                "tmdb_imdb_id",
+                "tmdb_metadata",
+            ]
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-external-id-filter-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/",
+            {
+                "type": "movies",
+                "metadata_status": "missing_external_ids",
+                "page_size": 24,
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 0)
 
     def test_select_all_does_not_cross_match_account_and_category(self):
         admin = get_user_model().objects.create_user(

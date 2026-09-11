@@ -12,7 +12,7 @@ import requests
 
 TMDB_API_ROOT = "https://api.themoviedb.org/3"
 TMDB_IMAGE_ROOT = "https://image.tmdb.org/t/p"
-TMDB_METADATA_SCHEMA = 2
+TMDB_METADATA_SCHEMA = 3
 
 
 class TMDBError(RuntimeError):
@@ -41,7 +41,7 @@ def normalize_languages(values):
             languages.append(normalized)
         if len(languages) == 2:
             break
-    return languages or ["de-DE", "en-US"]
+    return languages or ["en-US"]
 
 
 def _normalized_title(value):
@@ -135,7 +135,6 @@ def image_url(path, size):
 
 def normalize_details(payload, media_type, languages, *, match_method):
     title_key = "title" if media_type == "movie" else "name"
-    original_key = "original_title" if media_type == "movie" else "original_name"
     date_key = "release_date" if media_type == "movie" else "first_air_date"
     external_ids = payload.get("external_ids") or {}
     normalized_external_ids = {
@@ -154,9 +153,6 @@ def normalize_details(payload, media_type, languages, *, match_method):
         "id": str(payload.get("id") or ""),
         "media_type": media_type,
         "match_method": match_method,
-        "original_title": str(
-            payload.get(original_key) or payload.get(title_key) or ""
-        ).strip(),
         "original_language": str(payload.get("original_language") or "").strip(),
         "localized": _localized_values(payload, media_type, languages),
         "release_date": str(payload.get(date_key) or ""),
@@ -221,7 +217,7 @@ def preferred_title(metadata, language=None):
         title = values.get("title") if isinstance(values, dict) else ""
         if title:
             return str(title).strip()
-    return str(metadata.get("original_title") or "").strip()
+    return ""
 
 
 class Client:

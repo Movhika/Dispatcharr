@@ -1565,18 +1565,21 @@ export default class API {
     });
   }
 
-  static async refreshVODMetadata(force = false) {
+  static async refreshVODMetadata() {
     return await request(`${host}/api/vod/metadata/refresh/`, {
       method: 'POST',
-      body: { force },
+      body: {},
     });
   }
 
-  static async updateVODTmdbMatch(contentType, id, tmdbId) {
-    const resource = contentType === 'series' ? 'series' : 'movies';
-    return await request(`${host}/api/vod/${resource}/${id}/tmdb-match/`, {
+  static async updateVODRelationTmdbMatch(
+    tmdbId,
+    selections,
+    selectionOptions = {}
+  ) {
+    return await request(`${host}/api/vod/source-assets/relation-tmdb-match/`, {
       method: 'PATCH',
-      body: { tmdb_id: tmdbId || '' },
+      body: { tmdb_id: tmdbId || '', selections, ...selectionOptions },
     });
   }
 

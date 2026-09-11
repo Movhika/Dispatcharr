@@ -8,8 +8,16 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
-from apps.vod.api_views import MovieViewSet, VODMetadataViewSet
-from apps.vod.models import M3UMovieRelation, Movie, VODMetadataState
+from apps.vod.api_views import VODMetadataViewSet, VODSourceAssetViewSet
+from apps.vod.models import (
+    Episode,
+    M3UEpisodeRelation,
+    M3UMovieRelation,
+    M3USeriesRelation,
+    Movie,
+    Series,
+    VODMetadataState,
+)
 from apps.vod.tasks import enqueue_tmdb_enrichment, reconcile_vod_metadata_queue
 from apps.vod.tmdb import Client, normalize_details, preferred_title
 from core.models import CoreSettings
@@ -72,7 +80,7 @@ class TMDBMetadataTests(SimpleTestCase):
             match_method="provider_tmdb_id",
         )
 
-        self.assertEqual(metadata["original_title"], "Avatar: The Way of Water")
+        self.assertNotIn("original_title", metadata)
         self.assertEqual(
             metadata["localized"]["de-DE"]["overview"],
             "Deutsche Beschreibung",
@@ -182,17 +190,30 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.data["settings"]["languages"], ["de-DE", "en-US"])
         self.assertTrue(CoreSettings.get_tmdb_match_missing())
 
-    @patch.dict(
-        os.environ,
-        {"TMDB_API_READ_ACCESS_TOKEN": "", "TMDB_API_KEY": ""},
-    )
-    def test_manual_tmdb_match_preserves_provider_identity(self):
+    def test_api_key_only_update_preserves_library_metadata_preferences(self):
         CoreSettings.set_vod_metadata_settings(
-            api_token="",
+            api_token="old-secret",
             languages=["de-DE", "en-US"],
-            auto_enrich=True,
-            match_missing=False,
+            auto_enrich=False,
+            match_missing=True,
+            prefer_artwork=False,
         )
+        request = self.factory.put(
+            "/api/vod/metadata/settings/",
+            {"api_token": "new-secret", "auto_enrich": True},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"put": "update_settings"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CoreSettings.get_tmdb_languages(), ["de-DE", "en-US"])
+        self.assertTrue(CoreSettings.get_tmdb_match_missing())
+        self.assertFalse(CoreSettings.get_tmdb_prefer_artwork())
+        self.assertTrue(CoreSettings.get_tmdb_auto_enrich())
+
+    def test_manual_tmdb_match_moves_only_the_selected_provider_source(self):
         account = M3UAccount.objects.create(
             name="TMDB test",
             server_url="http://provider.example.com",
@@ -206,29 +227,136 @@ class VODMetadataAPITests(TestCase):
             tmdb_id="111",
             tmdb_match_id="111",
             tmdb_metadata={"id": "111", "status": "matched"},
+            tmdb_status="matched",
+            tmdb_enriched_at=timezone.now(),
         )
-        M3UMovieRelation.objects.create(
+        target = Movie.objects.create(
+            name="Correct title",
+            tmdb_id="76600",
+            tmdb_match_id="76600",
+            tmdb_metadata={"id": "76600", "status": "matched"},
+            tmdb_status="matched",
+        )
+        relation = M3UMovieRelation.objects.create(
             m3u_account=account,
             movie=movie,
             stream_id="movie-1",
         )
         request = self.factory.patch(
-            f"/api/vod/movies/{movie.id}/tmdb-match/",
-            {"tmdb_id": "76600"},
+            "/api/vod/source-assets/relation-tmdb-match/",
+            {
+                "tmdb_id": "76600",
+                "selections": [
+                    {"content_type": "movie", "relation_id": relation.id}
+                ],
+            },
             format="json",
         )
         force_authenticate(request, user=self.admin)
 
-        response = MovieViewSet.as_view({"patch": "tmdb_match"})(
-            request, pk=movie.pk
+        view = VODSourceAssetViewSet.as_view({"patch": "relation_tmdb_match"})
+        response = view(request)
+
+        self.assertEqual(response.status_code, 409)
+
+        confirmed_request = self.factory.patch(
+            "/api/vod/source-assets/relation-tmdb-match/",
+            {
+                "tmdb_id": "76600",
+                "confirmed": True,
+                "selections": [
+                    {"content_type": "movie", "relation_id": relation.id}
+                ],
+            },
+            format="json",
         )
+        force_authenticate(confirmed_request, user=self.admin)
+        with (
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ),
+            patch("apps.vod.catalog_cache.bump_catalog_generation") as bump_catalog,
+        ):
+            response = view(confirmed_request)
 
         movie.refresh_from_db()
+        relation.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(movie.tmdb_id, "111")
-        self.assertEqual(movie.tmdb_override_id, "76600")
-        self.assertEqual(response.data["tmdb"]["id"], "76600")
-        self.assertEqual(response.data["refresh"]["status"], "token_not_configured")
+        self.assertEqual(relation.movie_id, target.id)
+        self.assertEqual(relation.tmdb_override_id, "76600")
+        self.assertEqual(response.data["moved_sources"], 1)
+        bump_catalog.assert_not_called()
+
+    def test_manual_series_match_moves_its_episode_sources(self):
+        account = M3UAccount.objects.create(
+            name="TMDB series test",
+            server_url="http://provider.example.com",
+            username="user",
+            password="pass",
+            account_type=M3UAccount.Types.XC,
+            is_active=True,
+        )
+        original = Series.objects.create(
+            name="Wrong series",
+            tmdb_id="111",
+            tmdb_match_id="111",
+        )
+        target = Series.objects.create(
+            name="Correct series",
+            tmdb_id="1399",
+            tmdb_match_id="1399",
+            tmdb_metadata={"id": "1399", "status": "matched"},
+            tmdb_status="matched",
+        )
+        relation = M3USeriesRelation.objects.create(
+            m3u_account=account,
+            series=original,
+            external_series_id="series-1",
+        )
+        episode = Episode.objects.create(
+            series=original,
+            name="Provider episode",
+            season_number=1,
+            episode_number=2,
+        )
+        episode_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=account,
+            series_relation=relation,
+            episode=episode,
+            stream_id="episode-1",
+        )
+        request = self.factory.patch(
+            "/api/vod/source-assets/relation-tmdb-match/",
+            {
+                "tmdb_id": "1399",
+                "confirmed": True,
+                "selections": [
+                    {"content_type": "series", "relation_id": relation.id}
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        with (
+            patch(
+                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+            ),
+            patch("apps.vod.catalog_cache.bump_catalog_generation") as bump_catalog,
+        ):
+            response = VODSourceAssetViewSet.as_view(
+                {"patch": "relation_tmdb_match"}
+            )(request)
+
+        relation.refresh_from_db()
+        episode_relation.refresh_from_db()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(relation.series_id, target.id)
+        self.assertEqual(episode_relation.episode.series_id, target.id)
+        self.assertEqual(episode_relation.episode.season_number, 1)
+        self.assertEqual(episode_relation.episode.episode_number, 2)
+        bump_catalog.assert_not_called()
 
     def test_watchdog_ends_a_lost_running_status(self):
         state = VODMetadataState.objects.create(

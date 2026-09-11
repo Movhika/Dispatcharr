@@ -112,9 +112,8 @@ def _tmdb_content_signature(base_signature, content):
     identity = {
         "base": base_signature,
         "tmdb_id": str(value("tmdb_id") or ""),
-        "tmdb_override_id": str(value("tmdb_override_id") or ""),
         "imdb_id": str(value("imdb_id") or ""),
-        "name": str(value("display_name") or value("name") or ""),
+        "name": str(value("name") or ""),
         "year": value("year"),
     }
     return hashlib.sha256(
@@ -285,6 +284,7 @@ def enrich_vod_metadata(
         TMDBAuthenticationError,
         TMDBError,
         TMDBNotFound,
+        preferred_title,
     )
     from .utils import canonical_output_name
 
@@ -317,7 +317,6 @@ def enrich_vod_metadata(
             "display_name",
             "year",
             "tmdb_id",
-            "tmdb_override_id",
             "imdb_id",
             "tmdb_enrichment_signature",
         )
@@ -373,14 +372,8 @@ def enrich_vod_metadata(
         for model, media_type, content, signature in work:
             content_id = content["id"]
             content_name = content["name"]
-            tmdb_id = str(
-                content["tmdb_override_id"] or content["tmdb_id"] or ""
-            ).strip()
-            match_method = (
-                "manual_override"
-                if content["tmdb_override_id"]
-                else ("provider_tmdb_id" if tmdb_id else "")
-            )
+            tmdb_id = str(content["tmdb_id"] or "").strip()
+            match_method = "provider_tmdb_id" if tmdb_id else ""
             metadata = {}
             try:
                 if not tmdb_id and content["imdb_id"]:
@@ -460,6 +453,10 @@ def enrich_vod_metadata(
                 "tmdb_enriched_at": timezone.now(),
                 "tmdb_enrichment_signature": signature,
             }
+            if metadata.get("status") == "matched":
+                localized_title = preferred_title(metadata, languages[0])
+                if localized_title:
+                    update["display_name"] = localized_title[:255]
             # IDs discovered through IMDb/title matching stay inside the TMDB
             # snapshot. The canonical tmdb_id/imdb_id fields describe provider
             # identity and changing them here would alter later import matching.
@@ -489,6 +486,11 @@ def enrich_vod_metadata(
             started_at=started_at,
             completed_at=completed_at,
         )
+        rerun_after = bool(
+            VODMetadataState.objects.filter(pk=1, rerun_requested=True).update(
+                rerun_requested=False
+            )
+        )
         must_rebuild_profiles = bool(
             rebuild_profiles
             or VODMetadataState.objects.filter(
@@ -496,7 +498,10 @@ def enrich_vod_metadata(
                 rebuild_profiles_after_completion=True,
             ).exists()
         )
-        if must_rebuild_profiles:
+        # A provider refresh that landed during this pass needs one more
+        # incremental TMDB scan. Keep the rebuild request pending so clients
+        # switch only after that final scan has enriched the newest catalog.
+        if must_rebuild_profiles and not rerun_after:
             from .profile_selection import enqueue_all_profile_selection_rebuilds
 
             enqueue_all_profile_selection_rebuilds(
@@ -511,11 +516,6 @@ def enrich_vod_metadata(
             # Artwork and external IDs change XC and VOD responses, but do not
             # change profile membership.
             bump_catalog_generation(invalidate_selections=False)
-        rerun_after = bool(
-            VODMetadataState.objects.filter(pk=1, rerun_requested=True).update(
-                rerun_requested=False
-            )
-        )
         return {
             **counters,
             "changed_movies": changed_movies,
@@ -557,7 +557,15 @@ def enrich_vod_metadata(
         lock_renewer.stop()
         release_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID)
         if rerun_after:
+            pending_profile_rebuild = bool(
+                rebuild_profiles
+                or VODMetadataState.objects.filter(
+                    pk=1,
+                    rebuild_profiles_after_completion=True,
+                ).exists()
+            )
             enqueue_tmdb_enrichment(
+                rebuild_profiles=pending_profile_rebuild,
                 trigger_reason="VOD metadata changed during the previous TMDB pass",
             )
 
@@ -630,26 +638,27 @@ def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
 
     from .profile_selection import enqueue_all_profile_selection_rebuilds
 
-    # Provider/Compact catalogs do not consume TMDB data. Rebuild them first
-    # so a first-time TMDB bootstrap cannot hold visible provider changes for
-    # tens of minutes. Metadata enrichment is incremental and follows as its
-    # own durable task; future clean-title profiles can request a second,
-    # targeted rebuild when their consumed metadata changes.
-    profile_queued = enqueue_all_profile_selection_rebuilds(
+    # Enrichment is signature-based and therefore only requests metadata for
+    # new or outdated canonical titles.  When enabled, let that incremental
+    # pass finish before rebuilding profiles so clients switch once to the
+    # final catalog.  Without a configured enrichment pass the changed source
+    # catalog is rebuilt immediately.
+    if (
+        CoreSettings.get_tmdb_auto_enrich()
+        and CoreSettings.get_tmdb_api_token()
+    ):
+        result = enqueue_tmdb_enrichment(
+            rebuild_profiles=True,
+            trigger_reason="A completed provider VOD refresh changed the catalog",
+        )
+        return result["queued"] or result["status"] in {"queued", "running"}
+
+    return enqueue_all_profile_selection_rebuilds(
         trigger_reason=(
             "One or more completed VOD provider refreshes changed the source "
             "catalog"
         )
     )
-    metadata_queued = False
-    if (
-        CoreSettings.get_tmdb_auto_enrich()
-        and CoreSettings.get_tmdb_api_token()
-    ):
-        metadata_queued = enqueue_tmdb_enrichment(
-            trigger_reason="A completed provider VOD refresh changed the catalog",
-        )["queued"]
-    return profile_queued or metadata_queued
 
 
 @shared_task(bind=True, max_retries=180, track_started=True)
@@ -2190,6 +2199,17 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
             stream_id__in=stream_ids
         ).select_related('movie')
     }
+    movie_override_ids = {
+        rel.tmdb_override_id for rel in existing_relations.values()
+        if rel.tmdb_override_id
+    }
+    movie_override_targets = {
+        str(movie.tmdb_match_id or movie.tmdb_id): movie
+        for movie in Movie.objects.filter(
+            Q(tmdb_match_id__in=movie_override_ids)
+            | Q(tmdb_id__in=movie_override_ids)
+        )
+    }
 
     # Process each movie
     for movie_key, data in movie_keys.items():
@@ -2257,7 +2277,11 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
 
             if stream_id in existing_relations:
                 relation = existing_relations[stream_id]
-                relation.movie = movie
+                relation.movie = (
+                    movie_override_targets.get(relation.tmdb_override_id)
+                    if relation.tmdb_override_id
+                    else movie
+                ) or movie
                 relation.category = category
                 relation.container_extension = movie_data.get(
                     'container_extension', 'mp4'
@@ -2596,6 +2620,17 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
             external_series_id__in=series_ids
         ).select_related('series')
     }
+    series_override_ids = {
+        rel.tmdb_override_id for rel in existing_relations.values()
+        if rel.tmdb_override_id
+    }
+    series_override_targets = {
+        str(series.tmdb_match_id or series.tmdb_id): series
+        for series in Series.objects.filter(
+            Q(tmdb_match_id__in=series_override_ids)
+            | Q(tmdb_id__in=series_override_ids)
+        )
+    }
 
     # Process each series
     for series_key, data in series_keys.items():
@@ -2660,7 +2695,11 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
 
             if series_id in existing_relations:
                 relation = existing_relations[series_id]
-                relation.series = series
+                relation.series = (
+                    series_override_targets.get(relation.tmdb_override_id)
+                    if relation.tmdb_override_id
+                    else series
+                ) or series
                 relation.category = category
                 existing_rel_cp = relation.custom_properties or {}
                 relation.custom_properties = {
@@ -2926,6 +2965,10 @@ def parse_date(date_string):
 def refresh_series_episodes(account, series, external_series_id, episodes_data=None):
     """Refresh episodes for a series - only called on-demand"""
     try:
+        series_relation = M3USeriesRelation.objects.filter(
+            m3u_account=account,
+            external_series_id=external_series_id,
+        ).first()
         detailed_series_info = None
         if not episodes_data:
             # Fetch detailed series info including episodes
@@ -2941,6 +2984,13 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
                     info = series_info.get('info', {})
                     if isinstance(info, dict) and info:
                         detailed_series_info = clean_custom_properties(info)
+                    if (
+                        isinstance(info, dict)
+                        and info
+                        and not (
+                            series_relation and series_relation.tmdb_override_id
+                        )
+                    ):
                         # Only update fields if new value is non-empty and either no existing value or existing value is empty
                         updated = False
                         if should_update_field(series.description, info.get('plot')):
@@ -2965,13 +3015,6 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
                     episodes_data = series_info.get('episodes', {})
                 else:
                     episodes_data = {}
-
-        # Fetch the series relation once — used both to pass into batch_process_episodes
-        # (so episode relations get the FK set) and to update metadata afterwards.
-        series_relation = M3USeriesRelation.objects.filter(
-            m3u_account=account,
-            external_series_id=external_series_id
-        ).first()
 
         # Process all episodes in batch
         batch_process_episodes(account, series, episodes_data, series_relation=series_relation)
@@ -3867,6 +3910,32 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                 else:
                     movie_data = {}
                     logger.warning(f"VOD movie_data for stream {relation.stream_id} returned unexpected type: {type(movie_data_raw)}")
+
+                if relation.tmdb_override_id:
+                    # This concrete provider source was deliberately moved to
+                    # another canonical title. Keep provider detail on the
+                    # relation, but never let the provider's old IDs or text
+                    # overwrite the selected TMDB-backed canonical record.
+                    relation_custom_props = relation.custom_properties or {}
+                    cleaned_info = clean_custom_properties(info) if info else None
+                    cleaned_movie_data = (
+                        clean_custom_properties(movie_data) if movie_data else None
+                    )
+                    if cleaned_info:
+                        relation_custom_props['detailed_info'] = cleaned_info
+                    if cleaned_movie_data:
+                        relation_custom_props['movie_data'] = cleaned_movie_data
+                    relation_custom_props['detailed_fetched'] = True
+                    relation.custom_properties = relation_custom_props
+                    relation.last_advanced_refresh = now
+                    relation._skip_vod_profile_invalidation = True
+                    relation.save(
+                        update_fields=['custom_properties', 'last_advanced_refresh']
+                    )
+                    from .metadata import sync_relation_declared_metadata
+
+                    sync_relation_declared_metadata(relation)
+                    return "Advanced source data refreshed; canonical override preserved."
 
                 # Update Movie fields if changed
                 updated = False

@@ -903,7 +903,6 @@ class XcVodSeriesRegressionTests(TestCase):
         movie = Movie.objects.create(
             name="TMDB artwork movie",
             tmdb_id="100",
-            tmdb_override_id="200",
             tmdb_match_id="200",
             tmdb_imdb_id="tt200",
             tmdb_poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
@@ -912,6 +911,7 @@ class XcVodSeriesRegressionTests(TestCase):
             m3u_account=account,
             movie=movie,
             stream_id="tmdb-art-1",
+            tmdb_override_id="200",
             custom_properties={
                 "basic_data": {
                     "stream_icon": "https://cdn.example.com/provider.jpg",

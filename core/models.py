@@ -771,7 +771,7 @@ class CoreSettings(models.Model):
         return cls._get_group(VOD_SETTINGS_KEY, {
             "playback_history_retention_days": 0,
             "tmdb_api_token": "",
-            "tmdb_languages": ["de-DE", "en-US"],
+            "tmdb_languages": ["en-US"],
             "tmdb_auto_enrich": True,
             "tmdb_match_missing": False,
             "tmdb_prefer_artwork": True,
@@ -801,7 +801,7 @@ class CoreSettings(models.Model):
                 languages.append(language)
             if len(languages) == 2:
                 break
-        return languages or ["de-DE", "en-US"]
+        return languages or ["en-US"]
 
     @classmethod
     def get_tmdb_auto_enrich(cls):

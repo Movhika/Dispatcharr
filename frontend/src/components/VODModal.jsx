@@ -27,9 +27,7 @@ import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import { getMovieStreamUrl } from '../utils/components/VODModalUtils.js';
 import VODExternalIds from './VODExternalIds.jsx';
 
-const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod, onTmdbSaved }) => {
-  const displayVOD = detailedVOD || vod;
-
+const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
   return (
     <Stack spacing="md" flex={1}>
       <Title order={3}>{displayVOD.name}</Title>
@@ -55,7 +53,6 @@ const Movie = ({ onClickYouTubeTrailer, detailedVOD, vod, onTmdbSaved }) => {
           tmdb={displayVOD.tmdb}
           tmdbId={displayVOD.tmdb_id}
           imdbId={displayVOD.imdb_id}
-          onSaved={onTmdbSaved}
         />
       </Group>
 
@@ -123,6 +120,8 @@ const VODModal = ({
   opened,
   onClose,
   onMetadataChanged,
+  initialRelationId = null,
+  allowSourceEditing = true,
   profileCandidates = null,
   profileCandidatesLoading = false,
   profileCandidatesError = '',
@@ -162,7 +161,12 @@ const VODModal = ({
           // are independent. Profile ordering may immediately replace the
           // detail request, but the source list has already finished here.
           setLoadingProviders(false);
-          const provider = providersData[0] || null;
+          const provider =
+            providersData.find(
+              (item) => String(item.id) === String(initialRelationId)
+            ) ||
+            providersData[0] ||
+            null;
           setSelectedProvider(provider);
           return provider
             ? fetchMovieDetailsFromProvider(vod.id, provider.id)
@@ -191,7 +195,13 @@ const VODModal = ({
           }
         });
     }
-  }, [opened, vod?.id, fetchMovieDetailsFromProvider, fetchMovieProviders]);
+  }, [
+    initialRelationId,
+    opened,
+    vod?.id,
+    fetchMovieDetailsFromProvider,
+    fetchMovieProviders,
+  ]);
 
   useEffect(() => {
     if (!opened) {
@@ -299,20 +309,16 @@ const VODModal = ({
     onMetadataChanged?.();
   };
 
-  const updateTmdbMatch = (tmdb) => {
-    setDetailedVOD((current) => ({
-      ...(current || vod),
-      tmdb,
-      tmdb_id: tmdb?.id || '',
-      imdb_id: tmdb?.external_ids?.imdb_id || '',
-    }));
-    onMetadataChanged?.();
-  };
-
   if (!vod) return null;
 
   // Use detailed data if available, otherwise use basic vod data
-  const displayVOD = detailedVOD || vod;
+  const displayVOD = detailedVOD
+    ? {
+        ...detailedVOD,
+        name: allowSourceEditing ? detailedVOD.name : vod.name,
+        o_name: allowSourceEditing ? detailedVOD.o_name : '',
+      }
+    : vod;
 
   return (
     <>
@@ -436,10 +442,8 @@ const VODModal = ({
                 )}
 
                 <Movie
-                  detailedVOD={detailedVOD}
-                  vod={vod}
+                  displayVOD={displayVOD}
                   onClickYouTubeTrailer={onClickYouTubeTrailer}
-                  onTmdbSaved={updateTmdbMatch}
                 />
               </Flex>
 
@@ -457,7 +461,7 @@ const VODModal = ({
                   onSelect={onChangeSelectedProvider}
                   onPlay={playProvider}
                   onCopy={copyProviderLink}
-                  onEdit={setEditingProvider}
+                  onEdit={allowSourceEditing ? setEditingProvider : undefined}
                   profileCandidates={profileCandidates}
                   profileCandidatesLoading={profileCandidatesLoading}
                   profileCandidatesError={profileCandidatesError}
@@ -484,6 +488,11 @@ const VODModal = ({
         opened={Boolean(editingProvider)}
         onClose={() => setEditingProvider(null)}
         onSaved={updateProvider}
+        onMoved={() => {
+          setEditingProvider(null);
+          onMetadataChanged?.();
+          onClose();
+        }}
       />
     </>
   );

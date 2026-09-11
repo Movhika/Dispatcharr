@@ -1086,22 +1086,22 @@ def xc_get_epg(request, user, short=False):
 
 
 XC_MOVIE_VALUE_FIELDS = (
-    'id', 'movie_id', 'category_id', 'container_extension',
+    'id', 'movie_id', 'category_id', 'container_extension', 'tmdb_override_id',
     'movie__id', 'movie__name', 'movie__display_name', 'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
-    'movie__tmdb_override_id', 'movie__tmdb_match_id', 'movie__tmdb_imdb_id',
+    'movie__tmdb_match_id', 'movie__tmdb_imdb_id',
     'movie__tmdb_poster_url', 'movie__tmdb_backdrop_url',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
     'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
 
 XC_SERIES_VALUE_FIELDS = (
-    'id', 'series_id', 'category_id', 'updated_at',
+    'id', 'series_id', 'category_id', 'updated_at', 'tmdb_override_id',
     'series__id', 'series__name', 'series__display_name', 'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
-    'series__tmdb_override_id', 'series__tmdb_match_id', 'series__tmdb_imdb_id',
+    'series__tmdb_match_id', 'series__tmdb_imdb_id',
     'series__tmdb_poster_url', 'series__tmdb_backdrop_url',
     # Lean relation-artwork extracts (see _xc_annotate_relation_artwork).
     'rel_movie_image', 'rel_backdrop', 'rel_source_name',
@@ -1488,7 +1488,7 @@ def xc_get_vod_streams(request, user, category_id=None):
             "added": str(int(row['movie__created_at'].timestamp())),
             "is_adult": int(bool(row['movie__is_adult'])),
             "tmdb_id": (
-                row['movie__tmdb_override_id']
+                row['tmdb_override_id']
                 or row['movie__tmdb_match_id']
                 or row['movie__tmdb_id']
                 or ""
@@ -1663,7 +1663,7 @@ def xc_get_series(request, user, category_id=None):
             "category_id": str(category_id) if category_id else "0",
             "category_ids": [category_id] if category_id else [],
             "tmdb_id": (
-                row['series__tmdb_override_id']
+                row['tmdb_override_id']
                 or row['series__tmdb_match_id']
                 or row['series__tmdb_id']
                 or ""
@@ -2009,7 +2009,7 @@ def xc_get_series_info(request, user, series_id):
                 or ""
             ),
             "tmdb": str(
-                series.tmdb_override_id
+                series_relation.tmdb_override_id
                 or series.tmdb_match_id
                 or series.tmdb_id
                 or ""
@@ -2208,7 +2208,7 @@ def xc_get_vod_info(request, user, vod_id):
                 or movie_data.get('imdb_id', '')
             ),
             "tmdb_id": (
-                movie.tmdb_override_id
+                movie_relation.tmdb_override_id
                 or movie.tmdb_match_id
                 or movie_data.get('tmdb_id', '')
             ),

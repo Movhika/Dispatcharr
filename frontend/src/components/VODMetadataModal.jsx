@@ -3,10 +3,8 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Group,
   Modal,
-  PasswordInput,
   Progress,
   Select,
   Stack,
@@ -34,7 +32,7 @@ const defaultData = {
   settings: {
     token_configured: false,
     token_source: '',
-    languages: ['de-DE', 'en-US'],
+    languages: ['en-US'],
     auto_enrich: true,
     match_missing: false,
     prefer_artwork: true,
@@ -55,25 +53,21 @@ const statusColor = (status) => {
   return 'gray';
 };
 
-const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
+const VODMetadataModal = ({ opened, onClose, onUpdated }) => {
   const [data, setData] = useState(defaultData);
-  const [token, setToken] = useState('');
-  const [primaryLanguage, setPrimaryLanguage] = useState('de-DE');
-  const [secondaryLanguage, setSecondaryLanguage] = useState('en-US');
-  const [autoEnrich, setAutoEnrich] = useState(true);
+  const [primaryLanguage, setPrimaryLanguage] = useState('en-US');
+  const [secondaryLanguage, setSecondaryLanguage] = useState('');
   const [matchMissing, setMatchMissing] = useState(false);
   const [preferArtwork, setPreferArtwork] = useState(true);
-  const [force, setForce] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const applyData = useCallback((next) => {
     if (!next) return;
     setData(next);
-    const languages = next.settings?.languages || ['de-DE', 'en-US'];
-    setPrimaryLanguage(languages[0] || 'de-DE');
+    const languages = next.settings?.languages || ['en-US'];
+    setPrimaryLanguage(languages[0] || 'en-US');
     setSecondaryLanguage(languages[1] || '');
-    setAutoEnrich(Boolean(next.settings?.auto_enrich));
     setMatchMissing(Boolean(next.settings?.match_missing));
     setPreferArtwork(next.settings?.prefer_artwork !== false);
   }, []);
@@ -120,16 +114,13 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
     try {
       const payload = {
         languages,
-        auto_enrich: autoEnrich,
         match_missing: matchMissing,
         prefer_artwork: preferArtwork,
       };
-      if (token.trim()) payload.api_token = token.trim();
       const updated = await API.updateVODMetadataSettings(payload);
       applyData(updated);
-      setToken('');
       if (startRefresh) {
-        await API.refreshVODMetadata(force);
+        await API.refreshVODMetadata();
         await load({ quiet: true });
       }
       showNotification({
@@ -155,40 +146,22 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
     <Stack gap="md">
       <Alert color="blue" variant="light">
         Provider titles and provider metadata are never overwritten. TMDB is
-        stored separately on the canonical movie or series. The original TMDB
-        title is always retained, plus the one or two localized titles selected
-        below.
+        stored separately on the canonical movie or series. Choose up to two
+        localized titles for the canonical catalog.
       </Alert>
-
-      <PasswordInput
-        label="TMDB API read access token"
-        description={
-          data.settings?.token_source === 'environment'
-            ? 'Configured through the container environment. It is not exposed here.'
-            : data.settings?.token_configured
-              ? 'A stored token is configured. Enter a value only to replace it.'
-              : 'Create an application read token in your TMDB account.'
-        }
-        value={token}
-        onChange={(event) => setToken(event.currentTarget.value)}
-        placeholder={data.settings?.token_configured ? 'Configured' : ''}
-        disabled={data.settings?.token_source === 'environment'}
-        readOnly={running}
-      />
 
       <Group grow align="flex-start">
         <Select
           label="Primary localized title"
           data={LANGUAGE_OPTIONS}
           value={primaryLanguage}
-          onChange={(value) => setPrimaryLanguage(value || 'de-DE')}
+          onChange={(value) => setPrimaryLanguage(value || 'en-US')}
           searchable
           allowDeselect={false}
           disabled={running}
         />
         <Select
           label="Second localized title"
-          description="Optional; the original title is stored independently."
           data={LANGUAGE_OPTIONS.filter(
             (option) => option.value !== primaryLanguage
           )}
@@ -200,13 +173,6 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
         />
       </Group>
 
-      <Switch
-        label="Automatically enrich after a changed provider VOD refresh"
-        description="An unchanged provider catalog does not start TMDB or rebuild output profiles."
-        checked={autoEnrich}
-        disabled={running}
-        onChange={(event) => setAutoEnrich(event.currentTarget.checked)}
-      />
       <Switch
         label="Match content without a TMDB or IMDb ID"
         description="Only a unique exact title and matching release year is accepted; ambiguous results remain unmatched."
@@ -256,19 +222,10 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
         </Stack>
       )}
 
-      <Checkbox
-        label="Refetch titles whose TMDB data is already current"
-        checked={force}
-        onChange={(event) => setForce(event.currentTarget.checked)}
-        disabled={running}
-      />
-
       <Group justify="flex-end">
-        {!embedded && (
-          <Button variant="default" onClick={onClose}>
-            Close
-          </Button>
-        )}
+        <Button variant="default" onClick={onClose}>
+          Close
+        </Button>
         <Button
           variant="default"
           leftSection={<Save size={16} />}
@@ -289,8 +246,6 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, embedded = false }) => {
       </Group>
     </Stack>
   );
-
-  if (embedded) return content;
 
   return (
     <Modal

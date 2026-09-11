@@ -119,21 +119,16 @@ describe('VODMetadataModal', () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
 
     expect(await screen.findByText(/movies 80\/100/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('TMDB API read access token'), {
-      target: { value: 'new-token' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Save and refresh' }));
 
     await waitFor(() =>
       expect(API.updateVODMetadataSettings).toHaveBeenCalledWith({
         languages: ['de-DE', 'en-US'],
-        auto_enrich: true,
         match_missing: false,
         prefer_artwork: true,
-        api_token: 'new-token',
       })
     );
-    expect(API.refreshVODMetadata).toHaveBeenCalledWith(false);
+    expect(API.refreshVODMetadata).toHaveBeenCalledWith();
   });
 
   it('disables editing while the recorded task is active', async () => {

@@ -93,3 +93,14 @@ class XCGetVodInfoArtworkTests(TestCase):
         self.assertIn(f'/{logo.id}/', info['cover_big'])
         self.assertEqual(info['cover_big'], info['movie_image'])
         self.assertEqual(info['cover'], info['movie_image'])
+
+    def test_tmdb_id_uses_the_selected_provider_source_override(self):
+        self.movie.tmdb_id = '100'
+        self.movie.tmdb_match_id = '100'
+        self.movie.save(update_fields=['tmdb_id', 'tmdb_match_id'])
+        self.relation.tmdb_override_id = '200'
+        self.relation.save(update_fields=['tmdb_override_id'])
+
+        info = self._info()['info']
+
+        self.assertEqual(info['tmdb_id'], '200')

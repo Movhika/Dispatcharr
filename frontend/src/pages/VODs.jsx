@@ -2,6 +2,7 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   ActionIcon,
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -73,7 +74,7 @@ const VODMetadataModal = React.lazy(
   () => import('../components/VODMetadataModal')
 );
 
-const itemKey = (item) => `${item.contentType}:${item.id}`;
+const itemKey = (item) => `${item.contentType}:${item.relation_id || item.id}`;
 const logoUrl = (item) =>
   item.artwork_url ||
   item.logo?.cache_url ||
@@ -117,11 +118,8 @@ const VODsPage = () => {
     video_features: [],
   });
   const [bulkSaving, setBulkSaving] = useState(false);
-  const [bulkTitle, setBulkTitle] = useState({
-    mode: 'keep',
-    pattern: '',
-    replacement: '',
-  });
+  const [bulkTmdbId, setBulkTmdbId] = useState('');
+  const [bulkConfirmation, setBulkConfirmation] = useState(null);
   const [initialLoad, setInitialLoad] = useState(true);
   const [viewMode, setViewMode] = useState(() =>
     localStorage.getItem('vodsViewMode') === 'posters' ? 'posters' : 'list'
@@ -234,6 +232,8 @@ const VODsPage = () => {
     filters.resolution,
     filters.container_extension,
     filters.video_feature,
+    filters.metadata_status,
+    filters.representation,
   ]);
 
   const toggleItem = (key, checked) => {
@@ -263,10 +263,10 @@ const VODsPage = () => {
     }
   };
 
-  const saveBulkMetadata = async () => {
+  const saveBulkMetadata = async ({ confirmed = false } = {}) => {
     const selections = [...selected].map((key) => {
-      const [content_type, id] = key.split(':');
-      return { content_type, id: Number(id) };
+      const [content_type, relation_id] = key.split(':');
+      return { content_type, relation_id: Number(relation_id) };
     });
     const metadata = Object.fromEntries(
       Object.entries(bulkMetadata).filter(
@@ -286,28 +286,53 @@ const VODsPage = () => {
     }
     setBulkSaving(true);
     try {
-      const canonicalTitleOptions =
-        bulkTitle.mode === 'keep' ? {} : { canonical_title: bulkTitle };
-      const result = selectAllMatching
-        ? await API.bulkUpdateVODSourceMetadata([], metadata, {
+      const selectionOptions = selectAllMatching
+        ? {
             select_all: true,
             filters,
             exclude_selections: selections,
-            ...canonicalTitleOptions,
-          })
-        : await API.bulkUpdateVODSourceMetadata(selections, metadata, {
-            filters,
-            ...canonicalTitleOptions,
-          });
+          }
+        : { filters };
+      let movedSources = 0;
+      if (bulkTmdbId.trim()) {
+        try {
+          const moved = await API.updateVODRelationTmdbMatch(
+            bulkTmdbId.trim(),
+            selectAllMatching ? [] : selections,
+            { ...selectionOptions, confirmed }
+          );
+          movedSources = moved.moved_sources || 0;
+        } catch (error) {
+          if (error?.status === 409 && error?.body?.requires_confirmation) {
+            setBulkConfirmation(error.body);
+            return;
+          }
+          throw error;
+        }
+      }
+      const result = Object.keys(metadata).length
+        ? await API.bulkUpdateVODSourceMetadata(
+            selectAllMatching ? [] : selections,
+            metadata,
+            selectionOptions
+          )
+        : { updated_sources: 0 };
       showNotification({
         title: 'Source metadata updated',
-        message: `${result.updated_sources || 0} source editions and ${result.updated_titles || 0} canonical titles were updated.`,
+        message: `${result.updated_sources || 0} source editions updated${movedSources ? `; ${movedSources} moved to the selected TMDB title` : ''}.`,
         color: 'green',
       });
+      setBulkConfirmation(null);
       bulkEditorHandlers.close();
       setSelected(new Set());
       setSelectAllMatching(false);
       await fetchContent();
+    } catch (error) {
+      showNotification({
+        title: 'Provider sources were not updated',
+        message: error?.body?.tmdb_id || error?.message || 'Please retry.',
+        color: 'red',
+      });
     } finally {
       setBulkSaving(false);
     }
@@ -342,10 +367,26 @@ const VODsPage = () => {
           <Group gap="md">
             <Title order={2}>Video on Demand</Title>
             <Text c="dimmed">
-              {selectedCount} selected · {totalCount} matching
+              {filters.representation === 'variants'
+                ? `${selectedCount} selected · `
+                : ''}
+              {totalCount} matching
             </Text>
           </Group>
           <Group>
+            <SegmentedControl
+              aria-label="VOD representation"
+              value={filters.representation}
+              onChange={(representation) => {
+                setFilters({ representation });
+                setSelectAllMatching(false);
+                setPage(1);
+              }}
+              data={[
+                { value: 'canonical', label: 'Canonical' },
+                { value: 'variants', label: 'Variants' },
+              ]}
+            />
             <SegmentedControl
               aria-label="VOD view"
               value={viewMode}
@@ -366,13 +407,15 @@ const VODsPage = () => {
             />
             {user?.user_level >= 10 && (
               <>
-                <Button
-                  variant="default"
-                  leftSection={<DatabaseZap size={16} />}
-                  onClick={metadataHandlers.open}
-                >
-                  Metadata
-                </Button>
+                {filters.representation === 'canonical' && (
+                  <Button
+                    variant="default"
+                    leftSection={<DatabaseZap size={16} />}
+                    onClick={metadataHandlers.open}
+                  >
+                    Metadata
+                  </Button>
+                )}
                 <Button
                   variant="default"
                   leftSection={<SlidersHorizontal size={16} />}
@@ -380,14 +423,16 @@ const VODsPage = () => {
                 >
                   Output profiles
                 </Button>
-                <Button
-                  variant="default"
-                  leftSection={<Wrench size={16} />}
-                  disabled={selectedCount === 0}
-                  onClick={bulkEditorHandlers.open}
-                >
-                  Edit selected ({selectedCount})
-                </Button>
+                {filters.representation === 'variants' && (
+                  <Button
+                    variant="default"
+                    leftSection={<Wrench size={16} />}
+                    disabled={selectedCount === 0}
+                    onClick={bulkEditorHandlers.open}
+                  >
+                    Edit selected ({selectedCount})
+                  </Button>
+                )}
                 <Button
                   variant="default"
                   leftSection={<History size={16} />}
@@ -441,6 +486,24 @@ const VODsPage = () => {
               }}
               clearable
               miw={180}
+            />
+            <Select
+              placeholder="Metadata"
+              data={[
+                { value: 'missing_tmdb', label: 'No TMDB ID' },
+                {
+                  value: 'missing_external_ids',
+                  label: 'No external ID',
+                },
+                { value: 'missing_metadata', label: 'No TMDB metadata' },
+              ]}
+              value={filters.metadata_status || null}
+              onChange={(value) => {
+                setFilters({ metadata_status: value || '' });
+                setPage(1);
+              }}
+              clearable
+              w={175}
             />
           </Group>
           <Group gap="md" align="end">
@@ -510,28 +573,33 @@ const VODsPage = () => {
             >
               <TableThead>
                 <TableTr>
-                  {user?.user_level >= 10 && (
-                    <TableTh w={44}>
-                      <Checkbox
-                        aria-label="Select all filtered VODs"
-                        checked={allVisibleSelected}
-                        indeterminate={
-                          (selectAllMatching && selected.size > 0) ||
-                          (!selectAllMatching &&
-                            selected.size > 0 &&
-                            !allVisibleSelected)
-                        }
-                        onChange={(event) =>
-                          toggleAllMatching(event.currentTarget.checked)
-                        }
-                      />
-                    </TableTh>
-                  )}
+                  {user?.user_level >= 10 &&
+                    filters.representation === 'variants' && (
+                      <TableTh w={44}>
+                        <Checkbox
+                          aria-label="Select all filtered VODs"
+                          checked={allVisibleSelected}
+                          indeterminate={
+                            (selectAllMatching && selected.size > 0) ||
+                            (!selectAllMatching &&
+                              selected.size > 0 &&
+                              !allVisibleSelected)
+                          }
+                          onChange={(event) =>
+                            toggleAllMatching(event.currentTarget.checked)
+                          }
+                        />
+                      </TableTh>
+                    )}
                   <TableTh w={62}>Artwork</TableTh>
                   <TableTh>Title</TableTh>
                   <TableTh w={100}>Type</TableTh>
                   <TableTh w={90}>Year</TableTh>
-                  <TableTh w={85}>Sources</TableTh>
+                  <TableTh w={180}>
+                    {filters.representation === 'variants'
+                      ? 'Source'
+                      : 'Sources'}
+                  </TableTh>
                   <TableTh>Genre</TableTh>
                   <TableTh w={125}>DUB</TableTh>
                   <TableTh w={125}>SUB</TableTh>
@@ -544,24 +612,25 @@ const VODsPage = () => {
               <TableTbody>
                 {items.map((item) => (
                   <TableTr key={itemKey(item)}>
-                    {user?.user_level >= 10 && (
-                      <TableTd>
-                        <Checkbox
-                          aria-label={`Select ${item.name}`}
-                          checked={
-                            selectAllMatching
-                              ? !selected.has(itemKey(item))
-                              : selected.has(itemKey(item))
-                          }
-                          onChange={(event) =>
-                            toggleItem(
-                              itemKey(item),
-                              event.currentTarget.checked
-                            )
-                          }
-                        />
-                      </TableTd>
-                    )}
+                    {user?.user_level >= 10 &&
+                      filters.representation === 'variants' && (
+                        <TableTd>
+                          <Checkbox
+                            aria-label={`Select ${item.name}`}
+                            checked={
+                              selectAllMatching
+                                ? !selected.has(itemKey(item))
+                                : selected.has(itemKey(item))
+                            }
+                            onChange={(event) =>
+                              toggleItem(
+                                itemKey(item),
+                                event.currentTarget.checked
+                              )
+                            }
+                          />
+                        </TableTd>
+                      )}
                     <TableTd>
                       {logoUrl(item) ? (
                         <Image
@@ -577,6 +646,18 @@ const VODsPage = () => {
                     </TableTd>
                     <TableTd>
                       <Text fw={500}>{item.name}</Text>
+                      {item.is_variant && item.canonical_name && (
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          Canonical: {item.canonical_name}
+                        </Text>
+                      )}
+                      {!item.is_variant && (item.tmdb_id || item.imdb_id) && (
+                        <Text size="xs" c="dimmed">
+                          {item.tmdb_id ? `TMDB ${item.tmdb_id}` : ''}
+                          {item.tmdb_id && item.imdb_id ? ' · ' : ''}
+                          {item.imdb_id ? `IMDb ${item.imdb_id}` : ''}
+                        </Text>
+                      )}
                       {item.description && (
                         <Text size="xs" c="dimmed" lineClamp={1}>
                           {item.description}
@@ -587,7 +668,11 @@ const VODsPage = () => {
                       {item.contentType === 'series' ? 'Series' : 'Movie'}
                     </TableTd>
                     <TableTd>{item.year || '—'}</TableTd>
-                    <TableTd>{sourceCount(item)}</TableTd>
+                    <TableTd>
+                      {item.is_variant
+                        ? `${item.m3u_account?.name || 'Unknown'} · ${item.category?.name || 'Uncategorized'}`
+                        : sourceCount(item)}
+                    </TableTd>
                     <TableTd>{item.genre || '—'}</TableTd>
                     <TableTd>
                       {sourceMetadataValue(item, 'audio_languages')}
@@ -628,7 +713,7 @@ const VODsPage = () => {
               p="xs"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                 gap: 'var(--mantine-spacing-md)',
               }}
             >
@@ -657,27 +742,28 @@ const VODsPage = () => {
                     cursor: 'pointer',
                   }}
                 >
-                  {user?.user_level >= 10 && (
-                    <Checkbox
-                      aria-label={`Select ${item.name}`}
-                      checked={
-                        selectAllMatching
-                          ? !selected.has(itemKey(item))
-                          : selected.has(itemKey(item))
-                      }
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        toggleItem(itemKey(item), event.currentTarget.checked)
-                      }
-                      style={{
-                        position: 'absolute',
-                        top: 8,
-                        left: 8,
-                        zIndex: 2,
-                      }}
-                    />
-                  )}
+                  {user?.user_level >= 10 &&
+                    filters.representation === 'variants' && (
+                      <Checkbox
+                        aria-label={`Select ${item.name}`}
+                        checked={
+                          selectAllMatching
+                            ? !selected.has(itemKey(item))
+                            : selected.has(itemKey(item))
+                        }
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        onChange={(event) =>
+                          toggleItem(itemKey(item), event.currentTarget.checked)
+                        }
+                        style={{
+                          position: 'absolute',
+                          top: 8,
+                          left: 8,
+                          zIndex: 2,
+                        }}
+                      />
+                    )}
                   {logoUrl(item) ? (
                     <Image
                       src={logoUrl(item)}
@@ -704,7 +790,9 @@ const VODsPage = () => {
                     <Text size="xs" c="dimmed">
                       {item.contentType === 'series' ? 'Series' : 'Movie'}
                       {item.year ? ` · ${item.year}` : ''}
-                      {` · ${sourceCount(item)} sources`}
+                      {item.is_variant
+                        ? ` · ${item.m3u_account?.name || 'Unknown source'}`
+                        : ` · ${sourceCount(item)} sources`}
                     </Text>
                   </Stack>
                 </Box>
@@ -763,9 +851,9 @@ const VODsPage = () => {
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            Values are applied to all source editions behind the selected
-            titles, including episode sources for selected series. Manual values
-            are locked and are never replaced by playback observations.
+            Values are applied only to the selected provider sources. For a
+            selected series source, its episode sources are kept together.
+            Manual values are locked against later playback observations.
           </Text>
           <VODMetadataFields
             value={bulkMetadata}
@@ -774,53 +862,61 @@ const VODsPage = () => {
               resolution: 'Leave empty to keep existing values',
             }}
           />
-          <Select
-            label="Canonical client title"
-            description="Only compact output uses this stored canonical title. Variant names stay unchanged."
-            data={[
-              { value: 'keep', label: 'Keep existing override' },
-              { value: 'clean', label: 'Remove a common provider prefix' },
-              { value: 'regex', label: 'Apply a regular expression' },
-              { value: 'clear', label: 'Clear manual override' },
-            ]}
-            value={bulkTitle.mode}
-            onChange={(mode) =>
-              setBulkTitle((current) => ({ ...current, mode }))
-            }
+          <TextInput
+            label="Move selected sources to TMDB ID"
+            description="Leave empty to keep the current canonical assignment. The target is fetched once and shared by all selected sources."
+            value={bulkTmdbId}
+            onChange={(event) => setBulkTmdbId(event.currentTarget.value)}
+            inputMode="numeric"
           />
-          {bulkTitle.mode === 'regex' && (
-            <Group grow align="flex-start">
-              <TextInput
-                label="Title regular expression"
-                value={bulkTitle.pattern}
-                onChange={(event) =>
-                  setBulkTitle((current) => ({
-                    ...current,
-                    pattern: event.currentTarget.value,
-                  }))
-                }
-              />
-              <TextInput
-                label="Replacement"
-                value={bulkTitle.replacement}
-                onChange={(event) =>
-                  setBulkTitle((current) => ({
-                    ...current,
-                    replacement: event.currentTarget.value,
-                  }))
-                }
-              />
-            </Group>
-          )}
           <Group justify="flex-end">
             <Button variant="default" onClick={bulkEditorHandlers.close}>
               Cancel
             </Button>
-            <Button loading={bulkSaving} onClick={saveBulkMetadata}>
+            <Button
+              loading={bulkSaving}
+              disabled={
+                !bulkTmdbId.trim() &&
+                !Object.values(bulkMetadata).some((value) =>
+                  Array.isArray(value) ? value.length : Boolean(value)
+                )
+              }
+              onClick={() => saveBulkMetadata()}
+            >
               Apply and lock
             </Button>
           </Group>
         </Stack>
+        <Modal
+          opened={Boolean(bulkConfirmation)}
+          onClose={() => setBulkConfirmation(null)}
+          title="Replace existing TMDB assignments?"
+          centered
+        >
+          <Stack>
+            <Alert color="orange">
+              TMDB metadata was already fetched for{' '}
+              {bulkConfirmation?.previously_enriched_sources || 0} of the
+              selected sources. Continuing moves every selected source to TMDB{' '}
+              {bulkTmdbId.trim()}.
+            </Alert>
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                onClick={() => setBulkConfirmation(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="orange"
+                loading={bulkSaving}
+                onClick={() => saveBulkMetadata({ confirmed: true })}
+              >
+                Move all selected sources
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
       </Modal>
 
       <ErrorBoundary inline>
@@ -830,6 +926,8 @@ const VODsPage = () => {
             opened={seriesModalOpened}
             onClose={seriesModalHandlers.close}
             onMetadataChanged={fetchContent}
+            initialRelationId={selectedSeries?.relation_id}
+            allowSourceEditing={filters.representation === 'variants'}
           />
         </Suspense>
       </ErrorBoundary>
@@ -865,6 +963,8 @@ const VODsPage = () => {
             opened={vodModalOpened}
             onClose={vodModalHandlers.close}
             onMetadataChanged={fetchContent}
+            initialRelationId={selectedVOD?.relation_id}
+            allowSourceEditing={filters.representation === 'variants'}
           />
         </Suspense>
       </ErrorBoundary>

@@ -7,7 +7,10 @@ vi.mock('../../store/useVODStore', () => ({ default: vi.fn() }));
 vi.mock('../../store/auth', () => ({ default: vi.fn() }));
 vi.mock('../../store/playlists', () => ({ default: vi.fn() }));
 vi.mock('../../api', () => ({
-  default: { bulkUpdateVODSourceMetadata: vi.fn() },
+  default: {
+    bulkUpdateVODSourceMetadata: vi.fn(),
+    updateVODRelationTmdbMatch: vi.fn(),
+  },
 }));
 vi.mock('../../utils/pages/VODsUtils.js', () => ({
   filterCategoriesToEnabled: vi.fn(() => ({})),
@@ -121,6 +124,7 @@ vi.mock('@mantine/core', () => {
     </label>
   );
   return {
+    Alert: Wrapper,
     ActionIcon: ({ children, onClick, 'aria-label': ariaLabel }) => (
       <button aria-label={ariaLabel} onClick={onClick}>
         {children}
@@ -246,6 +250,8 @@ describe('VODsPage list and bulk editing', () => {
       resolution: '',
       container_extension: '',
       video_feature: '',
+      metadata_status: '',
+      representation: 'canonical',
     },
     currentPage: 1,
     totalCount: 30,
@@ -263,6 +269,13 @@ describe('VODsPage list and bulk editing', () => {
     fetchContent.mockResolvedValue(undefined);
     fetchCategories.mockResolvedValue(undefined);
     API.bulkUpdateVODSourceMetadata.mockResolvedValue({ updated_sources: 3 });
+    API.updateVODRelationTmdbMatch.mockResolvedValue({ moved_sources: 1 });
+    state.filters.representation = 'canonical';
+    state.filters.metadata_status = '';
+    state.currentPageContent[0].relation_id = undefined;
+    state.currentPageContent[0].is_variant = false;
+    state.currentPageContent[1].relation_id = undefined;
+    state.currentPageContent[1].is_variant = false;
     useVODStore.mockImplementation((selector) => selector(state));
     useAuthStore.mockImplementation((selector) =>
       selector({ user: { id: 1, user_level: 10 } })
@@ -305,7 +318,12 @@ describe('VODsPage list and bulk editing', () => {
     expect(screen.getByTestId('pagination')).toBeInTheDocument();
   });
 
-  it('bulk-updates every source behind selected titles', async () => {
+  it('bulk-updates selected provider variants only', async () => {
+    state.filters.representation = 'variants';
+    state.currentPageContent[0].relation_id = 101;
+    state.currentPageContent[0].is_variant = true;
+    state.currentPageContent[1].relation_id = 202;
+    state.currentPageContent[1].is_variant = true;
     render(<VODsPage />);
     await screen.findByText('Movie A');
     fireEvent.click(screen.getByLabelText('Select Movie A'));
@@ -316,7 +334,7 @@ describe('VODsPage list and bulk editing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply and lock' }));
     await waitFor(() =>
       expect(API.bulkUpdateVODSourceMetadata).toHaveBeenCalledWith(
-        [{ content_type: 'movie', id: 1 }],
+        [{ content_type: 'movie', relation_id: 101 }],
         { audio_languages: ['ger', 'eng'] },
         { filters: state.filters }
       )
@@ -337,6 +355,11 @@ describe('VODsPage list and bulk editing', () => {
   });
 
   it('selects every VOD matching the active filters across pages', async () => {
+    state.filters.representation = 'variants';
+    state.currentPageContent[0].relation_id = 101;
+    state.currentPageContent[0].is_variant = true;
+    state.currentPageContent[1].relation_id = 202;
+    state.currentPageContent[1].is_variant = true;
     render(<VODsPage />);
     await screen.findByText('Movie A');
     fireEvent.click(screen.getByLabelText('Select all filtered VODs'));

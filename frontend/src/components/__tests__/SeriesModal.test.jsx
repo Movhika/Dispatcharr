@@ -381,6 +381,27 @@ describe('SeriesModal', () => {
       });
     });
 
+    it('keeps the canonical title when provider details use a raw title', async () => {
+      mockVODStore.fetchSeriesInfo.mockResolvedValue({
+        ...mockDetailedSeries,
+        name: '┃DE┃ Provider Series UHD',
+      });
+
+      render(
+        <SeriesModal
+          series={{ ...mockSeries, name: 'Canonical Series' }}
+          opened={true}
+          onClose={vi.fn()}
+          allowSourceEditing={false}
+        />
+      );
+
+      expect(await screen.findByText('Canonical Series')).toBeInTheDocument();
+      expect(
+        screen.queryByText('┃DE┃ Provider Series UHD')
+      ).not.toBeInTheDocument();
+    });
+
     it('should display cover image', async () => {
       render(
         <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />

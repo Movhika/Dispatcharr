@@ -10,11 +10,7 @@ const lifecycleTimestamp = (profile, statusKind) => {
   const progress = profile?.selection_progress || {};
   const candidates =
     statusKind === 'active'
-      ? [
-          progress.updated_at,
-          profile?.selection_started_at,
-          progress.queued_at,
-        ]
+      ? [progress.updated_at, profile?.selection_started_at, progress.queued_at]
       : [profile?.selection_completed_at, progress.updated_at];
   for (const value of candidates) {
     const timestamp = Date.parse(value || '');
@@ -156,6 +152,7 @@ const getFetchContentParams = (state) => {
   params.append('page', state.currentPage);
   params.append('page_size', state.pageSize);
   params.append('type', state.filters.type);
+  params.append('representation', state.filters.representation);
 
   if (state.filters.search) {
     params.append('search', state.filters.search);
@@ -173,6 +170,7 @@ const getFetchContentParams = (state) => {
     'resolution',
     'container_extension',
     'video_feature',
+    'metadata_status',
   ]) {
     if (state.filters[key]) params.append(key, state.filters[key]);
   }
@@ -300,6 +298,7 @@ const useVODStore = create((set, get) => ({
   error: null,
   filters: {
     type: 'all', // 'all', 'movies', 'series'
+    representation: 'canonical', // 'canonical', 'variants'
     search: '',
     category: '',
     m3u_account: '',
@@ -308,6 +307,7 @@ const useVODStore = create((set, get) => ({
     resolution: '',
     container_extension: '',
     video_feature: '',
+    metadata_status: '',
   },
   currentPage: 1,
   totalCount: 0,
@@ -485,8 +485,7 @@ const useVODStore = create((set, get) => ({
         if (String(current.id) !== String(update.profile_id)) return current;
         const incoming = {
           ...current,
-          selection_status:
-            update.selection_status || current.selection_status,
+          selection_status: update.selection_status || current.selection_status,
           selection_progress:
             update.selection_progress || current.selection_progress,
           active_selection_generation:

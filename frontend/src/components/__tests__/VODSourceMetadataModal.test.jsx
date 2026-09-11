@@ -2,7 +2,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../api', () => ({
-  default: { updateVODRelationManualMetadata: vi.fn() },
+  default: {
+    updateVODRelationManualMetadata: vi.fn(),
+    updateVODRelationTmdbMatch: vi.fn(),
+  },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
@@ -38,6 +41,7 @@ vi.mock('../VideoFeaturePicker.jsx', () => ({
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
   return {
+    Alert: Wrapper,
     Button: ({ children, onClick, disabled, loading }) => (
       <button onClick={onClick} disabled={disabled || loading}>
         {children}
@@ -71,6 +75,13 @@ vi.mock('@mantine/core', () => {
     ),
     Stack: Wrapper,
     Text: Wrapper,
+    TextInput: ({ label, description, value, onChange }) => (
+      <label>
+        {label}
+        <input aria-label={label} value={value} onChange={onChange} />
+        <span>{description}</span>
+      </label>
+    ),
   };
 });
 
@@ -82,6 +93,7 @@ const provider = {
   source_asset: 90,
   m3u_account: { name: 'Provider' },
   category: { name: 'Movies' },
+  movie: { tmdb_match_id: '123', tmdb_id: '123' },
   source_metadata: {
     values: {
       audio_languages: ['ger'],
@@ -116,6 +128,7 @@ describe('VODSourceMetadataModal', () => {
         provenance: { subtitle_languages: 'manual' },
       },
     });
+    API.updateVODRelationTmdbMatch.mockResolvedValue({ moved_sources: 1 });
   });
 
   it('prefills effective metadata but keeps provider format read-only', async () => {
@@ -136,6 +149,9 @@ describe('VODSourceMetadataModal', () => {
     expect(screen.getByLabelText('Video features')).toHaveValue('hdr');
     expect(screen.queryByLabelText('Format')).not.toBeInTheDocument();
     expect(screen.getByText(/Format: mkv/)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Canonical TMDB ID for this provider source')
+    ).toHaveValue('123');
 
     fireEvent.change(screen.getByLabelText('SUB languages'), {
       target: { value: 'ger' },
@@ -168,5 +184,76 @@ describe('VODSourceMetadataModal', () => {
         }),
       })
     );
+  });
+
+  it('moves only this source after changing its canonical TMDB ID', async () => {
+    render(
+      <VODSourceMetadataModal
+        provider={provider}
+        contentType="movie"
+        opened
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onMoved={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByLabelText('Canonical TMDB ID for this provider source'),
+      { target: { value: '76600' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save and lock' }));
+
+    await waitFor(() =>
+      expect(API.updateVODRelationTmdbMatch).toHaveBeenCalledWith(
+        '76600',
+        [{ content_type: 'movie', relation_id: 51 }],
+        { confirmed: false }
+      )
+    );
+  });
+
+  it('warns before changing an enriched assignment and confirms once', async () => {
+    API.updateVODRelationTmdbMatch.mockRejectedValueOnce({
+      status: 409,
+      body: {
+        requires_confirmation: true,
+        previously_enriched_sources: 1,
+      },
+    });
+    const onMoved = vi.fn();
+    render(
+      <VODSourceMetadataModal
+        provider={provider}
+        contentType="movie"
+        opened
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onMoved={onMoved}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByLabelText('Canonical TMDB ID for this provider source'),
+      { target: { value: '76600' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save and lock' }));
+
+    expect(
+      await screen.findByText(/TMDB metadata has already been fetched/)
+    ).toBeInTheDocument();
+    expect(API.updateVODRelationManualMetadata).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move source' }));
+
+    await waitFor(() =>
+      expect(API.updateVODRelationTmdbMatch).toHaveBeenLastCalledWith(
+        '76600',
+        [{ content_type: 'movie', relation_id: 51 }],
+        { confirmed: true }
+      )
+    );
+    expect(API.updateVODRelationManualMetadata).toHaveBeenCalledTimes(1);
+    expect(onMoved).toHaveBeenCalledWith({ moved_sources: 1 });
   });
 });

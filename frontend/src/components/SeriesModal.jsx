@@ -45,7 +45,7 @@ import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import VODExternalIds from './VODExternalIds.jsx';
 
-const Series = ({ displaySeries, onClickYouTubeTrailer, onTmdbSaved }) => {
+const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
     <Flex gap="md" wrap="wrap">
       {displaySeries.series_image ||
@@ -113,7 +113,6 @@ const Series = ({ displaySeries, onClickYouTubeTrailer, onTmdbSaved }) => {
             tmdb={displaySeries.tmdb}
             tmdbId={displaySeries.tmdb_id}
             imdbId={displaySeries.imdb_id}
-            onSaved={onTmdbSaved}
           />
         </Group>
 
@@ -329,6 +328,8 @@ const SeriesModal = ({
   opened,
   onClose,
   onMetadataChanged,
+  initialRelationId = null,
+  allowSourceEditing = true,
   profileCandidates = null,
   profileCandidatesLoading = false,
   profileCandidatesError = '',
@@ -369,7 +370,12 @@ const SeriesModal = ({
           // Profile ordering can supersede only the detail/episode request.
           // The provider list itself is already complete at this point.
           setLoadingProviders(false);
-          const provider = providersData[0] || null;
+          const provider =
+            providersData.find(
+              (item) => String(item.id) === String(initialRelationId)
+            ) ||
+            providersData[0] ||
+            null;
           setSelectedProvider(provider);
           return provider
             ? fetchSeriesInfo(series.id, provider.id)
@@ -395,7 +401,13 @@ const SeriesModal = ({
           }
         });
     }
-  }, [opened, series?.id, fetchSeriesInfo, fetchSeriesProviders]);
+  }, [
+    initialRelationId,
+    opened,
+    series?.id,
+    fetchSeriesInfo,
+    fetchSeriesProviders,
+  ]);
 
   useEffect(() => {
     if (!opened) {
@@ -547,20 +559,16 @@ const SeriesModal = ({
     onMetadataChanged?.();
   };
 
-  const updateTmdbMatch = (tmdb) => {
-    setDetailedSeries((current) => ({
-      ...(current || series),
-      tmdb,
-      tmdb_id: tmdb?.id || '',
-      imdb_id: tmdb?.external_ids?.imdb_id || '',
-    }));
-    onMetadataChanged?.();
-  };
-
   if (!series) return null;
 
   // Use detailed data if available, otherwise use basic series data
-  const displaySeries = detailedSeries || series;
+  const displaySeries = detailedSeries
+    ? {
+        ...detailedSeries,
+        name: allowSourceEditing ? detailedSeries.name : series.name,
+        o_name: allowSourceEditing ? detailedSeries.o_name : '',
+      }
+    : series;
 
   return (
     <>
@@ -652,7 +660,6 @@ const SeriesModal = ({
               <Series
                 displaySeries={displaySeries}
                 onClickYouTubeTrailer={onClickYouTubeTrailer}
-                onTmdbSaved={updateTmdbMatch}
               />
 
               <Group gap="xs" mt="md">
@@ -667,7 +674,7 @@ const SeriesModal = ({
                   contentType="series"
                   disabled={loadingProviders || loadingDetails}
                   onSelect={onChangeSelectedProvider}
-                  onEdit={setEditingProvider}
+                  onEdit={allowSourceEditing ? setEditingProvider : undefined}
                   profileCandidates={profileCandidates}
                   profileCandidatesLoading={profileCandidatesLoading}
                   profileCandidatesError={profileCandidatesError}
@@ -833,6 +840,11 @@ const SeriesModal = ({
         opened={Boolean(editingProvider)}
         onClose={() => setEditingProvider(null)}
         onSaved={updateProvider}
+        onMoved={() => {
+          setEditingProvider(null);
+          onMetadataChanged?.();
+          onClose();
+        }}
       />
     </>
   );

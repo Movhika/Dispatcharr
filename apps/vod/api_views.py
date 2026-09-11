@@ -79,8 +79,7 @@ def _tmdb_content_payload(content):
     )
     external_ids = metadata.get("external_ids") or {}
     effective_id = str(
-        content.tmdb_override_id
-        or content.tmdb_match_id
+        content.tmdb_match_id
         or metadata.get("id")
         or content.tmdb_id
         or ""
@@ -88,7 +87,6 @@ def _tmdb_content_payload(content):
     return {
         "id": effective_id,
         "provider_id": str(content.tmdb_id or ""),
-        "override_id": str(content.tmdb_override_id or ""),
         "match_method": metadata.get("match_method") or "",
         "status": content.tmdb_status or "",
         "external_ids": {
@@ -107,48 +105,160 @@ def _tmdb_content_payload(content):
                 or ""
             ),
         },
-        "original_title": metadata.get("original_title") or "",
         "localized": metadata.get("localized") or {},
     }
 
 
-def _update_tmdb_override(request, content):
-    if not _is_admin(request.user):
-        raise PermissionDenied("Only administrators can change TMDB matches.")
-    override_id = str(request.data.get("tmdb_id", "") or "").strip()
-    if override_id and (not override_id.isdigit() or int(override_id) < 1):
-        raise DRFValidationError(
-            {"tmdb_id": "Enter a positive numeric TMDB ID, or leave it empty."}
-        )
-    content.__class__.objects.filter(pk=content.pk).update(
-        tmdb_override_id=override_id,
-        tmdb_match_id="",
-        tmdb_imdb_id="",
-        tmdb_poster_url="",
-        tmdb_backdrop_url="",
-        tmdb_metadata={},
-        tmdb_status="",
-        tmdb_enriched_at=None,
-        tmdb_enrichment_signature="",
+def _relation_property(relation, *keys):
+    payload = relation.custom_properties or {}
+    candidates = [payload]
+    for key in ("detailed_info", "basic_data", "movie_data", "series_data"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    for candidate in candidates:
+        for key in keys:
+            value = candidate.get(key)
+            if value not in (None, "", 0, "0"):
+                return value
+    return ""
+
+
+def _relation_provider_title(relation):
+    canonical = (
+        relation.movie
+        if isinstance(relation, M3UMovieRelation)
+        else relation.series
     )
-    content.refresh_from_db()
-    from .catalog_cache import bump_catalog_generation
+    return str(
+        _relation_property(relation, "name", "title") or canonical.name or ""
+    ).strip()
 
-    bump_catalog_generation(invalidate_selections=False)
-    refresh = {"queued": False, "status": "token_not_configured"}
-    if CoreSettings.get_tmdb_api_token():
-        from .tasks import enqueue_tmdb_enrichment
 
-        refresh = enqueue_tmdb_enrichment(
-            trigger_reason="A TMDB match was corrected manually",
-        )
-    return Response(
-        {"tmdb": _tmdb_content_payload(content), "refresh": refresh},
-        status=(
-            status.HTTP_202_ACCEPTED
-            if refresh.get("queued")
-            else status.HTTP_200_OK
+def _relation_provider_external_ids(relation):
+    return {
+        "tmdb_id": str(_relation_property(relation, "tmdb_id", "tmdb") or ""),
+        "imdb_id": str(_relation_property(relation, "imdb_id", "imdb") or ""),
+    }
+
+
+def _tmdb_target_defaults(metadata, media_type):
+    from .tmdb import preferred_title
+
+    languages = CoreSettings.get_tmdb_languages()
+    localized = metadata.get("localized") or {}
+    primary = localized.get(languages[0]) or {}
+    title = preferred_title(metadata, languages[0]) or f"TMDB {metadata['id']}"
+    release_date = str(metadata.get("release_date") or "")
+    year_match = re.match(r"(\d{4})", release_date)
+    defaults = {
+        "name": title,
+        "display_name": title,
+        "description": str(primary.get("overview") or metadata.get("overview") or ""),
+        "year": int(year_match.group(1)) if year_match else None,
+        "rating": str(metadata.get("rating") or ""),
+        "genre": ", ".join(
+            row.get("name") or "" for row in metadata.get("genres") or []
+            if row.get("name")
         ),
+        "tmdb_match_id": str(metadata.get("id") or ""),
+        "tmdb_imdb_id": str(metadata.get("imdb_id") or ""),
+        "tmdb_poster_url": str(metadata.get("poster_url") or ""),
+        "tmdb_backdrop_url": str(metadata.get("backdrop_url") or ""),
+        "tmdb_metadata": {**metadata, "status": "matched"},
+        "tmdb_status": "matched",
+        "tmdb_enriched_at": timezone.now(),
+        "tmdb_enrichment_signature": "",
+    }
+    if media_type == "movie" and metadata.get("runtime_minutes"):
+        defaults["duration_secs"] = int(metadata["runtime_minutes"] * 60)
+    return defaults
+
+
+def _materialize_tmdb_target(media_type, tmdb_id):
+    model = Movie if media_type == "movie" else Series
+    target = model.objects.filter(
+        Q(tmdb_id=tmdb_id) | Q(tmdb_match_id=tmdb_id)
+    ).order_by("id").first()
+    if target is not None and target.tmdb_status == "matched":
+        return target
+
+    token = CoreSettings.get_tmdb_api_token()
+    if not token:
+        raise DRFValidationError(
+            {"tmdb_id": "Configure a TMDB API token before assigning a new title."}
+        )
+    from .tmdb import Client as TMDBClient, TMDBError
+
+    try:
+        metadata = TMDBClient(token).details(
+            tmdb_id,
+            "movie" if media_type == "movie" else "tv",
+            CoreSettings.get_tmdb_languages(),
+            match_method="source_override",
+        )
+    except TMDBError as exc:
+        raise DRFValidationError({"tmdb_id": str(exc)}) from exc
+
+    defaults = _tmdb_target_defaults(metadata, media_type)
+    if target is None:
+        target = model.objects.create(tmdb_id=tmdb_id, **defaults)
+    else:
+        model.objects.filter(pk=target.pk).update(**defaults)
+        target.refresh_from_db()
+    # The manual move already fetched a complete TMDB document. Record the
+    # same signature used by automatic enrichment so the next normal pass does
+    # not request the title a second time.
+    from .tasks import _tmdb_content_signature, _tmdb_settings_signature
+
+    signature = _tmdb_content_signature(
+        _tmdb_settings_signature(
+            CoreSettings.get_tmdb_languages(),
+            CoreSettings.get_tmdb_match_missing(),
+        ),
+        target,
+    )
+    model.objects.filter(pk=target.pk).update(
+        tmdb_enrichment_signature=signature
+    )
+    target.tmdb_enrichment_signature = signature
+    return target
+
+
+def _move_series_relation(relation, target):
+    """Re-home one provider series and its episode sources atomically."""
+    if relation.series_id == target.id:
+        M3USeriesRelation.objects.filter(pk=relation.pk).update(
+            tmdb_override_id=str(target.tmdb_match_id or target.tmdb_id or "")
+        )
+        return
+    episode_relations = list(
+        relation.episode_relations.select_related("episode").order_by("id")
+    )
+    for episode_relation in episode_relations:
+        source = episode_relation.episode
+        episode, _ = Episode.objects.get_or_create(
+            series=target,
+            season_number=source.season_number,
+            episode_number=source.episode_number,
+            defaults={
+                "name": source.name,
+                "description": source.description,
+                "air_date": source.air_date,
+                "rating": source.rating,
+                "duration_secs": source.duration_secs,
+                "tmdb_id": source.tmdb_id,
+                "imdb_id": source.imdb_id,
+                "custom_properties": source.custom_properties,
+                "library_added_at": source.library_added_at,
+            },
+        )
+        M3UEpisodeRelation.objects.filter(pk=episode_relation.pk).update(
+            episode=episode
+        )
+    M3USeriesRelation.objects.filter(pk=relation.pk).update(
+        series=target,
+        tmdb_override_id=str(target.tmdb_match_id or target.tmdb_id or ""),
     )
 
 
@@ -522,7 +632,140 @@ def _filtered_vod_content(filters):
                 | Q(genre__icontains=search)
             )
 
+    metadata_status = str(filters.get("metadata_status") or "").strip()
+    if metadata_status:
+        movies = movies.filter(_vod_metadata_filter_q(metadata_status))
+        series = series.filter(_vod_metadata_filter_q(metadata_status))
+
     return movies.distinct(), series.distinct()
+
+
+def _vod_metadata_filter_q(value, prefix=""):
+    field = lambda name: f"{prefix}{name}"
+    missing_tmdb = (
+        Q(**{field("tmdb_match_id"): ""})
+        & (Q(**{f'{field("tmdb_id")}__isnull': True}) | Q(**{field("tmdb_id"): ""}))
+    )
+    if value == "missing_tmdb":
+        return missing_tmdb
+    if value == "missing_external_ids":
+        return (
+            missing_tmdb
+            & Q(**{field("tmdb_imdb_id"): ""})
+            & (
+                Q(**{f'{field("imdb_id")}__isnull': True})
+                | Q(**{field("imdb_id"): ""})
+            )
+            & (
+                Q(
+                    **{
+                        f'{field("tmdb_metadata")}__external_ids__tvdb_id__isnull': True
+                    }
+                )
+                | Q(
+                    **{
+                        f'{field("tmdb_metadata")}__external_ids__tvdb_id': ""
+                    }
+                )
+            )
+            & (
+                Q(
+                    **{
+                        f'{field("tmdb_metadata")}__external_ids__wikidata_id__isnull': True
+                    }
+                )
+                | Q(
+                    **{
+                        f'{field("tmdb_metadata")}__external_ids__wikidata_id': ""
+                    }
+                )
+            )
+        )
+    if value == "missing_metadata":
+        return ~Q(**{field("tmdb_status"): "matched"})
+    return Q()
+
+
+def _vod_metadata_sql_condition(value, alias):
+    effective_tmdb = (
+        f"COALESCE(NULLIF({alias}.tmdb_match_id, ''), "
+        f"NULLIF({alias}.tmdb_id, ''))"
+    )
+    effective_imdb = (
+        f"COALESCE(NULLIF({alias}.tmdb_imdb_id, ''), "
+        f"NULLIF({alias}.imdb_id, ''))"
+    )
+    effective_tvdb = (
+        f"NULLIF({alias}.tmdb_metadata -> 'external_ids' ->> 'tvdb_id', '')"
+    )
+    effective_wikidata = (
+        f"NULLIF({alias}.tmdb_metadata -> 'external_ids' ->> 'wikidata_id', '')"
+    )
+    if value == "missing_tmdb":
+        return f"{effective_tmdb} IS NULL"
+    if value == "missing_external_ids":
+        return (
+            f"{effective_tmdb} IS NULL AND {effective_imdb} IS NULL "
+            f"AND {effective_tvdb} IS NULL AND {effective_wikidata} IS NULL"
+        )
+    if value == "missing_metadata":
+        return f"COALESCE({alias}.tmdb_status, '') <> 'matched'"
+    return ""
+
+
+def _selected_relation_queryset(request, relation_type):
+    relation_model, canonical_field = (
+        (M3UMovieRelation, "movie")
+        if relation_type == "movie"
+        else (M3USeriesRelation, "series")
+    )
+    selections = request.data.get("selections", [])
+    exclusions = request.data.get("exclude_selections", [])
+    select_all = request.data.get("select_all") is True
+    filters = request.data.get("filters")
+    filters = filters if isinstance(filters, dict) else {}
+    ids = {
+        int(item["relation_id"])
+        for item in selections
+        if isinstance(item, dict)
+        and item.get("content_type") == relation_type
+        and str(item.get("relation_id", "")).isdigit()
+    }
+    excluded_ids = {
+        int(item["relation_id"])
+        for item in exclusions
+        if isinstance(item, dict)
+        and item.get("content_type") == relation_type
+        and str(item.get("relation_id", "")).isdigit()
+    }
+    queryset = relation_model.objects.filter(
+        _filtered_vod_relation_query(filters, relation_type)
+    ).select_related(canonical_field, "m3u_account", "category", "source_asset")
+    if not select_all:
+        queryset = queryset.filter(pk__in=ids)
+    elif excluded_ids:
+        queryset = queryset.exclude(pk__in=excluded_ids)
+
+    requested_type = str(filters.get("type") or "all")
+    expected_filter_type = "movies" if relation_type == "movie" else "series"
+    if requested_type not in {"all", expected_filter_type}:
+        return queryset.none()
+    search = str(filters.get("search") or "").strip()
+    if search:
+        canonical_lookup = f"{canonical_field}__name__icontains"
+        queryset = queryset.filter(
+            Q(**{canonical_lookup: search})
+            | Q(custom_properties__detailed_info__name__icontains=search)
+            | Q(custom_properties__basic_data__name__icontains=search)
+            | Q(custom_properties__movie_data__name__icontains=search)
+            | Q(custom_properties__series_data__name__icontains=search)
+        )
+    metadata_status = str(filters.get("metadata_status") or "").strip()
+    if metadata_status:
+        queryset = queryset.filter(
+            _vod_metadata_filter_q(metadata_status, f"{canonical_field}__")
+        )
+    return queryset
 
 
 def _filtered_vod_relation_query(filters, relation_type):
@@ -728,9 +971,100 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             }
         )
 
+    @action(detail=False, methods=["patch"], url_path="relation-tmdb-match")
+    def relation_tmdb_match(self, request):
+        """Move selected provider sources to the canonical TMDB title."""
+        if not _is_admin(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        tmdb_id = str(request.data.get("tmdb_id") or "").strip()
+        if not tmdb_id.isdigit() or int(tmdb_id) < 1:
+            raise DRFValidationError(
+                {"tmdb_id": "Enter the positive numeric ID from the TMDB URL."}
+            )
+
+        movie_relations = list(_selected_relation_queryset(request, "movie"))
+        series_relations = list(_selected_relation_queryset(request, "series"))
+        relations = movie_relations + series_relations
+        if not relations:
+            raise DRFValidationError(
+                {"selections": "Select at least one provider source."}
+            )
+        if movie_relations and series_relations:
+            raise DRFValidationError(
+                {
+                    "selections": (
+                        "Assign movies and series separately because TMDB uses "
+                        "different catalogs for the same numeric ID."
+                    )
+                }
+            )
+
+        already_enriched = 0
+        for relation in relations:
+            content = (
+                relation.movie
+                if isinstance(relation, M3UMovieRelation)
+                else relation.series
+            )
+            current_id = str(content.tmdb_match_id or content.tmdb_id or "")
+            has_existing_metadata = bool(
+                content.tmdb_enriched_at
+                or content.tmdb_status == "matched"
+                or content.tmdb_metadata
+            )
+            if has_existing_metadata and current_id != tmdb_id:
+                already_enriched += 1
+        if already_enriched and request.data.get("confirmed") is not True:
+            return Response(
+                {
+                    "requires_confirmation": True,
+                    "affected_sources": len(relations),
+                    "previously_enriched_sources": already_enriched,
+                    "detail": (
+                        "TMDB metadata was already fetched for one or more selected "
+                        "sources. Confirm to move all selected sources."
+                    ),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        movie_target = (
+            _materialize_tmdb_target("movie", tmdb_id) if movie_relations else None
+        )
+        series_target = (
+            _materialize_tmdb_target("series", tmdb_id) if series_relations else None
+        )
+        old_movie_ids = {relation.movie_id for relation in movie_relations}
+        old_series_ids = {relation.series_id for relation in series_relations}
+        with transaction.atomic():
+            if movie_relations:
+                M3UMovieRelation.objects.filter(
+                    pk__in=[relation.pk for relation in movie_relations]
+                ).update(movie=movie_target, tmdb_override_id=tmdb_id)
+            for relation in series_relations:
+                _move_series_relation(relation, series_target)
+
+        from .profile_selection import refresh_profile_selections_for_content
+
+        refresh_profile_selections_for_content(
+            movie_ids=old_movie_ids | ({movie_target.id} if movie_target else set()),
+            series_ids=old_series_ids | ({series_target.id} if series_target else set()),
+        )
+        return Response(
+            {
+                "moved_sources": len(relations),
+                "targets": {
+                    "movie": _tmdb_content_payload(movie_target)
+                    if movie_target else None,
+                    "series": _tmdb_content_payload(series_target)
+                    if series_target else None,
+                },
+            }
+        )
+
     @action(detail=False, methods=["patch"], url_path="bulk-manual-metadata")
     def bulk_manual_metadata(self, request):
-        """Set locked metadata on source relations matching the list selection."""
+        """Set locked metadata on the selected concrete provider sources."""
         if not _is_admin(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
         selections = request.data.get("selections", [])
@@ -739,18 +1073,16 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         filters = request.data.get("filters")
         filters = filters if isinstance(filters, dict) else {}
         metadata = request.data.get("metadata", {})
-        title_update = request.data.get("canonical_title", {})
         if (
             not isinstance(selections, list)
             or not isinstance(exclude_selections, list)
             or not isinstance(metadata, dict)
-            or not isinstance(title_update, dict)
         ):
             return Response(
                 {
                     "detail": (
                         "selections and exclude_selections must be lists and "
-                        "metadata and canonical_title objects"
+                        "metadata must be an object"
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -766,53 +1098,17 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .metadata import ensure_source_assets
 
         metadata, _locked_fields = _validated_manual_source_metadata(metadata)
-        explicit_movie_ids = {
-            int(item["id"])
-            for item in selections
-            if item.get("content_type") == "movie" and str(item.get("id", "")).isdigit()
-        }
-        explicit_series_ids = {
-            int(item["id"])
-            for item in selections
-            if item.get("content_type") == "series" and str(item.get("id", "")).isdigit()
-        }
-        excluded_movie_ids = {
-            int(item["id"])
-            for item in exclude_selections
-            if item.get("content_type") == "movie"
-            and str(item.get("id", "")).isdigit()
-        }
-        excluded_series_ids = {
-            int(item["id"])
-            for item in exclude_selections
-            if item.get("content_type") == "series"
-            and str(item.get("id", "")).isdigit()
-        }
-
-        if select_all:
-            movies, series = _filtered_vod_content(filters)
-            if excluded_movie_ids:
-                movies = movies.exclude(id__in=excluded_movie_ids)
-            if excluded_series_ids:
-                series = series.exclude(id__in=excluded_series_ids)
-            movie_ids = movies.values("id")
-            series_ids = series.values("id")
-        else:
-            movie_ids = explicit_movie_ids
-            series_ids = explicit_series_ids
-
+        if not metadata:
+            raise DRFValidationError(
+                {"detail": "Choose at least one provider-source metadata value."}
+            )
+        movie_relations = _selected_relation_queryset(request, "movie")
+        series_relations = _selected_relation_queryset(request, "series")
         relation_querysets = [
-            M3UMovieRelation.objects.filter(
-                _filtered_vod_relation_query(filters, "movie"),
-                movie_id__in=movie_ids,
-            ).select_related("m3u_account__server_group"),
-            M3USeriesRelation.objects.filter(
-                _filtered_vod_relation_query(filters, "series"),
-                series_id__in=series_ids,
-            ).select_related("m3u_account__server_group"),
+            movie_relations.select_related("m3u_account__server_group"),
+            series_relations.select_related("m3u_account__server_group"),
             M3UEpisodeRelation.objects.filter(
-                _filtered_vod_relation_query(filters, "episode"),
-                episode__series_id__in=series_ids,
+                series_relation__in=series_relations,
             ).select_related("m3u_account__server_group"),
         ]
         updated_asset_ids = set()
@@ -840,84 +1136,25 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 )
                 updated_asset_ids.update(asset.id for asset in assets)
 
-        if metadata:
-            for queryset in relation_querysets:
-                batch = []
-                for relation in queryset.iterator(chunk_size=1000):
-                    batch.append(relation)
-                    if len(batch) == 1000:
-                        update_assets(ensure_source_assets(batch))
-                        batch = []
-                if batch:
+        for queryset in relation_querysets:
+            batch = []
+            for relation in queryset.iterator(chunk_size=1000):
+                batch.append(relation)
+                if len(batch) == 1000:
                     update_assets(ensure_source_assets(batch))
-
-        updated_titles = 0
-        title_mode = str(title_update.get("mode") or "keep")
-        if title_mode not in {"keep", "clean", "clear", "regex"}:
-            raise DRFValidationError(
-                {"canonical_title": "mode must be keep, clean, clear, or regex"}
-            )
-        title_pattern = None
-        if title_mode == "regex":
-            import re
-
-            raw_pattern = str(title_update.get("pattern") or "")
-            if not raw_pattern:
-                raise DRFValidationError(
-                    {"canonical_title": "pattern is required for regex mode"}
-                )
-            try:
-                title_pattern = re.compile(raw_pattern)
-            except re.error as exc:
-                raise DRFValidationError(
-                    {"canonical_title": f"Invalid regular expression: {exc}"}
-                )
-        if title_mode != "keep":
-            from .utils import canonical_output_name
-
-            for queryset in (
-                Movie.objects.filter(pk__in=movie_ids),
-                Series.objects.filter(pk__in=series_ids),
-            ):
-                changed = []
-                for content in queryset.only("id", "name", "display_name").iterator(
-                    chunk_size=1000
-                ):
-                    if title_mode == "clear":
-                        display_name = ""
-                    elif title_mode == "clean":
-                        display_name = canonical_output_name(content.name)
-                    else:
-                        display_name = title_pattern.sub(
-                            str(title_update.get("replacement") or ""),
-                            content.name,
-                        ).strip()
-                    if content.display_name == display_name:
-                        continue
-                    content.display_name = display_name
-                    changed.append(content)
-                    if len(changed) >= 1000:
-                        queryset.model.objects.bulk_update(changed, ["display_name"])
-                        updated_titles += len(changed)
-                        changed.clear()
-                if changed:
-                    queryset.model.objects.bulk_update(changed, ["display_name"])
-                    updated_titles += len(changed)
-        if not metadata and title_mode == "keep":
-            raise DRFValidationError(
-                {"detail": "Choose metadata or a canonical title update."}
-            )
+                    batch = []
+            if batch:
+                update_assets(ensure_source_assets(batch))
 
         from .catalog_cache import bump_catalog_generation
         from .profile_selection import enqueue_all_profile_selection_rebuilds
 
-        bump_catalog_generation(invalidate_selections=bool(metadata))
-        if metadata:
-            enqueue_all_profile_selection_rebuilds()
+        bump_catalog_generation(invalidate_selections=True)
+        enqueue_all_profile_selection_rebuilds()
         return Response(
             {
                 "updated_sources": len(updated_asset_ids),
-                "updated_titles": updated_titles,
+                "updated_titles": 0,
             }
         )
 
@@ -1112,7 +1349,8 @@ class VODMetadataViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["put"], url_path="settings")
     def update_settings(self, request):
         self._admin_only(request)
-        raw_languages = request.data.get("languages", ["de-DE", "en-US"])
+        current_languages = CoreSettings.get_tmdb_languages()
+        raw_languages = request.data.get("languages", current_languages)
         if not isinstance(raw_languages, list) or not 1 <= len(raw_languages) <= 2:
             raise DRFValidationError(
                 {"languages": "Choose one or two TMDB language-region codes."}
@@ -1139,8 +1377,16 @@ class VODMetadataViewSet(viewsets.ViewSet):
         CoreSettings.set_vod_metadata_settings(
             api_token=token,
             languages=languages,
-            auto_enrich=request.data.get("auto_enrich") is True,
-            match_missing=request.data.get("match_missing") is True,
+            auto_enrich=(
+                request.data.get("auto_enrich") is True
+                if "auto_enrich" in request.data
+                else CoreSettings.get_tmdb_auto_enrich()
+            ),
+            match_missing=(
+                request.data.get("match_missing") is True
+                if "match_missing" in request.data
+                else CoreSettings.get_tmdb_match_missing()
+            ),
             prefer_artwork=request.data.get(
                 "prefer_artwork", previous_prefer_artwork
             ) is not False,
@@ -1161,7 +1407,6 @@ class VODMetadataViewSet(viewsets.ViewSet):
         from .tasks import enqueue_tmdb_enrichment
 
         result = enqueue_tmdb_enrichment(
-            force=request.data.get("force") is True,
             trigger_reason="Manual TMDB metadata refresh",
         )
         return Response(
@@ -2535,10 +2780,6 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         }
         return Response(response_data)
 
-    @action(detail=True, methods=['patch'], url_path='tmdb-match')
-    def tmdb_match(self, request, pk=None):
-        return _update_tmdb_override(request, self.get_object())
-
     @action(detail=True, methods=['get'], url_path='image', permission_classes=[AllowAny])
     def image(self, request, pk=None):
         """Proxy a stored movie image (backdrop, movie_image, poster_path)."""
@@ -2953,10 +3194,6 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=['patch'], url_path='tmdb-match')
-    def tmdb_match(self, request, pk=None):
-        return _update_tmdb_override(request, self.get_object())
-
     @action(detail=True, methods=['get'], url_path='image', permission_classes=[AllowAny])
     def image(self, request, pk=None):
         """Proxy a stored series image (backdrop, movie_image, poster_path)."""
@@ -3073,11 +3310,276 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
         except KeyError:
             return [Authenticated()]
 
+    def _list_variants(self, request):
+        """Return one paginated row per concrete provider movie/series source."""
+        user = _authenticated_user(request)
+        movies_allowed = is_vod_movies_enabled(user=user)
+        series_allowed = is_vod_series_enabled(user=user)
+        if not movies_allowed and not series_allowed:
+            return Response(
+                {"count": 0, "next": False, "previous": False, "results": []}
+            )
+
+        try:
+            page_size = max(
+                1, min(200, int(request.query_params.get("page_size", 24)))
+            )
+            page_number = max(1, int(request.query_params.get("page", 1)))
+        except (TypeError, ValueError):
+            raise DRFValidationError(
+                {"page": "Page and page_size must be numeric."}
+            )
+        offset = (page_number - 1) * page_size
+        content_filter = request.query_params.get("type", "all")
+        filters = {
+            key: request.query_params.get(key, "")
+            for key in (
+                "m3u_account",
+                "category",
+                "audio_language",
+                "subtitle_language",
+                "resolution",
+                "container_extension",
+                "video_feature",
+            )
+        }
+        movie_joins, movie_conditions, movie_params, _ = _vod_relation_sql(
+            filters, "movie"
+        )
+        series_joins, series_conditions, series_params, _ = _vod_relation_sql(
+            filters, "series"
+        )
+        category = filters["category"]
+        category_type = category.rsplit("|", 1)[1] if "|" in category else None
+        movie_enabled = (
+            movies_allowed
+            and content_filter != "series"
+            and category_type != "series"
+        )
+        series_enabled = (
+            series_allowed
+            and content_filter != "movies"
+            and category_type != "movie"
+        )
+        if not movie_enabled:
+            movie_conditions.append("1 = 0")
+        if not series_enabled:
+            series_conditions.append("1 = 0")
+
+        metadata_status = request.query_params.get("metadata_status", "")
+        movie_metadata_condition = _vod_metadata_sql_condition(
+            metadata_status, "movies"
+        )
+        series_metadata_condition = _vod_metadata_sql_condition(
+            metadata_status, "series"
+        )
+        if movie_metadata_condition:
+            movie_conditions.append(movie_metadata_condition)
+        if series_metadata_condition:
+            series_conditions.append(series_metadata_condition)
+
+        movie_title = """COALESCE(
+            relation.custom_properties -> 'detailed_info' ->> 'name',
+            relation.custom_properties -> 'basic_data' ->> 'name',
+            relation.custom_properties -> 'movie_data' ->> 'name',
+            movies.name
+        )"""
+        series_title = """COALESCE(
+            relation.custom_properties -> 'detailed_info' ->> 'name',
+            relation.custom_properties -> 'basic_data' ->> 'name',
+            relation.custom_properties -> 'series_data' ->> 'name',
+            series.name
+        )"""
+        search = str(request.query_params.get("search") or "").strip()
+        if search:
+            search_param = f"%{search.lower()}%"
+            movie_conditions.append(f"LOWER({movie_title}) LIKE %s")
+            movie_params.append(search_param)
+            series_conditions.append(f"LOWER({series_title}) LIKE %s")
+            series_params.append(search_param)
+
+        sql = f"""
+            WITH unified_variants AS (
+                SELECT relation.id AS relation_id,
+                       relation.movie_id AS canonical_id,
+                       {movie_title} AS source_name,
+                       'movie' AS content_type
+                FROM {movie_joins}
+                JOIN vod_movie movies ON movies.id = relation.movie_id
+                WHERE {' AND '.join(movie_conditions)}
+                UNION ALL
+                SELECT relation.id AS relation_id,
+                       relation.series_id AS canonical_id,
+                       {series_title} AS source_name,
+                       'series' AS content_type
+                FROM {series_joins}
+                JOIN vod_series series ON series.id = relation.series_id
+                WHERE {' AND '.join(series_conditions)}
+            )
+            SELECT relation_id, canonical_id, source_name, content_type
+            FROM unified_variants
+            ORDER BY LOWER(source_name), relation_id
+            LIMIT %s OFFSET %s
+        """
+        params = movie_params + series_params + [page_size, offset]
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            columns = [column[0] for column in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        movie_ids = [
+            row["relation_id"] for row in rows if row["content_type"] == "movie"
+        ]
+        series_ids = [
+            row["relation_id"] for row in rows if row["content_type"] == "series"
+        ]
+        relation_map = {}
+        if movie_ids:
+            relation_map.update(
+                {
+                    ("movie", relation.id): relation
+                    for relation in M3UMovieRelation.objects.filter(pk__in=movie_ids)
+                    .select_related(
+                        "movie__logo", "m3u_account", "category", "source_asset"
+                    )
+                }
+            )
+        if series_ids:
+            relation_map.update(
+                {
+                    ("series", relation.id): relation
+                    for relation in M3USeriesRelation.objects.filter(pk__in=series_ids)
+                    .select_related(
+                        "series__logo", "m3u_account", "category", "source_asset"
+                    )
+                }
+            )
+
+        prefer_tmdb_artwork = CoreSettings.get_tmdb_prefer_artwork()
+        image_parts = {
+            "movie": vod_image_url_parts(request, "movie"),
+            "series": vod_image_url_parts(request, "series"),
+        }
+        results = []
+        for row in rows:
+            relation = relation_map.get(
+                (row["content_type"], row["relation_id"])
+            )
+            if relation is None:
+                continue
+            content = (
+                relation.movie
+                if row["content_type"] == "movie"
+                else relation.series
+            )
+            effective = effective_relation_metadata(relation).get("values") or {}
+            resolution = effective.get("resolution") or (
+                f"{effective['height']}p" if effective.get("height") else ""
+            )
+            tmdb = _tmdb_content_payload(content)
+            art = prefer_relation_artwork(
+                relation.custom_properties or {},
+                content.custom_properties or {},
+                tmdb_poster_url=content.tmdb_poster_url,
+                tmdb_backdrop_url=content.tmdb_backdrop_url,
+                prefer_tmdb=prefer_tmdb_artwork,
+            )
+            artwork_url = ""
+            if is_proxyable_image_url(art["movie_image"]):
+                artwork_url = rewrite_single_image_url(
+                    request,
+                    row["content_type"],
+                    content.id,
+                    "movie_image",
+                    art["movie_image"],
+                    url_parts=image_parts[row["content_type"]],
+                    m3u_account_id=relation.m3u_account_id,
+                )
+            elif content.logo:
+                artwork_url = vodlogo_cache_url(request, content.logo)
+            results.append(
+                {
+                    "id": content.id,
+                    "canonical_id": content.id,
+                    "relation_id": relation.id,
+                    "is_variant": True,
+                    "content_type": row["content_type"],
+                    "name": _relation_provider_title(relation),
+                    "canonical_name": content.display_name or content.name,
+                    "description": content.description or "",
+                    "year": content.year,
+                    "rating": content.rating or "",
+                    "genre": content.genre or "",
+                    "artwork_url": artwork_url,
+                    "source_count": 1,
+                    "source_metadata": {
+                        "audio_languages": effective.get("audio_languages")
+                        or effective.get("languages")
+                        or [],
+                        "subtitle_languages": effective.get(
+                            "subtitle_languages"
+                        )
+                        or [],
+                        "resolutions": [resolution] if resolution else [],
+                        "container_extensions": [
+                            effective.get("container_extension")
+                        ]
+                        if effective.get("container_extension")
+                        else [],
+                        "video_features": effective.get("video_features") or [],
+                        "source_count": 1,
+                    },
+                    "m3u_account": {
+                        "id": relation.m3u_account_id,
+                        "name": relation.m3u_account.name,
+                    },
+                    "category": {
+                        "id": relation.category_id,
+                        "name": relation.category.name
+                        if relation.category
+                        else "Uncategorized",
+                    },
+                    "provider_external_ids": _relation_provider_external_ids(
+                        relation
+                    ),
+                    "tmdb_override_id": relation.tmdb_override_id,
+                    "tmdb": tmdb,
+                    "tmdb_id": tmdb["id"],
+                    "imdb_id": tmdb["external_ids"]["imdb_id"],
+                    "metadata_requested": bool(content.tmdb_enriched_at),
+                }
+            )
+
+        count_sql = f"""
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM {movie_joins}
+                JOIN vod_movie movies ON movies.id = relation.movie_id
+                WHERE {' AND '.join(movie_conditions)}
+                UNION ALL
+                SELECT 1 FROM {series_joins}
+                JOIN vod_series series ON series.id = relation.series_id
+                WHERE {' AND '.join(series_conditions)}
+            ) counted
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(count_sql, movie_params + series_params)
+            total = cursor.fetchone()[0]
+        return Response(
+            {
+                "count": total,
+                "next": offset + page_size < total,
+                "previous": page_number > 1,
+                "results": results,
+            }
+        )
+
     def list(self, request, *args, **kwargs):
         """Override list to handle unified content properly - database-level approach"""
         from django.db import connection
 
         try:
+            if request.query_params.get("representation") == "variants":
+                return self._list_variants(request)
             user = _authenticated_user(request)
             movies_allowed = is_vod_movies_enabled(user=user)
             series_allowed = is_vod_series_enabled(user=user)
@@ -3165,11 +3667,29 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             if search:
                 search_param = f"%{search.lower()}%"
                 if movie_enabled and movies_allowed:
-                    where_conditions[0] += " AND LOWER(movies.name) LIKE %s"
+                    where_conditions[0] += (
+                        " AND LOWER(COALESCE(NULLIF(movies.display_name, ''), "
+                        "movies.name)) LIKE %s"
+                    )
                     movie_params.append(search_param)
                 if series_enabled and series_allowed:
-                    where_conditions[1] += " AND LOWER(series.name) LIKE %s"
+                    where_conditions[1] += (
+                        " AND LOWER(COALESCE(NULLIF(series.display_name, ''), "
+                        "series.name)) LIKE %s"
+                    )
                     series_params.append(search_param)
+
+            metadata_status = request.query_params.get("metadata_status", "")
+            movie_metadata_condition = _vod_metadata_sql_condition(
+                metadata_status, "movies"
+            )
+            series_metadata_condition = _vod_metadata_sql_condition(
+                metadata_status, "series"
+            )
+            if movie_metadata_condition and movie_enabled and movies_allowed:
+                where_conditions[0] += f" AND {movie_metadata_condition}"
+            if series_metadata_condition and series_enabled and series_allowed:
+                where_conditions[1] += f" AND {series_metadata_condition}"
 
             library_bounds = (
                 ("library_added_after", ">="),
@@ -3207,7 +3727,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 SELECT
                     movies.id,
                     movies.uuid,
-                    movies.name,
+                    COALESCE(NULLIF(movies.display_name, ''), movies.name) as name,
                     movies.description,
                     movies.year,
                     movies.rating,
@@ -3219,6 +3739,10 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     movies.custom_properties,
                     movies.tmdb_poster_url,
                     movies.tmdb_backdrop_url,
+                    movies.tmdb_match_id,
+                    movies.tmdb_id,
+                    movies.tmdb_imdb_id,
+                    movies.imdb_id,
                     movies.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3232,7 +3756,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 SELECT
                     series.id,
                     series.uuid,
-                    series.name,
+                    COALESCE(NULLIF(series.display_name, ''), series.name) as name,
                     series.description,
                     series.year,
                     series.rating,
@@ -3244,6 +3768,10 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     series.custom_properties,
                     series.tmdb_poster_url,
                     series.tmdb_backdrop_url,
+                    series.tmdb_match_id,
+                    series.tmdb_id,
+                    series.tmdb_imdb_id,
+                    series.imdb_id,
                     series.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3300,6 +3828,16 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         'created_at': item_dict['created_at'].isoformat() if item_dict['created_at'] else None,
                         'updated_at': item_dict['updated_at'].isoformat() if item_dict['updated_at'] else None,
                         'custom_properties': item_dict['custom_properties'] or {},
+                        'tmdb_id': (
+                            item_dict['tmdb_match_id']
+                            or item_dict['tmdb_id']
+                            or ''
+                        ),
+                        'imdb_id': (
+                            item_dict['tmdb_imdb_id']
+                            or item_dict['imdb_id']
+                            or ''
+                        ),
                         '_tmdb_poster_url': item_dict['tmdb_poster_url'] or '',
                         '_tmdb_backdrop_url': item_dict['tmdb_backdrop_url'] or '',
                         'logo': logo_data,

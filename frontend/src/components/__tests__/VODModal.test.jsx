@@ -230,6 +230,35 @@ describe('VODModal', () => {
     expect(screen.getByText(/A test movie description/)).toBeInTheDocument();
   });
 
+  it('keeps the canonical title when provider details use a raw title', async () => {
+    mockFetchMovieDetailsFromProvider.mockResolvedValue({
+      ...mockVOD,
+      name: '┃DE┃ Test Movie UHD',
+    });
+
+    render(
+      <VODModal
+        vod={{ ...mockVOD, name: 'Canonical Test Movie' }}
+        opened={true}
+        onClose={mockOnClose}
+        allowSourceEditing={false}
+      />
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 3,
+        name: 'Canonical Test Movie',
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', {
+        level: 3,
+        name: '┃DE┃ Test Movie UHD',
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it('should fetch movie details on mount', async () => {
     render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
 

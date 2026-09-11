@@ -121,6 +121,45 @@ class VODBatchSourceVariantTests(TestCase):
             ["NF - Shared Movie", "DE - Shared Movie"],
         )
 
+    def test_movie_batch_preserves_manual_tmdb_source_assignment(self):
+        categories, relations = self._categories("movie")
+        row = {
+            "stream_id": 1001,
+            "name": "Wrong Provider Movie",
+            "tmdb_id": "500",
+            "category_id": "10",
+        }
+        process_movie_batch(
+            self.account,
+            [row],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+        relation = M3UMovieRelation.objects.get(stream_id="1001")
+        target = Movie.objects.create(
+            name="Correct TMDB Movie",
+            display_name="Correct TMDB Movie",
+            tmdb_id="76600",
+            tmdb_match_id="76600",
+            tmdb_status="matched",
+        )
+        relation.movie = target
+        relation.tmdb_override_id = "76600"
+        relation.save(update_fields=["movie", "tmdb_override_id"])
+
+        process_movie_batch(
+            self.account,
+            [row],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        relation.refresh_from_db()
+        self.assertEqual(relation.movie_id, target.id)
+        self.assertEqual(relation.tmdb_override_id, "76600")
+
     def test_series_batch_keeps_all_sources_for_same_tmdb_id(self):
         categories, relations = self._categories("series")
         process_series_batch(
@@ -161,6 +200,45 @@ class VODBatchSourceVariantTests(TestCase):
             ],
             ["NF - Shared Series", "NICK - Shared Series"],
         )
+
+    def test_series_batch_preserves_manual_tmdb_source_assignment(self):
+        categories, relations = self._categories("series")
+        row = {
+            "series_id": 2001,
+            "name": "Wrong Provider Series",
+            "tmdb": "246",
+            "category_id": "10",
+        }
+        process_series_batch(
+            self.account,
+            [row],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+        relation = M3USeriesRelation.objects.get(external_series_id="2001")
+        target = Series.objects.create(
+            name="Correct TMDB Series",
+            display_name="Correct TMDB Series",
+            tmdb_id="1399",
+            tmdb_match_id="1399",
+            tmdb_status="matched",
+        )
+        relation.series = target
+        relation.tmdb_override_id = "1399"
+        relation.save(update_fields=["series", "tmdb_override_id"])
+
+        process_series_batch(
+            self.account,
+            [row],
+            categories,
+            relations,
+            scan_start_time=timezone.now(),
+        )
+
+        relation.refresh_from_db()
+        self.assertEqual(relation.series_id, target.id)
+        self.assertEqual(relation.tmdb_override_id, "1399")
 
     def test_movie_batch_skips_blank_provider_rows_without_losing_valid_rows(self):
         categories, relations = self._categories("movie")
@@ -379,6 +457,52 @@ class VODSyncPreserveDetailsTests(TestCase):
 
         self.assertEqual(result, "Advanced data refreshed.")
         mock_client.get_vod_info.assert_called_once()
+
+    @patch("core.xtream_codes.Client")
+    def test_source_refresh_does_not_overwrite_manual_tmdb_target(
+        self, mock_client_cls
+    ):
+        target = Movie.objects.create(
+            name="TMDB title",
+            display_name="TMDB title",
+            description="TMDB plot",
+            tmdb_id="76600",
+            tmdb_match_id="76600",
+            tmdb_status="matched",
+        )
+        self.relation.movie = target
+        self.relation.tmdb_override_id = "76600"
+        self.relation.custom_properties = {"detailed_fetched": False}
+        self.relation.save(
+            update_fields=["movie", "tmdb_override_id", "custom_properties"]
+        )
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        mock_client.get_vod_info.return_value = {
+            "info": {
+                "name": "Wrong provider title",
+                "plot": "Wrong provider plot",
+                "tmdb_id": "900001",
+            },
+            "movie_data": {"stream_id": 1001},
+        }
+
+        result = refresh_movie_advanced_data(
+            self.relation.id, force_refresh=False
+        )
+
+        target.refresh_from_db()
+        self.relation.refresh_from_db()
+        self.assertEqual(
+            result,
+            "Advanced source data refreshed; canonical override preserved.",
+        )
+        self.assertEqual(target.name, "TMDB title")
+        self.assertEqual(target.description, "TMDB plot")
+        self.assertEqual(
+            self.relation.custom_properties["detailed_info"]["name"],
+            "Wrong provider title",
+        )
 
 
 class VODSeriesSyncPreserveDetailsTests(TestCase):

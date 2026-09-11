@@ -355,20 +355,22 @@ const VODSourceList = ({
                           </Tooltip>
                         </>
                       )}
-                      <Tooltip label="Edit this exact source">
-                        <ActionIcon
-                          aria-label="Edit exact source metadata"
-                          variant="light"
-                          color="gray"
-                          disabled={disabled}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onEdit?.(provider);
-                          }}
-                        >
-                          <Wrench size={15} />
-                        </ActionIcon>
-                      </Tooltip>
+                      {onEdit && (
+                        <Tooltip label="Edit this exact source">
+                          <ActionIcon
+                            aria-label="Edit exact source metadata"
+                            variant="light"
+                            color="gray"
+                            disabled={disabled}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onEdit(provider);
+                            }}
+                          >
+                            <Wrench size={15} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
                     </Group>
                   </TableTd>
                 </TableTr>

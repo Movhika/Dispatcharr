@@ -128,12 +128,6 @@ class Series(models.Model):
     # this snapshot belongs to the canonical title and can be reused by every
     # output profile.
     tmdb_metadata = models.JSONField(default=dict, blank=True)
-    tmdb_override_id = models.CharField(
-        max_length=50,
-        blank=True,
-        db_index=True,
-        help_text="Administrator-selected TMDB ID; provider identity is preserved.",
-    )
     tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
     tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
     tmdb_poster_url = models.CharField(max_length=500, blank=True)
@@ -207,12 +201,6 @@ class Movie(models.Model):
 
     # Keep external enrichment isolated from the provider's original data.
     tmdb_metadata = models.JSONField(default=dict, blank=True)
-    tmdb_override_id = models.CharField(
-        max_length=50,
-        blank=True,
-        db_index=True,
-        help_text="Administrator-selected TMDB ID; provider identity is preserved.",
-    )
     tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
     tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
     tmdb_poster_url = models.CharField(max_length=500, blank=True)
@@ -563,6 +551,12 @@ class M3USeriesRelation(models.Model):
 
     # Provider-specific fields - renamed to avoid clash with series ForeignKey
     external_series_id = models.CharField(max_length=255, help_text="External series ID from M3U provider")
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID for this provider source.",
+    )
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data")
 
     # Timestamps
@@ -602,6 +596,12 @@ class M3UMovieRelation(models.Model):
     # Streaming information (provider-specific)
     stream_id = models.CharField(max_length=255, help_text="External stream ID from M3U provider")
     container_extension = models.CharField(max_length=10, blank=True, null=True)
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID for this provider source.",
+    )
 
     # Provider-specific data
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data like quality, language, etc.")
