@@ -415,6 +415,28 @@ const useVODStore = create((set, get) => ({
     }
   },
 
+  applyAccessPolicyProgress: (update) => {
+    if (!update?.profile_id) return;
+    set((state) => ({
+      accessPolicies: state.accessPolicies.map((current) => {
+        if (String(current.id) !== String(update.profile_id)) return current;
+        const incoming = {
+          ...current,
+          selection_status:
+            update.selection_status || current.selection_status,
+          selection_progress:
+            update.selection_progress || current.selection_progress,
+          active_selection_generation:
+            update.active_selection_generation ||
+            current.active_selection_generation,
+          selection_completed_at:
+            update.selection_completed_at || current.selection_completed_at,
+        };
+        return mergeAccessPolicyState(current, incoming);
+      }),
+    }));
+  },
+
   upsertAccessPolicy: (policy, { force = false } = {}) => {
     if (!policy?.id) return;
     // A response requested before this mutation must not restore stale status

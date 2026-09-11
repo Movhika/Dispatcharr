@@ -984,6 +984,40 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(self.policy.selection_progress["processed"], 65000)
         self.assertEqual(self.policy.selection_progress["percent"], 28)
 
+    @patch("core.utils.send_websocket_update")
+    def test_profile_progress_pushes_each_persisted_batch(self, websocket_update):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_progress={
+                "phase": "Selecting movies sources",
+                "percent": 2,
+                "processed": 0,
+                "total": 83733,
+                "stage_index": 1,
+                "stage_count": 5,
+                "build_generation": "active-build",
+            },
+        )
+
+        updated = _set_profile_progress(
+            self.policy.pk,
+            "Selecting movies sources",
+            12,
+            processed=25000,
+            total=83733,
+            stage_index=1,
+            stage_count=5,
+            build_generation="active-build",
+        )
+
+        self.assertTrue(updated)
+        websocket_update.assert_called_once()
+        payload = websocket_update.call_args.args[2]
+        self.assertEqual(payload["type"], "vod_profile_selection")
+        self.assertEqual(payload["profile_id"], self.policy.pk)
+        self.assertEqual(payload["selection_status"], "building")
+        self.assertEqual(payload["selection_progress"]["percent"], 12)
+
     def test_duplicate_task_does_not_rebuild_an_already_ready_profile(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
             selection_status=VODAccessPolicy.SelectionStatus.READY,

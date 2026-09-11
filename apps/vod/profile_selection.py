@@ -85,6 +85,36 @@ def _progress_context(progress):
     }
 
 
+def _publish_profile_progress(
+    policy_id,
+    selection_status,
+    selection_progress,
+    *,
+    active_selection_generation="",
+    selection_completed_at=None,
+):
+    """Push one durable profile heartbeat through the normal UI update bus."""
+    from core.utils import send_websocket_update
+
+    send_websocket_update(
+        "updates",
+        "update",
+        {
+            "type": "vod_profile_selection",
+            "profile_id": policy_id,
+            "selection_status": selection_status,
+            "selection_progress": selection_progress or {},
+            "active_selection_generation": active_selection_generation or "",
+            "selection_completed_at": (
+                selection_completed_at.isoformat()
+                if hasattr(selection_completed_at, "isoformat")
+                else selection_completed_at or None
+            ),
+        },
+        collect_garbage=False,
+    )
+
+
 def _set_pending_profiles_progress(
     queryset,
     phase,
@@ -141,6 +171,7 @@ def _set_profile_progress(policy_id, phase, percent, **details):
     # Progress is read and written by background workers while the API polls
     # the same row. Serialize writers so a delayed heartbeat cannot win the
     # read/update race and make one build appear to run backwards.
+    progress = None
     with transaction.atomic():
         row = (
             VODAccessPolicy.objects.select_for_update()
@@ -185,16 +216,20 @@ def _set_profile_progress(policy_id, phase, percent, **details):
                 # generation and is surfaced as a separate attempt instead.
                 return False
         persistent = _progress_context(current)
-        return bool(
-            VODAccessPolicy.objects.filter(
-                pk=policy_id,
-                selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
-            ).update(
-                selection_progress=_progress_payload(
-                    phase, percent, **persistent, **details
-                )
-            )
+        progress = _progress_payload(
+            phase, percent, **persistent, **details
         )
+        updated = VODAccessPolicy.objects.filter(
+            pk=policy_id,
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+        ).update(selection_progress=progress)
+    if updated:
+        _publish_profile_progress(
+            policy_id,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+            progress,
+        )
+    return bool(updated)
 
 
 def profile_selection_signature(policy):
@@ -1112,6 +1147,17 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
             # QuerySet.update deliberately avoids the catalog-invalidating
             # policy signal: selection bookkeeping does not change policy
             # semantics or source data.
+            ready_progress = _progress_payload(
+                "Ready",
+                100,
+                **task_details,
+                stage_index=BUILD_STAGE_COUNT,
+                stage_count=BUILD_STAGE_COUNT,
+                stage_percent=100,
+                target_export_mode=policy.export_mode,
+                build_generation=generation,
+                prepared_seconds=prepared_seconds,
+            )
             VODAccessPolicy.objects.filter(pk=policy.pk).update(
                 active_selection_generation=generation,
                 selection_catalog_generation=source_generation,
@@ -1119,17 +1165,16 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
                 selection_status=VODAccessPolicy.SelectionStatus.READY,
                 selection_completed_at=completed_at,
                 selection_error="",
-                selection_progress=_progress_payload(
-                    "Ready",
-                    100,
-                    **task_details,
-                    stage_index=BUILD_STAGE_COUNT,
-                    stage_count=BUILD_STAGE_COUNT,
-                    stage_percent=100,
-                    target_export_mode=policy.export_mode,
-                    build_generation=generation,
-                    prepared_seconds=prepared_seconds,
-                ),
+                selection_progress=ready_progress,
+            )
+            transaction.on_commit(
+                lambda: _publish_profile_progress(
+                    policy.pk,
+                    VODAccessPolicy.SelectionStatus.READY,
+                    ready_progress,
+                    active_selection_generation=generation,
+                    selection_completed_at=completed_at,
+                )
             )
         VODMovieProfileSelection.objects.filter(policy=policy).exclude(
             generation=generation

@@ -341,6 +341,56 @@ describe('useVODStore', () => {
     );
   });
 
+  it('applies pushed catalog progress and completion to the known profile', () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          active_selection_generation: 'old-catalog',
+          selection_progress: {
+            task_id: 'catalog-task',
+            build_generation: 'catalog-build',
+            percent: 36,
+          },
+        },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.applyAccessPolicyProgress({
+        profile_id: 1,
+        selection_status: 'building',
+        selection_progress: {
+          task_id: 'catalog-task',
+          build_generation: 'catalog-build',
+          percent: 44,
+        },
+      });
+    });
+    expect(result.current.accessPolicies[0].selection_progress.percent).toBe(44);
+
+    act(() => {
+      result.current.applyAccessPolicyProgress({
+        profile_id: 1,
+        selection_status: 'ready',
+        active_selection_generation: 'new-catalog',
+        selection_completed_at: '2026-09-11T13:00:00Z',
+        selection_progress: { phase: 'Ready', percent: 100 },
+      });
+    });
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'ready',
+        active_selection_generation: 'new-catalog',
+        selection_completed_at: '2026-09-11T13:00:00Z',
+        selection_progress: expect.objectContaining({ percent: 100 }),
+      })
+    );
+  });
+
   it('does not let a stale save response replace its optimistic build status', () => {
     useVODStore.setState({
       accessPolicies: [

@@ -17,6 +17,7 @@ import API from './api';
 import useSettingsStore from './store/settings';
 import useAuthStore from './store/auth';
 import useUsersStore from './store/users';
+import useVODStore from './store/useVODStore';
 
 export const WebsocketContext = createContext([false, () => {}, null]);
 
@@ -311,6 +312,27 @@ export const WebsocketProvider = ({ children }) => {
                 }
               }
               break;
+
+            case 'vod_profile_selection': {
+              const vodStore = useVODStore.getState();
+              const knownProfile = vodStore.accessPolicies.some(
+                (profile) =>
+                  String(profile.id) === String(parsedEvent.data.profile_id)
+              );
+              if (!knownProfile) break;
+              vodStore.applyAccessPolicyProgress(parsedEvent.data);
+              if (
+                ['ready', 'failed'].includes(
+                  parsedEvent.data.selection_status
+                )
+              ) {
+                // The push event carries lifecycle state immediately. Fetch
+                // once at the terminal edge to pick up final counts and every
+                // other serialized profile field.
+                await vodStore.fetchAccessPolicies();
+              }
+              break;
+            }
 
             case 'channel_stats':
               setChannelStats(JSON.parse(parsedEvent.data.stats));
