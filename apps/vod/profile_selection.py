@@ -275,6 +275,11 @@ def profile_selection_signature(policy):
         "name_template": policy.name_template,
         "category_rules": category_rules,
     }
+    if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
+        # Bump only Provider-data catalogs when their one-relation-per-entry
+        # semantics change. The queue reconciler will rebuild existing Variant
+        # generations after an upgrade without invalidating Compact profiles.
+        payload["provider_data_schema"] = 1
     encoded = json.dumps(
         payload,
         sort_keys=True,

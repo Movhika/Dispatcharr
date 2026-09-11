@@ -95,7 +95,7 @@ const outputModeLabel = (mode) =>
   mode === 'compact'
     ? 'Compact'
     : mode === 'variants'
-      ? 'Variants'
+      ? 'Provider data'
       : 'Unknown mode';
 
 const buildPhaseDescription = (progress) => {
@@ -352,7 +352,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   ]);
 
   useEffect(() => {
-    if (draft.export_mode === 'variants' && activeTab === 'editions') {
+    if (
+      draft.export_mode === 'variants' &&
+      ['editions', 'failover'].includes(activeTab)
+    ) {
       setActiveTab('settings');
     }
   }, [activeTab, draft.export_mode]);
@@ -898,7 +901,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               {draft.export_mode === 'compact' && (
                 <TabsTab value="editions">Editions</TabsTab>
               )}
-              <TabsTab value="failover">Failover</TabsTab>
+              {draft.export_mode === 'compact' && (
+                <TabsTab value="failover">Failover</TabsTab>
+              )}
               <TabsTab value="preview">Content preview</TabsTab>
             </TabsList>
 
@@ -924,7 +929,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         },
                         {
                           value: 'variants',
-                          label: 'Variants — every distinct source edition',
+                          label:
+                            'Provider data — every allowed provider source unchanged',
                         },
                       ]}
                       value={draft.export_mode}
@@ -996,26 +1002,28 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               </ScrollArea>
             </TabsPanel>
 
-            <TabsPanel value="failover" pt="md">
-              <ScrollArea h="calc(96vh - 270px)">
-                <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
-                  <VODFailoverRanking
-                    value={draft.ranking}
-                    providerOrder={draft.provider_order}
-                    providerOptions={failoverAccountOptions}
-                    onChange={(ranking) =>
-                      setDraft((current) => ({ ...current, ranking }))
-                    }
-                    onProviderOrderChange={(providerOrder) =>
-                      setDraft((current) => ({
-                        ...current,
-                        provider_order: providerOrder,
-                      }))
-                    }
-                  />
-                </Paper>
-              </ScrollArea>
-            </TabsPanel>
+            {draft.export_mode === 'compact' && (
+              <TabsPanel value="failover" pt="md">
+                <ScrollArea h="calc(96vh - 270px)">
+                  <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                    <VODFailoverRanking
+                      value={draft.ranking}
+                      providerOrder={draft.provider_order}
+                      providerOptions={failoverAccountOptions}
+                      onChange={(ranking) =>
+                        setDraft((current) => ({ ...current, ranking }))
+                      }
+                      onProviderOrderChange={(providerOrder) =>
+                        setDraft((current) => ({
+                          ...current,
+                          provider_order: providerOrder,
+                        }))
+                      }
+                    />
+                  </Paper>
+                </ScrollArea>
+              </TabsPanel>
+            )}
 
             <TabsPanel value="editions" pt="md">
               <ScrollArea h="calc(96vh - 270px)">

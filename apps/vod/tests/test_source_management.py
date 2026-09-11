@@ -40,6 +40,7 @@ from apps.vod.models import (
     VODCategory,
 )
 from apps.vod.policies import (
+    ordered_candidates,
     ordered_failover_candidates,
     relation_allowed,
     relation_policy_evaluation,
@@ -616,7 +617,7 @@ class VODSourceManagementTests(TestCase):
 
         self.assertEqual(ordered[0].id, self.german_relation.id)
 
-    def test_compact_and_variants_share_explicit_asset_identity(self):
+    def test_provider_data_keeps_every_provider_relation_distinct(self):
         compact = select_relations_for_policy(
             [self.german_relation, self.english_relation],
             self.policy,
@@ -644,7 +645,23 @@ class VODSourceManagementTests(TestCase):
             self.policy,
             "movie_id",
         )
-        self.assertEqual(len(linked), 1)
+        self.assertEqual(len(linked), 2)
+
+    def test_provider_data_playback_uses_only_the_selected_relation(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.save()
+
+        ordered = ordered_candidates(
+            [self.german_relation, self.english_relation],
+            self.policy,
+            preferred_relation=self.english_relation,
+        )
+
+        self.assertEqual(
+            [relation.id for relation in ordered],
+            [self.english_relation.id],
+        )
 
     def test_streaming_compact_selection_returns_only_winner_ids(self):
         ids = select_relation_ids_for_policy(

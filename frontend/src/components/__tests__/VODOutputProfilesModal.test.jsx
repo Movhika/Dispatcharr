@@ -614,8 +614,31 @@ describe('VODOutputProfilesModal', () => {
 
     expect(await screen.findByText('Outdated')).toBeInTheDocument();
     expect(
-      screen.getByText(/active catalog was built as Variants/)
+      screen.getByText(/active catalog was built as Provider data/)
     ).toBeInTheDocument();
     expect(screen.getByText(/saved as Compact/)).toBeInTheDocument();
+  });
+
+  it('describes provider data as exact provider sources without failover controls', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        export_mode: 'variants',
+        selection_active_mode: 'variants',
+        selection_counts: {
+          ...profile.selection_counts,
+          export_mode: 'variants',
+        },
+      },
+    ];
+
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(
+      await screen.findByRole('option', {
+        name: 'Provider data — every allowed provider source unchanged',
+      })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Failover priority')).not.toBeInTheDocument();
   });
 });

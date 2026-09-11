@@ -786,10 +786,10 @@ def _relation_selection_key(
             getattr(relation, canonical_field),
             edition["key"],
         )
-    # Confirmed aliases are one edition. Unlinked relations remain distinct,
-    # even when raw provider IDs collide across accounts.
-    if relation.source_asset_id:
-        return ("asset", relation.source_asset_id)
+    # Provider-data output is deliberately one-to-one: selecting an entry in
+    # the client must identify the exact provider relation represented by that
+    # entry.  Source-asset links are still useful for metadata/history, but
+    # must not collapse two provider rows into one client item.
     return ("relation", relation.id)
 
 
@@ -952,9 +952,24 @@ def ordered_failover_candidates(candidates, policy, preferred_relation=None):
 
 
 def ordered_candidates(candidates, policy, preferred_relation=None):
-    """Apply policy constraints/ranking while preserving an allowed exact choice."""
+    """Return playback candidates for the selected output entry.
+
+    Compact output represents a canonical title and therefore walks its
+    ranked fallback sources. Provider-data output represents one concrete
+    provider relation, so it may only play that exact relation.
+    """
     if not candidates:
         return []
+    if (
+        policy
+        and policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS
+        and preferred_relation is not None
+    ):
+        return (
+            [preferred_relation]
+            if relation_allowed(preferred_relation, policy)
+            else []
+        )
     if not policy:
         ordered = list(candidates)
     else:
