@@ -125,6 +125,7 @@ vi.mock('@mantine/core', async () => {
       </a>
     ),
     Loader: (props) => <div data-testid="loader" {...props} />,
+    Alert: ({ children }) => <div>{children}</div>,
     Stack: ({ children, ...props }) => (
       <div data-testid="stack" {...props}>
         {children}
@@ -301,6 +302,38 @@ describe('SeriesModal', () => {
     await waitFor(() =>
       expect(mockVODStore.fetchSeriesProviders).toHaveBeenCalledTimes(1)
     );
+  });
+
+  it('stops the source loader when profile ordering replaces the detail request', async () => {
+    mockVODStore.fetchSeriesInfo
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce(mockDetailedSeries);
+
+    render(
+      <SeriesModal
+        series={mockSeries}
+        opened={true}
+        onClose={vi.fn()}
+        profileCandidates={{
+          profile_id: 7,
+          canonical_id: mockSeries.id,
+          results: [
+            { relation_id: mockProviders[0].id, allowed: true, position: 1 },
+          ],
+        }}
+      />
+    );
+
+    await waitFor(() =>
+      expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledTimes(2)
+    );
+    const sourcesTitle = screen
+      .getAllByTestId('title')
+      .find((node) => node.textContent === 'Sources (2)');
+    expect(sourcesTitle).toBeTruthy();
+    expect(
+      sourcesTitle.parentElement.querySelector('[data-testid="loader"]')
+    ).not.toBeInTheDocument();
   });
 
   describe('Rendering', () => {

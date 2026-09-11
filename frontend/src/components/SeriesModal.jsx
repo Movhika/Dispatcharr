@@ -367,6 +367,7 @@ const SeriesModal = ({
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const providersRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
   const profilePreferenceAppliedRef = useRef('');
   const seriesRef = useRef(series);
@@ -374,13 +375,17 @@ const SeriesModal = ({
 
   useEffect(() => {
     if (opened && series?.id) {
-      const requestId = ++detailsRequestIdRef.current;
+      const providersRequestId = ++providersRequestIdRef.current;
+      const detailsRequestId = ++detailsRequestIdRef.current;
       setLoadingDetails(true);
       setLoadingProviders(true);
       fetchSeriesProviders(series.id)
         .then((providersData) => {
-          if (detailsRequestIdRef.current !== requestId) return null;
+          if (providersRequestIdRef.current !== providersRequestId) return null;
           setProviders(providersData);
+          // Profile ordering can supersede only the detail/episode request.
+          // The provider list itself is already complete at this point.
+          setLoadingProviders(false);
           const provider = providersData[0] || null;
           setSelectedProvider(provider);
           return provider
@@ -388,17 +393,21 @@ const SeriesModal = ({
             : fetchSeriesInfo(series.id);
         })
         .then((details) => {
-          if (!details || detailsRequestIdRef.current !== requestId) return;
+          if (!details || detailsRequestIdRef.current !== detailsRequestId) {
+            return;
+          }
           setDetailedSeries(details);
         })
         .catch((error) => {
-          if (detailsRequestIdRef.current !== requestId) return;
+          if (detailsRequestIdRef.current !== detailsRequestId) return;
           console.error('Failed to fetch series providers:', error);
           setDetailedSeries(seriesRef.current);
         })
         .finally(() => {
-          if (detailsRequestIdRef.current === requestId) {
+          if (providersRequestIdRef.current === providersRequestId) {
             setLoadingProviders(false);
+          }
+          if (detailsRequestIdRef.current === detailsRequestId) {
             setLoadingDetails(false);
           }
         });
@@ -407,6 +416,7 @@ const SeriesModal = ({
 
   useEffect(() => {
     if (!opened) {
+      providersRequestIdRef.current += 1;
       detailsRequestIdRef.current += 1;
       profilePreferenceAppliedRef.current = '';
       setDetailedSeries(null);

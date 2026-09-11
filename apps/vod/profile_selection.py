@@ -50,6 +50,8 @@ PROGRESS_CONTEXT_KEYS = (
     "batch_total",
     "trigger_reason",
     "original_trigger_reason",
+    "attempt",
+    "restart_reason",
 )
 
 
@@ -152,6 +154,20 @@ def _set_profile_progress(policy_id, phase, percent, **details):
         # A watchdog or a newer delivery has superseded this worker. Do not let
         # a late heartbeat replace the authoritative generation token.
         return False
+    if build_generation and active_build_generation == build_generation:
+        current_stage = int(current.get("stage_index") or 0)
+        next_stage = int(details.get("stage_index") or 0)
+        current_processed = int(current.get("processed") or 0)
+        next_processed = int(details.get("processed") or 0)
+        if next_stage < current_stage or (
+            next_stage == current_stage
+            and current.get("phase") == phase
+            and next_processed < current_processed
+        ):
+            # A delayed duplicate heartbeat must never make one build appear
+            # to run backwards. A genuine Celery retry uses a new generation
+            # and is surfaced as a separate attempt instead.
+            return False
     persistent = _progress_context(current)
     return bool(
         VODAccessPolicy.objects.filter(

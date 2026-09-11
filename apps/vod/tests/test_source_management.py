@@ -62,6 +62,7 @@ from apps.vod.catalog_cache import (
 from apps.vod.profile_selection import (
     PROFILE_REBUILD_ENQUEUE_KEY,
     ProfileBuildAlreadyRunning,
+    _set_profile_progress,
     build_vod_profile_selection,
     enqueue_all_profile_selection_rebuilds,
     prepared_relation_ids,
@@ -918,6 +919,36 @@ class VODSourceManagementTests(TestCase):
 
         with self.assertRaises(ProfileBuildAlreadyRunning):
             build_vod_profile_selection(self.policy.id)
+
+    def test_profile_progress_cannot_move_backwards_within_one_build(self):
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
+            selection_progress={
+                "phase": "Selecting movies sources",
+                "percent": 20,
+                "processed": 35000,
+                "total": 83733,
+                "stage_index": 1,
+                "stage_count": 5,
+                "build_generation": "active-build",
+            },
+        )
+
+        updated = _set_profile_progress(
+            self.policy.pk,
+            "Selecting movies sources",
+            10,
+            processed=20000,
+            total=83733,
+            stage_index=1,
+            stage_count=5,
+            build_generation="active-build",
+        )
+
+        self.assertFalse(updated)
+        self.policy.refresh_from_db()
+        self.assertEqual(self.policy.selection_progress["processed"], 35000)
+        self.assertEqual(self.policy.selection_progress["percent"], 20)
 
     def test_duplicate_task_does_not_rebuild_an_already_ready_profile(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(

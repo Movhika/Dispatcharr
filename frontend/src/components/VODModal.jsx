@@ -153,6 +153,7 @@ const VODModal = ({
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const providersRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
   const profilePreferenceAppliedRef = useRef('');
   const vodRef = useRef(vod);
@@ -167,13 +168,18 @@ const VODModal = ({
 
   useEffect(() => {
     if (opened && vod?.id) {
-      const requestId = ++detailsRequestIdRef.current;
+      const providersRequestId = ++providersRequestIdRef.current;
+      const detailsRequestId = ++detailsRequestIdRef.current;
       setLoadingProviders(true);
       setLoadingDetails(true);
       fetchMovieProviders(vod.id)
         .then((providersData) => {
-          if (detailsRequestIdRef.current !== requestId) return null;
+          if (providersRequestIdRef.current !== providersRequestId) return null;
           setProviders(providersData);
+          // Loading the source list and loading the selected source's details
+          // are independent. Profile ordering may immediately replace the
+          // detail request, but the source list has already finished here.
+          setLoadingProviders(false);
           const provider = providersData[0] || null;
           setSelectedProvider(provider);
           return provider
@@ -181,11 +187,13 @@ const VODModal = ({
             : fetchMovieDetailsFromProvider(vod.id);
         })
         .then((details) => {
-          if (!details || detailsRequestIdRef.current !== requestId) return;
+          if (!details || detailsRequestIdRef.current !== detailsRequestId) {
+            return;
+          }
           setDetailedVOD(details);
         })
         .catch((error) => {
-          if (detailsRequestIdRef.current !== requestId) return;
+          if (detailsRequestIdRef.current !== detailsRequestId) return;
           console.warn(
             'Failed to fetch providers or details, using basic info:',
             error
@@ -193,8 +201,10 @@ const VODModal = ({
           setDetailedVOD(vodRef.current);
         })
         .finally(() => {
-          if (detailsRequestIdRef.current === requestId) {
+          if (providersRequestIdRef.current === providersRequestId) {
             setLoadingProviders(false);
+          }
+          if (detailsRequestIdRef.current === detailsRequestId) {
             setLoadingDetails(false);
           }
         });
@@ -203,6 +213,7 @@ const VODModal = ({
 
   useEffect(() => {
     if (!opened) {
+      providersRequestIdRef.current += 1;
       detailsRequestIdRef.current += 1;
       profilePreferenceAppliedRef.current = '';
       setDetailedVOD(null);

@@ -121,6 +121,7 @@ def rebuild_vod_profile_selection(self, policy_id):
         task_id=str(self.request.id or ""),
         task_name=SINGLE_PROFILE_TASK_NAME,
         batch=False,
+        attempt=int(getattr(self.request, "retries", 0) or 0) + 1,
     )
 
     if M3UAccount.objects.filter(
@@ -135,6 +136,7 @@ def rebuild_vod_profile_selection(self, policy_id):
             task_id=str(self.request.id or ""),
             task_name=SINGLE_PROFILE_TASK_NAME,
             batch=False,
+            attempt=int(getattr(self.request, "retries", 0) or 0) + 1,
         )
         raise self.retry(countdown=10)
     from .profile_selection import (
@@ -173,6 +175,7 @@ def rebuild_all_vod_profile_selections(self):
         task_id=str(self.request.id or ""),
         task_name=BATCH_PROFILE_TASK_NAME,
         batch=True,
+        attempt=int(getattr(self.request, "retries", 0) or 0) + 1,
     )
 
     if M3UAccount.objects.filter(
@@ -188,6 +191,7 @@ def rebuild_all_vod_profile_selections(self):
             task_id=str(self.request.id or ""),
             task_name=BATCH_PROFILE_TASK_NAME,
             batch=True,
+            attempt=int(getattr(self.request, "retries", 0) or 0) + 1,
         )
         raise self.retry(countdown=10)
     from django.core.cache import cache

@@ -784,6 +784,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ) && (
             <Stack gap={3}>
               <Text size="sm" fw={500}>
+                {buildProgress.stage_index && buildProgress.stage_count
+                  ? `Step ${buildProgress.stage_index} of ${buildProgress.stage_count} · `
+                  : ''}
                 {batchWaitingForTurn
                   ? 'VOD profile catalog batch is running; this profile is waiting for its turn'
                   : buildProgress.phase ||
@@ -792,6 +795,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       : 'Preparing catalog')}
                 {buildProgress.batch_position && buildProgress.batch_total
                   ? ` · profile ${buildProgress.batch_position} of ${buildProgress.batch_total}`
+                  : ''}
+                {Number(buildProgress.attempt) > 1
+                  ? ` · attempt ${Number(buildProgress.attempt)}`
                   : ''}
                 {Number.isFinite(Number(buildProgress.processed)) &&
                   Number(buildProgress.total) > 0 &&
@@ -809,6 +815,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 {buildProgress.trigger_reason ||
                   'not recorded by the previous version'}
               </Text>
+              {buildProgress.restart_reason && (
+                <Text size="xs" c="yellow">
+                  Restarted because: {buildProgress.restart_reason}
+                </Text>
+              )}
               {buildProgress.original_trigger_reason &&
                 buildProgress.original_trigger_reason !==
                   buildProgress.trigger_reason && (

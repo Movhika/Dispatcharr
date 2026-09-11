@@ -564,6 +564,8 @@ describe('VODOutputProfilesModal', () => {
           stage_percent: 50,
           phase_started_at: new Date(Date.now() - 30_000).toISOString(),
           target_export_mode: 'compact',
+          attempt: 2,
+          restart_reason: 'The VOD catalog changed while the profile was built',
           trigger_reason:
             'Automatic recovery: the previous Celery task is no longer available after a service restart',
           original_trigger_reason: 'A source metadata field changed',
@@ -574,7 +576,12 @@ describe('VODOutputProfilesModal', () => {
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(
-      await screen.findByText(/Building movies output · 5,000 \/ 10,000/)
+      await screen.findByText(
+        /Step 2 of 5 · Building movies output · attempt 2 · 5,000 \/ 10,000/
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Restarted because: The VOD catalog changed/)
     ).toBeInTheDocument();
     expect(
       screen.queryByLabelText('Catalog preparation progress')

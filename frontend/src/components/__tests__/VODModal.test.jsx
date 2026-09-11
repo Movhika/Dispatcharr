@@ -75,6 +75,7 @@ vi.mock('@mantine/core', async () => {
       </select>
     ),
     Loader: () => <div data-testid="loader">Loading...</div>,
+    Alert: ({ children }) => <div>{children}</div>,
     ActionIcon: ({ children, onClick, disabled, ...props }) => (
       <button onClick={onClick} disabled={disabled} {...props}>
         {children}
@@ -236,6 +237,38 @@ describe('VODModal', () => {
     await waitFor(() => {
       expect(mockFetchMovieProviders).toHaveBeenCalledWith(mockVOD.id);
     });
+  });
+
+  it('stops the source loader when profile ordering replaces the detail request', async () => {
+    mockFetchMovieDetailsFromProvider
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce(mockVOD);
+
+    render(
+      <VODModal
+        vod={mockVOD}
+        opened={true}
+        onClose={mockOnClose}
+        profileCandidates={{
+          profile_id: 7,
+          canonical_id: mockVOD.id,
+          results: [
+            { relation_id: mockProvider.id, allowed: true, position: 1 },
+          ],
+        }}
+      />
+    );
+
+    const heading = await screen.findByRole('heading', {
+      level: 3,
+      name: 'Sources (1)',
+    });
+    await waitFor(() =>
+      expect(mockFetchMovieDetailsFromProvider).toHaveBeenCalledTimes(2)
+    );
+    expect(
+      heading.parentElement.querySelector('[data-testid="loader"]')
+    ).not.toBeInTheDocument();
   });
 
   it('should show loading state while fetching details', () => {
