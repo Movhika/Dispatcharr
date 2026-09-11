@@ -5,11 +5,6 @@ let accessPolicyFetchSequence = 0;
 
 const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
 
-const profileStatusTimestamp = (value) => {
-  const timestamp = new Date(value || '').getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
 const keepNewerLocalProfileBuild = (current, incoming) => {
   if (
     !ACTIVE_PROFILE_BUILD_STATUSES.has(current?.selection_status) ||
@@ -18,26 +13,40 @@ const keepNewerLocalProfileBuild = (current, incoming) => {
     return false;
   }
 
-  const startedAt = profileStatusTimestamp(
-    current.selection_started_at ||
-      current.selection_progress?.queued_at ||
-      current.selection_progress?.updated_at
-  );
-  const previousCompletedAt = profileStatusTimestamp(
-    current.selection_completed_at
-  );
-  const completedAt = profileStatusTimestamp(incoming?.selection_completed_at);
+  const currentTaskId = current.selection_progress?.task_id || '';
+  const incomingTaskId = incoming?.selection_progress?.task_id || '';
+  const currentBuildGeneration =
+    current.selection_progress?.build_generation || '';
+  const incomingBuildGeneration =
+    incoming?.selection_progress?.build_generation || '';
 
-  // Only a terminal state produced after this build started may replace its
-  // live status. Prefer the server's previous completion marker so this also
-  // remains correct when the browser and server clocks differ.
-  return (
-    completedAt === null ||
-    (previousCompletedAt !== null && completedAt <= previousCompletedAt) ||
-    (previousCompletedAt === null &&
-      startedAt !== null &&
-      completedAt < startedAt)
-  );
+  // A terminal result carrying the same task/build identity is authoritative.
+  // This also accepts failures, which do not activate a new catalog generation.
+  if (
+    (currentTaskId && currentTaskId === incomingTaskId) ||
+    (currentBuildGeneration &&
+      currentBuildGeneration === incomingBuildGeneration)
+  ) {
+    return false;
+  }
+
+  if (incoming?.selection_status === 'ready') {
+    const currentCatalogGeneration = current.active_selection_generation || '';
+    const incomingCatalogGeneration =
+      incoming.active_selection_generation || '';
+
+    // Every successful full build activates a new immutable snapshot ID. A
+    // Ready response that still names the old active snapshot is therefore a
+    // delayed pre-save response and must not hide the running update.
+    return (
+      !incomingCatalogGeneration ||
+      incomingCatalogGeneration === currentCatalogGeneration
+    );
+  }
+
+  // A terminal response without either the current task identity or a newly
+  // activated snapshot cannot prove that it belongs to this local save.
+  return true;
 };
 
 const getFetchContentParams = (state) => {
@@ -342,11 +351,18 @@ const useVODStore = create((set, get) => ({
       const response = await api.getVODAccessPolicies();
       const results = response.results || response;
       if (requestSequence === accessPolicyFetchSequence) {
-        // This is the newest no-store response requested after the last local
-        // mutation, so the database state is authoritative. Comparing its
-        // timestamps with an optimistic browser timestamp can otherwise keep
-        // a completed build stuck on Building when the two clocks differ.
-        set({ accessPolicies: Array.isArray(results) ? results : [] });
+        set((state) => ({
+          accessPolicies: Array.isArray(results)
+            ? results.map((incoming) => {
+                const current = state.accessPolicies.find(
+                  (profile) => String(profile.id) === String(incoming.id)
+                );
+                return current && keepNewerLocalProfileBuild(current, incoming)
+                  ? current
+                  : incoming;
+              })
+            : [],
+        }));
       }
       return results;
     } catch (error) {

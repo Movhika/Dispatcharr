@@ -169,7 +169,7 @@ describe('useVODStore', () => {
     );
   });
 
-  it('accepts the latest authoritative terminal poll despite clock skew', async () => {
+  it('accepts a completed build with a new catalog generation despite clock skew', async () => {
     useVODStore.setState({
       accessPolicies: [
         {
@@ -178,6 +178,7 @@ describe('useVODStore', () => {
           selection_status: 'building',
           selection_started_at: '2026-09-11T09:00:00Z',
           selection_completed_at: '2026-09-11T08:00:00Z',
+          active_selection_generation: 'old-catalog',
           selection_progress: { task_id: 'current-task' },
         },
       ],
@@ -188,6 +189,8 @@ describe('useVODStore', () => {
         name: 'English',
         selection_status: 'ready',
         selection_completed_at: '2026-09-11T08:00:00Z',
+        active_selection_generation: 'new-catalog',
+        selection_progress: { task_id: 'current-task' },
       },
     ]);
     const { result } = renderHook(() => useVODStore());
@@ -200,6 +203,55 @@ describe('useVODStore', () => {
       expect.objectContaining({
         selection_status: 'ready',
         selection_completed_at: '2026-09-11T08:00:00Z',
+        active_selection_generation: 'new-catalog',
+      })
+    );
+  });
+
+  it('keeps showing a running save when a poll returns the old ready snapshot', async () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'building',
+          active_selection_generation: 'old-catalog',
+          selection_progress: {
+            task_id: 'new-task',
+            build_generation: 'new-build',
+            percent: 36,
+          },
+        },
+      ],
+    });
+    api.getVODAccessPolicies.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'English',
+        selection_status: 'ready',
+        selection_current: true,
+        active_selection_generation: 'old-catalog',
+        selection_progress: {
+          task_id: 'old-task',
+          build_generation: 'old-catalog',
+          percent: 100,
+        },
+      },
+    ]);
+    const { result } = renderHook(() => useVODStore());
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'building',
+        active_selection_generation: 'old-catalog',
+        selection_progress: expect.objectContaining({
+          task_id: 'new-task',
+          percent: 36,
+        }),
       })
     );
   });
