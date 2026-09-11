@@ -285,6 +285,24 @@ describe('SeriesModal', () => {
     copyToClipboard.mockResolvedValue(undefined);
   });
 
+  it('does not reload providers when the same series is passed as a new object', async () => {
+    const onClose = vi.fn();
+    const view = render(
+      <SeriesModal series={mockSeries} opened={true} onClose={onClose} />
+    );
+    await waitFor(() =>
+      expect(mockVODStore.fetchSeriesProviders).toHaveBeenCalledTimes(1)
+    );
+
+    view.rerender(
+      <SeriesModal series={{ ...mockSeries }} opened={true} onClose={onClose} />
+    );
+
+    await waitFor(() =>
+      expect(mockVODStore.fetchSeriesProviders).toHaveBeenCalledTimes(1)
+    );
+  });
+
   describe('Rendering', () => {
     it('should render nothing when series is null', () => {
       const { container } = render(

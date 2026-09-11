@@ -944,44 +944,42 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 is_default=True
             ).update(is_default=False)
 
-    @transaction.atomic
     def create(self, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", [])
         users = validated_data.pop("users", [])
-        policy = VODAccessPolicy.objects.create(**validated_data)
-        self._assign_users(policy, users)
-        self._normalize_default(policy)
-        self._replace_category_rules(policy, rules)
+        with transaction.atomic():
+            policy = VODAccessPolicy.objects.create(**validated_data)
+            self._assign_users(policy, users)
+            self._normalize_default(policy)
+            self._replace_category_rules(policy, rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(
             policy.pk,
             trigger_reason="A new VOD output profile was created",
         )
-        # The enqueue helper persists the initial queue status with a queryset
-        # update. Refresh before DRF serializes the POST response so a newly
-        # created profile is immediately visible as pending, including its
-        # progress phase, without requiring a second list request.
+        # In normal autocommit mode the task is published before this refresh,
+        # so the mutation response contains its real task ID. A caller-owned
+        # outer transaction still keeps publication safely deferred to commit.
         policy.refresh_from_db()
         return policy
 
-    @transaction.atomic
     def update(self, instance, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", None)
         users = validated_data.pop("users", None)
-        instance = super().update(instance, validated_data)
-        self._assign_users(instance, users)
-        self._normalize_default(instance)
-        self._replace_category_rules(instance, rules)
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            self._assign_users(instance, users)
+            self._normalize_default(instance)
+            self._replace_category_rules(instance, rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(
             instance.pk,
             trigger_reason="VOD output profile settings were saved",
         )
-        # enqueue_profile_selection_rebuild updates status/progress with a
-        # queryset update, so refresh both those fields and any prefetched
-        # category rules before DRF serializes the mutation response.
+        # Read the task identity/status written during publication instead of
+        # returning the pre-commit placeholder to the frontend.
         instance.refresh_from_db()
         return instance
 

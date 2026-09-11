@@ -179,6 +179,23 @@ describe('VODModal', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not reload providers when the same movie is passed as a new object', async () => {
+    const view = render(
+      <VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />
+    );
+    await waitFor(() =>
+      expect(mockFetchMovieProviders).toHaveBeenCalledTimes(1)
+    );
+
+    view.rerender(
+      <VODModal vod={{ ...mockVOD }} opened={true} onClose={mockOnClose} />
+    );
+
+    await waitFor(() =>
+      expect(mockFetchMovieProviders).toHaveBeenCalledTimes(1)
+    );
+  });
+
   it('should not render when closed', () => {
     render(<VODModal vod={mockVOD} opened={false} onClose={mockOnClose} />);
     expect(screen.queryByTestId('modal')).not.toBeInTheDocument();

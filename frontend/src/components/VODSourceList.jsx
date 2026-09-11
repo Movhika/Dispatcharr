@@ -184,8 +184,8 @@ const VODSourceList = ({
       {profileCandidates && (
         <Alert color="blue" variant="light">
           Profile order and exclusions are shown on the same source rows. The
-          first eligible source is preferred; availability is checked again when
-          playback starts.
+          first eligible source is tried first; availability is checked again
+          when playback starts.
         </Alert>
       )}
       <ScrollArea type="auto">
@@ -199,7 +199,7 @@ const VODSourceList = ({
         >
           <TableThead>
             <TableTr>
-              {profileCandidates && <TableTh w={125}>Profile</TableTh>}
+              {profileCandidates && <TableTh w={125}>Order</TableTh>}
               <TableTh>
                 <Stack gap={0}>
                   <Text inherit fw={700}>
@@ -261,11 +261,6 @@ const VODSourceList = ({
                         ) : (
                           <Badge color="gray" variant="outline">
                             Excluded
-                          </Badge>
-                        )}
-                        {profileRow?.selected && (
-                          <Badge color="blue" variant="light">
-                            Preferred
                           </Badge>
                         )}
                         {profileRow?.reason &&

@@ -1418,7 +1418,10 @@ class VODSourceManagementTests(TestCase):
             patch(
                 "apps.vod.tasks.rebuild_vod_profile_selection.delay"
             ) as delay,
-            self.captureOnCommitCallbacks(execute=True),
+            patch(
+                "apps.vod.profile_selection.transaction.on_commit",
+                side_effect=lambda callback: callback(),
+            ),
         ):
             delay.return_value.id = "variants-update-task"
             response = VODAccessPolicyViewSet.as_view(
@@ -1432,6 +1435,14 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             response.data["selection_status"],
             VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(
+            response.data["selection_progress"]["task_id"],
+            "variants-update-task",
+        )
+        self.assertEqual(
+            response.data["selection_progress"]["task_name"],
+            "apps.vod.tasks.rebuild_vod_profile_selection",
         )
         delay.assert_called_once_with(self.policy.pk)
 

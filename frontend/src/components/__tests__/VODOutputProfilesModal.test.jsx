@@ -424,6 +424,9 @@ describe('VODOutputProfilesModal', () => {
     );
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
     await screen.findByDisplayValue('German HD');
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'German HD updated' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
@@ -441,6 +444,18 @@ describe('VODOutputProfilesModal', () => {
     await waitFor(() =>
       expect(upsertAccessPolicy).toHaveBeenLastCalledWith(profile)
     );
+  });
+
+  it('enables save only after an existing profile was changed', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    const name = await screen.findByLabelText('Profile name');
+    const saveButton = screen.getByRole('button', { name: 'Save profile' });
+
+    expect(saveButton).toBeDisabled();
+    fireEvent.change(name, { target: { value: 'German HD updated' } });
+    expect(saveButton).toBeEnabled();
+    fireEvent.change(name, { target: { value: 'German HD' } });
+    expect(saveButton).toBeDisabled();
   });
 
   it('does not overwrite an edited draft when profile status is polled', async () => {

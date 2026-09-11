@@ -350,7 +350,10 @@ const SeriesModal = ({
   profileCandidatesLoading = false,
   profileCandidatesError = '',
 }) => {
-  const { fetchSeriesInfo, fetchSeriesProviders } = useVODStore();
+  const fetchSeriesInfo = useVODStore((state) => state.fetchSeriesInfo);
+  const fetchSeriesProviders = useVODStore(
+    (state) => state.fetchSeriesProviders
+  );
   const showVideo = useVideoStore((s) => s.showVideo);
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
 
@@ -366,9 +369,11 @@ const SeriesModal = ({
   const [loadingProviders, setLoadingProviders] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const profilePreferenceAppliedRef = useRef('');
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
 
   useEffect(() => {
-    if (opened && series) {
+    if (opened && series?.id) {
       const requestId = ++detailsRequestIdRef.current;
       setLoadingDetails(true);
       setLoadingProviders(true);
@@ -389,7 +394,7 @@ const SeriesModal = ({
         .catch((error) => {
           if (detailsRequestIdRef.current !== requestId) return;
           console.error('Failed to fetch series providers:', error);
-          setDetailedSeries(series);
+          setDetailedSeries(seriesRef.current);
         })
         .finally(() => {
           if (detailsRequestIdRef.current === requestId) {
@@ -398,7 +403,7 @@ const SeriesModal = ({
           }
         });
     }
-  }, [opened, series, fetchSeriesInfo, fetchSeriesProviders]);
+  }, [opened, series?.id, fetchSeriesInfo, fetchSeriesProviders]);
 
   useEffect(() => {
     if (!opened) {

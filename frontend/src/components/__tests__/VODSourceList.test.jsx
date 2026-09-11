@@ -100,9 +100,9 @@ describe('VODSourceList', () => {
       </MantineProvider>
     );
 
-    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Order' })).toBeVisible();
     expect(screen.getByText('#1')).toBeVisible();
-    expect(screen.getByText('Preferred')).toBeVisible();
+    expect(screen.queryByText('Preferred')).not.toBeInTheDocument();
     expect(screen.getByText('Excluded')).toBeVisible();
     expect(screen.getByText('source rule exclude')).toBeVisible();
   });

@@ -97,6 +97,72 @@ const outputModeLabel = (mode) =>
       ? 'Variants'
       : 'Unknown mode';
 
+const profilePayload = (profile) => ({
+  name: profile.name.trim(),
+  export_mode: profile.export_mode,
+  is_default: profile.is_default,
+  is_active: profile.is_active,
+  hard_constraints: {
+    source_rules: (profile.hard_constraints?.source_rules || []).map(
+      (rule) => ({
+        ...rule,
+        required_audio_languages: normalizeLanguageCodes(
+          rule.required_audio_languages || []
+        ),
+        required_subtitle_languages: normalizeLanguageCodes(
+          rule.required_subtitle_languages || []
+        ),
+        required_video_features: rule.required_video_features || [],
+      })
+    ),
+  },
+  ranking: normalizeVODFailoverRanking(
+    profile.ranking || DEFAULT_VOD_FAILOVER_RANKING
+  ),
+  provider_order: [...new Set(profile.provider_order || [])]
+    .map(Number)
+    .filter((providerId) => Number.isInteger(providerId) && providerId > 0),
+  edition_rules: (profile.edition_rules || []).map((rule) => ({
+    id: rule.id,
+    name: rule.title_suffix.trim(),
+    title_suffix: rule.title_suffix.trim(),
+    enabled: rule.enabled !== false,
+    min_resolution: Number(rule.min_resolution || 0),
+    max_resolution: Number(rule.max_resolution || 0),
+    required_audio_languages: normalizeLanguageCodes(
+      rule.required_audio_languages || []
+    ),
+    required_subtitle_languages: normalizeLanguageCodes(
+      rule.required_subtitle_languages || []
+    ),
+    required_video_features: rule.required_video_features || [],
+  })),
+  naming_mode: 'mode_default',
+  name_template: '',
+  category_rules: relationIds(profile)
+    .map(Number)
+    .sort((left, right) => left - right)
+    .map((category_relation) => ({
+      category_relation,
+      enabled: true,
+      priority: 0,
+    })),
+});
+
+const canonicalizeObject = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalizeObject);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalizeObject(item)])
+  );
+};
+
+const profileDraftSignature = (profile) =>
+  JSON.stringify(canonicalizeObject(profilePayload(profile)));
+
 const VODOutputProfilesModal = ({ opened, onClose }) => {
   const categories = useVODStore((state) => state.categories);
   const profiles = useVODStore((state) => state.accessPolicies);
@@ -107,6 +173,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [profileId, setProfileId] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState(EMPTY_PROFILE);
+  const [savedDraftSignature, setSavedDraftSignature] = useState('');
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [candidateTarget, setCandidateTarget] = useState(null);
   const [candidateData, setCandidateData] = useState(null);
@@ -156,7 +223,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const resetDraft = (profile = null) => {
     const source = profile || EMPTY_PROFILE;
     const sourceRules = source.hard_constraints?.source_rules || [];
-    setDraft({
+    const nextDraft = {
       ...EMPTY_PROFILE,
       ...source,
       hard_constraints: {
@@ -171,7 +238,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       name_template:
         source.naming_mode === 'template' ? source.name_template || '' : '',
       category_rules: source.category_rules || [],
-    });
+    };
+    setDraft(nextDraft);
+    setSavedDraftSignature(profileDraftSignature(nextDraft));
   };
 
   useEffect(() => {
@@ -399,54 +468,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     if (!draft.name.trim()) return;
     setSaving(true);
     try {
-      const payload = {
-        name: draft.name.trim(),
-        export_mode: draft.export_mode,
-        is_default: draft.is_default,
-        is_active: draft.is_active,
-        hard_constraints: {
-          source_rules: (draft.hard_constraints.source_rules || []).map(
-            (rule) => ({
-              ...rule,
-              required_audio_languages: normalizeLanguageCodes(
-                rule.required_audio_languages || []
-              ),
-              required_subtitle_languages: normalizeLanguageCodes(
-                rule.required_subtitle_languages || []
-              ),
-              required_video_features: rule.required_video_features || [],
-            })
-          ),
-        },
-        ranking: draft.ranking,
-        provider_order: [...new Set(draft.provider_order || [])]
-          .map(Number)
-          .filter(
-            (providerId) => Number.isInteger(providerId) && providerId > 0
-          ),
-        edition_rules: (draft.edition_rules || []).map((rule) => ({
-          id: rule.id,
-          name: rule.title_suffix.trim(),
-          title_suffix: rule.title_suffix.trim(),
-          enabled: rule.enabled !== false,
-          min_resolution: Number(rule.min_resolution || 0),
-          max_resolution: Number(rule.max_resolution || 0),
-          required_audio_languages: normalizeLanguageCodes(
-            rule.required_audio_languages || []
-          ),
-          required_subtitle_languages: normalizeLanguageCodes(
-            rule.required_subtitle_languages || []
-          ),
-          required_video_features: rule.required_video_features || [],
-        })),
-        naming_mode: 'mode_default',
-        name_template: '',
-        category_rules: relationIds(draft).map((category_relation) => ({
-          category_relation: Number(category_relation),
-          enabled: true,
-          priority: 0,
-        })),
-      };
+      const payload = profilePayload(draft);
       const previousProfile = selectedProfile;
       if (profileId && previousProfile?.is_active) {
         upsertAccessPolicy({
@@ -473,6 +495,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       resetDraft(saved);
       setCreating(false);
       setProfileId(String(saved.id));
+      if (
+        ['pending', 'building'].includes(saved.selection_status) &&
+        !saved.selection_progress?.task_id
+      ) {
+        // A caller-owned outer transaction can make the mutation response
+        // arrive with the pre-publication placeholder. The follow-up request
+        // runs after the HTTP transaction committed and attaches the real
+        // Celery task immediately instead of waiting for the first poll tick.
+        await fetchProfiles();
+      }
       showNotification({
         title: 'VOD output profile saved',
         message:
@@ -527,6 +559,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   };
 
   const selectedCategoryIds = relationIds(draft);
+  const draftChanged = profileDraftSignature(draft) !== savedDraftSignature;
+  const canSave = Boolean(
+    draft.name.trim() && (creating || (selectedProfile && draftChanged))
+  );
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
   const activeMode =
@@ -674,7 +710,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <Button
               leftSection={<Save size={15} />}
               loading={saving}
-              disabled={!draft.name.trim()}
+              disabled={!canSave}
               onClick={save}
             >
               Save profile

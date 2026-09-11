@@ -155,13 +155,18 @@ const VODModal = ({
   const [loadingProviders, setLoadingProviders] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const profilePreferenceAppliedRef = useRef('');
+  const vodRef = useRef(vod);
+  vodRef.current = vod;
 
-  const { fetchMovieDetailsFromProvider, fetchMovieProviders } = useVODStore();
+  const fetchMovieDetailsFromProvider = useVODStore(
+    (state) => state.fetchMovieDetailsFromProvider
+  );
+  const fetchMovieProviders = useVODStore((state) => state.fetchMovieProviders);
   const showVideo = useVideoStore((s) => s.showVideo);
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
 
   useEffect(() => {
-    if (opened && vod) {
+    if (opened && vod?.id) {
       const requestId = ++detailsRequestIdRef.current;
       setLoadingProviders(true);
       setLoadingDetails(true);
@@ -185,7 +190,7 @@ const VODModal = ({
             'Failed to fetch providers or details, using basic info:',
             error
           );
-          setDetailedVOD(vod);
+          setDetailedVOD(vodRef.current);
         })
         .finally(() => {
           if (detailsRequestIdRef.current === requestId) {
@@ -194,7 +199,7 @@ const VODModal = ({
           }
         });
     }
-  }, [opened, vod, fetchMovieDetailsFromProvider, fetchMovieProviders]);
+  }, [opened, vod?.id, fetchMovieDetailsFromProvider, fetchMovieProviders]);
 
   useEffect(() => {
     if (!opened) {

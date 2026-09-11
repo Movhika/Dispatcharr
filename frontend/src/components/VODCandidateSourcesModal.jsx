@@ -204,9 +204,6 @@ const VODCandidateSourcesModal = ({
                             </Badge>
                           )}
                           {row.current && <Badge color="green">Playing</Badge>}
-                          {!row.current && row.selected && (
-                            <Badge color="blue">Preferred</Badge>
-                          )}
                         </Group>
                       </TableTd>
                       <TableTd>
