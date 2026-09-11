@@ -305,7 +305,6 @@ def reconcile_vod_profile_selection_queue():
     from django.core.cache import cache
     from django.utils.dateparse import parse_datetime
 
-    from .catalog_cache import selection_catalog_generation
     from .models import VODAccessPolicy
     from .profile_selection import (
         BATCH_PROFILE_TASK_NAME,
@@ -317,7 +316,6 @@ def reconcile_vod_profile_selection_queue():
     from .serializers import VODAccessPolicySerializer
 
     stale_ready = []
-    current_generation = str(selection_catalog_generation())
     mode_reader = VODAccessPolicySerializer()
     for policy in VODAccessPolicy.objects.filter(
         is_active=True,
@@ -329,8 +327,6 @@ def reconcile_vod_profile_selection_queue():
         reasons = []
         if not policy.active_selection_generation:
             reasons.append("no prepared catalog generation exists")
-        if policy.selection_catalog_generation != current_generation:
-            reasons.append("the VOD source catalog changed")
         if active_mode and active_mode != policy.export_mode:
             reasons.append("the saved Compact/Variants mode changed")
         if (

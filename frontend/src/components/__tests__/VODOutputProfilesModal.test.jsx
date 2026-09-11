@@ -577,15 +577,15 @@ describe('VODOutputProfilesModal', () => {
 
     expect(
       await screen.findByText(
-        /Step 2 of 5 · Building movies output · attempt 2 · 5,000 \/ 10,000/
+        /Step 2 of 5 · Building movies output · attempt 2 · 36% overall/
       )
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Restarted because: The VOD catalog changed/)
     ).toBeInTheDocument();
     expect(
-      screen.queryByLabelText('Catalog preparation progress')
-    ).not.toBeInTheDocument();
+      screen.getByLabelText('Catalog preparation progress')
+    ).toHaveTextContent('36');
     expect(
       screen.getByText(/saved rules are not active in this preview yet/)
     ).toBeInTheDocument();

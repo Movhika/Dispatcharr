@@ -9,6 +9,7 @@ import {
   Modal,
   Paper,
   Pagination,
+  Progress,
   ScrollArea,
   SegmentedControl,
   Select,
@@ -567,6 +568,11 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   );
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
+  const buildPercent = (() => {
+    const value = Number(buildProgress.percent);
+    if (!Number.isFinite(value)) return null;
+    return Math.min(Math.max(value, 0), 100);
+  })();
   const activeMode =
     selectedProfile?.selection_active_mode ||
     counts.export_mode ||
@@ -799,11 +805,19 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                 {Number(buildProgress.attempt) > 1
                   ? ` · attempt ${Number(buildProgress.attempt)}`
                   : ''}
-                {Number.isFinite(Number(buildProgress.processed)) &&
-                  Number(buildProgress.total) > 0 &&
-                  ` · ${Number(buildProgress.processed).toLocaleString()} / ${Number(buildProgress.total).toLocaleString()}`}
+                {buildPercent !== null
+                  ? ` · ${Math.round(buildPercent)}% overall`
+                  : ''}
                 {` · ${formatDuration(buildElapsedSeconds)} elapsed`}
               </Text>
+              {buildPercent !== null && (
+                <Progress
+                  value={buildPercent}
+                  animated={selectedProfile.selection_status === 'building'}
+                  aria-label="Catalog preparation progress"
+                  size="sm"
+                />
+              )}
               <Text size="xs" c="dimmed">
                 Assigned Celery task: {taskName} · Queue:{' '}
                 {buildProgress.queue || 'celery'} · Task ID:{' '}

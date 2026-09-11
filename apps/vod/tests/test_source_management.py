@@ -889,7 +889,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(serialized["selection_active_mode"], "variants")
         self.assertFalse(serialized["selection_current"])
 
-    def test_listing_profiles_is_read_only_for_a_stale_ready_generation(self):
+    def test_listing_profiles_trusts_a_completed_ready_lifecycle(self):
         admin = get_user_model().objects.create_user(
             username="profile-repair-admin",
             password="test-password",
@@ -909,6 +909,7 @@ class VODSourceManagementTests(TestCase):
             response = VODAccessPolicyViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data[0]["selection_current"])
         enqueue.assert_not_called()
 
     def test_profile_build_does_not_overlap_an_active_build(self):
@@ -1168,6 +1169,28 @@ class VODSourceManagementTests(TestCase):
         build_vod_profile_selection(self.policy.id)
         cache.delete(SELECTION_GENERATION_KEY)
         cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+
+        with patch(
+            "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
+        ) as enqueue:
+            result = reconcile_vod_profile_selection_queue.run()
+
+        self.policy.refresh_from_db()
+        self.assertEqual(result["stale_ready_requeued"], 0)
+        self.assertEqual(
+            self.policy.selection_status,
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+        enqueue.assert_not_called()
+
+    def test_watchdog_does_not_second_guess_a_ready_source_generation(self):
+        VODAccessPolicy.objects.exclude(pk=self.policy.pk).update(
+            is_active=False
+        )
+        build_vod_profile_selection(self.policy.id)
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_catalog_generation="previous-source-marker"
+        )
 
         with patch(
             "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
