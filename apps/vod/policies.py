@@ -73,25 +73,108 @@ def enabled_category_map():
     return mapping
 
 
-def policy_category_map(policy):
-    """Return globally enabled sources narrowed by an optional user allowlist.
+def _profile_category_rule_matches(rule, category):
+    if rule.get("enabled", True) is False:
+        return False
+    if str(rule.get("scope") or "") != str(
+        category.get("category_type") or ""
+    ):
+        return False
+    account_id = rule.get("m3u_account_id")
+    if account_id is not None and account_id != "":
+        try:
+            if int(account_id) != int(category["account_id"]):
+                return False
+        except (TypeError, ValueError):
+            return False
+    flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
+    try:
+        pattern = re.compile(str(rule.get("regex_pattern") or ""), flags)
+    except re.error:
+        return False
+    return bool(pattern.search(str(category.get("category_name") or "")))
 
-    An empty allowlist deliberately means "all enabled categories" so existing
-    users keep their current catalog.  Category priority is not used for
-    ranking; the allowlist is only a hard source boundary before technical
-    language/resolution policy is evaluated.
+
+def _profile_category_enabled(category, rules, defaults):
+    """Resolve a globally available category through ordered profile rules."""
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if _profile_category_rule_matches(rule, category):
+            return rule.get("action") == "enable"
+    return defaults.get(category["category_type"], "enable") == "enable"
+
+
+def policy_category_map(policy):
+    """Return globally enabled sources narrowed by a profile source policy.
+
+    The M3U-account category selection remains an absolute upper boundary.
+    Explicit profile rows override dynamic rules, then the first matching
+    profile rule wins, followed by the per-content-type default. Profiles from
+    before dynamic rules retain their original semantics: no rows means all
+    globally enabled categories, while any saved rows form an exact allowlist.
     """
     mapping = enabled_category_map()
     if not policy:
         return mapping
-    allowed = set(
-        policy.vodpolicycategory_set.filter(enabled=True).values_list(
+    explicit_rows = list(
+        policy.vodpolicycategory_set.all().values_list(
+            "category_relation_id",
             "category_relation__m3u_account_id",
             "category_relation__category_id",
+            "enabled",
         )
     )
-    if not allowed:
-        return mapping
+    constraints = policy.hard_constraints or {}
+    dynamic_configured = (
+        "category_import_rules" in constraints
+        or "category_default_actions" in constraints
+    )
+    if not dynamic_configured:
+        if not explicit_rows:
+            return mapping
+        allowed = {
+            (account_id, category_id)
+            for _relation_id, account_id, category_id, enabled in explicit_rows
+            if enabled
+        }
+        return {key: value for key, value in mapping.items() if key in allowed}
+
+    explicit_by_relation = {
+        relation_id: enabled
+        for relation_id, _account_id, _category_id, enabled in explicit_rows
+    }
+    rules = list(constraints.get("category_import_rules") or [])
+    defaults = dict(constraints.get("category_default_actions") or {})
+    inventory = M3UVODCategoryRelation.objects.filter(
+        enabled=True,
+        m3u_account__is_active=True,
+    ).values(
+        "id",
+        "m3u_account_id",
+        "category_id",
+        "category__name",
+        "category__category_type",
+    )
+    allowed = set()
+    for category in inventory.iterator(chunk_size=2000):
+        key = (category["m3u_account_id"], category["category_id"])
+        if key not in mapping:
+            continue
+        if category["id"] in explicit_by_relation:
+            enabled = explicit_by_relation[category["id"]]
+        else:
+            enabled = _profile_category_enabled(
+                {
+                    "account_id": category["m3u_account_id"],
+                    "category_name": category["category__name"],
+                    "category_type": category["category__category_type"],
+                },
+                rules,
+                defaults,
+            )
+        if enabled:
+            allowed.add(key)
     return {key: value for key, value in mapping.items() if key in allowed}
 
 
@@ -116,8 +199,13 @@ def allowed_category_query(policy):
     # their first VOD refresh. Older catalogs can contain movie/series
     # relations before M3UVODCategoryRelation rows have been discovered.
     # Once category inventory exists, it remains the hard visibility boundary.
-    if not mapping:
+    if not mapping and not M3UVODCategoryRelation.objects.filter(
+        enabled=True,
+        m3u_account__is_active=True,
+    ).exists():
         return Q()
+    if not mapping:
+        return Q(pk__in=[])
     query = Q(pk__in=[])
     categories_by_account = {}
     for account_id, category_id in mapping:

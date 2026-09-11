@@ -32,7 +32,15 @@ const VODCategoryFilter = ({
   categoryStates,
   setCategoryStates,
   type,
+  mode = 'account',
+  rules = [],
+  onRulesChange,
+  defaultAction = 'enable',
+  onDefaultActionChange,
+  accountOptions = [],
+  onClearOverrides,
 }) => {
+  const profileMode = mode === 'profile';
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -40,7 +48,7 @@ const VODCategoryFilter = ({
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
-  const [previewCategoryId, setPreviewCategoryId] = useState(null);
+  const [previewCategory, setPreviewCategory] = useState(null);
   const [metadataModes, setMetadataModes] = useState({
     audio_languages: 'keep',
     subtitle_languages: 'keep',
@@ -55,6 +63,7 @@ const VODCategoryFilter = ({
   });
 
   useEffect(() => {
+    if (profileMode) return;
     if (Object.keys(categories).length === 0) return;
 
     setCategoryStates(
@@ -62,12 +71,12 @@ const VODCategoryFilter = ({
         .filter(
           (category) =>
             category.m3u_accounts.find(
-              (account) => account.m3u_account == playlist.id
+              (account) => account.m3u_account == playlist?.id
             ) && category.category_type == type
         )
         .map((category) => {
           const relation = category.m3u_accounts.find(
-            (account) => account.m3u_account == playlist.id
+            (account) => account.m3u_account == playlist?.id
           );
           return {
             ...category,
@@ -78,13 +87,16 @@ const VODCategoryFilter = ({
           };
         })
     );
-  }, [categories, playlist.id, setCategoryStates, type]);
+  }, [categories, playlist?.id, profileMode, setCategoryStates, type]);
+
+  const rowId = (category) => String(category.relation_id ?? category.id);
 
   const visible = useMemo(
     () =>
       categoryStates
         .filter((category) => {
           const matchesText = category.name
+            .concat(' ', category.accountName || '')
             .toLowerCase()
             .includes(filter.toLowerCase());
           const matchesStatus =
@@ -100,7 +112,7 @@ const VODCategoryFilter = ({
   const updateSelected = (changes) => {
     setCategoryStates((current) =>
       current.map((category) =>
-        selected.has(category.id) ? { ...category, ...changes } : category
+        selected.has(rowId(category)) ? { ...category, ...changes } : category
       )
     );
   };
@@ -118,7 +130,7 @@ const VODCategoryFilter = ({
     setSelected((current) => {
       const next = new Set(current);
       visible.forEach((category) =>
-        checked ? next.add(category.id) : next.delete(category.id)
+        checked ? next.add(rowId(category)) : next.delete(rowId(category))
       );
       return next;
     });
@@ -140,7 +152,7 @@ const VODCategoryFilter = ({
       }
     }
     const targets = categoryStates.filter((category) =>
-      selected.has(category.id)
+      selected.has(rowId(category))
     );
     setSaving(true);
     try {
@@ -150,7 +162,7 @@ const VODCategoryFilter = ({
       );
       setCategoryStates((current) =>
         current.map((category) =>
-          selected.has(category.id)
+          selected.has(rowId(category))
             ? {
                 ...category,
                 metadata_defaults: {
@@ -190,7 +202,7 @@ const VODCategoryFilter = ({
 
   const allVisibleSelected =
     visible.length > 0 &&
-    visible.every((category) => selected.has(category.id));
+    visible.every((category) => selected.has(rowId(category)));
 
   return (
     <>
@@ -204,13 +216,17 @@ const VODCategoryFilter = ({
             Import rules
           </Button>
           <Text size="xs" c="dimmed">
-            New unmatched categories are imported inactive.
+            {profileMode
+              ? `New unmatched categories are ${defaultAction === 'enable' ? 'allowed' : 'blocked'} by this profile.`
+              : 'New unmatched categories are imported inactive.'}
           </Text>
         </Group>
 
         <Flex gap="sm" align="end" wrap="wrap">
           <TextInput
-            label="Search categories"
+            label={
+              profileMode ? 'Search account or category' : 'Search categories'
+            }
             placeholder="Filter categories..."
             value={filter}
             onChange={(event) => setFilter(event.currentTarget.value)}
@@ -223,17 +239,35 @@ const VODCategoryFilter = ({
             size="xs"
             data={[
               { label: 'All', value: 'all' },
-              { label: 'Enabled', value: 'enabled' },
-              { label: 'Disabled', value: 'disabled' },
+              {
+                label: profileMode ? 'Allowed' : 'Enabled',
+                value: 'enabled',
+              },
+              {
+                label: profileMode ? 'Blocked' : 'Disabled',
+                value: 'disabled',
+              },
             ]}
           />
+          {profileMode && (
+            <SegmentedControl
+              value={defaultAction}
+              onChange={onDefaultActionChange}
+              size="xs"
+              aria-label={`Default for unmatched ${type} categories`}
+              data={[
+                { label: 'Allow new unmatched', value: 'enable' },
+                { label: 'Block new unmatched', value: 'disable' },
+              ]}
+            />
+          )}
           <Button
             variant="default"
             size="xs"
             disabled={!selected.size}
             onClick={() => updateSelected({ enabled: true })}
           >
-            Enable selected
+            {profileMode ? 'Allow selected' : 'Enable selected'}
           </Button>
           <Button
             variant="default"
@@ -241,16 +275,30 @@ const VODCategoryFilter = ({
             disabled={!selected.size}
             onClick={() => updateSelected({ enabled: false })}
           >
-            Disable selected
+            {profileMode ? 'Block selected' : 'Disable selected'}
           </Button>
-          <Button
-            variant="default"
-            size="xs"
-            disabled={!selected.size}
-            onClick={openMetadataEditor}
-          >
-            Edit metadata ({selected.size})
-          </Button>
+          {profileMode ? (
+            <Button
+              variant="default"
+              size="xs"
+              disabled={!selected.size}
+              onClick={() => {
+                onClearOverrides?.([...selected]);
+                setSelected(new Set());
+              }}
+            >
+              Use rules for selected
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              size="xs"
+              disabled={!selected.size}
+              onClick={openMetadataEditor}
+            >
+              Edit metadata ({selected.size})
+            </Button>
+          )}
         </Flex>
 
         <Table striped highlightOnHover withTableBorder stickyHeader>
@@ -265,8 +313,10 @@ const VODCategoryFilter = ({
                   }
                 />
               </TableTh>
+              {profileMode && <TableTh>M3U account</TableTh>}
               <TableTh>Category</TableTh>
-              <TableTh w={100}>Enabled</TableTh>
+              <TableTh w={110}>{profileMode ? 'Allowed' : 'Enabled'}</TableTh>
+              {profileMode && <TableTh w={130}>Decision</TableTh>}
               <TableTh>
                 <Group gap={4} wrap="nowrap">
                   DUB
@@ -299,28 +349,32 @@ const VODCategoryFilter = ({
           </TableThead>
           <TableTbody>
             {visible.map((category) => (
-              <TableTr key={category.id}>
+              <TableTr key={rowId(category)}>
                 <TableTd>
                   <Checkbox
                     aria-label={`Select ${category.name}`}
-                    checked={selected.has(category.id)}
+                    checked={selected.has(rowId(category))}
                     onChange={(event) =>
-                      toggleSelected(category.id, event.currentTarget.checked)
+                      toggleSelected(
+                        rowId(category),
+                        event.currentTarget.checked
+                      )
                     }
                   />
                 </TableTd>
+                {profileMode && <TableTd>{category.accountName}</TableTd>}
                 <TableTd>{category.name}</TableTd>
                 <TableTd>
                   <Button
                     size="compact-xs"
                     color={category.enabled ? 'green' : 'gray'}
                     variant={category.enabled ? 'filled' : 'light'}
-                    aria-label={`Enable ${category.name}`}
+                    aria-label={`${profileMode ? 'Allow' : 'Enable'} ${category.name}`}
                     aria-pressed={category.enabled}
                     onClick={() =>
                       setCategoryStates((current) =>
                         current.map((item) =>
-                          item.id === category.id
+                          rowId(item) === rowId(category)
                             ? {
                                 ...item,
                                 enabled: !item.enabled,
@@ -330,9 +384,22 @@ const VODCategoryFilter = ({
                       )
                     }
                   >
-                    {category.enabled ? 'Active' : 'Inactive'}
+                    {category.enabled
+                      ? profileMode
+                        ? 'Allowed'
+                        : 'Active'
+                      : profileMode
+                        ? 'Blocked'
+                        : 'Inactive'}
                   </Button>
                 </TableTd>
+                {profileMode && (
+                  <TableTd>
+                    <Text size="xs" c="dimmed">
+                      {category.decision_source}
+                    </Text>
+                  </TableTd>
+                )}
                 <TableTd>
                   {(category.metadata_defaults?.audio_languages || []).join(
                     ', '
@@ -356,7 +423,7 @@ const VODCategoryFilter = ({
                     <ActionIcon
                       variant="subtle"
                       aria-label={`Preview ${category.name}`}
-                      onClick={() => setPreviewCategoryId(category.id)}
+                      onClick={() => setPreviewCategory(category)}
                     >
                       <Eye size={16} />
                     </ActionIcon>
@@ -407,17 +474,19 @@ const VODCategoryFilter = ({
       </Modal>
 
       <Modal
-        opened={!!previewCategoryId}
-        onClose={() => setPreviewCategoryId(null)}
+        opened={!!previewCategory}
+        onClose={() => setPreviewCategory(null)}
         title={`${type === 'movie' ? 'Movie' : 'Series'} sources`}
         size="85vw"
       >
-        {previewCategoryId && (
+        {previewCategory && (
           <M3UDeveloperCatalog
-            accountId={playlist.id}
+            accountId={profileMode ? previewCategory.accountId : playlist?.id}
             initialScope={type}
             lockedScope
-            initialCategory={String(previewCategoryId)}
+            initialCategory={String(
+              previewCategory.category_id ?? previewCategory.id
+            )}
           />
         )}
       </Modal>
@@ -429,7 +498,15 @@ const VODCategoryFilter = ({
         size="95vw"
         scrollAreaComponent={Modal.NativeScrollArea}
       >
-        <M3UGroupRules accountId={playlist.id} scope={type} />
+        <M3UGroupRules
+          accountId={playlist?.id}
+          scope={type}
+          mode={mode}
+          value={rules}
+          onChange={onRulesChange}
+          accountOptions={accountOptions}
+          categoryRows={categoryStates}
+        />
       </Modal>
     </>
   );

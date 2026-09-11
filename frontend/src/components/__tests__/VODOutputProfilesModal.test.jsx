@@ -15,8 +15,10 @@ vi.mock('../../api', () => ({
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
-vi.mock('../forms/VODUserCategorySelector.jsx', () => ({
-  default: () => null,
+vi.mock('../forms/VODCategoryFilter.jsx', () => ({
+  default: ({ mode, type }) => (
+    <div>{`${mode} ${type} category selection`}</div>
+  ),
 }));
 vi.mock('../VODFailoverRanking.jsx', () => ({
   default: ({ onProviderOrderChange }) => (
@@ -275,6 +277,19 @@ describe('VODOutputProfilesModal', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('reuses the VOD category selection for both profile source scopes', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    await screen.findByDisplayValue('German HD');
+    expect(
+      screen.getByText('profile movie category selection')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('profile series category selection')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Content rules')).toBeInTheDocument();
+  });
+
   it('does not require a manual retry for an outdated catalog update', async () => {
     storeProfiles = [
       {
@@ -383,7 +398,14 @@ describe('VODOutputProfilesModal', () => {
       expect(API.createVODAccessPolicy).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'New profile',
-          hard_constraints: { source_rules: [] },
+          hard_constraints: {
+            source_rules: [],
+            category_import_rules: [],
+            category_default_actions: {
+              movie: 'enable',
+              series: 'enable',
+            },
+          },
           provider_order: [22, 11],
         })
       )

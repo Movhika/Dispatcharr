@@ -43,7 +43,7 @@ import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import API from '../api.js';
 
 const RULE_DEFAULTS = {
-  match_field: 'category',
+  match_field: 'stream',
   regex_pattern: '',
   case_sensitive: false,
   enabled: true,
@@ -108,7 +108,7 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
     ...RULE_DEFAULTS,
     ...rule,
     id: rule.id || `rule-${index}`,
-    match_field: rule.match_field || 'category',
+    match_field: rule.match_field || 'stream',
     regex_pattern: rule.regex_pattern ?? rule.category_regex ?? '',
     result: rule.result || 'include',
   }));
@@ -150,12 +150,13 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
     <Stack>
       <Group justify="space-between" align="flex-start">
         <Stack gap={4}>
-          <Text fw={700}>Stream filters</Text>
+          <Text fw={700}>Content filters</Text>
           <Alert icon={<Info size={16} />} color="blue" variant="light">
             <Text size="sm">
               <strong>Order matters.</strong> The first matching filter decides
-              whether a source is included. Unmatched sources remain available
-              inside the allowed categories.
+              whether a source is included. Category discovery belongs to the
+              Sources tab; these filters narrow the selected catalog by source
+              title and technical metadata. Unmatched sources remain available.
             </Text>
           </Alert>
         </Stack>
@@ -204,8 +205,15 @@ const VODSourceRules = ({ value = [], onChange, categoryRelationIds = [] }) => {
                           size="xs"
                           aria-label="VOD stream filter field"
                           data={[
-                            { value: 'category', label: 'Category' },
-                            { value: 'stream', label: 'Stream' },
+                            { value: 'stream', label: 'Source title' },
+                            ...(rule.match_field === 'category'
+                              ? [
+                                  {
+                                    value: 'category',
+                                    label: 'Category (legacy)',
+                                  },
+                                ]
+                              : []),
                           ]}
                           value={rule.match_field}
                           onChange={(match_field) =>

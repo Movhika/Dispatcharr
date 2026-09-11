@@ -767,16 +767,156 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "required_video_features", "excluded_video_features",
             "min_resolution", "max_resolution",
             "allow_unknown_metadata", "language_match_mode",
-            "source_rules",
+            "source_rules", "category_import_rules",
+            "category_default_actions",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
         normalized = dict(value)
         source_rules = normalized.pop("source_rules", [])
+        category_import_rules = normalized.pop("category_import_rules", None)
+        category_default_actions = normalized.pop(
+            "category_default_actions", None
+        )
         if not isinstance(source_rules, list):
             raise serializers.ValidationError(
                 {"source_rules": "Must be an ordered list"}
             )
+
+        if category_import_rules is not None:
+            if not isinstance(category_import_rules, list):
+                raise serializers.ValidationError(
+                    {"category_import_rules": "Must be an ordered list"}
+                )
+            normalized_category_rules = []
+            seen_category_rule_ids = set()
+            for index, rule in enumerate(category_import_rules):
+                if not isinstance(rule, dict):
+                    raise serializers.ValidationError(
+                        {"category_import_rules": {index: "Must be an object"}}
+                    )
+                rule_id = str(rule.get("id") or f"category-rule-{index}")[:120]
+                if rule_id in seen_category_rule_ids:
+                    raise serializers.ValidationError(
+                        {"category_import_rules": {index: "Duplicate rule ID"}}
+                    )
+                seen_category_rule_ids.add(rule_id)
+                scope = str(rule.get("scope") or "")
+                if scope not in {"movie", "series"}:
+                    raise serializers.ValidationError(
+                        {
+                            "category_import_rules": {
+                                index: {"scope": "Use movie or series"}
+                            }
+                        }
+                    )
+                match_field = str(rule.get("match_field") or "group_name")
+                if match_field != "group_name":
+                    raise serializers.ValidationError(
+                        {
+                            "category_import_rules": {
+                                index: {
+                                    "match_field": "VOD profiles match category names"
+                                }
+                            }
+                        }
+                    )
+                regex_pattern = str(rule.get("regex_pattern") or "")
+                try:
+                    re.compile(regex_pattern)
+                except re.error as exc:
+                    raise serializers.ValidationError(
+                        {
+                            "category_import_rules": {
+                                index: {"regex_pattern": str(exc)}
+                            }
+                        }
+                    )
+                action = str(rule.get("action") or "disable")
+                if action not in {"enable", "disable"}:
+                    raise serializers.ValidationError(
+                        {
+                            "category_import_rules": {
+                                index: {"action": "Use enable or disable"}
+                            }
+                        }
+                    )
+                raw_account_id = rule.get("m3u_account_id")
+                if raw_account_id is None or raw_account_id == "":
+                    account_id = None
+                else:
+                    try:
+                        account_id = int(raw_account_id)
+                    except (TypeError, ValueError):
+                        raise serializers.ValidationError(
+                            {
+                                "category_import_rules": {
+                                    index: {
+                                        "m3u_account_id": (
+                                            "Use a positive M3U account ID"
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                    if account_id <= 0:
+                        raise serializers.ValidationError(
+                            {
+                                "category_import_rules": {
+                                    index: {
+                                        "m3u_account_id": (
+                                            "Use a positive M3U account ID"
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                normalized_category_rules.append(
+                    {
+                        "id": rule_id,
+                        "scope": scope,
+                        "m3u_account_id": account_id,
+                        "match_field": "group_name",
+                        "regex_pattern": regex_pattern,
+                        "action": action,
+                        "case_sensitive": bool(
+                            rule.get("case_sensitive", False)
+                        ),
+                        "enabled": bool(rule.get("enabled", True)),
+                        "order": index,
+                    }
+                )
+            category_import_rules = normalized_category_rules
+
+        if category_default_actions is not None:
+            if not isinstance(category_default_actions, dict):
+                raise serializers.ValidationError(
+                    {"category_default_actions": "Must be an object"}
+                )
+            unsupported_scopes = set(category_default_actions) - {
+                "movie", "series"
+            }
+            if unsupported_scopes:
+                raise serializers.ValidationError(
+                    {
+                        "category_default_actions": (
+                            "Use only movie and series defaults"
+                        )
+                    }
+                )
+            normalized_defaults = {}
+            for scope, action in category_default_actions.items():
+                action = str(action)
+                if action not in {"enable", "disable"}:
+                    raise serializers.ValidationError(
+                        {
+                            "category_default_actions": {
+                                scope: "Use enable or disable"
+                            }
+                        }
+                    )
+                normalized_defaults[scope] = action
+            category_default_actions = normalized_defaults
         for field in (
             "required_audio_languages",
             "required_subtitle_languages",
@@ -937,10 +1077,21 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 }
             )
         normalized["source_rules"] = normalized_rules
-        if requested_fields <= {"source_rules"} and all(
+        if category_import_rules is not None:
+            normalized["category_import_rules"] = category_import_rules
+        if category_default_actions is not None:
+            normalized["category_default_actions"] = category_default_actions
+        configuration_fields = {
+            "source_rules", "category_import_rules", "category_default_actions"
+        }
+        if requested_fields <= configuration_fields and all(
             rule.get("match_field") for rule in normalized_rules
         ):
-            return {"source_rules": normalized_rules}
+            return {
+                key: normalized[key]
+                for key in configuration_fields
+                if key in normalized and key in requested_fields
+            }
         return normalized
 
     def _assign_users(self, policy, users):

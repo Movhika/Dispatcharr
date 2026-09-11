@@ -40,6 +40,7 @@ from apps.vod.models import (
     VODCategory,
 )
 from apps.vod.policies import (
+    allowed_category_query,
     ordered_candidates,
     ordered_failover_candidates,
     relation_allowed,
@@ -146,6 +147,123 @@ class VODSourceManagementTests(TestCase):
             self.policy,
         )
         self.assertEqual([relation.id for relation in ordered], [self.german_relation.id])
+
+    def test_profile_category_import_rules_apply_to_existing_and_future_groups(self):
+        self.policy.hard_constraints = {
+            "source_rules": [],
+            "category_import_rules": [
+                {
+                    "id": "hindi-categories",
+                    "scope": "movie",
+                    "m3u_account_id": None,
+                    "match_field": "group_name",
+                    "regex_pattern": "GERMANY|HINDI",
+                    "action": "enable",
+                    "case_sensitive": False,
+                    "enabled": True,
+                    "order": 0,
+                }
+            ],
+            "category_default_actions": {
+                "movie": "disable",
+                "series": "disable",
+            },
+        }
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+        hindi = VODCategory.objects.create(
+            name="HINDI MOVIES", category_type="movie"
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_b,
+            category=hindi,
+            enabled=True,
+        )
+        hindi_relation = M3UMovieRelation.objects.create(
+            m3u_account=self.account_b,
+            movie=self.movie,
+            category=hindi,
+            stream_id="future-hindi",
+        )
+        bump_catalog_generation()
+
+        self.assertTrue(relation_allowed(hindi_relation, self.policy))
+
+    def test_profile_category_rule_can_be_scoped_to_one_provider(self):
+        self.policy.hard_constraints = {
+            "category_import_rules": [
+                {
+                    "id": "provider-a-only",
+                    "scope": "movie",
+                    "m3u_account_id": self.account_a.id,
+                    "match_field": "group_name",
+                    "regex_pattern": ".*",
+                    "action": "enable",
+                }
+            ],
+            "category_default_actions": {"movie": "disable"},
+        }
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_explicit_profile_category_choice_overrides_dynamic_rule(self):
+        self.policy.hard_constraints = {
+            "category_import_rules": [
+                {
+                    "id": "allow-all",
+                    "scope": "movie",
+                    "match_field": "group_name",
+                    "regex_pattern": ".*",
+                    "action": "enable",
+                }
+            ],
+            "category_default_actions": {"movie": "disable"},
+        }
+        VODPolicyCategory.objects.create(
+            policy=self.policy,
+            category_relation=self.german_category,
+            enabled=False,
+        )
+
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+        self.assertTrue(relation_allowed(self.english_relation, self.policy))
+
+    def test_dynamic_profile_cannot_restore_globally_disabled_category(self):
+        self.policy.hard_constraints = {
+            "category_import_rules": [
+                {
+                    "id": "allow-all",
+                    "scope": "movie",
+                    "match_field": "group_name",
+                    "regex_pattern": ".*",
+                    "action": "enable",
+                }
+            ],
+            "category_default_actions": {"movie": "enable"},
+        }
+        self.english_category.enabled = False
+        self.english_category.save(update_fields=["enabled"])
+        bump_catalog_generation()
+
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+    def test_dynamic_profile_can_block_every_globally_enabled_category(self):
+        self.policy.hard_constraints = {
+            "category_import_rules": [],
+            "category_default_actions": {
+                "movie": "disable",
+                "series": "disable",
+            },
+        }
+
+        query = allowed_category_query(self.policy)
+
+        self.assertFalse(
+            M3UMovieRelation.objects.filter(query).exists()
+        )
 
     def test_first_matching_category_rule_overrides_default_source_constraints(self):
         self.english_category.metadata_defaults = {
@@ -2219,6 +2337,49 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             constraints["source_rules"][0]["required_subtitle_languages"],
             ["ger"],
+        )
+
+    def test_profile_validates_dynamic_category_import_configuration(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Dynamic Hindi catalog",
+                "hard_constraints": {
+                    "source_rules": [],
+                    "category_import_rules": [
+                        {
+                            "id": "hindi-provider-a",
+                            "scope": "movie",
+                            "m3u_account_id": str(self.account_a.id),
+                            "match_field": "group_name",
+                            "regex_pattern": "hindi|bollywood",
+                            "action": "enable",
+                        }
+                    ],
+                    "category_default_actions": {
+                        "movie": "disable",
+                        "series": "enable",
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        constraints = serializer.validated_data["hard_constraints"]
+        self.assertEqual(
+            set(constraints),
+            {
+                "source_rules",
+                "category_import_rules",
+                "category_default_actions",
+            },
+        )
+        self.assertEqual(
+            constraints["category_import_rules"][0]["m3u_account_id"],
+            self.account_a.id,
+        )
+        self.assertEqual(
+            constraints["category_default_actions"]["movie"],
+            "disable",
         )
 
     def test_admin_can_replace_vod_output_profile_categories(self):

@@ -40,7 +40,8 @@ import {
 } from '../utils/vodMetadataOptions.js';
 import { LanguageSelect } from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
-import VODUserCategorySelector from './forms/VODUserCategorySelector.jsx';
+import VODCategoryFilter from './forms/VODCategoryFilter.jsx';
+import { resolveProfileCategoryRows } from './forms/VODProfileCategoryRules.utils.js';
 import VODFailoverRanking from './VODFailoverRanking.jsx';
 import VODSourceRules from './VODSourceRules.jsx';
 import VODEditionRules from './VODEditionRules.jsx';
@@ -58,6 +59,11 @@ const EMPTY_PROFILE = {
   is_active: true,
   hard_constraints: {
     source_rules: [],
+    category_import_rules: [],
+    category_default_actions: {
+      movie: 'enable',
+      series: 'enable',
+    },
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
   provider_order: [],
@@ -73,10 +79,8 @@ const metadataText = (metadata, field) => {
   return value || '—';
 };
 
-const relationIds = (profile) =>
-  (profile?.category_rules || [])
-    .filter((rule) => rule.enabled !== false)
-    .map((rule) => String(rule.category_relation));
+const hasOwn = (object, key) =>
+  Object.prototype.hasOwnProperty.call(object || {}, key);
 
 const formatDuration = (seconds) => {
   const rounded = Math.max(Math.round(seconds || 0), 0);
@@ -127,6 +131,41 @@ const profilePayload = (profile) => ({
         required_video_features: rule.required_video_features || [],
       })
     ),
+    ...(hasOwn(profile.hard_constraints, 'category_import_rules')
+      ? {
+          category_import_rules: (
+            profile.hard_constraints.category_import_rules || []
+          ).map((rule, index) => ({
+            id: rule.id,
+            scope: rule.scope,
+            m3u_account_id: rule.m3u_account_id
+              ? Number(rule.m3u_account_id)
+              : null,
+            match_field: 'group_name',
+            regex_pattern: rule.regex_pattern || '',
+            action: rule.action === 'enable' ? 'enable' : 'disable',
+            case_sensitive: Boolean(rule.case_sensitive),
+            enabled: rule.enabled !== false,
+            order: index,
+          })),
+        }
+      : {}),
+    ...(hasOwn(profile.hard_constraints, 'category_default_actions')
+      ? {
+          category_default_actions: {
+            movie:
+              profile.hard_constraints.category_default_actions?.movie ===
+              'disable'
+                ? 'disable'
+                : 'enable',
+            series:
+              profile.hard_constraints.category_default_actions?.series ===
+              'disable'
+                ? 'disable'
+                : 'enable',
+          },
+        }
+      : {}),
   },
   ranking: normalizeVODFailoverRanking(
     profile.ranking || DEFAULT_VOD_FAILOVER_RANKING
@@ -151,14 +190,14 @@ const profilePayload = (profile) => ({
   })),
   naming_mode: 'mode_default',
   name_template: '',
-  category_rules: relationIds(profile)
-    .map(Number)
-    .sort((left, right) => left - right)
-    .map((category_relation) => ({
-      category_relation,
-      enabled: true,
-      priority: 0,
-    })),
+  category_rules: (profile.category_rules || [])
+    .map((rule) => ({
+      category_relation: Number(rule.category_relation),
+      enabled: rule.enabled !== false,
+      priority: Number(rule.priority || 0),
+    }))
+    .filter((rule) => Number.isInteger(rule.category_relation))
+    .sort((left, right) => left.category_relation - right.category_relation),
 });
 
 const canonicalizeObject = (value) => {
@@ -186,7 +225,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [savedDraftSignature, setSavedDraftSignature] = useState('');
-  const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [candidateTarget, setCandidateTarget] = useState(null);
   const [candidateData, setCandidateData] = useState(null);
   const [candidateLoading, setCandidateLoading] = useState(false);
@@ -235,11 +273,25 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const resetDraft = (profile = null) => {
     const source = profile || EMPTY_PROFILE;
     const sourceRules = source.hard_constraints?.source_rules || [];
+    const sourceConstraints = source.hard_constraints || {};
     const nextDraft = {
       ...EMPTY_PROFILE,
       ...source,
       hard_constraints: {
         source_rules: sourceRules,
+        ...(hasOwn(sourceConstraints, 'category_import_rules')
+          ? {
+              category_import_rules:
+                sourceConstraints.category_import_rules || [],
+            }
+          : {}),
+        ...(hasOwn(sourceConstraints, 'category_default_actions')
+          ? {
+              category_default_actions: {
+                ...(sourceConstraints.category_default_actions || {}),
+              },
+            }
+          : {}),
       },
       ranking: normalizeVODFailoverRanking(
         source.ranking || EMPTY_PROFILE.ranking
@@ -378,28 +430,117 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         .sort((left, right) => left.label.localeCompare(right.label)),
     [categories]
   );
+  const movieCategoryStates = useMemo(
+    () => resolveProfileCategoryRows(categories, draft, 'movie'),
+    [categories, draft]
+  );
+  const seriesCategoryStates = useMemo(
+    () => resolveProfileCategoryRows(categories, draft, 'series'),
+    [categories, draft]
+  );
+  const allowedCategoryStates = useMemo(
+    () =>
+      [...movieCategoryStates, ...seriesCategoryStates].filter(
+        (category) => category.enabled
+      ),
+    [movieCategoryStates, seriesCategoryStates]
+  );
+  const selectedCategoryIds = allowedCategoryStates.map((category) =>
+    String(category.relation_id)
+  );
+
+  const updateProfileCategoryStates = (currentRows) => (updater) => {
+    const nextRows =
+      typeof updater === 'function' ? updater(currentRows) : updater;
+    const previousById = new Map(
+      currentRows.map((row) => [String(row.relation_id), row])
+    );
+    const changedById = new Map(
+      (nextRows || [])
+        .filter((row) => {
+          const previous = previousById.get(String(row.relation_id));
+          return previous && previous.enabled !== row.enabled;
+        })
+        .map((row) => [String(row.relation_id), row.enabled])
+    );
+    if (!changedById.size) return;
+    setDraft((current) => {
+      const existing = new Map(
+        (current.category_rules || []).map((rule) => [
+          String(rule.category_relation),
+          rule,
+        ])
+      );
+      changedById.forEach((enabled, relationId) => {
+        existing.set(relationId, {
+          category_relation: Number(relationId),
+          enabled,
+          priority: 0,
+        });
+      });
+      return { ...current, category_rules: [...existing.values()] };
+    });
+  };
+
+  const clearProfileCategoryOverrides = (relationIdsToClear) => {
+    const cleared = new Set(relationIdsToClear.map(String));
+    setDraft((current) => ({
+      ...current,
+      category_rules: (current.category_rules || []).filter(
+        (rule) => !cleared.has(String(rule.category_relation))
+      ),
+    }));
+  };
+
+  const updateProfileCategoryRules = (scope, scopeRules) => {
+    setDraft((current) => {
+      const constraints = current.hard_constraints || {};
+      const otherRules = (constraints.category_import_rules || []).filter(
+        (rule) => rule.scope !== scope
+      );
+      return {
+        ...current,
+        hard_constraints: {
+          ...constraints,
+          category_import_rules: [...otherRules, ...scopeRules],
+          category_default_actions: {
+            movie: constraints.category_default_actions?.movie || 'enable',
+            series: constraints.category_default_actions?.series || 'enable',
+          },
+        },
+      };
+    });
+  };
+
+  const updateProfileCategoryDefault = (scope, action) => {
+    setDraft((current) => ({
+      ...current,
+      hard_constraints: {
+        ...current.hard_constraints,
+        category_import_rules:
+          current.hard_constraints?.category_import_rules || [],
+        category_default_actions: {
+          movie:
+            current.hard_constraints?.category_default_actions?.movie ||
+            'enable',
+          series:
+            current.hard_constraints?.category_default_actions?.series ||
+            'enable',
+          [scope]: action,
+        },
+      },
+    }));
+  };
+
   const failoverAccountOptions = useMemo(() => {
-    const selectedRelations = new Set(
-      (draft.category_rules || [])
-        .filter((rule) => rule.enabled !== false)
-        .map((rule) => String(rule.category_relation))
-    );
-    if (!selectedRelations.size) return accountOptions;
     const allowedAccountIds = new Set(
-      Object.values(categories || {}).flatMap((category) =>
-        (category.m3u_accounts || [])
-          .filter(
-            (relation) =>
-              relation.enabled !== false &&
-              selectedRelations.has(String(relation.id))
-          )
-          .map((relation) => String(relation.m3u_account))
-      )
+      allowedCategoryStates.map((category) => String(category.accountId))
     );
+    if (!allowedAccountIds.size) return accountOptions;
     return accountOptions.filter((option) =>
       allowedAccountIds.has(String(option.value))
     );
-  }, [accountOptions, categories, draft.category_rules]);
+  }, [accountOptions, allowedCategoryStates]);
   const categoryOptions = useMemo(
     () =>
       Object.values(categories || {})
@@ -575,7 +716,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     setActiveTab('settings');
   };
 
-  const selectedCategoryIds = relationIds(draft);
   const draftChanged = profileDraftSignature(draft) !== savedDraftSignature;
   const canSave = Boolean(
     draft.name.trim() && (creating || (selectedProfile && draftChanged))
@@ -898,6 +1038,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             <TabsList>
               <TabsTab value="settings">Settings</TabsTab>
               <TabsTab value="sources">Sources</TabsTab>
+              <TabsTab value="content-rules">Content rules</TabsTab>
               {draft.export_mode === 'compact' && (
                 <TabsTab value="editions">Editions</TabsTab>
               )}
@@ -967,38 +1108,86 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
 
             <TabsPanel value="sources" pt="md">
               <ScrollArea h="calc(96vh - 270px)">
-                <Stack gap="lg">
-                  <Paper withBorder p="lg" radius="md">
-                    <Stack>
-                      <Group justify="space-between">
-                        <Stack gap={0}>
-                          <Text fw={700}>Allowed source categories</Text>
-                          <Text size="sm" c="dimmed">
-                            {selectedCategoryIds.length
-                              ? `${selectedCategoryIds.length} categories selected`
-                              : 'All enabled categories'}
-                          </Text>
-                        </Stack>
-                        <Button
-                          variant="default"
-                          onClick={() => setCategorySelectorOpen(true)}
-                        >
-                          Manage categories
-                        </Button>
-                      </Group>
-                    </Stack>
-                  </Paper>
+                <Paper withBorder p="lg" radius="md">
+                  <Stack>
+                    <Alert color="blue" variant="light">
+                      The M3U account selection is the global source boundary.
+                      This profile can narrow those categories per account and
+                      keeps applying its ordered import rules when providers add
+                      new categories.
+                    </Alert>
+                    <Tabs defaultValue="movie">
+                      <TabsList>
+                        <TabsTab value="movie">VOD - Movies</TabsTab>
+                        <TabsTab value="series">VOD - Series</TabsTab>
+                      </TabsList>
+                      <TabsPanel value="movie">
+                        <VODCategoryFilter
+                          mode="profile"
+                          categoryStates={movieCategoryStates}
+                          setCategoryStates={updateProfileCategoryStates(
+                            movieCategoryStates
+                          )}
+                          type="movie"
+                          rules={(
+                            draft.hard_constraints.category_import_rules || []
+                          ).filter((rule) => rule.scope === 'movie')}
+                          onRulesChange={(rules) =>
+                            updateProfileCategoryRules('movie', rules)
+                          }
+                          defaultAction={
+                            draft.hard_constraints.category_default_actions
+                              ?.movie || 'enable'
+                          }
+                          onDefaultActionChange={(action) =>
+                            updateProfileCategoryDefault('movie', action)
+                          }
+                          accountOptions={accountOptions}
+                          onClearOverrides={clearProfileCategoryOverrides}
+                        />
+                      </TabsPanel>
+                      <TabsPanel value="series">
+                        <VODCategoryFilter
+                          mode="profile"
+                          categoryStates={seriesCategoryStates}
+                          setCategoryStates={updateProfileCategoryStates(
+                            seriesCategoryStates
+                          )}
+                          type="series"
+                          rules={(
+                            draft.hard_constraints.category_import_rules || []
+                          ).filter((rule) => rule.scope === 'series')}
+                          onRulesChange={(rules) =>
+                            updateProfileCategoryRules('series', rules)
+                          }
+                          defaultAction={
+                            draft.hard_constraints.category_default_actions
+                              ?.series || 'enable'
+                          }
+                          onDefaultActionChange={(action) =>
+                            updateProfileCategoryDefault('series', action)
+                          }
+                          accountOptions={accountOptions}
+                          onClearOverrides={clearProfileCategoryOverrides}
+                        />
+                      </TabsPanel>
+                    </Tabs>
+                  </Stack>
+                </Paper>
+              </ScrollArea>
+            </TabsPanel>
 
-                  <Paper withBorder p="lg" radius="md">
-                    <VODSourceRules
-                      value={draft.hard_constraints.source_rules || []}
-                      onChange={(value) =>
-                        updateConstraint('source_rules', value)
-                      }
-                      categoryRelationIds={selectedCategoryIds}
-                    />
-                  </Paper>
-                </Stack>
+            <TabsPanel value="content-rules" pt="md">
+              <ScrollArea h="calc(96vh - 270px)">
+                <Paper withBorder p="lg" radius="md">
+                  <VODSourceRules
+                    value={draft.hard_constraints.source_rules || []}
+                    onChange={(value) =>
+                      updateConstraint('source_rules', value)
+                    }
+                    categoryRelationIds={selectedCategoryIds}
+                  />
+                </Paper>
               </ScrollArea>
             </TabsPanel>
 
@@ -1281,22 +1470,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         </Stack>
       </Modal>
 
-      <VODUserCategorySelector
-        opened={categorySelectorOpen}
-        onClose={() => setCategorySelectorOpen(false)}
-        categories={categories}
-        selectedIds={selectedCategoryIds}
-        onChange={(ids) =>
-          setDraft((current) => ({
-            ...current,
-            category_rules: ids.map((category_relation) => ({
-              category_relation: Number(category_relation),
-              enabled: true,
-              priority: 0,
-            })),
-          }))
-        }
-      />
       {candidateTarget?.content_type === 'series' ? (
         <SeriesModal
           series={candidateContent}

@@ -42,6 +42,7 @@ import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 import LanguagePicker from '../LanguagePicker.jsx';
 import VideoFeaturePicker from '../VideoFeaturePicker.jsx';
 import { RESOLUTION_VALUES } from '../../utils/vodMetadataOptions.js';
+import { firstMatchingCategoryRule } from './VODProfileCategoryRules.utils.js';
 
 const SortableRuleRow = ({ ruleId, children }) => {
   const {
@@ -80,8 +81,17 @@ const SortableRuleRow = ({ ruleId, children }) => {
   );
 };
 
-const M3UGroupRules = ({ accountId, scope }) => {
-  const [rules, setRules] = useState([]);
+const M3UGroupRules = ({
+  accountId,
+  scope,
+  mode = 'account',
+  value = [],
+  onChange,
+  accountOptions = [],
+  categoryRows = [],
+}) => {
+  const profileMode = mode === 'profile';
+  const [rules, setRules] = useState(profileMode ? value : []);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState(null);
   const [previewRule, setPreviewRule] = useState(null);
@@ -92,26 +102,56 @@ const M3UGroupRules = ({ accountId, scope }) => {
   );
 
   const load = useCallback(async () => {
-    if (!accountId) return;
+    if (profileMode || !accountId) return;
     setLoading(true);
     try {
       setRules((await API.getM3UGroupRules(accountId, scope)) || []);
     } finally {
       setLoading(false);
     }
-  }, [accountId, scope]);
+  }, [accountId, profileMode, scope]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (profileMode) setRules(value || []);
+  }, [profileMode, value]);
+
+  const commitRules = (next) => {
+    setRules(next);
+    if (profileMode) onChange?.(next);
+  };
+
   const updateLocal = (id, values) => {
-    setRules((current) =>
-      current.map((rule) => (rule.id === id ? { ...rule, ...values } : rule))
+    const next = rules.map((rule) =>
+      rule.id === id ? { ...rule, ...values } : rule
     );
+    commitRules(next);
   };
 
   const addRule = async () => {
+    if (profileMode) {
+      commitRules([
+        ...rules,
+        {
+          id: `profile-category-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 7)}`,
+          scope,
+          m3u_account_id: null,
+          match_field: 'group_name',
+          match_mode: 'any',
+          regex_pattern: '',
+          action: 'disable',
+          case_sensitive: false,
+          enabled: true,
+          order: rules.length,
+        },
+      ]);
+      return;
+    }
     const created = await API.createM3UGroupRule(accountId, {
       scope,
       match_field: 'group_name',
@@ -128,6 +168,21 @@ const M3UGroupRules = ({ accountId, scope }) => {
   };
 
   const rulePayload = (rule) => {
+    if (profileMode) {
+      return {
+        id: rule.id,
+        scope,
+        m3u_account_id: rule.m3u_account_id
+          ? Number(rule.m3u_account_id)
+          : null,
+        match_field: 'group_name',
+        regex_pattern: rule.regex_pattern || '',
+        action: rule.action === 'enable' ? 'enable' : 'disable',
+        case_sensitive: Boolean(rule.case_sensitive),
+        enabled: rule.enabled !== false,
+        order: rule.order || 0,
+      };
+    }
     const metadataDefaults = {
       ...(rule.metadata_defaults || {}),
       audio_languages: normalizeLanguageCodes(
@@ -172,7 +227,25 @@ const M3UGroupRules = ({ accountId, scope }) => {
     setPreviewRule(rule);
     setPreviewLoading(true);
     try {
-      setPreview(await API.previewM3UGroupRule(accountId, rule.id, payload));
+      if (profileMode) {
+        const normalizedRules = rules.map(rulePayload);
+        const results = categoryRows
+          .filter(
+            (row) =>
+              firstMatchingCategoryRule(normalizedRules, row)?.id === rule.id
+          )
+          .map((row) => ({
+            relation_id: row.relation_id,
+            name: row.categoryName,
+            account_name: row.accountName,
+            currently_enabled: row.enabled,
+            would_enable: payload.action === 'enable',
+            item_count: row.item_count || 0,
+          }));
+        setPreview({ count: results.length, results });
+      } else {
+        setPreview(await API.previewM3UGroupRule(accountId, rule.id, payload));
+      }
     } finally {
       setPreviewLoading(false);
     }
@@ -207,6 +280,10 @@ const M3UGroupRules = ({ accountId, scope }) => {
   };
 
   const deleteRule = async (id) => {
+    if (profileMode) {
+      commitRules(rules.filter((rule) => rule.id !== id));
+      return;
+    }
     await API.deleteM3UGroupRule(accountId, id);
     setRules((current) => current.filter((rule) => rule.id !== id));
   };
@@ -228,7 +305,8 @@ const M3UGroupRules = ({ accountId, scope }) => {
       (rule) =>
         previous.find((item) => item.id === rule.id)?.order !== rule.order
     );
-    setRules(reordered);
+    commitRules(reordered);
+    if (profileMode) return;
     setLoading(true);
     try {
       const saved = await Promise.all(
@@ -265,9 +343,9 @@ const M3UGroupRules = ({ accountId, scope }) => {
             Import rules
           </Text>
           <Text c="dimmed" size="xs">
-            First matching rule wins. Use an earlier disable or ignore rule for
-            exclusions. Existing choices and learned or manual metadata are not
-            changed unless you preview and explicitly apply a rule.
+            {profileMode
+              ? 'First matching rule wins. These rules select globally enabled provider categories now and after future refreshes. They are stored when the VOD profile is saved.'
+              : 'First matching rule wins. Use an earlier disable or ignore rule for exclusions. Existing choices and learned or manual metadata are not changed unless you preview and explicitly apply a rule.'}
           </Text>
         </div>
         <Button
@@ -283,27 +361,38 @@ const M3UGroupRules = ({ accountId, scope }) => {
 
       {rules.length === 0 ? (
         <Alert color="gray" variant="light">
-          No rule configured. New unmatched groups are imported inactive.
+          {profileMode
+            ? 'No rule configured. The profile default decides unmatched categories.'
+            : 'No rule configured. New unmatched groups are imported inactive.'}
         </Alert>
       ) : (
         <ScrollArea type="auto">
           <Table
             striped
             withTableBorder
-            miw={scope === 'live' ? 1150 : 1650}
+            miw={profileMode ? 900 : scope === 'live' ? 1150 : 1650}
             verticalSpacing="xs"
           >
             <TableThead>
               <TableTr>
                 <TableTh w={48} aria-label="Rule order" />
-                <TableTh w={145}>Match</TableTh>
+                {profileMode && <TableTh w={190}>M3U account</TableTh>}
+                {!profileMode && <TableTh w={145}>Match</TableTh>}
                 <TableTh>Regular expression</TableTh>
-                <TableTh w={120}>Item mode</TableTh>
+                {!profileMode && <TableTh w={120}>Item mode</TableTh>}
                 <TableTh w={145}>Result</TableTh>
-                {scope !== 'live' && <TableTh w={175}>DUB</TableTh>}
-                {scope !== 'live' && <TableTh w={175}>SUB</TableTh>}
-                {scope !== 'live' && <TableTh w={120}>Resolution</TableTh>}
-                {scope !== 'live' && <TableTh w={180}>Features</TableTh>}
+                {!profileMode && scope !== 'live' && (
+                  <TableTh w={175}>DUB</TableTh>
+                )}
+                {!profileMode && scope !== 'live' && (
+                  <TableTh w={175}>SUB</TableTh>
+                )}
+                {!profileMode && scope !== 'live' && (
+                  <TableTh w={120}>Resolution</TableTh>
+                )}
+                {!profileMode && scope !== 'live' && (
+                  <TableTh w={180}>Features</TableTh>
+                )}
                 <TableTh w={75}>Case</TableTh>
                 <TableTh w={75}>Active</TableTh>
                 <TableTh w={80}>Actions</TableTh>
@@ -322,19 +411,43 @@ const M3UGroupRules = ({ accountId, scope }) => {
                 <TableTbody>
                   {rules.map((rule) => (
                     <SortableRuleRow key={rule.id} ruleId={rule.id}>
-                      <TableTd>
-                        <Select
-                          size="xs"
-                          value={rule.match_field}
-                          data={[
-                            { value: 'group_name', label: 'Group name' },
-                            { value: 'item_name', label: 'Contained item' },
-                          ]}
-                          onChange={(value) =>
-                            updateLocal(rule.id, { match_field: value })
-                          }
-                        />
-                      </TableTd>
+                      {profileMode && (
+                        <TableTd>
+                          <Select
+                            size="xs"
+                            clearable
+                            searchable
+                            placeholder="All accounts"
+                            aria-label="M3U account for profile category rule"
+                            value={
+                              rule.m3u_account_id
+                                ? String(rule.m3u_account_id)
+                                : null
+                            }
+                            data={accountOptions}
+                            onChange={(value) =>
+                              updateLocal(rule.id, {
+                                m3u_account_id: value || null,
+                              })
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      {!profileMode && (
+                        <TableTd>
+                          <Select
+                            size="xs"
+                            value={rule.match_field}
+                            data={[
+                              { value: 'group_name', label: 'Group name' },
+                              { value: 'item_name', label: 'Contained item' },
+                            ]}
+                            onChange={(value) =>
+                              updateLocal(rule.id, { match_field: value })
+                            }
+                          />
+                        </TableTd>
+                      )}
                       <TableTd>
                         <TextInput
                           size="xs"
@@ -347,35 +460,49 @@ const M3UGroupRules = ({ accountId, scope }) => {
                           }
                         />
                       </TableTd>
-                      <TableTd>
-                        <Select
-                          size="xs"
-                          disabled={rule.match_field !== 'item_name'}
-                          value={rule.match_mode}
-                          data={[
-                            { value: 'any', label: 'Any item' },
-                            { value: 'all', label: 'All items' },
-                          ]}
-                          onChange={(value) =>
-                            updateLocal(rule.id, { match_mode: value })
-                          }
-                        />
-                      </TableTd>
+                      {!profileMode && (
+                        <TableTd>
+                          <Select
+                            size="xs"
+                            disabled={rule.match_field !== 'item_name'}
+                            value={rule.match_mode}
+                            data={[
+                              { value: 'any', label: 'Any item' },
+                              { value: 'all', label: 'All items' },
+                            ]}
+                            onChange={(value) =>
+                              updateLocal(rule.id, { match_mode: value })
+                            }
+                          />
+                        </TableTd>
+                      )}
                       <TableTd>
                         <Select
                           size="xs"
                           value={rule.action}
                           data={[
-                            { value: 'enable', label: 'Import enabled' },
-                            { value: 'disable', label: 'Import disabled' },
-                            { value: 'ignore', label: 'Ignore group' },
+                            {
+                              value: 'enable',
+                              label: profileMode
+                                ? 'Allow in profile'
+                                : 'Import enabled',
+                            },
+                            {
+                              value: 'disable',
+                              label: profileMode
+                                ? 'Block in profile'
+                                : 'Import disabled',
+                            },
+                            ...(!profileMode
+                              ? [{ value: 'ignore', label: 'Ignore group' }]
+                              : []),
                           ]}
                           onChange={(value) =>
                             updateLocal(rule.id, { action: value })
                           }
                         />
                       </TableTd>
-                      {scope !== 'live' && (
+                      {!profileMode && scope !== 'live' && (
                         <TableTd>
                           <LanguagePicker
                             size="xs"
@@ -392,7 +519,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
                           />
                         </TableTd>
                       )}
-                      {scope !== 'live' && (
+                      {!profileMode && scope !== 'live' && (
                         <TableTd>
                           <LanguagePicker
                             size="xs"
@@ -409,7 +536,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
                           />
                         </TableTd>
                       )}
-                      {scope !== 'live' && (
+                      {!profileMode && scope !== 'live' && (
                         <TableTd>
                           <Select
                             size="xs"
@@ -422,7 +549,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
                           />
                         </TableTd>
                       )}
-                      {scope !== 'live' && (
+                      {!profileMode && scope !== 'live' && (
                         <TableTd>
                           <VideoFeaturePicker
                             size="xs"
@@ -458,16 +585,22 @@ const M3UGroupRules = ({ accountId, scope }) => {
                       </TableTd>
                       <TableTd>
                         <Group gap={4} wrap="nowrap">
+                          {!profileMode && (
+                            <ActionIcon
+                              aria-label="Save rule"
+                              color="blue"
+                              variant="subtle"
+                              onClick={() => saveRule(rule)}
+                            >
+                              <Save size={15} />
+                            </ActionIcon>
+                          )}
                           <ActionIcon
-                            aria-label="Save rule"
-                            color="blue"
-                            variant="subtle"
-                            onClick={() => saveRule(rule)}
-                          >
-                            <Save size={15} />
-                          </ActionIcon>
-                          <ActionIcon
-                            aria-label="Preview and apply rule"
+                            aria-label={
+                              profileMode
+                                ? 'Preview rule'
+                                : 'Preview and apply rule'
+                            }
                             color="green"
                             variant="subtle"
                             onClick={() => openPreview(rule)}
@@ -516,6 +649,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
             <Table striped withTableBorder stickyHeader>
               <TableThead>
                 <TableTr>
+                  {profileMode && <TableTh>M3U account</TableTh>}
                   <TableTh>Name</TableTh>
                   <TableTh w={90}>Current</TableTh>
                   <TableTh w={110}>Result</TableTh>
@@ -525,6 +659,7 @@ const M3UGroupRules = ({ accountId, scope }) => {
               <TableTbody>
                 {(preview?.results || []).map((row) => (
                   <TableTr key={row.relation_id}>
+                    {profileMode && <TableTd>{row.account_name}</TableTd>}
                     <TableTd>{row.name}</TableTd>
                     <TableTd>
                       {row.currently_enabled ? 'Active' : 'Inactive'}
@@ -557,13 +692,15 @@ const M3UGroupRules = ({ accountId, scope }) => {
             >
               Close
             </Button>
-            <Button
-              loading={previewLoading}
-              disabled={!preview?.count || previewRule?.action === 'ignore'}
-              onClick={applyPreview}
-            >
-              Save and apply to existing
-            </Button>
+            {!profileMode && (
+              <Button
+                loading={previewLoading}
+                disabled={!preview?.count || previewRule?.action === 'ignore'}
+                onClick={applyPreview}
+              >
+                Save and apply to existing
+              </Button>
+            )}
           </Group>
         </Stack>
       </Modal>
