@@ -6,6 +6,7 @@ from django.conf import settings as django_settings
 from django.db import models
 from rest_framework import viewsets, status
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes, action
@@ -159,6 +160,64 @@ class CoreSettingsViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
         return response
+
+    @action(detail=False, methods=["get"], url_path="resources")
+    def resources(self, request):
+        """Return a small, read-only snapshot of this Dispatcharr process."""
+        if getattr(request.user, "user_level", 0) < 10:
+            raise PermissionDenied("Only administrators can view resource usage.")
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        with process.oneshot():
+            process_memory = process.memory_info().rss
+            threads = process.num_threads()
+            started_at = process.create_time()
+        system_memory = psutil.virtual_memory()
+
+        # In a container psutil can report host RAM. Prefer cgroup v2 values
+        # when the runtime exposes a finite limit.
+        memory_used = process_memory
+        memory_total = system_memory.total
+        try:
+            with open("/sys/fs/cgroup/memory.max", encoding="utf-8") as handle:
+                raw_limit = handle.read().strip()
+            with open("/sys/fs/cgroup/memory.current", encoding="utf-8") as handle:
+                raw_used = handle.read().strip()
+            if raw_limit.isdigit() and raw_used.isdigit():
+                cgroup_total = int(raw_limit)
+                if 0 < cgroup_total < system_memory.total:
+                    memory_total = cgroup_total
+                    memory_used = int(raw_used)
+        except (OSError, ValueError):
+            pass
+
+        storage_path = "/data" if os.path.isdir("/data") else str(django_settings.BASE_DIR)
+        storage = psutil.disk_usage(storage_path)
+        return Response(
+            {
+                "process": {
+                    "memory_bytes": process_memory,
+                    "cpu_percent": process.cpu_percent(interval=0.05),
+                    "threads": threads,
+                    "started_at": started_at,
+                },
+                "memory": {
+                    "used_bytes": memory_used,
+                    "total_bytes": memory_total,
+                    "percent": round((memory_used / memory_total) * 100, 1)
+                    if memory_total else 0,
+                },
+                "storage": {
+                    "path": storage_path,
+                    "used_bytes": storage.used,
+                    "total_bytes": storage.total,
+                    "free_bytes": storage.free,
+                    "percent": storage.percent,
+                },
+            }
+        )
+
     @action(detail=False, methods=["post"], url_path="check")
     def check(self, request, *args, **kwargs):
         data = request.data

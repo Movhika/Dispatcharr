@@ -6,7 +6,8 @@ from django.utils import timezone
 
 from apps.m3u.models import M3UAccount
 from apps.output.views import xc_get_vod_info
-from apps.vod.models import M3UMovieRelation, Movie, VODLogo
+from apps.vod.models import M3UMovieRelation, Movie, VODAccessPolicy, VODLogo
+from apps.vod.profile_selection import build_vod_profile_selection
 
 User = get_user_model()
 
@@ -104,3 +105,44 @@ class XCGetVodInfoArtworkTests(TestCase):
         info = self._info()['info']
 
         self.assertEqual(info['tmdb_id'], '200')
+
+    def test_curated_variants_keep_provider_name_but_not_provider_plot(self):
+        policy = VODAccessPolicy.objects.create(
+            name='Curated variants detail',
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            metadata_source=VODAccessPolicy.MetadataSource.CANONICAL,
+            naming_mode=VODAccessPolicy.NamingMode.PROVIDER,
+            hard_constraints={'allow_unknown_metadata': True},
+        )
+        policy.users.add(self.user)
+        self.movie.display_name = 'Clean Solo Movie'
+        self.movie.tmdb_metadata = {
+            'localized': {
+                'en-US': {
+                    'title': 'Clean Solo Movie',
+                    'overview': 'Curated plot',
+                }
+            },
+            'release_date': '2020-06-01',
+            'rating': 7.4,
+            'genres': [{'id': 1, 'name': 'Drama'}],
+        }
+        self.movie.save(update_fields=['display_name', 'tmdb_metadata'])
+        self.relation.custom_properties = {
+            'detailed_fetched': True,
+            'basic_data': {'name': 'PROVIDER - Solo Movie'},
+            'detailed_info': {
+                'name': 'Provider detail title',
+                'plot': 'Provider plot',
+                'rating': 2,
+            },
+        }
+        self.relation.save(update_fields=['custom_properties'])
+        build_vod_profile_selection(policy.id)
+
+        info = self._info()['info']
+
+        self.assertEqual(info['name'], 'PROVIDER - Solo Movie')
+        self.assertEqual(info['plot'], 'Curated plot')
+        self.assertEqual(info['genre'], 'Drama')
+        self.assertEqual(info['rating'], 7.4)

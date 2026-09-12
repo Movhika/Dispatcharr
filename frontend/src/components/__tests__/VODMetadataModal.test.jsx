@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../api', () => ({
   default: {
     getVODMetadataStatus: vi.fn(),
-    updateVODMetadataSettings: vi.fn(),
+    getAllContent: vi.fn(),
     refreshVODMetadata: vi.fn(),
   },
 }));
@@ -13,91 +13,89 @@ vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
 vi.mock('lucide-react', () => ({
+  Eye: () => null,
   RefreshCw: () => null,
-  Save: () => null,
+  Search: () => null,
 }));
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
-  const Modal = ({ opened, title, children }) =>
-    opened ? (
-      <div>
-        <h2>{title}</h2>
-        {children}
-      </div>
-    ) : null;
-  const Select = ({ label, value, onChange, data = [], disabled }) => (
-    <label>
-      {label}
-      <select
-        aria-label={label}
-        value={value || ''}
-        disabled={disabled}
-        onChange={(event) => onChange?.(event.target.value || null)}
-      >
-        <option value="" />
-        {data.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-  const Toggle = ({ label, checked, onChange, disabled }) => (
-    <label>
-      <input
-        aria-label={label}
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={onChange}
-      />
-      {label}
-    </label>
-  );
+  const Table = ({ children }) => <table>{children}</table>;
+  Table.Thead = ({ children }) => <thead>{children}</thead>;
+  Table.Tbody = ({ children }) => <tbody>{children}</tbody>;
+  Table.Tr = ({ children }) => <tr>{children}</tr>;
+  Table.Th = ({ children }) => <th>{children}</th>;
+  Table.Td = ({ children }) => <td>{children}</td>;
   return {
-    Alert: Wrapper,
+    ActionIcon: ({ children, onClick, 'aria-label': label }) => (
+      <button aria-label={label} onClick={onClick}>
+        {children}
+      </button>
+    ),
     Badge: Wrapper,
     Button: ({ children, onClick, disabled, loading }) => (
       <button disabled={disabled || loading} onClick={onClick}>
         {children}
       </button>
     ),
-    Checkbox: Toggle,
+    Checkbox: ({ checked, onChange, 'aria-label': label }) => (
+      <input
+        aria-label={label}
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+      />
+    ),
     Group: Wrapper,
-    Modal,
-    PasswordInput: ({ label, value, onChange, disabled, readOnly }) => (
+    Modal: ({ opened, title, children }) =>
+      opened ? (
+        <div>
+          <h2>{title}</h2>
+          {children}
+        </div>
+      ) : null,
+    Pagination: () => null,
+    Progress: ({ value }) => <div data-testid="progress">{value}</div>,
+    SegmentedControl: ({ data, onChange }) => (
+      <div>
+        {data.map((row) => (
+          <button key={row.value} onClick={() => onChange(row.value)}>
+            {row.label}
+          </button>
+        ))}
+      </div>
+    ),
+    Select: ({ label, data = [], value, onChange }) => (
       <label>
         {label}
-        <input
-          aria-label={label}
-          value={value}
-          disabled={disabled}
-          readOnly={readOnly}
-          onChange={onChange}
-        />
+        <select
+          value={value || ''}
+          onChange={(event) => onChange(event.target.value || null)}
+        >
+          <option value="" />
+          {data.map((row) => (
+            <option key={row.value} value={row.value}>
+              {row.label}
+            </option>
+          ))}
+        </select>
       </label>
     ),
-    Progress: ({ value }) => <div data-testid="progress">{value}</div>,
-    Select,
     Stack: Wrapper,
-    Switch: Toggle,
+    Table,
     Text: Wrapper,
+    TextInput: ({ label, value, onChange }) => (
+      <label>
+        {label}
+        <input aria-label={label} value={value} onChange={onChange} />
+      </label>
+    ),
   };
 });
 
 import API from '../../api';
 import VODMetadataModal from '../VODMetadataModal';
 
-const response = {
-  settings: {
-    token_configured: true,
-    token_source: 'stored',
-    languages: ['de-DE', 'en-US'],
-    auto_enrich: true,
-    match_missing: false,
-    prefer_artwork: true,
-  },
+const statusResponse = {
   catalog: {
     movies: 100,
     series: 20,
@@ -106,34 +104,45 @@ const response = {
   },
   state: { status: 'complete', progress: { percent: 100 } },
 };
+const contentResponse = {
+  count: 1,
+  results: [
+    {
+      id: 7,
+      content_type: 'movie',
+      name: 'Bliss',
+      year: 2021,
+      tmdb_id: '613911',
+      tmdb_status: '',
+    },
+  ],
+};
 
 describe('VODMetadataModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    API.getVODMetadataStatus.mockResolvedValue(response);
-    API.updateVODMetadataSettings.mockResolvedValue(response);
+    API.getVODMetadataStatus.mockResolvedValue(statusResponse);
+    API.getAllContent.mockResolvedValue(contentResponse);
     API.refreshVODMetadata.mockResolvedValue({ status: 'queued' });
   });
 
-  it('shows durable coverage and starts a saved refresh', async () => {
+  it('lists canonical titles and refreshes an explicit selection', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-
-    expect(await screen.findByText(/movies 80\/100/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save and refresh' }));
-
-    await waitFor(() =>
-      expect(API.updateVODMetadataSettings).toHaveBeenCalledWith({
-        languages: ['de-DE', 'en-US'],
-        match_missing: false,
-        prefer_artwork: true,
-      })
+    expect((await screen.findAllByText('Bliss')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByLabelText('Select Bliss'));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Enrich selected (1)' })
     );
-    expect(API.refreshVODMetadata).toHaveBeenCalledWith();
+    await waitFor(() =>
+      expect(API.refreshVODMetadata).toHaveBeenCalledWith([
+        { id: 7, content_type: 'movie' },
+      ])
+    );
   });
 
-  it('disables editing while the recorded task is active', async () => {
+  it('shows durable progress and disables refresh while active', async () => {
     API.getVODMetadataStatus.mockResolvedValue({
-      ...response,
+      ...statusResponse,
       state: {
         status: 'running',
         progress: {
@@ -145,12 +154,11 @@ describe('VODMetadataModal', () => {
       },
     });
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-
     expect(
       await screen.findByText('Fetching TMDB metadata')
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Save and refresh' })
+      screen.getByRole('button', { name: 'Enrich pending' })
     ).toBeDisabled();
     expect(screen.getByTestId('progress')).toHaveTextContent('32');
   });

@@ -874,7 +874,7 @@ def _relation_selection_key(
             getattr(relation, canonical_field),
             edition["key"],
         )
-    # Provider-data output is deliberately one-to-one: selecting an entry in
+    # Variants output is deliberately one-to-one: selecting an entry in
     # the client must identify the exact provider relation represented by that
     # entry.  Source-asset links are still useful for metadata/history, but
     # must not collapse two provider rows into one client item.
@@ -1043,7 +1043,7 @@ def ordered_candidates(candidates, policy, preferred_relation=None):
     """Return playback candidates for the selected output entry.
 
     Compact output represents a canonical title and therefore walks its
-    ranked fallback sources. Provider-data output represents one concrete
+    ranked fallback sources. Variants output represents one concrete
     provider relation, so it may only play that exact relation.
     """
     if not candidates:

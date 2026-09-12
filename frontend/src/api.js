@@ -1565,10 +1565,17 @@ export default class API {
     });
   }
 
-  static async refreshVODMetadata() {
+  static async refreshVODMetadata(selections = []) {
     return await request(`${host}/api/vod/metadata/refresh/`, {
       method: 'POST',
-      body: {},
+      body: { selections },
+    });
+  }
+
+  static async previewVODMetadataTitles(titleRules, search = '') {
+    return await request(`${host}/api/vod/metadata/title-preview/`, {
+      method: 'POST',
+      body: { title_rules: titleRules, search },
     });
   }
 
@@ -2316,6 +2323,12 @@ export default class API {
     } catch (e) {
       errorNotification('Failed to retrieve settings', e);
     }
+  }
+
+  static async getSystemResources() {
+    return await request(`${host}/api/core/settings/resources/`, {
+      cache: 'no-store',
+    });
   }
 
   static async getEnvironmentSettings() {

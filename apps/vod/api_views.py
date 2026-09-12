@@ -84,6 +84,7 @@ def _tmdb_content_payload(content):
         or content.tmdb_id
         or ""
     )
+    languages = CoreSettings.get_tmdb_languages()
     return {
         "id": effective_id,
         "provider_id": str(content.tmdb_id or ""),
@@ -106,6 +107,16 @@ def _tmdb_content_payload(content):
             ),
         },
         "localized": metadata.get("localized") or {},
+        "languages": languages,
+        "primary_language": languages[0] if languages else "",
+        "secondary_language": languages[1] if len(languages) > 1 else "",
+        "overview": metadata.get("overview") or "",
+        "release_date": metadata.get("release_date") or "",
+        "runtime_minutes": metadata.get("runtime_minutes"),
+        "rating": metadata.get("rating"),
+        "genres": metadata.get("genres") or [],
+        "poster_url": metadata.get("poster_url") or "",
+        "backdrop_url": metadata.get("backdrop_url") or "",
     }
 
 
@@ -215,6 +226,7 @@ def _materialize_tmdb_target(media_type, tmdb_id):
         _tmdb_settings_signature(
             CoreSettings.get_tmdb_languages(),
             CoreSettings.get_tmdb_match_missing(),
+            CoreSettings.get_tmdb_title_rules(),
         ),
         target,
     )
@@ -1329,6 +1341,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     "auto_enrich": CoreSettings.get_tmdb_auto_enrich(),
                     "match_missing": CoreSettings.get_tmdb_match_missing(),
                     "prefer_artwork": CoreSettings.get_tmdb_prefer_artwork(),
+                    "title_rules": CoreSettings.get_tmdb_title_rules(),
                 },
                 "catalog": {
                     "movies": movie_total,
@@ -1374,6 +1387,14 @@ class VODMetadataViewSet(viewsets.ViewSet):
         elif "api_token" in request.data:
             token = str(request.data.get("api_token") or "").strip()
         previous_prefer_artwork = CoreSettings.get_tmdb_prefer_artwork()
+        title_rules = CoreSettings.get_tmdb_title_rules()
+        if "title_rules" in request.data:
+            from .tmdb import normalize_title_rules
+
+            try:
+                title_rules = normalize_title_rules(request.data.get("title_rules"))
+            except ValueError as exc:
+                raise DRFValidationError({"title_rules": str(exc)}) from exc
         CoreSettings.set_vod_metadata_settings(
             api_token=token,
             languages=languages,
@@ -1390,6 +1411,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
             prefer_artwork=request.data.get(
                 "prefer_artwork", previous_prefer_artwork
             ) is not False,
+            title_rules=title_rules,
         )
         if previous_prefer_artwork != CoreSettings.get_tmdb_prefer_artwork():
             from .catalog_cache import bump_catalog_generation
@@ -1404,15 +1426,98 @@ class VODMetadataViewSet(viewsets.ViewSet):
             raise DRFValidationError(
                 {"api_token": "Configure a TMDB API read access token first."}
             )
+        selections = request.data.get("selections") or []
+        if not isinstance(selections, list) or len(selections) > 500:
+            raise DRFValidationError(
+                {"selections": "Choose at most 500 canonical titles."}
+            )
+        movie_ids = []
+        series_ids = []
+        for row in selections:
+            if not isinstance(row, dict):
+                raise DRFValidationError({"selections": "Invalid selection."})
+            try:
+                content_id = int(row.get("id"))
+            except (TypeError, ValueError):
+                raise DRFValidationError({"selections": "Invalid content ID."})
+            target = movie_ids if row.get("content_type") == "movie" else (
+                series_ids if row.get("content_type") == "series" else None
+            )
+            if target is None:
+                raise DRFValidationError({"selections": "Invalid content type."})
+            target.append(content_id)
+
         from .tasks import enqueue_tmdb_enrichment
+
+        if selections:
+            state = VODMetadataState.objects.filter(pk=1).first()
+            if state and state.status in {
+                VODMetadataState.Status.QUEUED,
+                VODMetadataState.Status.RUNNING,
+            }:
+                return Response(
+                    {"detail": "A TMDB metadata batch is already running."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         result = enqueue_tmdb_enrichment(
             trigger_reason="Manual TMDB metadata refresh",
+            force=bool(selections),
+            movie_ids=movie_ids if selections else None,
+            series_ids=series_ids if selections else None,
         )
         return Response(
             {**result, "state": _vod_metadata_state_payload()},
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @action(detail=False, methods=["post"], url_path="title-preview")
+    def title_preview(self, request):
+        """Preview lookup-only title cleanup against real canonical rows."""
+        self._admin_only(request)
+        from .tmdb import clean_lookup_title, normalize_title_rules
+
+        try:
+            rules = normalize_title_rules(
+                request.data.get("title_rules", CoreSettings.get_tmdb_title_rules())
+            )
+        except ValueError as exc:
+            raise DRFValidationError({"title_rules": str(exc)}) from exc
+        search = str(request.data.get("search") or "").strip()
+        rows = []
+        for model, content_type, relation_name in (
+            (Movie, "movie", "m3u_relations"),
+            (Series, "series", "m3u_relations"),
+        ):
+            queryset = model.objects.filter(
+                **{f"{relation_name}__m3u_account__is_active": True}
+            ).distinct()
+            if search:
+                queryset = queryset.filter(
+                    Q(name__icontains=search) | Q(display_name__icontains=search)
+                )
+            for content in queryset.values(
+                "id", "name", "display_name", "year"
+            ).order_by("id")[:100]:
+                before = str(content["display_name"] or content["name"] or "")
+                after = clean_lookup_title(
+                    content["name"],
+                    display_name=content["display_name"],
+                    year=content["year"],
+                    rules=rules,
+                )
+                if search or before != after:
+                    rows.append(
+                        {
+                            "id": content["id"],
+                            "content_type": content_type,
+                            "before": before,
+                            "after": after,
+                            "year": content["year"],
+                        }
+                    )
+        rows.sort(key=lambda row: (row["before"].casefold(), row["content_type"], row["id"]))
+        return Response({"results": rows[:50]})
 
 
 class VODAccessPolicyViewSet(viewsets.ModelViewSet):
@@ -3743,6 +3848,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     movies.tmdb_id,
                     movies.tmdb_imdb_id,
                     movies.imdb_id,
+                    movies.tmdb_metadata,
+                    movies.tmdb_status,
+                    movies.tmdb_enriched_at,
                     movies.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3772,6 +3880,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     series.tmdb_id,
                     series.tmdb_imdb_id,
                     series.imdb_id,
+                    series.tmdb_metadata,
+                    series.tmdb_status,
+                    series.tmdb_enriched_at,
                     series.logo_id,
                     logo.name as logo_name,
                     logo.url as logo_url,
@@ -3787,6 +3898,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
             params.extend([page_size, offset])
 
+            from .tmdb import clean_lookup_title
+
+            title_rules = CoreSettings.get_tmdb_title_rules()
             with connection.cursor() as cursor:
                 cursor.execute(sql, params)
                 columns = [col[0] for col in cursor.description]
@@ -3838,11 +3952,31 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                             or item_dict['imdb_id']
                             or ''
                         ),
+                        'tmdb_status': item_dict['tmdb_status'] or '',
+                        'tmdb_enriched_at': (
+                            item_dict['tmdb_enriched_at'].isoformat()
+                            if item_dict['tmdb_enriched_at'] else None
+                        ),
+                        'tmdb': _tmdb_content_payload(
+                            SimpleNamespace(
+                                tmdb_metadata=item_dict['tmdb_metadata'] or {},
+                                tmdb_match_id=item_dict['tmdb_match_id'] or '',
+                                tmdb_id=item_dict['tmdb_id'] or '',
+                                tmdb_imdb_id=item_dict['tmdb_imdb_id'] or '',
+                                imdb_id=item_dict['imdb_id'] or '',
+                                tmdb_status=item_dict['tmdb_status'] or '',
+                            )
+                        ),
                         '_tmdb_poster_url': item_dict['tmdb_poster_url'] or '',
                         '_tmdb_backdrop_url': item_dict['tmdb_backdrop_url'] or '',
                         'logo': logo_data,
                         'content_type': item_dict['content_type']
                     }
+                    formatted_item['tmdb_lookup_title'] = clean_lookup_title(
+                        item_dict['name'],
+                        year=item_dict['year'],
+                        rules=title_rules,
+                    )
                     results.append(formatted_item)
 
             # Add technical source summaries with two bounded relation queries

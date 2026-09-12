@@ -936,14 +936,15 @@ class VODSourceManagementTests(TestCase):
             [self.german_relation.id],
         )
 
-    def test_variants_keep_provider_titles_and_ignore_compact_suffix_rules(self):
+    def test_variants_support_formatted_clean_titles_and_ignore_suffix_rules(self):
         self.german_category.metadata_defaults = {
             **self.german_category.metadata_defaults,
             "video_features": ["3d"],
         }
         self.german_category.save(update_fields=["metadata_defaults"])
         self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
-        self.policy.naming_mode = VODAccessPolicy.NamingMode.CANONICAL
+        self.policy.naming_mode = VODAccessPolicy.NamingMode.TEMPLATE
+        self.policy.name_template = "{canonical} {provider}"
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.edition_rules = [
             {
@@ -977,7 +978,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(counts["movies"]["output_entries"], 2)
         self.assertEqual(
             names,
-            {"Provider A Avatar 3D", "Provider B Avatar UHD"},
+            {"Avatar (2005) provider-a", "Avatar (2005) provider-b"},
         )
 
     def test_switching_variants_to_compact_activates_compact_generation(self):

@@ -216,6 +216,7 @@ describe('VODOutputProfilesModal', () => {
     },
     ranking: ['audio_language', 'subtitle_language', 'resolution'],
     provider_order: [11, 7],
+    metadata_source: 'provider',
     category_rules: [],
     selection_status: 'ready',
     selection_current: true,
@@ -632,12 +633,12 @@ describe('VODOutputProfilesModal', () => {
 
     expect(await screen.findByText('Outdated')).toBeInTheDocument();
     expect(
-      screen.getByText(/active catalog was built as Provider data/)
+      screen.getByText(/active catalog was built as Variants/)
     ).toBeInTheDocument();
     expect(screen.getByText(/saved as Compact/)).toBeInTheDocument();
   });
 
-  it('describes provider data as exact provider sources without failover controls', async () => {
+  it('configures variants metadata and titles independently without failover controls', async () => {
     storeProfiles = [
       {
         ...profile,
@@ -654,9 +655,33 @@ describe('VODOutputProfilesModal', () => {
 
     expect(
       await screen.findByRole('option', {
-        name: 'Provider data — every allowed provider source unchanged',
+        name: 'Variants — every allowed provider source as a separate entry',
       })
     ).toBeInTheDocument();
+    expect(screen.getByLabelText('Client metadata')).toHaveValue('provider');
+    expect(screen.getByLabelText('Client title')).toHaveValue('provider');
     expect(screen.queryByText('Failover priority')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Client metadata'), {
+      target: { value: 'canonical' },
+    });
+    fireEvent.change(screen.getByLabelText('Client title'), {
+      target: { value: 'template' },
+    });
+    fireEvent.change(screen.getByLabelText('Output title format'), {
+      target: { value: '{canonical} [{resolution}]' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() =>
+      expect(API.updateVODAccessPolicy).toHaveBeenCalledWith(
+        '7',
+        expect.objectContaining({
+          metadata_source: 'canonical',
+          naming_mode: 'template',
+          name_template: '{canonical} [{resolution}]',
+        })
+      )
+    );
   });
 });

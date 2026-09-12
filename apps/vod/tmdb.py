@@ -44,6 +44,61 @@ def normalize_languages(values):
     return languages or ["en-US"]
 
 
+def normalize_title_rules(values):
+    """Validate ordered regex replacements used only for TMDB lookup names."""
+    if not isinstance(values, list):
+        raise ValueError("Title rules must be a list")
+    rules = []
+    for index, raw in enumerate(values[:20]):
+        if not isinstance(raw, dict):
+            raise ValueError(f"Title rule {index + 1} must be an object")
+        pattern = str(raw.get("pattern") or "").strip()
+        replacement = str(raw.get("replacement") or "")
+        if not pattern:
+            raise ValueError(f"Title rule {index + 1} needs a pattern")
+        if len(pattern) > 255 or len(replacement) > 255:
+            raise ValueError(f"Title rule {index + 1} is too long")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(
+                f"Title rule {index + 1} has an invalid expression: {exc}"
+            ) from exc
+        rules.append(
+            {
+                "pattern": pattern,
+                "replacement": replacement,
+                "enabled": raw.get("enabled") is not False,
+            }
+        )
+    return rules
+
+
+def clean_lookup_title(name, *, display_name="", year=None, rules=None):
+    """Create the non-persistent title used for TMDB search and its preview.
+
+    Provider names remain untouched. Built-in structural prefix cleanup runs
+    first, followed by the administrator's ordered replacements. A trailing
+    release year is removed because TMDB receives it in a dedicated parameter.
+    """
+    from .utils import canonical_output_name
+
+    result = canonical_output_name(name, display_name=display_name).strip()
+    for rule in normalize_title_rules(rules or []):
+        if rule["enabled"]:
+            result = re.sub(rule["pattern"], rule["replacement"], result)
+    if year:
+        result = re.sub(
+            rf"\s*[\(\[]\s*{re.escape(str(year))}\s*[\)\]]\s*$",
+            "",
+            result,
+        )
+    else:
+        result = re.sub(r"\s*[\(\[]\s*(?:19|20)\d{2}\s*[\)\]]\s*$", "", result)
+    result = re.sub(r"^[\s\-–—:|┃]+|[\s\-–—:|┃]+$", "", result)
+    return re.sub(r"\s+", " ", result).strip()
+
+
 def _normalized_title(value):
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(char for char in text if not unicodedata.combining(char))

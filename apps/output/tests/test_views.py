@@ -29,6 +29,7 @@ from apps.vod.models import (
     VODCategory,
     VODLogo,
 )
+from apps.vod.profile_selection import build_vod_profile_selection
 import xml.etree.ElementTree as ET
 from datetime import timedelta
 
@@ -559,6 +560,58 @@ class XcVodSeriesDistinctTests(TestCase):
         self.assertEqual(stream["release_date"], "2021-01-01")
         self.assertEqual(stream["trailer"], "yt123")
         self.assertEqual(stream["container_extension"], "avi")
+
+    def test_variants_can_keep_provider_title_with_curated_tmdb_metadata(self):
+        policy = VODAccessPolicy.objects.create(
+            name=f"curated-variants-{uuid4().hex[:8]}",
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            metadata_source=VODAccessPolicy.MetadataSource.CANONICAL,
+            naming_mode=VODAccessPolicy.NamingMode.PROVIDER,
+            hard_constraints={"allow_unknown_metadata": True},
+        )
+        policy.users.add(self.user)
+        account = self._account(f"acct-{uuid4().hex[:6]}")
+        movie = Movie.objects.create(
+            name="Raw Bliss",
+            display_name="Bliss",
+            year=2020,
+            description="Canonical fallback",
+            genre="Fallback",
+            rating="4",
+            tmdb_poster_url="https://image.tmdb.org/t/p/w500/bliss.jpg",
+            tmdb_metadata={
+                "localized": {
+                    "en-US": {
+                        "title": "Bliss",
+                        "overview": "Enriched plot",
+                    }
+                },
+                "release_date": "2021-02-05",
+                "rating": 6.8,
+                "genres": [{"id": 1, "name": "Science Fiction"}],
+            },
+        )
+        M3UMovieRelation.objects.create(
+            m3u_account=account,
+            movie=movie,
+            stream_id="curated-variant",
+            custom_properties={
+                "basic_data": {
+                    "name": "4K-AMZ - Bliss (2021)",
+                    "stream_icon": "https://provider.example/bliss.jpg",
+                }
+            },
+        )
+        build_vod_profile_selection(policy.id)
+
+        stream = xc_get_vod_streams(self.request, self.user)[0]
+
+        self.assertEqual(stream["name"], "4K-AMZ - Bliss (2021)")
+        self.assertEqual(stream["plot"], "Enriched plot")
+        self.assertEqual(stream["genre"], "Science Fiction")
+        self.assertEqual(stream["year"], 2021)
+        self.assertEqual(stream["rating"], 6.8)
+        self.assertIn("kind=movie_image", stream["stream_icon"])
 
     def test_vod_streams_stream_icon_uses_logo_id_without_logo_join(self):
         account = self._account(f"acct-{uuid4().hex[:6]}")

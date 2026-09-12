@@ -19,11 +19,45 @@ from apps.vod.models import (
     VODMetadataState,
 )
 from apps.vod.tasks import enqueue_tmdb_enrichment, reconcile_vod_metadata_queue
-from apps.vod.tmdb import Client, normalize_details, preferred_title
+from apps.vod.tmdb import (
+    Client,
+    clean_lookup_title,
+    normalize_details,
+    normalize_title_rules,
+    preferred_title,
+)
 from core.models import CoreSettings
 
 
 class TMDBMetadataTests(SimpleTestCase):
+    def test_lookup_title_cleanup_handles_provider_prefixes_and_release_year(self):
+        for raw in (
+            "4K-AMZ - Bliss (2021)",
+            "DE - Bliss (2021)",
+            "AMZ - Bliss (2021)",
+            "┃DE┃ Bliss (2021)",
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    clean_lookup_title(raw, year=2021),
+                    "Bliss",
+                )
+
+    def test_lookup_title_cleanup_applies_ordered_custom_rules(self):
+        self.assertEqual(
+            clean_lookup_title(
+                "WEB Bliss Director Cut [2021]",
+                year=2021,
+                rules=[
+                    {"pattern": r"^WEB\s+", "replacement": ""},
+                    {"pattern": r"\s+Director Cut", "replacement": ""},
+                ],
+            ),
+            "Bliss",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid expression"):
+            normalize_title_rules([{"pattern": "[", "replacement": ""}])
+
     def test_normalizes_original_localized_and_watch_provider_data(self):
         metadata = normalize_details(
             {

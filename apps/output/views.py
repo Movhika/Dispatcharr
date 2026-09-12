@@ -1107,6 +1107,98 @@ XC_SERIES_VALUE_FIELDS = (
     'rel_movie_image', 'rel_backdrop', 'rel_source_name',
 )
 
+XC_CURATED_VALUE_FIELDS = (
+    'rel_curated_title', 'rel_curated_overview',
+    'rel_curated_release_date', 'rel_curated_rating',
+    'rel_curated_runtime', 'rel_curated_genres',
+)
+
+
+def _xc_uses_curated_metadata(policy):
+    """Whether the profile projects canonical/TMDB descriptive metadata."""
+    if not policy:
+        return False
+    return (
+        policy.export_mode == "compact"
+        or getattr(policy, "metadata_source", "provider") == "canonical"
+    )
+
+
+def _xc_genre_names(value):
+    if not isinstance(value, list):
+        return ""
+    return ", ".join(
+        str(row.get("name") or "").strip()
+        for row in value
+        if isinstance(row, dict) and str(row.get("name") or "").strip()
+    )
+
+
+def _xc_curated_row_values(row, prefix):
+    """Return lightweight enriched values selected for an XC list row."""
+    release_date = str(row.get("rel_curated_release_date") or "").strip()
+    year = row.get(f"{prefix}__year") or ""
+    if release_date[:4].isdigit():
+        year = int(release_date[:4])
+    rating = row.get("rel_curated_rating")
+    if rating in (None, ""):
+        rating = row.get(f"{prefix}__rating")
+    elif isinstance(rating, str):
+        try:
+            rating = float(rating)
+        except ValueError:
+            pass
+    runtime = row.get("rel_curated_runtime")
+    if isinstance(runtime, str) and runtime.isdigit():
+        runtime = int(runtime)
+    return {
+        "title": str(row.get("rel_curated_title") or "").strip(),
+        "overview": str(row.get("rel_curated_overview") or "").strip()
+        or row.get(f"{prefix}__description")
+        or "",
+        "release_date": release_date,
+        "year": year,
+        "rating": rating,
+        "runtime": runtime,
+        "genre": _xc_genre_names(row.get("rel_curated_genres"))
+        or row.get(f"{prefix}__genre")
+        or "",
+    }
+
+
+def _xc_curated_object_values(content):
+    """Resolve the same enriched fields for a single movie/series detail."""
+    metadata = content.tmdb_metadata if isinstance(content.tmdb_metadata, dict) else {}
+    languages = CoreSettings.get_tmdb_languages()
+    localized = metadata.get("localized") or {}
+    localized_values = localized.get(languages[0]) or {}
+    if not localized_values:
+        localized_values = next(
+            (row for row in localized.values() if isinstance(row, dict)),
+            {},
+        )
+    release_date = str(metadata.get("release_date") or "").strip()
+    year = content.year or ""
+    if release_date[:4].isdigit():
+        year = int(release_date[:4])
+    rating = metadata.get("rating")
+    if rating in (None, ""):
+        rating = content.rating
+    return {
+        "title": str(localized_values.get("title") or content.display_name or "").strip(),
+        "overview": str(
+            localized_values.get("overview")
+            or metadata.get("overview")
+            or content.description
+            or ""
+        ).strip(),
+        "release_date": release_date,
+        "year": year,
+        "rating": rating,
+        "runtime": metadata.get("runtime_minutes"),
+        "genre": _xc_genre_names(metadata.get("genres")) or content.genre or "",
+    }
+
 
 # Same key precedence get_relation_artwork uses for a single cover/still.
 XC_RELATION_IMAGE_KEYS = ('movie_image', 'cover_big', 'stream_icon', 'cover')
@@ -1122,13 +1214,20 @@ def _xc_annotate_relation_artwork(qs):
     empty backdrop arrays are treated as missing, matching the Python helper,
     since raw basic_data is stored uncleaned and often carries empty image keys.
     """
-    from django.db.models import CharField, Value
+    from django.db.models import CharField, F, Value
     from django.db.models.fields.json import JSONField, KeyTextTransform, KeyTransform
     from django.db.models.functions import Coalesce, NullIf, Trim
 
     basic = KeyTransform('basic_data', 'custom_properties')
     detailed = KeyTransform('detailed_info', 'custom_properties')
     movie_data = KeyTransform('movie_data', 'custom_properties')
+    content_field = (
+        "movie" if qs.model.__name__ == "M3UMovieRelation" else "series"
+    )
+    tmdb_metadata = F(f"{content_field}__tmdb_metadata")
+    localized = KeyTransform("localized", tmdb_metadata)
+    primary_language = CoreSettings.get_tmdb_languages()[0]
+    primary_values = KeyTransform(primary_language, localized)
 
     def image_candidates(container):
         return [
@@ -1171,6 +1270,25 @@ def _xc_annotate_relation_artwork(qs):
             Value(''),
             output_field=CharField(),
         ),
+        rel_curated_title=Coalesce(
+            NullIf(Trim(KeyTextTransform('title', primary_values)), Value('')),
+            Value(''),
+            output_field=CharField(),
+        ),
+        rel_curated_overview=Coalesce(
+            NullIf(Trim(KeyTextTransform('overview', primary_values)), Value('')),
+            NullIf(Trim(KeyTextTransform('overview', tmdb_metadata)), Value('')),
+            Value(''),
+            output_field=CharField(),
+        ),
+        rel_curated_release_date=Coalesce(
+            NullIf(Trim(KeyTextTransform('release_date', tmdb_metadata)), Value('')),
+            Value(''),
+            output_field=CharField(),
+        ),
+        rel_curated_rating=KeyTextTransform('rating', tmdb_metadata),
+        rel_curated_runtime=KeyTextTransform('runtime_minutes', tmdb_metadata),
+        rel_curated_genres=KeyTransform('genres', tmdb_metadata),
     )
 
 
@@ -1409,6 +1527,7 @@ def xc_get_vod_streams(request, user, category_id=None):
     )
 
     policy = _xc_policy_for_user(user)
+    use_curated_metadata = _xc_uses_curated_metadata(policy)
     cache_key = catalog_cache_key(request, user, "movies", category_id)
     cached = safe_cache_get(cache_key)
     if cached is not None:
@@ -1426,7 +1545,11 @@ def xc_get_vod_streams(request, user, category_id=None):
         manager=M3UMovieRelation.objects,
         rel_filters=rel_filters,
         distinct_field=('movie_id', 'category_id'),
-        value_fields=XC_MOVIE_VALUE_FIELDS,
+        value_fields=(
+            XC_MOVIE_VALUE_FIELDS + XC_CURATED_VALUE_FIELDS
+            if use_curated_metadata
+            else XC_MOVIE_VALUE_FIELDS
+        ),
         order_by_name_field='movie__name',
         policy=policy,
         canonical_field="movie_id",
@@ -1453,12 +1576,27 @@ def xc_get_vod_streams(request, user, category_id=None):
         category_id = row['category_id']
         category_id_str = str(category_id) if category_id else "0"
         category_id_list = [category_id] if category_id else []
-        rating = row['movie__rating']
-        artwork = _xc_relation_artwork_from_row(
-            row,
-            custom_props,
-            prefix='movie',
-            prefer_tmdb=_prefer_tmdb_artwork,
+        curated = (
+            _xc_curated_row_values(row, "movie")
+            if use_curated_metadata
+            else None
+        )
+        rating = curated["rating"] if curated else row['movie__rating']
+        artwork = (
+            prefer_relation_artwork(
+                {},
+                custom_props,
+                tmdb_poster_url=row.get('movie__tmdb_poster_url') or '',
+                tmdb_backdrop_url=row.get('movie__tmdb_backdrop_url') or '',
+                prefer_tmdb=_prefer_tmdb_artwork,
+            )
+            if use_curated_metadata
+            else _xc_relation_artwork_from_row(
+                row,
+                custom_props,
+                prefix='movie',
+                prefer_tmdb=_prefer_tmdb_artwork,
+            )
         )
 
         append({
@@ -1495,12 +1633,16 @@ def xc_get_vod_streams(request, user, category_id=None):
             ),
             "imdb_id": row['movie__tmdb_imdb_id'] or row['movie__imdb_id'] or "",
             "trailer": custom_props.get('youtube_trailer') or "",
-            "plot": row['movie__description'] or "",
-            "genre": row['movie__genre'] or "",
-            "year": row['movie__year'] or "",
+            "plot": curated["overview"] if curated else row['movie__description'] or "",
+            "genre": curated["genre"] if curated else row['movie__genre'] or "",
+            "year": curated["year"] if curated else row['movie__year'] or "",
             "director": custom_props.get('director', ''),
             "cast": custom_props.get('actors', ''),
-            "release_date": custom_props.get('release_date', ''),
+            "release_date": (
+                curated["release_date"]
+                if curated and curated["release_date"]
+                else custom_props.get('release_date', '')
+            ),
             "category_id": category_id_str,
             "category_ids": category_id_list,
             "container_extension": row['container_extension'] or "mp4",
@@ -1572,6 +1714,7 @@ def xc_get_series(request, user, category_id=None):
     )
 
     policy = _xc_policy_for_user(user)
+    use_curated_metadata = _xc_uses_curated_metadata(policy)
     cache_key = catalog_cache_key(request, user, "series", category_id)
     cached = safe_cache_get(cache_key)
     if cached is not None:
@@ -1586,7 +1729,11 @@ def xc_get_series(request, user, category_id=None):
         manager=M3USeriesRelation.objects,
         rel_filters=rel_filters,
         distinct_field=('series_id', 'category_id'),
-        value_fields=XC_SERIES_VALUE_FIELDS,
+        value_fields=(
+            XC_SERIES_VALUE_FIELDS + XC_CURATED_VALUE_FIELDS
+            if use_curated_metadata
+            else XC_SERIES_VALUE_FIELDS
+        ),
         order_by_name_field='series__name',
         policy=policy,
         canonical_field="series_id",
@@ -1611,14 +1758,34 @@ def xc_get_series(request, user, category_id=None):
     for num, row in enumerate(relations, 1):
         custom_props = row['series__custom_properties'] or {}
         category_id = row['category_id']
-        rating = row['series__rating']
-        year_str = str(row['series__year']) if row['series__year'] else ""
-        release_date = custom_props.get('release_date', year_str)
-        artwork = _xc_relation_artwork_from_row(
-            row,
-            custom_props,
-            prefix='series',
-            prefer_tmdb=_prefer_tmdb_artwork,
+        curated = (
+            _xc_curated_row_values(row, "series")
+            if use_curated_metadata
+            else None
+        )
+        rating = curated["rating"] if curated else row['series__rating']
+        year_value = curated["year"] if curated else row['series__year']
+        year_str = str(year_value) if year_value else ""
+        release_date = (
+            curated["release_date"]
+            if curated and curated["release_date"]
+            else custom_props.get('release_date', year_str)
+        )
+        artwork = (
+            prefer_relation_artwork(
+                {},
+                custom_props,
+                tmdb_poster_url=row.get('series__tmdb_poster_url') or '',
+                tmdb_backdrop_url=row.get('series__tmdb_backdrop_url') or '',
+                prefer_tmdb=_prefer_tmdb_artwork,
+            )
+            if use_curated_metadata
+            else _xc_relation_artwork_from_row(
+                row,
+                custom_props,
+                prefix='series',
+                prefer_tmdb=_prefer_tmdb_artwork,
+            )
         )
 
         append({
@@ -1642,10 +1809,10 @@ def xc_get_series(request, user, category_id=None):
                 logo_url_parts=_logo_url_parts,
                 url_parts=_series_image_parts,
             ),
-            "plot": row['series__description'] or "",
+            "plot": curated["overview"] if curated else row['series__description'] or "",
             "cast": custom_props.get('cast', ''),
             "director": custom_props.get('director', ''),
-            "genre": row['series__genre'] or "",
+            "genre": curated["genre"] if curated else row['series__genre'] or "",
             "release_date": release_date,
             "releaseDate": release_date,
             "last_modified": str(int(row['updated_at'].timestamp())),
@@ -1659,7 +1826,11 @@ def xc_get_series(request, user, category_id=None):
                 url_parts=_series_image_parts,
             ),
             "youtube_trailer": custom_props.get('youtube_trailer', ''),
-            "episode_run_time": custom_props.get('episode_run_time', ''),
+            "episode_run_time": (
+                curated["runtime"]
+                if curated and curated["runtime"]
+                else custom_props.get('episode_run_time', '')
+            ),
             "category_id": str(category_id) if category_id else "0",
             "category_ids": [category_id] if category_id else [],
             "tmdb_id": (
@@ -1693,6 +1864,7 @@ def xc_get_series_info(request, user, series_id):
     from apps.vod.policies import relation_allowed
 
     policy = _xc_policy_for_user(user)
+    use_curated_metadata = _xc_uses_curated_metadata(policy)
     cache_key = catalog_cache_key(request, user, "series-info", series_id)
     cached = safe_cache_get(cache_key)
     if cached is not None:
@@ -1913,26 +2085,37 @@ def xc_get_series_info(request, user, series_id):
 
             # Override with detailed_info values where available
             for key in ['name', 'description', 'year', 'genre', 'rating']:
-                if detailed_info.get(key):
+                if not use_curated_metadata and detailed_info.get(key):
                     series_data[key] = detailed_info[key]
 
             # Handle plot vs description
-            if detailed_info.get('plot'):
+            if not use_curated_metadata and detailed_info.get('plot'):
                 series_data['description'] = detailed_info['plot']
-            elif detailed_info.get('description'):
+            elif not use_curated_metadata and detailed_info.get('description'):
                 series_data['description'] = detailed_info['description']
 
             # Update additional fields from detailed info
             series_data.update({
-                'cast': detailed_info.get('cast', series_data['cast']),
-                'director': detailed_info.get('director', series_data['director']),
-                'youtube_trailer': detailed_info.get('youtube_trailer', series_data['youtube_trailer']),
-                'episode_run_time': detailed_info.get('episode_run_time', series_data['episode_run_time']),
-                'backdrop_path': detailed_info.get('backdrop_path', series_data['backdrop_path']),
+                'cast': series_data['cast'] if use_curated_metadata else detailed_info.get('cast', series_data['cast']),
+                'director': series_data['director'] if use_curated_metadata else detailed_info.get('director', series_data['director']),
+                'youtube_trailer': series_data['youtube_trailer'] if use_curated_metadata else detailed_info.get('youtube_trailer', series_data['youtube_trailer']),
+                'episode_run_time': series_data['episode_run_time'] if use_curated_metadata else detailed_info.get('episode_run_time', series_data['episode_run_time']),
+                'backdrop_path': series_data['backdrop_path'] if use_curated_metadata else detailed_info.get('backdrop_path', series_data['backdrop_path']),
             })
 
     except Exception as e:
         logger.error(f"Error parsing series custom_properties: {str(e)}")
+
+    if use_curated_metadata:
+        curated = _xc_curated_object_values(series)
+        series_data.update(
+            name=curated["title"] or series_data["name"],
+            description=curated["overview"],
+            year=curated["year"],
+            genre=curated["genre"],
+            rating=curated["rating"],
+            episode_run_time=curated["runtime"] or series_data["episode_run_time"],
+        )
 
     seasons_list = [
         {"season_number": int(season_num), "name": f"Season {season_num}"}
@@ -1940,7 +2123,7 @@ def xc_get_series_info(request, user, series_id):
     ]
 
     series_artwork = prefer_relation_artwork(
-        series_relation.custom_properties,
+        {} if use_curated_metadata else series_relation.custom_properties,
         series.custom_properties,
         tmdb_poster_url=series.tmdb_poster_url,
         tmdb_backdrop_url=series.tmdb_backdrop_url,
@@ -1990,8 +2173,16 @@ def xc_get_series_info(request, user, series_id):
             "cast": series_data['cast'],
             "director": series_data['director'],
             "genre": series_data['genre'],
-            "release_date": series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else ""),
-            "releaseDate": series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else ""),
+            "release_date": (
+                curated["release_date"]
+                if use_curated_metadata and curated["release_date"]
+                else series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else "")
+            ),
+            "releaseDate": (
+                curated["release_date"]
+                if use_curated_metadata and curated["release_date"]
+                else series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else "")
+            ),
             "added": str(int(series_relation.created_at.timestamp())),
             "last_modified": str(int(series_relation.updated_at.timestamp())),
             "rating": str(series_data['rating']),
@@ -2042,6 +2233,7 @@ def xc_get_vod_info(request, user, vod_id):
     from apps.vod.policies import relation_allowed
 
     policy = _xc_policy_for_user(user)
+    use_curated_metadata = _xc_uses_curated_metadata(policy)
     cache_key = catalog_cache_key(request, user, "movie-info", vod_id)
     cached = safe_cache_get(cache_key)
     if cached is not None:
@@ -2120,13 +2312,13 @@ def xc_get_vod_info(request, user, vod_id):
             detailed_info = movie_relation.custom_properties.get('detailed_info', {})
             # Update movie_data with detailed info
             movie_data.update({
-                'director': custom_data.get('director') or detailed_info.get('director', ''),
-                'actors': custom_data.get('actors') or detailed_info.get('actors', ''),
-                'country': custom_data.get('country') or detailed_info.get('country', ''),
-                'release_date': custom_data.get('release_date') or detailed_info.get('release_date') or detailed_info.get('releasedate', ''),
-                'youtube_trailer': custom_data.get('youtube_trailer') or detailed_info.get('youtube_trailer') or detailed_info.get('trailer', ''),
-                'backdrop_path': custom_data.get('backdrop_path') or detailed_info.get('backdrop_path', []),
-                'cover_big': detailed_info.get('cover_big', ''),
+                'director': custom_data.get('director') or ('' if use_curated_metadata else detailed_info.get('director', '')),
+                'actors': custom_data.get('actors') or ('' if use_curated_metadata else detailed_info.get('actors', '')),
+                'country': custom_data.get('country') or ('' if use_curated_metadata else detailed_info.get('country', '')),
+                'release_date': custom_data.get('release_date') or ('' if use_curated_metadata else detailed_info.get('release_date') or detailed_info.get('releasedate', '')),
+                'youtube_trailer': custom_data.get('youtube_trailer') or ('' if use_curated_metadata else detailed_info.get('youtube_trailer') or detailed_info.get('trailer', '')),
+                'backdrop_path': custom_data.get('backdrop_path') or ([] if use_curated_metadata else detailed_info.get('backdrop_path', [])),
+                'cover_big': '' if use_curated_metadata else detailed_info.get('cover_big', ''),
                 'bitrate': detailed_info.get('bitrate', 0),
                 'video': detailed_info.get('video', {}),
                 'audio': detailed_info.get('audio', {}),
@@ -2134,23 +2326,34 @@ def xc_get_vod_info(request, user, vod_id):
 
             # Override with detailed_info values where available
             for key in ['name', 'description', 'year', 'genre', 'rating', 'tmdb_id', 'imdb_id']:
-                if detailed_info.get(key):
+                if not use_curated_metadata and detailed_info.get(key):
                     movie_data[key] = detailed_info[key]
 
             # Handle plot vs description
-            if detailed_info.get('plot'):
+            if not use_curated_metadata and detailed_info.get('plot'):
                 movie_data['description'] = detailed_info['plot']
-            elif detailed_info.get('description'):
+            elif not use_curated_metadata and detailed_info.get('description'):
                 movie_data['description'] = detailed_info['description']
 
     except Exception as e:
         logger.error(f"Failed to process movie data: {e}")
 
+    if use_curated_metadata:
+        curated = _xc_curated_object_values(movie)
+        movie_data.update(
+            name=curated["title"] or movie_data["name"],
+            description=curated["overview"],
+            year=curated["year"],
+            genre=curated["genre"],
+            rating=curated["rating"],
+            release_date=curated["release_date"] or movie_data["release_date"],
+        )
+
     # Real XC servers return the same URL for cover_big and movie_image, so both
     # are set from a single resolved cover: winning-provider still first, synced
     # VODLogo only when the relation/object has no proxyable image.
     movie_artwork = prefer_relation_artwork(
-        movie_relation.custom_properties,
+        {} if use_curated_metadata else movie_relation.custom_properties,
         movie.custom_properties,
         tmdb_poster_url=movie.tmdb_poster_url,
         tmdb_backdrop_url=movie.tmdb_backdrop_url,

@@ -350,6 +350,7 @@ const SeriesModal = ({
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [dataView, setDataView] = useState('primary');
   const [loadingProviders, setLoadingProviders] = useState(false);
   const providersRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
@@ -419,6 +420,7 @@ const SeriesModal = ({
       setProviders([]);
       setSelectedProvider(null);
       setEditingProvider(null);
+      setDataView('primary');
       setLoadingProviders(false);
     }
   }, [opened]);
@@ -561,14 +563,53 @@ const SeriesModal = ({
 
   if (!series) return null;
 
-  // Use detailed data if available, otherwise use basic series data
-  const displaySeries = detailedSeries
+  const tmdb = series.tmdb || detailedSeries?.tmdb || {};
+  const primaryLanguage = tmdb.primary_language || tmdb.languages?.[0] || '';
+  const secondaryLanguage =
+    tmdb.secondary_language || tmdb.languages?.[1] || '';
+  const localized = tmdb.localized || {};
+  const localizedCanonical = (language) => {
+    const values = localized[language] || {};
+    return {
+      ...series,
+      name: values.title || series.name,
+      description: values.overview || series.description,
+      genre:
+        (tmdb.genres || [])
+          .map((row) => row.name)
+          .filter(Boolean)
+          .join(', ') || series.genre,
+      rating: tmdb.rating || series.rating,
+      release_date: tmdb.release_date || '',
+      series_image:
+        series.artwork_url || tmdb.poster_url || series.series_image || '',
+      backdrop_path: tmdb.backdrop_url
+        ? [tmdb.backdrop_url]
+        : series.backdrop_path || [],
+      tmdb,
+      tmdb_id: tmdb.id || series.tmdb_id,
+      imdb_id: tmdb.external_ids?.imdb_id || series.imdb_id,
+      o_name: series.o_name || '',
+    };
+  };
+  const providerIds = selectedProvider?.provider_external_ids || {};
+  const providerSeries = detailedSeries
     ? {
         ...detailedSeries,
-        name: allowSourceEditing ? detailedSeries.name : series.name,
-        o_name: allowSourceEditing ? detailedSeries.o_name : '',
+        tmdb_id: providerIds.tmdb_id || '',
+        imdb_id: providerIds.imdb_id || '',
+        tmdb: {
+          id: providerIds.tmdb_id || '',
+          external_ids: { imdb_id: providerIds.imdb_id || '' },
+        },
       }
     : series;
+  const displaySeries =
+    dataView === 'provider'
+      ? providerSeries
+      : localizedCanonical(
+          dataView === 'secondary' ? secondaryLanguage : primaryLanguage
+        );
 
   return (
     <>
@@ -647,6 +688,33 @@ const SeriesModal = ({
           {/* Modal content above backdrop */}
           <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
+              <Group justify="flex-end" pr="xl">
+                <Group gap={2} aria-label="Metadata source">
+                  <Button
+                    size="xs"
+                    variant={dataView === 'primary' ? 'filled' : 'default'}
+                    onClick={() => setDataView('primary')}
+                  >
+                    Primary{primaryLanguage ? ` · ${primaryLanguage}` : ''}
+                  </Button>
+                  {secondaryLanguage && (
+                    <Button
+                      size="xs"
+                      variant={dataView === 'secondary' ? 'filled' : 'default'}
+                      onClick={() => setDataView('secondary')}
+                    >
+                      Secondary · {secondaryLanguage}
+                    </Button>
+                  )}
+                  <Button
+                    size="xs"
+                    variant={dataView === 'provider' ? 'filled' : 'default'}
+                    onClick={() => setDataView('provider')}
+                  >
+                    Provider
+                  </Button>
+                </Group>
+              </Group>
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
                   <Loader size="xs" />

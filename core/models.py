@@ -775,6 +775,7 @@ class CoreSettings(models.Model):
             "tmdb_auto_enrich": True,
             "tmdb_match_missing": False,
             "tmdb_prefer_artwork": True,
+            "tmdb_title_rules": [],
         })
 
     @classmethod
@@ -818,6 +819,28 @@ class CoreSettings(models.Model):
         )
 
     @classmethod
+    def get_tmdb_title_rules(cls):
+        """Return ordered, bounded regex replacements for TMDB title lookup."""
+        raw = cls.get_vod_settings().get("tmdb_title_rules") or []
+        if not isinstance(raw, list):
+            return []
+        rules = []
+        for row in raw[:20]:
+            if not isinstance(row, dict):
+                continue
+            pattern = str(row.get("pattern") or "").strip()
+            if not pattern:
+                continue
+            rules.append(
+                {
+                    "pattern": pattern[:255],
+                    "replacement": str(row.get("replacement") or "")[:255],
+                    "enabled": row.get("enabled") is not False,
+                }
+            )
+        return rules
+
+    @classmethod
     def set_vod_metadata_settings(
         cls,
         *,
@@ -826,6 +849,7 @@ class CoreSettings(models.Model):
         match_missing,
         prefer_artwork=True,
         api_token=None,
+        title_rules=None,
     ):
         updates = {
             "tmdb_languages": list(languages)[:2],
@@ -835,6 +859,8 @@ class CoreSettings(models.Model):
         }
         if api_token is not None:
             updates["tmdb_api_token"] = str(api_token).strip()
+        if title_rules is not None:
+            updates["tmdb_title_rules"] = list(title_rules)[:20]
         return cls._update_group(VOD_SETTINGS_KEY, "VOD Settings", updates)
 
     @classmethod

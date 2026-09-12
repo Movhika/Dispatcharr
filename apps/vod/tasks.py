@@ -87,7 +87,7 @@ def cleanup_vod_playback_history():
     return {"retention_days": retention_days, "deleted_sessions": deleted}
 
 
-def _tmdb_settings_signature(languages, match_missing):
+def _tmdb_settings_signature(languages, match_missing, title_rules=None):
     from .tmdb import TMDB_METADATA_SCHEMA
 
     return hashlib.sha256(
@@ -96,6 +96,7 @@ def _tmdb_settings_signature(languages, match_missing):
                 "schema": TMDB_METADATA_SCHEMA,
                 "languages": languages,
                 "match_missing": bool(match_missing),
+                "title_rules": title_rules or [],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -142,6 +143,8 @@ def enqueue_tmdb_enrichment(
     force=False,
     rebuild_profiles=False,
     trigger_reason="Manual TMDB metadata refresh",
+    movie_ids=None,
+    series_ids=None,
 ):
     """Publish at most one durable global enrichment task."""
     from .models import VODMetadataState
@@ -189,6 +192,8 @@ def enqueue_tmdb_enrichment(
                     force=force,
                     rebuild_profiles=rebuild_profiles,
                     trigger_reason=trigger_reason,
+                    movie_ids=movie_ids,
+                    series_ids=series_ids,
                 )
                 VODMetadataState.objects.filter(
                     pk=1,
@@ -275,6 +280,8 @@ def enrich_vod_metadata(
     force=False,
     rebuild_profiles=False,
     trigger_reason="Manual TMDB metadata refresh",
+    movie_ids=None,
+    series_ids=None,
 ):
     """Enrich canonical movies and series in one resumable TMDB batch."""
     from core.models import CoreSettings
@@ -284,9 +291,9 @@ def enrich_vod_metadata(
         TMDBAuthenticationError,
         TMDBError,
         TMDBNotFound,
+        clean_lookup_title,
         preferred_title,
     )
-    from .utils import canonical_output_name
 
     if not acquire_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID):
         return {"skipped": "TMDB enrichment is already running"}
@@ -305,7 +312,10 @@ def enrich_vod_metadata(
             raise ValueError("Configure a TMDB API read access token first")
         languages = CoreSettings.get_tmdb_languages()
         match_missing = CoreSettings.get_tmdb_match_missing()
-        base_signature = _tmdb_settings_signature(languages, match_missing)
+        title_rules = CoreSettings.get_tmdb_title_rules()
+        base_signature = _tmdb_settings_signature(
+            languages, match_missing, title_rules
+        )
 
         # Keep only the lightweight identity columns in memory. In particular,
         # do not load every existing tmdb_metadata JSON document just to find
@@ -332,6 +342,9 @@ def enrich_vod_metadata(
                 .values(*query_fields)
                 .order_by("id")
             )
+            selected_ids = movie_ids if media_type == "movie" else series_ids
+            if selected_ids is not None:
+                queryset = queryset.filter(id__in=selected_ids)
             for content in queryset.iterator(chunk_size=1000):
                 signature = _tmdb_content_signature(base_signature, content)
                 if force or content["tmdb_enrichment_signature"] != signature:
@@ -381,9 +394,11 @@ def enrich_vod_metadata(
                     if tmdb_id:
                         match_method = "imdb_id"
                 if not tmdb_id and match_missing:
-                    query = canonical_output_name(
+                    query = clean_lookup_title(
                         content_name,
                         display_name=content["display_name"],
+                        year=content["year"],
+                        rules=title_rules,
                     )
                     tmdb_id = client.search(
                         query,

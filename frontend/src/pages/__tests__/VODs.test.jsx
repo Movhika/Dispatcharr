@@ -76,6 +76,7 @@ vi.mock('../../components/VideoFeaturePicker.jsx', () => ({
 }));
 vi.mock('lucide-react', () => ({
   DatabaseZap: () => null,
+  Eye: () => null,
   History: () => null,
   LayoutGrid: (props) => <span {...props}>Poster wall</span>,
   List: (props) => <span {...props}>List view</span>,
@@ -299,11 +300,11 @@ describe('VODsPage list and bulk editing', () => {
   it('opens the correct detail dialog from a row', async () => {
     render(<VODsPage />);
     await screen.findByText('Movie A');
-    fireEvent.click(screen.getByLabelText('Open Movie A'));
+    fireEvent.click(screen.getByLabelText('Details Movie A'));
     expect(await screen.findByTestId('movie-modal')).toHaveTextContent(
       'Movie A'
     );
-    fireEvent.click(screen.getByLabelText('Open Series B'));
+    fireEvent.click(screen.getByLabelText('Details Series B'));
     expect(await screen.findByTestId('series-modal')).toHaveTextContent(
       'Series B'
     );

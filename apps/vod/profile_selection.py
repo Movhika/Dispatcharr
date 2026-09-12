@@ -273,13 +273,14 @@ def profile_selection_signature(policy):
         "edition_rules": policy.edition_rules or [],
         "naming_mode": policy.naming_mode,
         "name_template": policy.name_template,
+        "metadata_source": policy.metadata_source,
         "category_rules": category_rules,
     }
     if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
-        # Bump only Provider-data catalogs when their one-relation-per-entry
-        # semantics change. The queue reconciler will rebuild existing Variant
-        # generations after an upgrade without invalidating Compact profiles.
-        payload["provider_data_schema"] = 1
+        # Bump only one-relation-per-entry catalogs when their snapshot
+        # semantics change. The queue reconciler can then rebuild existing
+        # Variant generations without invalidating Compact profiles.
+        payload["variants_output_schema"] = 2
     encoded = json.dumps(
         payload,
         sort_keys=True,
@@ -784,11 +785,22 @@ def _metadata_columns(metadata, relation):
 
 def _edition_columns(policy, relation, content, metadata, category_mapping):
     if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
+        edition = {
+            "key": "default",
+            "name": "",
+            "suffix": "",
+        }
         return {
-            "edition_key": "default",
-            "edition_name": "",
-            "edition_suffix": "",
-            "output_name": get_vod_source_name(relation, content.name)[:500],
+            "edition_key": edition["key"],
+            "edition_name": edition["name"],
+            "edition_suffix": edition["suffix"],
+            "output_name": policy_output_name(
+                content,
+                relation,
+                policy,
+                edition=edition,
+                metadata=metadata,
+            )[:500],
         }
     edition = relation_edition(
         relation,

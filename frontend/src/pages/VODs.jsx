@@ -28,6 +28,7 @@ import {
 } from '@mantine/core';
 import {
   DatabaseZap,
+  Eye,
   History,
   LayoutGrid,
   List,
@@ -495,7 +496,10 @@ const VODsPage = () => {
                   value: 'missing_external_ids',
                   label: 'No external ID',
                 },
-                { value: 'missing_metadata', label: 'No TMDB metadata' },
+                {
+                  value: 'missing_metadata',
+                  label: 'TMDB details not enriched',
+                },
               ]}
               value={filters.metadata_status || null}
               onChange={(value) => {
@@ -606,7 +610,7 @@ const VODsPage = () => {
                   <TableTh w={130}>Resolution</TableTh>
                   <TableTh w={100}>Format</TableTh>
                   <TableTh w={160}>Features</TableTh>
-                  <TableTh w={60}>Open</TableTh>
+                  <TableTh w={60}>Details</TableTh>
                 </TableTr>
               </TableThead>
               <TableTbody>
@@ -656,6 +660,9 @@ const VODsPage = () => {
                           {item.tmdb_id ? `TMDB ${item.tmdb_id}` : ''}
                           {item.tmdb_id && item.imdb_id ? ' · ' : ''}
                           {item.imdb_id ? `IMDb ${item.imdb_id}` : ''}
+                          {item.tmdb_status !== 'matched'
+                            ? ' · details not enriched'
+                            : ''}
                         </Text>
                       )}
                       {item.description && (
@@ -697,11 +704,11 @@ const VODsPage = () => {
                     </TableTd>
                     <TableTd>
                       <ActionIcon
-                        aria-label={`Open ${item.name}`}
+                        aria-label={`Details ${item.name}`}
                         variant="subtle"
                         onClick={() => openItem(item)}
                       >
-                        <Play size={16} />
+                        <Eye size={16} />
                       </ActionIcon>
                     </TableTd>
                   </TableTr>
@@ -722,7 +729,7 @@ const VODsPage = () => {
                   key={itemKey(item)}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Open ${item.name}`}
+                  aria-label={`Details ${item.name}`}
                   onClick={() => openItem(item)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
@@ -927,7 +934,7 @@ const VODsPage = () => {
             onClose={seriesModalHandlers.close}
             onMetadataChanged={fetchContent}
             initialRelationId={selectedSeries?.relation_id}
-            allowSourceEditing={filters.representation === 'variants'}
+            allowSourceEditing
           />
         </Suspense>
       </ErrorBoundary>
@@ -937,6 +944,9 @@ const VODsPage = () => {
             opened={metadataOpened}
             onClose={metadataHandlers.close}
             onUpdated={fetchContent}
+            onOpenContent={(item) =>
+              openItem({ ...item, contentType: item.content_type })
+            }
           />
         </Suspense>
       </ErrorBoundary>
@@ -964,7 +974,7 @@ const VODsPage = () => {
             onClose={vodModalHandlers.close}
             onMetadataChanged={fetchContent}
             initialRelationId={selectedVOD?.relation_id}
-            allowSourceEditing={filters.representation === 'variants'}
+            allowSourceEditing
           />
         </Suspense>
       </ErrorBoundary>

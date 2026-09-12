@@ -70,6 +70,7 @@ const EMPTY_PROFILE = {
   edition_rules: [],
   naming_mode: 'mode_default',
   name_template: '',
+  metadata_source: 'canonical',
   category_rules: [],
 };
 
@@ -99,7 +100,7 @@ const outputModeLabel = (mode) =>
   mode === 'compact'
     ? 'Compact'
     : mode === 'variants'
-      ? 'Provider data'
+      ? 'Variants'
       : 'Unknown mode';
 
 const catalogModeLabel = (mode) =>
@@ -207,8 +208,20 @@ const profilePayload = (profile) => ({
     ),
     required_video_features: rule.required_video_features || [],
   })),
-  naming_mode: 'mode_default',
-  name_template: '',
+  naming_mode:
+    profile.export_mode === 'variants'
+      ? profile.naming_mode === 'template'
+        ? 'template'
+        : 'provider'
+      : 'mode_default',
+  name_template:
+    profile.export_mode === 'variants' && profile.naming_mode === 'template'
+      ? profile.name_template.trim() || '{canonical}'
+      : '',
+  metadata_source:
+    profile.export_mode === 'variants'
+      ? profile.metadata_source || 'provider'
+      : 'canonical',
   category_rules: (profile.category_rules || [])
     .map((rule) => ({
       category_relation: Number(rule.category_relation),
@@ -320,9 +333,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       ),
       provider_order: source.provider_order || [],
       edition_rules: source.edition_rules || [],
-      naming_mode: source.naming_mode || 'mode_default',
+      naming_mode:
+        source.export_mode === 'variants' &&
+        ['canonical', 'template'].includes(source.naming_mode)
+          ? 'template'
+          : source.naming_mode || 'mode_default',
       name_template:
-        source.naming_mode === 'template' ? source.name_template || '' : '',
+        source.naming_mode === 'template'
+          ? source.name_template || ''
+          : source.naming_mode === 'canonical'
+            ? '{canonical}'
+            : '',
+      metadata_source: source.metadata_source || 'provider',
       category_rules: source.category_rules || [],
     };
     setDraft(nextDraft);
@@ -1081,7 +1103,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           {
                             value: 'variants',
                             label:
-                              'Provider data — every allowed provider source unchanged',
+                              'Variants — every allowed provider source as a separate entry',
                           },
                         ]}
                         value={draft.export_mode}
@@ -1089,6 +1111,79 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                           setDraft({ ...draft, export_mode: value })
                         }
                       />
+                      {draft.export_mode === 'variants' && (
+                        <>
+                          <Select
+                            label="Client metadata"
+                            description="Choose independently from the title shown for each source."
+                            data={[
+                              {
+                                value: 'canonical',
+                                label:
+                                  'Canonical / TMDB — use our enriched metadata',
+                              },
+                              {
+                                value: 'provider',
+                                label:
+                                  'Provider — keep the source metadata unchanged',
+                              },
+                            ]}
+                            value={draft.metadata_source}
+                            onChange={(value) =>
+                              setDraft({
+                                ...draft,
+                                metadata_source: value || 'canonical',
+                              })
+                            }
+                          />
+                          <Select
+                            label="Client title"
+                            data={[
+                              {
+                                value: 'provider',
+                                label:
+                                  'Provider title — keep the original name',
+                              },
+                              {
+                                value: 'template',
+                                label: 'Clean title — apply the output format',
+                              },
+                            ]}
+                            value={
+                              draft.naming_mode === 'template'
+                                ? 'template'
+                                : 'provider'
+                            }
+                            onChange={(value) =>
+                              setDraft({
+                                ...draft,
+                                naming_mode:
+                                  value === 'template'
+                                    ? 'template'
+                                    : 'provider',
+                                name_template:
+                                  value === 'template' && !draft.name_template
+                                    ? '{canonical}'
+                                    : draft.name_template,
+                              })
+                            }
+                          />
+                          {draft.naming_mode === 'template' && (
+                            <TextInput
+                              label="Output title format"
+                              description="Available: {canonical}, {title}, {year}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}"
+                              placeholder="{canonical}"
+                              value={draft.name_template}
+                              onChange={(event) =>
+                                setDraft({
+                                  ...draft,
+                                  name_template: event.currentTarget.value,
+                                })
+                              }
+                            />
+                          )}
+                        </>
+                      )}
                       <Group grow>
                         <Switch
                           label="Active"

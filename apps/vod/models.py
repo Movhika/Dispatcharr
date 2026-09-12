@@ -461,6 +461,10 @@ class VODAccessPolicy(models.Model):
         CANONICAL = "canonical", "Canonical title and edition"
         TEMPLATE = "template", "Custom template"
 
+    class MetadataSource(models.TextChoices):
+        PROVIDER = "provider", "Provider metadata"
+        CANONICAL = "canonical", "Canonical / TMDB metadata"
+
     name = models.CharField(max_length=255, unique=True)
     export_mode = models.CharField(
         max_length=10,
@@ -497,6 +501,15 @@ class VODAccessPolicy(models.Model):
         blank=True,
         default="{canonical} {edition}",
         help_text="Output title template used when naming_mode is template.",
+    )
+    metadata_source = models.CharField(
+        max_length=16,
+        choices=MetadataSource.choices,
+        default=MetadataSource.PROVIDER,
+        help_text=(
+            "Metadata projected to clients for variants output. Compact "
+            "always uses canonical metadata."
+        ),
     )
     users = models.ManyToManyField(
         settings.AUTH_USER_MODEL,

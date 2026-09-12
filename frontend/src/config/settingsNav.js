@@ -4,6 +4,7 @@ import {
   DatabaseBackup,
   DatabaseZap,
   FileOutput,
+  Gauge,
   Menu,
   Monitor,
   Network,
@@ -53,6 +54,9 @@ const BackupManager = lazy(
 );
 const VODMetadataSettingsForm = lazy(
   () => import('../components/forms/settings/VODMetadataSettingsForm.jsx')
+);
+const SystemResourcesPanel = lazy(
+  () => import('../components/forms/settings/SystemResourcesPanel.jsx')
 );
 
 // Component lives on each section so it can never drift out of sync with the
@@ -164,6 +168,12 @@ export const SETTINGS_GROUPS = [
         label: 'System Settings',
         icon: Settings2,
         Component: SystemSettingsForm,
+      },
+      {
+        id: 'system-resources',
+        label: 'Resources',
+        icon: Gauge,
+        Component: SystemResourcesPanel,
       },
       {
         id: 'user-limits',

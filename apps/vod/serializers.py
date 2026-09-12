@@ -442,7 +442,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
             "hard_constraints", "ranking", "provider_order", "edition_rules",
-            "naming_mode", "name_template", "users",
+            "naming_mode", "name_template", "metadata_source", "users",
             "category_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",

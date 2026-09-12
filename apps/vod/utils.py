@@ -19,7 +19,7 @@ def _first_text(*values):
 _CANONICAL_PREFIX_PATTERNS = (
     re.compile(r"^\s*[┃|]\s*[^┃|]{1,20}\s*[┃|]\s*"),
     re.compile(r"^\s*\[[A-Z0-9+._ -]{1,20}\]\s*", re.IGNORECASE),
-    re.compile(r"^\s*[A-Z0-9+._]{1,12}\s+-\s+"),
+    re.compile(r"^\s*[A-Z0-9+._-]{1,20}\s+-\s+"),
 )
 
 

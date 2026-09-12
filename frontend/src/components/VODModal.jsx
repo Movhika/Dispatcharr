@@ -133,6 +133,7 @@ const VODModal = ({
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [dataView, setDataView] = useState('primary');
   const [loadingProviders, setLoadingProviders] = useState(false);
   const providersRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
@@ -215,6 +216,7 @@ const VODModal = ({
       setProviders([]);
       setSelectedProvider(null);
       setEditingProvider(null);
+      setDataView('primary');
       setLoadingProviders(false);
     }
   }, [opened]);
@@ -311,14 +313,55 @@ const VODModal = ({
 
   if (!vod) return null;
 
-  // Use detailed data if available, otherwise use basic vod data
-  const displayVOD = detailedVOD
+  const tmdb = vod.tmdb || detailedVOD?.tmdb || {};
+  const primaryLanguage = tmdb.primary_language || tmdb.languages?.[0] || '';
+  const secondaryLanguage =
+    tmdb.secondary_language || tmdb.languages?.[1] || '';
+  const localized = tmdb.localized || {};
+  const localizedCanonical = (language) => {
+    const values = localized[language] || {};
+    return {
+      ...vod,
+      name: values.title || vod.name,
+      description: values.overview || vod.description,
+      genre:
+        (tmdb.genres || [])
+          .map((row) => row.name)
+          .filter(Boolean)
+          .join(', ') || vod.genre,
+      rating: tmdb.rating || vod.rating,
+      duration_secs:
+        (tmdb.runtime_minutes ? tmdb.runtime_minutes * 60 : null) ||
+        vod.duration_secs,
+      release_date: tmdb.release_date || '',
+      movie_image: vod.artwork_url || tmdb.poster_url || vod.movie_image || '',
+      backdrop_path: tmdb.backdrop_url
+        ? [tmdb.backdrop_url]
+        : vod.backdrop_path || [],
+      tmdb,
+      tmdb_id: tmdb.id || vod.tmdb_id,
+      imdb_id: tmdb.external_ids?.imdb_id || vod.imdb_id,
+      o_name: vod.o_name || '',
+    };
+  };
+  const providerIds = selectedProvider?.provider_external_ids || {};
+  const providerVOD = detailedVOD
     ? {
         ...detailedVOD,
-        name: allowSourceEditing ? detailedVOD.name : vod.name,
-        o_name: allowSourceEditing ? detailedVOD.o_name : '',
+        tmdb_id: providerIds.tmdb_id || '',
+        imdb_id: providerIds.imdb_id || '',
+        tmdb: {
+          id: providerIds.tmdb_id || '',
+          external_ids: { imdb_id: providerIds.imdb_id || '' },
+        },
       }
     : vod;
+  const displayVOD =
+    dataView === 'provider'
+      ? providerVOD
+      : localizedCanonical(
+          dataView === 'secondary' ? secondaryLanguage : primaryLanguage
+        );
 
   return (
     <>
@@ -395,6 +438,33 @@ const VODModal = ({
           {/* Modal content above backdrop */}
           <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
+              <Group justify="flex-end" pr="xl">
+                <Group gap={2} aria-label="Metadata source">
+                  <Button
+                    size="xs"
+                    variant={dataView === 'primary' ? 'filled' : 'default'}
+                    onClick={() => setDataView('primary')}
+                  >
+                    Primary{primaryLanguage ? ` · ${primaryLanguage}` : ''}
+                  </Button>
+                  {secondaryLanguage && (
+                    <Button
+                      size="xs"
+                      variant={dataView === 'secondary' ? 'filled' : 'default'}
+                      onClick={() => setDataView('secondary')}
+                    >
+                      Secondary · {secondaryLanguage}
+                    </Button>
+                  )}
+                  <Button
+                    size="xs"
+                    variant={dataView === 'provider' ? 'filled' : 'default'}
+                    onClick={() => setDataView('provider')}
+                  >
+                    Provider
+                  </Button>
+                </Group>
+              </Group>
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
                   <Loader size="xs" />
