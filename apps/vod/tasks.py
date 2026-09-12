@@ -62,7 +62,22 @@ VOD_PROFILE_FINGERPRINT_FIELDS = (
     "rating",
     "genre",
     "stream_icon",
+    "cover",
+    "cover_big",
+    "backdrop_path",
+    "trailer",
+    "youtube_trailer",
+    "director",
+    "actors",
+    "cast",
+    "crew",
+    "country",
+    "origin_country",
+    "age",
+    "age_rating",
 )
+
+VOD_PROVIDER_METADATA_SCHEMA = 2
 
 
 @shared_task
@@ -1252,6 +1267,17 @@ def _refresh_vod_content_impl(account_id):
             return "VOD refresh only available for XtreamCodes accounts"
 
         logger.info(f"Starting batch VOD refresh for account {account.name}")
+        # Include titles whose source may disappear during this scan. They can
+        # remain canonical through another provider and need their field-level
+        # provider projection recalculated after cleanup.
+        affected_movie_ids = set(
+            M3UMovieRelation.objects.filter(m3u_account_id=account_id)
+            .values_list("movie_id", flat=True)
+        )
+        affected_series_ids = set(
+            M3USeriesRelation.objects.filter(m3u_account_id=account_id)
+            .values_list("series_id", flat=True)
+        )
         start_time = timezone.now()
         progress_started_at = time.monotonic()
 
@@ -1356,6 +1382,7 @@ def _refresh_vod_content_impl(account_id):
         current_fingerprint = (
             hashlib.sha256(
                 (
+                    f"schema:{VOD_PROVIDER_METADATA_SCHEMA}|"
                     f"movie:{movie_fingerprint}|"
                     f"series:{series_fingerprint}"
                 ).encode("utf-8")
@@ -1377,6 +1404,38 @@ def _refresh_vod_content_impl(account_id):
             or not previous_fingerprint
             or previous_fingerprint != current_fingerprint
         )
+
+        if catalog_changed:
+            _send_vod_refresh_progress(
+                account_id,
+                started_at=progress_started_at,
+                phase="Merging provider metadata",
+                progress=98,
+            )
+            affected_movie_ids.update(
+                M3UMovieRelation.objects.filter(m3u_account_id=account_id)
+                .values_list("movie_id", flat=True)
+            )
+            affected_series_ids.update(
+                M3USeriesRelation.objects.filter(m3u_account_id=account_id)
+                .values_list("series_id", flat=True)
+            )
+            from .provider_metadata import (
+                reconcile_movie_provider_metadata,
+                reconcile_series_provider_metadata,
+            )
+
+            reconciled_movies = reconcile_movie_provider_metadata(
+                affected_movie_ids
+            )
+            reconciled_series = reconcile_series_provider_metadata(
+                affected_series_ids
+            )
+            logger.info(
+                "Reconciled canonical provider metadata for %d movies and %d series",
+                reconciled_movies,
+                reconciled_series,
+            )
 
         if current_fingerprint:
             updated_properties = {
@@ -3053,6 +3112,12 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
             from .metadata import sync_relation_declared_metadata
 
             sync_relation_declared_metadata(series_relation)
+            from .provider_metadata import reconcile_series_provider_metadata
+
+            if reconcile_series_provider_metadata([series_relation.series_id]):
+                from .catalog_cache import bump_catalog_generation
+
+                bump_catalog_generation(invalidate_selections=False)
 
     except Exception as e:
         logger.error(f"Error refreshing episodes for series {series.name}: {str(e)}")
@@ -3950,6 +4015,12 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                     from .metadata import sync_relation_declared_metadata
 
                     sync_relation_declared_metadata(relation)
+                    from .provider_metadata import reconcile_movie_provider_metadata
+
+                    if reconcile_movie_provider_metadata([relation.movie_id]):
+                        from .catalog_cache import bump_catalog_generation
+
+                        bump_catalog_generation(invalidate_selections=False)
                     return "Advanced source data refreshed; canonical override preserved."
 
                 # Update Movie fields if changed
@@ -4073,6 +4144,12 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                 from .metadata import sync_relation_declared_metadata
 
                 sync_relation_declared_metadata(relation)
+                from .provider_metadata import reconcile_movie_provider_metadata
+
+                if reconcile_movie_provider_metadata([relation.movie_id]):
+                    from .catalog_cache import bump_catalog_generation
+
+                    bump_catalog_generation(invalidate_selections=False)
 
         return "Advanced data refreshed."
     except Exception as e:

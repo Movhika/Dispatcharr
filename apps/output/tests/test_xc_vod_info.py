@@ -126,6 +126,12 @@ class XCGetVodInfoArtworkTests(TestCase):
             'release_date': '2020-06-01',
             'rating': 7.4,
             'genres': [{'id': 1, 'name': 'Drama'}],
+            'director': 'Curated Director',
+            'actors': 'Curated Actor',
+            'crew': 'Curated Producer (Producer)',
+            'country': 'United States of America',
+            'age_rating': 'PG-13',
+            'youtube_trailer': 'curated-trailer',
         }
         self.movie.save(update_fields=['display_name', 'tmdb_metadata'])
         self.relation.custom_properties = {
@@ -146,3 +152,9 @@ class XCGetVodInfoArtworkTests(TestCase):
         self.assertEqual(info['plot'], 'Curated plot')
         self.assertEqual(info['genre'], 'Drama')
         self.assertEqual(info['rating'], 7.4)
+        self.assertEqual(info['director'], 'Curated Director')
+        self.assertEqual(info['actors'], 'Curated Actor')
+        self.assertEqual(info['crew'], 'Curated Producer (Producer)')
+        self.assertEqual(info['country'], 'United States of America')
+        self.assertEqual(info['age'], 'PG-13')
+        self.assertEqual(info['youtube_trailer'], 'curated-trailer')

@@ -77,6 +77,37 @@ class TMDBMetadataTests(SimpleTestCase):
                 "original_language": "en",
                 "release_date": "2022-12-14",
                 "genres": [{"id": 878, "name": "Science Fiction"}],
+                "production_countries": [
+                    {"iso_3166_1": "US", "name": "United States of America"}
+                ],
+                "credits": {
+                    "cast": [{"name": "Sam Worthington"}, {"name": "Zoe Saldaña"}],
+                    "crew": [
+                        {"name": "James Cameron", "job": "Director"},
+                        {"name": "Someone Else", "job": "Producer"},
+                    ],
+                },
+                "videos": {
+                    "results": [
+                        {
+                            "site": "YouTube",
+                            "key": "trailer-key",
+                            "type": "Trailer",
+                            "official": True,
+                            "size": 1080,
+                        }
+                    ]
+                },
+                "release_dates": {
+                    "results": [
+                        {
+                            "iso_3166_1": "DE",
+                            "release_dates": [
+                                {"certification": "12", "type": 3}
+                            ],
+                        }
+                    ]
+                },
                 "poster_path": "/poster.jpg",
                 "backdrop_path": "/backdrop.jpg",
                 "external_ids": {
@@ -143,6 +174,36 @@ class TMDBMetadataTests(SimpleTestCase):
             "https://image.tmdb.org/t/p/w1280/backdrop.jpg",
         )
         self.assertEqual(metadata["external_ids"]["imdb_id"], "tt1630029")
+        self.assertEqual(metadata["director"], "James Cameron")
+        self.assertEqual(metadata["actors"], "Sam Worthington, Zoe Saldaña")
+        self.assertEqual(metadata["crew"], "Someone Else (Producer)")
+        self.assertEqual(metadata["country"], "United States of America")
+        self.assertEqual(metadata["youtube_trailer"], "trailer-key")
+        self.assertEqual(metadata["age_rating"], "12")
+
+    def test_detail_request_includes_richer_movie_metadata(self):
+        response = Mock(status_code=200, headers={})
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": 613911, "title": "Bliss"}
+        session = Mock()
+        session.get.return_value = response
+
+        Client("v3-api-key", session=session, min_interval=0).details(
+            "613911", "movie", ["de-DE", "en-US"], match_method="manual"
+        )
+
+        params = session.get.call_args.kwargs["params"]
+        appended = set(params["append_to_response"].split(","))
+        self.assertTrue(
+            {
+                "translations",
+                "external_ids",
+                "watch/providers",
+                "credits",
+                "videos",
+                "release_dates",
+            }.issubset(appended)
+        )
 
     def test_search_accepts_only_one_exact_title_and_year_match(self):
         response = Mock(status_code=200, headers={})

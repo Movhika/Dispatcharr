@@ -23,6 +23,7 @@ import {
   TabsList,
   TabsPanel,
   TabsTab,
+  Alert,
 } from '@mantine/core';
 import { Play, Copy } from 'lucide-react';
 import { copyToClipboard } from '../utils';
@@ -44,6 +45,7 @@ import { YouTubeTrailerModal } from './modals/YouTubeTrailerModal.jsx';
 import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import VODExternalIds from './VODExternalIds.jsx';
+import VODEnrichmentButton from './VODEnrichmentButton.jsx';
 
 const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
@@ -138,6 +140,12 @@ const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
         {displaySeries.cast && (
           <Text size="sm" c="dimmed">
             <strong>Cast:</strong> {displaySeries.cast}
+          </Text>
+        )}
+
+        {displaySeries.crew && (
+          <Text size="sm" c="dimmed">
+            <strong>Crew:</strong> {displaySeries.crew}
           </Text>
         )}
 
@@ -561,31 +569,59 @@ const SeriesModal = ({
     onMetadataChanged?.();
   };
 
+  const reloadAfterEnrichment = async () => {
+    const requestId = ++detailsRequestIdRef.current;
+    const details = await fetchSeriesInfo(
+      series.id,
+      selectedProvider?.id || null
+    );
+    if (detailsRequestIdRef.current === requestId) setDetailedSeries(details);
+    await onMetadataChanged?.();
+  };
+
   if (!series) return null;
 
-  const tmdb = series.tmdb || detailedSeries?.tmdb || {};
+  const tmdb = detailedSeries?.tmdb || series.tmdb || {};
   const primaryLanguage = tmdb.primary_language || tmdb.languages?.[0] || '';
   const secondaryLanguage =
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
-  const localizedCanonical = (language) => {
+  const metadataMatched = tmdb.status === 'matched';
+  const canonicalSeries = detailedSeries?.canonical || series;
+  const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
     return {
       ...series,
-      name: values.title || series.name,
-      description: values.overview || series.description,
+      ...canonicalSeries,
+      name: values.title || canonicalSeries.name || series.name,
+      description:
+        values.overview ||
+        (secondary ? '' : canonicalSeries.description || series.description),
       genre:
         (tmdb.genres || [])
           .map((row) => row.name)
           .filter(Boolean)
-          .join(', ') || series.genre,
-      rating: tmdb.rating || series.rating,
-      release_date: tmdb.release_date || '',
+          .join(', ') || canonicalSeries.genre || series.genre,
+      rating: tmdb.rating || canonicalSeries.rating || series.rating,
+      release_date: tmdb.release_date || canonicalSeries.release_date || '',
+      director: tmdb.director || canonicalSeries.director || '',
+      cast: tmdb.actors || canonicalSeries.cast || '',
+      crew: tmdb.crew || canonicalSeries.crew || '',
+      country: tmdb.country || canonicalSeries.country || '',
+      age: tmdb.age_rating || canonicalSeries.age || '',
+      youtube_trailer:
+        tmdb.youtube_trailer ||
+        canonicalSeries.youtube_trailer ||
+        '',
       series_image:
-        series.artwork_url || tmdb.poster_url || series.series_image || '',
+        series.artwork_url ||
+        tmdb.poster_url ||
+        canonicalSeries.movie_image ||
+        series.series_image ||
+        '',
       backdrop_path: tmdb.backdrop_url
         ? [tmdb.backdrop_url]
-        : series.backdrop_path || [],
+        : canonicalSeries.backdrop_path || series.backdrop_path || [],
       tmdb,
       tmdb_id: tmdb.id || series.tmdb_id,
       imdb_id: tmdb.external_ids?.imdb_id || series.imdb_id,
@@ -608,8 +644,13 @@ const SeriesModal = ({
     dataView === 'provider'
       ? providerSeries
       : localizedCanonical(
-          dataView === 'secondary' ? secondaryLanguage : primaryLanguage
+          dataView === 'secondary' ? secondaryLanguage : primaryLanguage,
+          dataView === 'secondary'
         );
+  const secondaryValues = localized[secondaryLanguage] || {};
+  const secondaryTranslationAvailable = Boolean(
+    secondaryValues.title || secondaryValues.overview || secondaryValues.tagline
+  );
 
   return (
     <>
@@ -688,16 +729,29 @@ const SeriesModal = ({
           {/* Modal content above backdrop */}
           <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
-              <Group justify="flex-end" pr="xl">
+              <Group justify="space-between" pr="xl">
+                {allowSourceEditing ? (
+                  <VODEnrichmentButton
+                    contentId={series.id}
+                    contentType="series"
+                    enriched={metadataMatched}
+                    onComplete={reloadAfterEnrichment}
+                  />
+                ) : (
+                  <Box />
+                )}
                 <Group gap={2} aria-label="Metadata source">
                   <Button
                     size="xs"
                     variant={dataView === 'primary' ? 'filled' : 'default'}
                     onClick={() => setDataView('primary')}
                   >
-                    Primary{primaryLanguage ? ` · ${primaryLanguage}` : ''}
+                    {metadataMatched ? 'Primary' : 'Canonical'}
+                    {metadataMatched && primaryLanguage
+                      ? ` · ${primaryLanguage}`
+                      : ''}
                   </Button>
-                  {secondaryLanguage && (
+                  {metadataMatched && secondaryLanguage && (
                     <Button
                       size="xs"
                       variant={dataView === 'secondary' ? 'filled' : 'default'}
@@ -715,6 +769,19 @@ const SeriesModal = ({
                   </Button>
                 </Group>
               </Group>
+              {dataView === 'primary' && !metadataMatched && (
+                <Alert color="blue" py="xs">
+                  A provider ID may already be known, but no TMDB detail record
+                  is stored yet. Use Enrich with TMDB to load localized data.
+                </Alert>
+              )}
+              {dataView === 'secondary' && !secondaryTranslationAvailable && (
+                <Alert color="yellow" py="xs">
+                  TMDB returned no separate {secondaryLanguage} translation for
+                  this title. Shared facts remain visible, but primary text is
+                  not copied into the secondary view.
+                </Alert>
+              )}
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
                   <Loader size="xs" />

@@ -12,7 +12,7 @@ import requests
 
 TMDB_API_ROOT = "https://api.themoviedb.org/3"
 TMDB_IMAGE_ROOT = "https://image.tmdb.org/t/p"
-TMDB_METADATA_SCHEMA = 3
+TMDB_METADATA_SCHEMA = 4
 
 
 class TMDBError(RuntimeError):
@@ -194,6 +194,95 @@ def image_url(path, size):
     return f"{TMDB_IMAGE_ROOT}/{size}/{path.lstrip('/')}" if path else ""
 
 
+def _person_names(rows, *, limit=20):
+    names = []
+    for row in rows or []:
+        name = str((row or {}).get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def _director_names(payload, media_type):
+    if media_type == "tv":
+        creators = _person_names(payload.get("created_by") or [], limit=10)
+        if creators:
+            return creators
+    crew = (payload.get("credits") or {}).get("crew") or []
+    return _person_names(
+        [row for row in crew if str(row.get("job") or "").lower() == "director"],
+        limit=10,
+    )
+
+
+def _crew_labels(payload, *, limit=20):
+    labels = []
+    for row in (payload.get("credits") or {}).get("crew") or []:
+        name = str(row.get("name") or "").strip()
+        job = str(row.get("job") or row.get("department") or "").strip()
+        if not name or job.lower() == "director":
+            continue
+        label = f"{name} ({job})" if job else name
+        if label not in labels:
+            labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _youtube_trailer(payload):
+    videos = (payload.get("videos") or {}).get("results") or []
+    candidates = [
+        row
+        for row in videos
+        if row.get("site") == "YouTube"
+        and row.get("key")
+        and row.get("type") in {"Trailer", "Teaser"}
+    ]
+    candidates.sort(
+        key=lambda row: (
+            row.get("type") != "Trailer",
+            not bool(row.get("official")),
+            -(int(row.get("size") or 0)),
+        )
+    )
+    return str(candidates[0].get("key") or "") if candidates else ""
+
+
+def _age_rating(payload, media_type, languages):
+    regions = [
+        language.partition("-")[2].upper()
+        for language in languages
+        if language.partition("-")[2]
+    ]
+    if media_type == "movie":
+        rows = (payload.get("release_dates") or {}).get("results") or []
+        for region in regions:
+            entry = next(
+                (row for row in rows if row.get("iso_3166_1") == region), None
+            )
+            if not entry:
+                continue
+            releases = entry.get("release_dates") or []
+            releases.sort(key=lambda row: row.get("type") != 3)
+            for release in releases:
+                certification = str(release.get("certification") or "").strip()
+                if certification:
+                    return certification
+    else:
+        rows = (payload.get("content_ratings") or {}).get("results") or []
+        for region in regions:
+            entry = next(
+                (row for row in rows if row.get("iso_3166_1") == region), None
+            )
+            rating = str((entry or {}).get("rating") or "").strip()
+            if rating:
+                return rating
+    return ""
+
+
 def normalize_details(payload, media_type, languages, *, match_method):
     title_key = "title" if media_type == "movie" else "name"
     date_key = "release_date" if media_type == "movie" else "first_air_date"
@@ -209,6 +298,18 @@ def normalize_details(payload, media_type, languages, *, match_method):
     }
     poster_path = payload.get("poster_path") or ""
     backdrop_path = payload.get("backdrop_path") or ""
+    director_names = _director_names(payload, media_type)
+    actor_names = _person_names(
+        (payload.get("credits") or {}).get("cast") or [], limit=20
+    )
+    crew_labels = _crew_labels(payload, limit=20)
+    countries = _person_names(payload.get("production_countries") or [], limit=20)
+    if not countries:
+        countries = [
+            str(country or "").strip()
+            for country in payload.get("origin_country") or []
+            if str(country or "").strip()
+        ]
     return {
         "schema": TMDB_METADATA_SCHEMA,
         "id": str(payload.get("id") or ""),
@@ -227,6 +328,13 @@ def normalize_details(payload, media_type, languages, *, match_method):
         "vote_count": payload.get("vote_count"),
         "popularity": payload.get("popularity"),
         "adult": bool(payload.get("adult", False)),
+        "age_rating": _age_rating(payload, media_type, languages),
+        "director": ", ".join(director_names),
+        "actors": ", ".join(actor_names),
+        "crew": ", ".join(crew_labels),
+        "countries": countries,
+        "country": ", ".join(countries),
+        "youtube_trailer": _youtube_trailer(payload),
         "genres": [
             {"id": row.get("id"), "name": row.get("name") or ""}
             for row in payload.get("genres") or []
@@ -388,10 +496,19 @@ class Client:
 
     def details(self, tmdb_id, media_type, languages, *, match_method):
         languages = normalize_languages(languages)
+        media_path = "movie" if media_type == "movie" else "tv"
+        appended = [
+            "translations",
+            "external_ids",
+            "watch/providers",
+            "credits",
+            "videos",
+            "release_dates" if media_type == "movie" else "content_ratings",
+        ]
         payload = self.get(
-            f"{'movie' if media_type == 'movie' else 'tv'}/{tmdb_id}",
+            f"{media_path}/{tmdb_id}",
             language=languages[0],
-            append_to_response="translations,external_ids,watch/providers",
+            append_to_response=",".join(appended),
         )
         return normalize_details(
             payload,

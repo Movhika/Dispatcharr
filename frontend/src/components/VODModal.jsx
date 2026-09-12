@@ -11,6 +11,7 @@ import {
   Loader,
   Stack,
   Modal,
+  Alert,
 } from '@mantine/core';
 import { Play } from 'lucide-react';
 import { copyToClipboard } from '../utils';
@@ -26,6 +27,7 @@ import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import { getMovieStreamUrl } from '../utils/components/VODModalUtils.js';
 import VODExternalIds from './VODExternalIds.jsx';
+import VODEnrichmentButton from './VODEnrichmentButton.jsx';
 
 const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
   return (
@@ -78,6 +80,12 @@ const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
       {displayVOD.actors && (
         <Text size="sm" c="dimmed">
           <strong>Cast:</strong> {displayVOD.actors}
+        </Text>
+      )}
+
+      {displayVOD.crew && (
+        <Text size="sm" c="dimmed">
+          <strong>Crew:</strong> {displayVOD.crew}
         </Text>
       )}
 
@@ -311,33 +319,63 @@ const VODModal = ({
     onMetadataChanged?.();
   };
 
+  const reloadAfterEnrichment = async () => {
+    const requestId = ++detailsRequestIdRef.current;
+    const details = await fetchMovieDetailsFromProvider(
+      vod.id,
+      selectedProvider?.id || null
+    );
+    if (detailsRequestIdRef.current === requestId) setDetailedVOD(details);
+    await onMetadataChanged?.();
+  };
+
   if (!vod) return null;
 
-  const tmdb = vod.tmdb || detailedVOD?.tmdb || {};
+  const tmdb = detailedVOD?.tmdb || vod.tmdb || {};
   const primaryLanguage = tmdb.primary_language || tmdb.languages?.[0] || '';
   const secondaryLanguage =
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
-  const localizedCanonical = (language) => {
+  const metadataMatched = tmdb.status === 'matched';
+  const canonicalVOD = detailedVOD?.canonical || vod;
+  const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
     return {
       ...vod,
-      name: values.title || vod.name,
-      description: values.overview || vod.description,
+      ...canonicalVOD,
+      name: values.title || canonicalVOD.name || vod.name,
+      description:
+        values.overview ||
+        (secondary ? '' : canonicalVOD.description || vod.description),
       genre:
         (tmdb.genres || [])
           .map((row) => row.name)
           .filter(Boolean)
-          .join(', ') || vod.genre,
-      rating: tmdb.rating || vod.rating,
+          .join(', ') || canonicalVOD.genre || vod.genre,
+      rating: tmdb.rating || canonicalVOD.rating || vod.rating,
       duration_secs:
         (tmdb.runtime_minutes ? tmdb.runtime_minutes * 60 : null) ||
+        canonicalVOD.duration_secs ||
         vod.duration_secs,
-      release_date: tmdb.release_date || '',
-      movie_image: vod.artwork_url || tmdb.poster_url || vod.movie_image || '',
+      release_date: tmdb.release_date || canonicalVOD.release_date || '',
+      director: tmdb.director || canonicalVOD.director || '',
+      actors: tmdb.actors || canonicalVOD.actors || '',
+      crew: tmdb.crew || canonicalVOD.crew || '',
+      country: tmdb.country || canonicalVOD.country || '',
+      age: tmdb.age_rating || canonicalVOD.age || '',
+      youtube_trailer:
+        tmdb.youtube_trailer ||
+        canonicalVOD.youtube_trailer ||
+        '',
+      movie_image:
+        vod.artwork_url ||
+        tmdb.poster_url ||
+        canonicalVOD.movie_image ||
+        vod.movie_image ||
+        '',
       backdrop_path: tmdb.backdrop_url
         ? [tmdb.backdrop_url]
-        : vod.backdrop_path || [],
+        : canonicalVOD.backdrop_path || vod.backdrop_path || [],
       tmdb,
       tmdb_id: tmdb.id || vod.tmdb_id,
       imdb_id: tmdb.external_ids?.imdb_id || vod.imdb_id,
@@ -360,8 +398,13 @@ const VODModal = ({
     dataView === 'provider'
       ? providerVOD
       : localizedCanonical(
-          dataView === 'secondary' ? secondaryLanguage : primaryLanguage
+          dataView === 'secondary' ? secondaryLanguage : primaryLanguage,
+          dataView === 'secondary'
         );
+  const secondaryValues = localized[secondaryLanguage] || {};
+  const secondaryTranslationAvailable = Boolean(
+    secondaryValues.title || secondaryValues.overview || secondaryValues.tagline
+  );
 
   return (
     <>
@@ -438,16 +481,29 @@ const VODModal = ({
           {/* Modal content above backdrop */}
           <Box p="md" pt="xl" style={{ position: 'relative', zIndex: 2 }}>
             <Stack spacing="md">
-              <Group justify="flex-end" pr="xl">
+              <Group justify="space-between" pr="xl">
+                {allowSourceEditing ? (
+                  <VODEnrichmentButton
+                    contentId={vod.id}
+                    contentType="movie"
+                    enriched={metadataMatched}
+                    onComplete={reloadAfterEnrichment}
+                  />
+                ) : (
+                  <Box />
+                )}
                 <Group gap={2} aria-label="Metadata source">
                   <Button
                     size="xs"
                     variant={dataView === 'primary' ? 'filled' : 'default'}
                     onClick={() => setDataView('primary')}
                   >
-                    Primary{primaryLanguage ? ` · ${primaryLanguage}` : ''}
+                    {metadataMatched ? 'Primary' : 'Canonical'}
+                    {metadataMatched && primaryLanguage
+                      ? ` · ${primaryLanguage}`
+                      : ''}
                   </Button>
-                  {secondaryLanguage && (
+                  {metadataMatched && secondaryLanguage && (
                     <Button
                       size="xs"
                       variant={dataView === 'secondary' ? 'filled' : 'default'}
@@ -465,6 +521,19 @@ const VODModal = ({
                   </Button>
                 </Group>
               </Group>
+              {dataView === 'primary' && !metadataMatched && (
+                <Alert color="blue" py="xs">
+                  A provider ID may already be known, but no TMDB detail record
+                  is stored yet. Use Enrich with TMDB to load localized data.
+                </Alert>
+              )}
+              {dataView === 'secondary' && !secondaryTranslationAvailable && (
+                <Alert color="yellow" py="xs">
+                  TMDB returned no separate {secondaryLanguage} translation for
+                  this title. Shared facts remain visible, but primary text is
+                  not copied into the secondary view.
+                </Alert>
+              )}
               {loadingDetails && (
                 <Group spacing="xs" mb={8}>
                   <Loader size="xs" />

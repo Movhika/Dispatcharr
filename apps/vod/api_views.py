@@ -115,8 +115,39 @@ def _tmdb_content_payload(content):
         "runtime_minutes": metadata.get("runtime_minutes"),
         "rating": metadata.get("rating"),
         "genres": metadata.get("genres") or [],
+        "director": metadata.get("director") or "",
+        "actors": metadata.get("actors") or "",
+        "crew": metadata.get("crew") or "",
+        "country": metadata.get("country") or "",
+        "age_rating": metadata.get("age_rating") or "",
+        "youtube_trailer": metadata.get("youtube_trailer") or "",
         "poster_url": metadata.get("poster_url") or "",
         "backdrop_url": metadata.get("backdrop_url") or "",
+    }
+
+
+def _canonical_provider_payload(content):
+    """Provider-derived fields stored on the shared canonical title."""
+    properties = content.custom_properties or {}
+    actors = properties.get("actors") or properties.get("cast") or ""
+    return {
+        "id": content.id,
+        "name": content.display_name or content.name,
+        "description": content.description or "",
+        "year": content.year,
+        "rating": content.rating or "",
+        "genre": content.genre or "",
+        "duration_secs": getattr(content, "duration_secs", None),
+        "release_date": properties.get("release_date") or "",
+        "director": properties.get("director") or "",
+        "actors": actors,
+        "cast": actors,
+        "crew": properties.get("crew") or "",
+        "country": properties.get("country") or "",
+        "age": properties.get("age") or "",
+        "youtube_trailer": properties.get("youtube_trailer") or "",
+        "backdrop_path": properties.get("backdrop_path") or [],
+        "movie_image": properties.get("movie_image") or "",
     }
 
 
@@ -2888,6 +2919,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
         else:
             movie_image = ''
         tmdb = _tmdb_content_payload(movie)
+        canonical = _canonical_provider_payload(movie)
 
         # Build response with available data
         response_data = {
@@ -2911,6 +2943,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
                 or info.get('imdb_id', '')
             ),
             'tmdb': tmdb,
+            'canonical': canonical,
             'youtube_trailer': (movie.custom_properties or {}).get('youtube_trailer') or info.get('youtube_trailer') or info.get('trailer', ''),
             'duration_secs': movie.duration_secs or info.get('duration_secs'),
             'age': info.get('age', ''),
@@ -3219,6 +3252,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
             else:
                 cover = None
             tmdb = _tmdb_content_payload(series)
+            canonical = _canonical_provider_payload(series)
 
             response_data = {
                 'id': series.id,
@@ -3231,6 +3265,7 @@ class SeriesViewSet(viewsets.ReadOnlyModelViewSet):
                 'tmdb_id': tmdb['id'],
                 'imdb_id': tmdb['external_ids']['imdb_id'],
                 'tmdb': tmdb,
+                'canonical': canonical,
                 'category_id': relation.category.id if relation.category else None,
                 'category_name': relation.category.name if relation.category else None,
                 'cover': cover,

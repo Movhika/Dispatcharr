@@ -1184,6 +1184,7 @@ def _xc_curated_object_values(content):
     rating = metadata.get("rating")
     if rating in (None, ""):
         rating = content.rating
+    provider_properties = content.custom_properties or {}
     return {
         "title": str(localized_values.get("title") or content.display_name or "").strip(),
         "overview": str(
@@ -1197,6 +1198,33 @@ def _xc_curated_object_values(content):
         "rating": rating,
         "runtime": metadata.get("runtime_minutes"),
         "genre": _xc_genre_names(metadata.get("genres")) or content.genre or "",
+        "director": (
+            metadata.get("director")
+            or provider_properties.get("director")
+            or ""
+        ),
+        "actors": (
+            metadata.get("actors")
+            or provider_properties.get("actors")
+            or provider_properties.get("cast")
+            or ""
+        ),
+        "crew": metadata.get("crew") or provider_properties.get("crew") or "",
+        "country": (
+            metadata.get("country")
+            or provider_properties.get("country")
+            or ""
+        ),
+        "age_rating": (
+            metadata.get("age_rating")
+            or provider_properties.get("age")
+            or ""
+        ),
+        "youtube_trailer": (
+            metadata.get("youtube_trailer")
+            or provider_properties.get("youtube_trailer")
+            or ""
+        ),
     }
 
 
@@ -2062,6 +2090,9 @@ def xc_get_series_info(request, user, series_id):
         'rating': series.rating or '0',
         'cast': '',
         'director': '',
+        'crew': '',
+        'country': '',
+        'age': '',
         'youtube_trailer': '',
         'episode_run_time': '',
         'backdrop_path': [],
@@ -2115,6 +2146,12 @@ def xc_get_series_info(request, user, series_id):
             genre=curated["genre"],
             rating=curated["rating"],
             episode_run_time=curated["runtime"] or series_data["episode_run_time"],
+            cast=curated["actors"],
+            director=curated["director"],
+            crew=curated["crew"],
+            country=curated["country"],
+            age=curated["age_rating"],
+            youtube_trailer=curated["youtube_trailer"],
         )
 
     seasons_list = [
@@ -2172,6 +2209,9 @@ def xc_get_series_info(request, user, series_id):
             "plot": series_data['description'],
             "cast": series_data['cast'],
             "director": series_data['director'],
+            "crew": series_data['crew'],
+            "country": series_data['country'],
+            "age": series_data['age'],
             "genre": series_data['genre'],
             "release_date": (
                 curated["release_date"]
@@ -2275,7 +2315,9 @@ def xc_get_vod_info(request, user, vod_id):
         'imdb_id': movie.imdb_id or '',
         'director': '',
         'actors': '',
+        'crew': '',
         'country': '',
+        'age': '',
         'release_date': '',
         'youtube_trailer': '',
         'backdrop_path': [],
@@ -2347,6 +2389,12 @@ def xc_get_vod_info(request, user, vod_id):
             genre=curated["genre"],
             rating=curated["rating"],
             release_date=curated["release_date"] or movie_data["release_date"],
+            director=curated["director"],
+            actors=curated["actors"],
+            crew=curated["crew"],
+            country=curated["country"],
+            age=curated["age_rating"],
+            youtube_trailer=curated["youtube_trailer"],
         )
 
     # Real XC servers return the same URL for cover_big and movie_image, so both
@@ -2404,7 +2452,9 @@ def xc_get_vod_info(request, user, vod_id):
             'director': movie_data.get('director', ''),
             'actors': movie_data.get('actors', ''),
             'cast': movie_data.get('actors', ''),
+            'crew': movie_data.get('crew', ''),
             'country': movie_data.get('country', ''),
+            'age': movie_data.get('age', ''),
             'rating': movie_data.get('rating', 0),
             'imdb_id': (
                 (movie.tmdb_metadata or {}).get('imdb_id')

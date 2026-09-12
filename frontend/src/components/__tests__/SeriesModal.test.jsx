@@ -45,6 +45,7 @@ vi.mock('lucide-react', () => ({
   Copy: () => <div data-testid="copy-icon" />,
   Check: () => <div data-testid="check-icon" />,
   Wrench: () => <div data-testid="wrench-icon" />,
+  DatabaseZap: () => <div data-testid="database-zap-icon" />,
 }));
 
 // Mock Mantine components
@@ -522,7 +523,7 @@ describe('SeriesModal', () => {
       );
 
       await waitFor(() => {
-        const link = screen.getByText(/TMDB/i).closest('a');
+        const link = screen.getByRole('link', { name: 'TMDb' });
         expect(link).toHaveAttribute(
           'href',
           'https://www.themoviedb.org/tv/12345'
