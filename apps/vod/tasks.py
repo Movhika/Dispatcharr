@@ -141,6 +141,48 @@ def _tmdb_content_signature(base_signature, content):
     ).hexdigest()
 
 
+def _filter_manual_tmdb_selection(queryset, media_type, filters):
+    """Apply the small canonical filter set used by the metadata dialog."""
+    filters = filters if isinstance(filters, dict) else {}
+    content_type = str(filters.get("type") or "all")
+    if (
+        (content_type == "movies" and media_type != "movie")
+        or (content_type == "series" and media_type != "tv")
+    ):
+        return queryset.none()
+
+    search = str(filters.get("search") or "").strip()
+    if search:
+        queryset = queryset.filter(
+            Q(display_name__icontains=search)
+            | (
+                (Q(display_name="") | Q(display_name__isnull=True))
+                & Q(name__icontains=search)
+            )
+        )
+
+    metadata_status = str(filters.get("metadata_status") or "").strip()
+    missing_tmdb = Q(tmdb_match_id="") & (
+        Q(tmdb_id__isnull=True) | Q(tmdb_id="")
+    )
+    if metadata_status == "missing_tmdb":
+        queryset = queryset.filter(missing_tmdb)
+    elif metadata_status == "missing_external_ids":
+        queryset = queryset.filter(
+            missing_tmdb,
+            Q(tmdb_imdb_id=""),
+            Q(imdb_id__isnull=True) | Q(imdb_id=""),
+        ).filter(
+            Q(tmdb_metadata__external_ids__tvdb_id__isnull=True)
+            | Q(tmdb_metadata__external_ids__tvdb_id=""),
+            Q(tmdb_metadata__external_ids__wikidata_id__isnull=True)
+            | Q(tmdb_metadata__external_ids__wikidata_id=""),
+        )
+    elif metadata_status == "missing_metadata":
+        queryset = queryset.exclude(tmdb_status="matched")
+    return queryset
+
+
 def _set_tmdb_state(status, *, task_id=None, progress=None, error=None, **dates):
     from .models import VODMetadataState
 
@@ -162,6 +204,9 @@ def enqueue_tmdb_enrichment(
     trigger_reason="Manual TMDB metadata refresh",
     movie_ids=None,
     series_ids=None,
+    selection_filters=None,
+    exclude_movie_ids=None,
+    exclude_series_ids=None,
 ):
     """Publish at most one durable global enrichment task."""
     from .models import VODMetadataState
@@ -211,6 +256,9 @@ def enqueue_tmdb_enrichment(
                     trigger_reason=trigger_reason,
                     movie_ids=movie_ids,
                     series_ids=series_ids,
+                    selection_filters=selection_filters,
+                    exclude_movie_ids=exclude_movie_ids,
+                    exclude_series_ids=exclude_series_ids,
                 )
                 VODMetadataState.objects.filter(
                     pk=1,
@@ -299,6 +347,9 @@ def enrich_vod_metadata(
     trigger_reason="Manual TMDB metadata refresh",
     movie_ids=None,
     series_ids=None,
+    selection_filters=None,
+    exclude_movie_ids=None,
+    exclude_series_ids=None,
 ):
     """Enrich canonical movies and series in one resumable TMDB batch."""
     from core.models import CoreSettings
@@ -364,6 +415,15 @@ def enrich_vod_metadata(
             selected_ids = movie_ids if media_type == "movie" else series_ids
             if selected_ids is not None:
                 queryset = queryset.filter(id__in=selected_ids)
+            if selection_filters is not None:
+                queryset = _filter_manual_tmdb_selection(
+                    queryset, media_type, selection_filters
+                )
+            excluded_ids = (
+                exclude_movie_ids if media_type == "movie" else exclude_series_ids
+            )
+            if excluded_ids:
+                queryset = queryset.exclude(id__in=excluded_ids)
             for content in queryset.iterator(chunk_size=1000):
                 signature = _tmdb_content_signature(base_signature, content)
                 if force or content["tmdb_enrichment_signature"] != signature:

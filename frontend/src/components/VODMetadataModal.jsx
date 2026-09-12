@@ -58,6 +58,8 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   const [metadataStatus, setMetadataStatus] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(new Set());
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const [excluded, setExcluded] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingSettings, setEditingSettings] = useState(false);
@@ -133,18 +135,38 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
     return () => window.clearInterval(timer);
   }, [loadRows, onUpdated, opened, running]);
 
-  useEffect(() => setSelected(new Set()), [metadataStatus, page, search, type]);
+  useEffect(() => {
+    setSelected(new Set());
+    setAllMatchingSelected(false);
+    setExcluded(new Set());
+  }, [metadataStatus, search, type]);
   useEffect(() => {
     setTitlePreview({});
     setTitleRuleError('');
   }, [page, rows]);
   const rowKey = (row) => `${row.content_type}:${row.id}`;
-  const selectedRows = useMemo(
-    () => rows.filter((row) => selected.has(rowKey(row))),
-    [rows, selected]
+  const selectionFromKey = (key) => {
+    const [contentType, id] = key.split(':');
+    return { id: Number(id), content_type: contentType };
+  };
+  const explicitSelection = useMemo(
+    () => Array.from(selected, selectionFromKey),
+    [selected]
   );
+  const excludedSelection = useMemo(
+    () => Array.from(excluded, selectionFromKey),
+    [excluded]
+  );
+  const isRowSelected = (row) =>
+    allMatchingSelected
+      ? !excluded.has(rowKey(row))
+      : selected.has(rowKey(row));
   const allPageSelected =
-    rows.length > 0 && selectedRows.length === rows.length;
+    rows.length > 0 && rows.every((row) => isRowSelected(row));
+  const selectedPageCount = rows.filter((row) => isRowSelected(row)).length;
+  const selectedCount = allMatchingSelected
+    ? Math.max(0, total - excluded.size)
+    : selected.size;
   const titleRulesValid = titleRules.every((rule) => rule.pattern.trim());
   const titleRulesDirty =
     rulesFingerprint(titleRules) !== rulesFingerprint(savedTitleRules);
@@ -223,16 +245,29 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
     }
   };
 
-  const startRefresh = async (selection) => {
+  const startRefresh = async () => {
     setRefreshing(true);
     try {
-      await API.refreshVODMetadata(
-        selection.map((row) => ({ id: row.id, content_type: row.content_type }))
-      );
+      if (allMatchingSelected) {
+        await API.refreshVODMetadata([], {
+          select_all: true,
+          exclude_selections: excludedSelection,
+          filters: {
+            type,
+            search: search.trim(),
+            metadata_status: metadataStatus,
+          },
+        });
+      } else {
+        await API.refreshVODMetadata(explicitSelection);
+      }
       await loadStatus();
+      setSelected(new Set());
+      setAllMatchingSelected(false);
+      setExcluded(new Set());
       showNotification({
         title: 'TMDB enrichment started',
-        message: `${selection.length} selected canonical titles will be refreshed.`,
+        message: `${selectedCount} selected canonical titles will be refreshed.`,
         color: 'green',
       });
     } catch (error) {
@@ -247,15 +282,13 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   };
 
   const resetSelected = async () => {
-    if (!resetMode || selectedRows.length === 0) return;
+    if (!resetMode || allMatchingSelected || explicitSelection.length === 0)
+      return;
     setResetting(true);
     try {
       await API.resetVODMetadata(
         resetMode,
-        selectedRows.map((row) => ({
-          id: row.id,
-          content_type: row.content_type,
-        }))
+        explicitSelection
       );
       setResetMode('');
       setSelected(new Set());
@@ -359,11 +392,11 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
             <Button
               variant="default"
               leftSection={<RefreshCw size={16} />}
-              disabled={running || selectedRows.length === 0}
+              disabled={running || selectedCount === 0}
               loading={refreshing}
-              onClick={() => startRefresh(selectedRows)}
+              onClick={startRefresh}
             >
-              Enrich selected ({selectedRows.length})
+              Enrich selected ({selectedCount})
             </Button>
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
@@ -371,7 +404,15 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
                   variant="default"
                   leftSection={<RotateCcw size={16} />}
                   disabled={
-                    running || resetting || selectedRows.length === 0
+                    running ||
+                    resetting ||
+                    allMatchingSelected ||
+                    explicitSelection.length === 0
+                  }
+                  title={
+                    allMatchingSelected
+                      ? 'Reload metadata in explicit batches; select-all enrichment is processed separately in the background.'
+                      : undefined
                   }
                 >
                   Reload selected
@@ -598,6 +639,46 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
           </Stack>
         )}
 
+        {allPageSelected && total > rows.length && (
+          <Group justify="center" gap="xs">
+            {allMatchingSelected ? (
+              <>
+                <Text size="sm">
+                  All {selectedCount} matching canonical titles are selected.
+                </Text>
+                <Button
+                  variant="subtle"
+                  size="compact-sm"
+                  onClick={() => {
+                    setAllMatchingSelected(false);
+                    setSelected(new Set());
+                    setExcluded(new Set());
+                  }}
+                >
+                  Clear selection
+                </Button>
+              </>
+            ) : (
+              <>
+                <Text size="sm">
+                  All {rows.length} titles on this page are selected.
+                </Text>
+                <Button
+                  variant="subtle"
+                  size="compact-sm"
+                  onClick={() => {
+                    setAllMatchingSelected(true);
+                    setSelected(new Set());
+                    setExcluded(new Set());
+                  }}
+                >
+                  Select all {total} matching titles
+                </Button>
+              </>
+            )}
+          </Group>
+        )}
+
         <Table withTableBorder striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -606,14 +687,32 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
                   aria-label="Select this page"
                   checked={allPageSelected}
                   indeterminate={
-                    selectedRows.length > 0 && selectedRows.length < rows.length
+                    selectedPageCount > 0 && selectedPageCount < rows.length
                   }
                   onChange={(event) =>
-                    setSelected(
-                      event.currentTarget.checked
-                        ? new Set(rows.map(rowKey))
-                        : new Set()
-                    )
+                    event.currentTarget.checked
+                      ? allMatchingSelected
+                        ? setExcluded((current) => {
+                            const next = new Set(current);
+                            rows.forEach((row) => next.delete(rowKey(row)));
+                            return next;
+                          })
+                        : setSelected((current) => {
+                            const next = new Set(current);
+                            rows.forEach((row) => next.add(rowKey(row)));
+                            return next;
+                          })
+                      : allMatchingSelected
+                        ? setExcluded((current) => {
+                            const next = new Set(current);
+                            rows.forEach((row) => next.add(rowKey(row)));
+                            return next;
+                          })
+                        : setSelected((current) => {
+                            const next = new Set(current);
+                            rows.forEach((row) => next.delete(rowKey(row)));
+                            return next;
+                          })
                   }
                 />
               </Table.Th>
@@ -640,15 +739,24 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
                   <Table.Td>
                     <Checkbox
                       aria-label={`Select ${row.name}`}
-                      checked={selected.has(rowKey(row))}
+                      checked={isRowSelected(row)}
                       onChange={(event) => {
                         const checked = event.currentTarget.checked;
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          if (checked) next.add(rowKey(row));
-                          else next.delete(rowKey(row));
-                          return next;
-                        });
+                        if (allMatchingSelected) {
+                          setExcluded((current) => {
+                            const next = new Set(current);
+                            if (checked) next.delete(rowKey(row));
+                            else next.add(rowKey(row));
+                            return next;
+                          });
+                        } else {
+                          setSelected((current) => {
+                            const next = new Set(current);
+                            if (checked) next.add(rowKey(row));
+                            else next.delete(rowKey(row));
+                            return next;
+                          });
+                        }
                       }}
                     />
                   </Table.Td>
@@ -736,7 +844,7 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
               Cancel
             </Button>
             <Button loading={resetting} onClick={resetSelected}>
-              Reload {selectedRows.length} selected
+              Reload {explicitSelection.length} selected
             </Button>
           </Group>
         </Stack>

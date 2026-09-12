@@ -1565,10 +1565,10 @@ export default class API {
     });
   }
 
-  static async refreshVODMetadata(selections = []) {
+  static async refreshVODMetadata(selections = [], options = {}) {
     return await request(`${host}/api/vod/metadata/refresh/`, {
       method: 'POST',
-      body: { selections },
+      body: { selections, ...options },
     });
   }
 

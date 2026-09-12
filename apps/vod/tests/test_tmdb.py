@@ -302,6 +302,49 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("selections", response.data)
 
+    @patch("apps.vod.tasks.enqueue_tmdb_enrichment")
+    def test_manual_enrichment_can_select_all_matching_server_side(self, enqueue):
+        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        enqueue.return_value = {
+            "queued": True,
+            "task_id": "task",
+            "status": "queued",
+        }
+        request = self.factory.post(
+            "/api/vod/metadata/refresh/",
+            {
+                "select_all": True,
+                "selections": [],
+                "exclude_selections": [
+                    {"id": 9, "content_type": "movie"}
+                ],
+                "filters": {
+                    "type": "movies",
+                    "search": "Bliss",
+                    "metadata_status": "missing_metadata",
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "refresh"})(request)
+
+        self.assertEqual(response.status_code, 202)
+        enqueue.assert_called_once_with(
+            trigger_reason="Manual TMDB metadata refresh",
+            force=True,
+            movie_ids=None,
+            series_ids=None,
+            selection_filters={
+                "type": "movies",
+                "search": "Bliss",
+                "metadata_status": "missing_metadata",
+            },
+            exclude_movie_ids=[9],
+            exclude_series_ids=[],
+        )
+
     def test_api_key_only_update_preserves_library_metadata_preferences(self):
         CoreSettings.set_vod_metadata_settings(
             api_token="old-secret",

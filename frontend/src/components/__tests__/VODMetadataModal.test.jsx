@@ -186,6 +186,29 @@ describe('VODMetadataModal', () => {
     );
   });
 
+  it('enriches every canonical title matching the active filters', async () => {
+    API.getAllContent.mockResolvedValue({ ...contentResponse, count: 100 });
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+    await screen.findAllByText('Bliss');
+    fireEvent.click(screen.getByLabelText('Select this page'));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Select all 100 matching titles',
+      })
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Enrich selected (100)' })
+    );
+
+    await waitFor(() =>
+      expect(API.refreshVODMetadata).toHaveBeenCalledWith([], {
+        select_all: true,
+        exclude_selections: [],
+        filters: { type: 'all', search: '', metadata_status: '' },
+      })
+    );
+  });
+
   it('shows durable progress and disables refresh while active', async () => {
     API.getVODMetadataStatus.mockResolvedValue({
       ...statusResponse,

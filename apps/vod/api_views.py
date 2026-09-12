@@ -1457,26 +1457,72 @@ class VODMetadataViewSet(viewsets.ViewSet):
             raise DRFValidationError(
                 {"api_token": "Configure a TMDB API read access token first."}
             )
+        select_all = request.data.get("select_all") is True
         selections = request.data.get("selections") or []
-        if not isinstance(selections, list) or not 1 <= len(selections) <= 500:
+        exclusions = request.data.get("exclude_selections") or []
+        if not isinstance(selections, list) or not isinstance(exclusions, list):
+            raise DRFValidationError({"selections": "Invalid selection."})
+        if select_all:
+            if selections or len(exclusions) > 500:
+                raise DRFValidationError(
+                    {
+                        "selections": (
+                            "Select-all accepts at most 500 explicitly excluded "
+                            "canonical titles."
+                        )
+                    }
+                )
+        elif not 1 <= len(selections) <= 500:
             raise DRFValidationError(
                 {"selections": "Choose between 1 and 500 canonical titles."}
             )
-        movie_ids = []
-        series_ids = []
-        for row in selections:
-            if not isinstance(row, dict):
-                raise DRFValidationError({"selections": "Invalid selection."})
-            try:
-                content_id = int(row.get("id"))
-            except (TypeError, ValueError):
-                raise DRFValidationError({"selections": "Invalid content ID."})
-            target = movie_ids if row.get("content_type") == "movie" else (
-                series_ids if row.get("content_type") == "series" else None
-            )
-            if target is None:
-                raise DRFValidationError({"selections": "Invalid content type."})
-            target.append(content_id)
+
+        def selection_ids(rows):
+            movie_ids = []
+            series_ids = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise DRFValidationError(
+                        {"selections": "Invalid selection."}
+                    )
+                try:
+                    content_id = int(row.get("id"))
+                except (TypeError, ValueError) as exc:
+                    raise DRFValidationError(
+                        {"selections": "Invalid content ID."}
+                    ) from exc
+                target = movie_ids if row.get("content_type") == "movie" else (
+                    series_ids if row.get("content_type") == "series" else None
+                )
+                if target is None:
+                    raise DRFValidationError(
+                        {"selections": "Invalid content type."}
+                    )
+                target.append(content_id)
+            return movie_ids, series_ids
+
+        movie_ids, series_ids = selection_ids(selections)
+        exclude_movie_ids, exclude_series_ids = selection_ids(exclusions)
+        selection_filters = None
+        if select_all:
+            filters = request.data.get("filters")
+            filters = filters if isinstance(filters, dict) else {}
+            content_type = str(filters.get("type") or "all")
+            metadata_status = str(filters.get("metadata_status") or "")
+            if content_type not in {"all", "movies", "series"}:
+                raise DRFValidationError({"filters": "Invalid content type."})
+            if metadata_status not in {
+                "",
+                "missing_tmdb",
+                "missing_external_ids",
+                "missing_metadata",
+            }:
+                raise DRFValidationError({"filters": "Invalid metadata state."})
+            selection_filters = {
+                "type": content_type,
+                "search": str(filters.get("search") or "").strip()[:255],
+                "metadata_status": metadata_status,
+            }
 
         from .tasks import enqueue_tmdb_enrichment
 
@@ -1493,8 +1539,11 @@ class VODMetadataViewSet(viewsets.ViewSet):
         result = enqueue_tmdb_enrichment(
             trigger_reason="Manual TMDB metadata refresh",
             force=True,
-            movie_ids=movie_ids,
-            series_ids=series_ids,
+            movie_ids=None if select_all else movie_ids,
+            series_ids=None if select_all else series_ids,
+            selection_filters=selection_filters,
+            exclude_movie_ids=exclude_movie_ids,
+            exclude_series_ids=exclude_series_ids,
         )
         return Response(
             {**result, "state": _vod_metadata_state_payload()},
