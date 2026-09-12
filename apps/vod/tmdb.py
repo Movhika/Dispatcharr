@@ -84,6 +84,12 @@ def clean_lookup_title(name, *, display_name="", year=None, rules=None):
     from .utils import canonical_output_name
 
     result = canonical_output_name(name, display_name=display_name).strip()
+    if display_name:
+        # A curated display name normally bypasses prefix cleanup for client
+        # output. TMDB lookup titles are different: provider-style prefixes in
+        # an existing canonical display name must still be cleaned, while the
+        # stored display name itself remains untouched.
+        result = canonical_output_name(result).strip()
     for rule in normalize_title_rules(rules or []):
         if rule["enabled"]:
             result = re.sub(rule["pattern"], rule["replacement"], result)

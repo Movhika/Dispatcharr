@@ -1,18 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActionIcon,
-  Alert,
   Button,
   Group,
   PasswordInput,
   Select,
   Stack,
   Switch,
-  Table,
-  Text,
-  TextInput,
 } from '@mantine/core';
-import { Eye, Plus, Trash2 } from 'lucide-react';
 import API from '../../../api';
 import { showNotification } from '../../../utils/notificationUtils';
 
@@ -29,7 +23,7 @@ const LANGUAGE_OPTIONS = [
   ['tr-TR', 'Turkish (tr-TR)'],
 ].map(([value, label]) => ({ value, label }));
 
-const VODMetadataSettingsForm = ({ active = true }) => {
+const VODMetadataSettingsForm = ({ active = true, onSaved }) => {
   const [status, setStatus] = useState(null);
   const [token, setToken] = useState('');
   const [primaryLanguage, setPrimaryLanguage] = useState('en-US');
@@ -37,9 +31,6 @@ const VODMetadataSettingsForm = ({ active = true }) => {
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [matchMissing, setMatchMissing] = useState(false);
   const [preferArtwork, setPreferArtwork] = useState(true);
-  const [titleRules, setTitleRules] = useState([]);
-  const [preview, setPreview] = useState([]);
-  const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const applyStatus = useCallback((next) => {
@@ -51,7 +42,6 @@ const VODMetadataSettingsForm = ({ active = true }) => {
     setAutoEnrich(settings.auto_enrich !== false);
     setMatchMissing(Boolean(settings.match_missing));
     setPreferArtwork(settings.prefer_artwork !== false);
-    setTitleRules(settings.title_rules || []);
   }, []);
 
   const load = useCallback(async () => {
@@ -70,25 +60,6 @@ const VODMetadataSettingsForm = ({ active = true }) => {
     [primaryLanguage, secondaryLanguage]
   );
 
-  const updateRule = (index, patch) =>
-    setTitleRules((current) =>
-      current.map((rule, ruleIndex) =>
-        ruleIndex === index ? { ...rule, ...patch } : rule
-      )
-    );
-
-  const loadPreview = async () => {
-    setPreviewing(true);
-    try {
-      const response = await API.previewVODMetadataTitles(titleRules);
-      setPreview(response.results || []);
-    } catch {
-      setPreview([]);
-    } finally {
-      setPreviewing(false);
-    }
-  };
-
   const save = async () => {
     setSaving(true);
     try {
@@ -97,21 +68,23 @@ const VODMetadataSettingsForm = ({ active = true }) => {
         auto_enrich: autoEnrich,
         match_missing: matchMissing,
         prefer_artwork: preferArtwork,
-        title_rules: titleRules,
       };
       if (token.trim()) payload.api_token = token.trim();
-      applyStatus(await API.updateVODMetadataSettings(payload));
+      const next = await API.updateVODMetadataSettings(payload);
+      applyStatus(next);
+      onSaved?.(next);
       setToken('');
       showNotification({
         title: 'TMDB settings saved',
-        message: 'The automatic enrichment and lookup rules were updated.',
+        message: 'The automatic enrichment settings were updated.',
         color: 'green',
       });
     } catch (error) {
       showNotification({
         title: 'TMDB settings were not saved',
         message:
-          error?.body?.title_rules ||
+          error?.body?.languages ||
+          error?.body?.api_token ||
           error?.message ||
           'Please check the values and retry.',
         color: 'red',
@@ -178,101 +151,6 @@ const VODMetadataSettingsForm = ({ active = true }) => {
         checked={preferArtwork}
         onChange={(event) => setPreferArtwork(event.currentTarget.checked)}
       />
-
-      <Alert color="blue" variant="light">
-        Lookup rules never rename provider or canonical records. They only clean
-        the search text before content without IDs is sent to TMDB. Rules run
-        after common prefixes such as “DE -”, “4K-AMZ -” and “┃DE┃” are removed;
-        a trailing release year is sent separately.
-      </Alert>
-
-      <Group justify="space-between">
-        <Text fw={600}>Lookup title rules</Text>
-        <Button
-          variant="default"
-          size="xs"
-          leftSection={<Plus size={14} />}
-          onClick={() =>
-            setTitleRules((current) => [
-              ...current,
-              { pattern: '', replacement: '', enabled: true },
-            ])
-          }
-        >
-          Add rule
-        </Button>
-      </Group>
-      {titleRules.map((rule, index) => (
-        <Group key={index} align="end" wrap="nowrap">
-          <TextInput
-            label={index === 0 ? 'Regular expression' : undefined}
-            placeholder="For example ^AMZ\\s*-\\s*"
-            value={rule.pattern}
-            onChange={(event) =>
-              updateRule(index, { pattern: event.currentTarget.value })
-            }
-            style={{ flex: 2 }}
-          />
-          <TextInput
-            label={index === 0 ? 'Replace with' : undefined}
-            placeholder="Empty removes the match"
-            value={rule.replacement || ''}
-            onChange={(event) =>
-              updateRule(index, { replacement: event.currentTarget.value })
-            }
-            style={{ flex: 1 }}
-          />
-          <Switch
-            aria-label={`Enable lookup title rule ${index + 1}`}
-            checked={rule.enabled !== false}
-            onChange={(event) =>
-              updateRule(index, { enabled: event.currentTarget.checked })
-            }
-            mb={8}
-          />
-          <ActionIcon
-            aria-label={`Delete lookup title rule ${index + 1}`}
-            color="red"
-            variant="subtle"
-            mb={4}
-            onClick={() =>
-              setTitleRules((current) =>
-                current.filter((_, ruleIndex) => ruleIndex !== index)
-              )
-            }
-          >
-            <Trash2 size={16} />
-          </ActionIcon>
-        </Group>
-      ))}
-      <Group justify="flex-end">
-        <Button
-          variant="default"
-          leftSection={<Eye size={16} />}
-          loading={previewing}
-          onClick={loadPreview}
-        >
-          Preview before / after
-        </Button>
-      </Group>
-      {preview.length > 0 && (
-        <Table withTableBorder striped>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Before</Table.Th>
-              <Table.Th>TMDB lookup title</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {preview.map((row) => (
-              <Table.Tr key={`${row.content_type}:${row.id}`}>
-                <Table.Td>{row.before}</Table.Td>
-                <Table.Td>{row.after || '—'}</Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      )}
 
       <Button onClick={save} loading={saving} style={{ alignSelf: 'flex-end' }}>
         Save

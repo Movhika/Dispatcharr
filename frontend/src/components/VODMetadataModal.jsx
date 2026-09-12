@@ -14,10 +14,12 @@ import {
   Table,
   Text,
   TextInput,
+  Switch,
 } from '@mantine/core';
-import { Eye, RefreshCw, Search } from 'lucide-react';
+import { Eye, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
+import VODMetadataSettingsForm from './forms/settings/VODMetadataSettingsForm.jsx';
 
 const statusColor = (value) => {
   if (value === 'matched' || value === 'complete') return 'green';
@@ -25,6 +27,15 @@ const statusColor = (value) => {
   if (value === 'running' || value === 'queued') return 'blue';
   return 'gray';
 };
+
+const normalizeRules = (rules) =>
+  (Array.isArray(rules) ? rules : []).map((rule) => ({
+    pattern: String(rule?.pattern || ''),
+    replacement: String(rule?.replacement || ''),
+    enabled: rule?.enabled !== false,
+  }));
+
+const rulesFingerprint = (rules) => JSON.stringify(normalizeRules(rules));
 
 const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   const [status, setStatus] = useState(null);
@@ -37,13 +48,31 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [editingSettings, setEditingSettings] = useState(false);
+  const [editingLookup, setEditingLookup] = useState(false);
+  const [titleRules, setTitleRules] = useState([]);
+  const [savedTitleRules, setSavedTitleRules] = useState([]);
+  const [titlePreview, setTitlePreview] = useState({});
+  const [previewingTitles, setPreviewingTitles] = useState(false);
+  const [savingTitleRules, setSavingTitleRules] = useState(false);
+  const [titleRuleError, setTitleRuleError] = useState('');
   const pageSize = 25;
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (hydrateTitleRules = false) => {
     try {
-      setStatus(await API.getVODMetadataStatus());
+      const next = await API.getVODMetadataStatus();
+      setStatus(next);
+      if (hydrateTitleRules) {
+        const rules = normalizeRules(next?.settings?.title_rules);
+        setTitleRules(rules);
+        setSavedTitleRules(rules);
+        setTitlePreview({});
+        setTitleRuleError('');
+      }
+      return next;
     } catch {
       // The shared request layer reports the failed request.
+      return null;
     }
   }, []);
 
@@ -68,9 +97,13 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
 
   useEffect(() => {
     if (!opened) return;
-    loadStatus();
+    loadStatus(true);
+  }, [loadStatus, opened]);
+
+  useEffect(() => {
+    if (!opened) return;
     loadRows();
-  }, [loadRows, loadStatus, opened]);
+  }, [loadRows, opened]);
 
   const running = ['queued', 'running'].includes(status?.state?.status);
   useEffect(() => {
@@ -87,6 +120,10 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   }, [loadRows, onUpdated, opened, running]);
 
   useEffect(() => setSelected(new Set()), [metadataStatus, page, search, type]);
+  useEffect(() => {
+    setTitlePreview({});
+    setTitleRuleError('');
+  }, [page, rows]);
   const rowKey = (row) => `${row.content_type}:${row.id}`;
   const selectedRows = useMemo(
     () => rows.filter((row) => selected.has(rowKey(row))),
@@ -94,6 +131,83 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   );
   const allPageSelected =
     rows.length > 0 && selectedRows.length === rows.length;
+  const titleRulesValid = titleRules.every((rule) => rule.pattern.trim());
+  const titleRulesDirty =
+    rulesFingerprint(titleRules) !== rulesFingerprint(savedTitleRules);
+
+  const updateTitleRule = (index, patch) => {
+    setTitleRules((current) =>
+      current.map((rule, ruleIndex) =>
+        ruleIndex === index ? { ...rule, ...patch } : rule
+      )
+    );
+    setTitlePreview({});
+    setTitleRuleError('');
+  };
+
+  const previewTitleRules = async (rules = titleRules) => {
+    if (!rows.length || !rules.every((rule) => rule.pattern.trim())) return;
+    setPreviewingTitles(true);
+    setTitleRuleError('');
+    try {
+      const response = await API.previewVODMetadataTitles(
+        rules,
+        rows.map((row) => ({
+          id: row.id,
+          content_type: row.content_type,
+        }))
+      );
+      setTitlePreview(
+        Object.fromEntries(
+          (response.results || []).map((row) => [
+            `${row.content_type}:${row.id}`,
+            row,
+          ])
+        )
+      );
+    } catch (error) {
+      setTitlePreview({});
+      setTitleRuleError(
+        error?.body?.title_rules ||
+          error?.body?.detail ||
+          error?.message ||
+          'The lookup-title preview could not be created.'
+      );
+    } finally {
+      setPreviewingTitles(false);
+    }
+  };
+
+  const saveTitleRules = async () => {
+    if (!titleRulesValid || !titleRulesDirty) return;
+    setSavingTitleRules(true);
+    setTitleRuleError('');
+    try {
+      const next = await API.updateVODMetadataSettings({
+        title_rules: titleRules,
+      });
+      setStatus(next);
+      const saved = normalizeRules(next?.settings?.title_rules);
+      setTitleRules(saved);
+      setSavedTitleRules(saved);
+      await loadRows();
+      await previewTitleRules(saved);
+      showNotification({
+        title: 'TMDB lookup rules saved',
+        message: 'Automatic and manual TMDB searches now use these rules.',
+        color: 'green',
+      });
+    } catch (error) {
+      setTitleRuleError(
+        error?.body?.title_rules ||
+          error?.body?.detail ||
+          error?.message ||
+          'The lookup rules were not saved.'
+      );
+    } finally {
+      setSavingTitleRules(false);
+    }
+  };
 
   const startRefresh = async (selection = []) => {
     setRefreshing(true);
@@ -177,6 +291,25 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
           </Group>
           <Group>
             <Button
+              variant={editingSettings ? 'light' : 'default'}
+              leftSection={<Settings2 size={16} />}
+              onClick={() => {
+                setEditingSettings((current) => !current);
+                setEditingLookup(false);
+              }}
+            >
+              TMDB settings
+            </Button>
+            <Button
+              variant={editingLookup ? 'light' : 'default'}
+              onClick={() => {
+                setEditingLookup((current) => !current);
+                setEditingSettings(false);
+              }}
+            >
+              Lookup rename
+            </Button>
+            <Button
               variant="default"
               leftSection={<RefreshCw size={16} />}
               disabled={running || selectedRows.length === 0}
@@ -195,6 +328,139 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
             </Button>
           </Group>
         </Group>
+
+        {editingSettings && (
+          <Stack
+            gap="sm"
+            p="md"
+            style={{ border: '1px solid var(--mantine-color-dark-4)' }}
+          >
+            <Text fw={600}>TMDB configuration</Text>
+            <VODMetadataSettingsForm
+              active={opened && editingSettings}
+              onSaved={setStatus}
+            />
+          </Stack>
+        )}
+
+        {editingLookup && (
+          <Stack
+            gap="sm"
+            p="md"
+            style={{ border: '1px solid var(--mantine-color-dark-4)' }}
+          >
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text fw={600}>TMDB lookup-title rules</Text>
+                <Text size="sm" c="dimmed">
+                  The stored provider and canonical titles stay unchanged. The
+                  rules clean only the title sent to TMDB, in the displayed
+                  order. The table below is the before/after preview for the
+                  current page.
+                </Text>
+              </div>
+              <Group>
+                <Button
+                  variant="default"
+                  size="xs"
+                  leftSection={<Plus size={14} />}
+                  onClick={() => {
+                    setTitleRules((current) => [
+                      ...current,
+                      { pattern: '', replacement: '', enabled: true },
+                    ]);
+                    setTitlePreview({});
+                    setTitleRuleError('');
+                  }}
+                >
+                  Add rule
+                </Button>
+                <Button
+                  variant="default"
+                  size="xs"
+                  leftSection={<Eye size={14} />}
+                  loading={previewingTitles}
+                  disabled={!rows.length || !titleRulesValid}
+                  onClick={() => previewTitleRules()}
+                >
+                  Preview current page
+                </Button>
+                <Button
+                  size="xs"
+                  loading={savingTitleRules}
+                  disabled={!titleRulesValid || !titleRulesDirty}
+                  onClick={saveTitleRules}
+                >
+                  Save rules
+                </Button>
+              </Group>
+            </Group>
+
+            {titleRules.length === 0 && (
+              <Text size="sm" c="dimmed">
+                No custom lookup-title rules. Built-in prefix and release-year
+                cleanup still applies.
+              </Text>
+            )}
+            {titleRules.map((rule, index) => (
+              <Group key={index} align="end" wrap="nowrap">
+                <TextInput
+                  label={index === 0 ? 'Regular expression' : undefined}
+                  placeholder="For example \\s+Extended Cut$"
+                  value={rule.pattern}
+                  error={!rule.pattern.trim() ? 'Expression required' : null}
+                  onChange={(event) =>
+                    updateTitleRule(index, {
+                      pattern: event.currentTarget.value,
+                    })
+                  }
+                  style={{ flex: 2 }}
+                />
+                <TextInput
+                  label={index === 0 ? 'Replace with' : undefined}
+                  placeholder="Empty removes the match"
+                  value={rule.replacement}
+                  onChange={(event) =>
+                    updateTitleRule(index, {
+                      replacement: event.currentTarget.value,
+                    })
+                  }
+                  style={{ flex: 1 }}
+                />
+                <Switch
+                  aria-label={`Enable lookup title rule ${index + 1}`}
+                  checked={rule.enabled}
+                  onChange={(event) =>
+                    updateTitleRule(index, {
+                      enabled: event.currentTarget.checked,
+                    })
+                  }
+                  mb={8}
+                />
+                <ActionIcon
+                  aria-label={`Delete lookup title rule ${index + 1}`}
+                  color="red"
+                  variant="subtle"
+                  mb={4}
+                  onClick={() => {
+                    setTitleRules((current) =>
+                      current.filter((_, ruleIndex) => ruleIndex !== index)
+                    );
+                    setTitlePreview({});
+                    setTitleRuleError('');
+                  }}
+                >
+                  <Trash2 size={16} />
+                </ActionIcon>
+              </Group>
+            ))}
+            {titleRuleError && (
+              <Text size="sm" c="red">
+                {titleRuleError}
+              </Text>
+            )}
+          </Stack>
+        )}
 
         <Group justify="space-between">
           <Text size="sm" c="dimmed">
@@ -242,8 +508,14 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
                   }
                 />
               </Table.Th>
-              <Table.Th>Canonical title</Table.Th>
-              <Table.Th>TMDB lookup title</Table.Th>
+              <Table.Th>
+                {editingLookup ? 'Before: canonical title' : 'Canonical title'}
+              </Table.Th>
+              <Table.Th>
+                {editingLookup
+                  ? 'After: TMDB lookup title'
+                  : 'TMDB lookup title'}
+              </Table.Th>
               <Table.Th w={85}>Type</Table.Th>
               <Table.Th w={75}>Year</Table.Th>
               <Table.Th w={135}>TMDB ID</Table.Th>
@@ -252,51 +524,60 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {rows.map((row) => (
-              <Table.Tr key={rowKey(row)}>
-                <Table.Td>
-                  <Checkbox
-                    aria-label={`Select ${row.name}`}
-                    checked={selected.has(rowKey(row))}
-                    onChange={(event) => {
-                      const checked = event.currentTarget.checked;
-                      setSelected((current) => {
-                        const next = new Set(current);
-                        if (checked) next.add(rowKey(row));
-                        else next.delete(rowKey(row));
-                        return next;
-                      });
-                    }}
-                  />
-                </Table.Td>
-                <Table.Td>{row.name}</Table.Td>
-                <Table.Td>{row.tmdb_lookup_title || row.name}</Table.Td>
-                <Table.Td>
-                  {row.content_type === 'series' ? 'Series' : 'Movie'}
-                </Table.Td>
-                <Table.Td>{row.year || '—'}</Table.Td>
-                <Table.Td>{row.tmdb_id || '—'}</Table.Td>
-                <Table.Td>
-                  <Badge color={statusColor(row.tmdb_status)} variant="light">
-                    {row.tmdb_status === 'matched'
-                      ? 'Enriched'
-                      : row.tmdb_status || 'Not enriched'}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <ActionIcon
-                    aria-label={`Details ${row.name}`}
-                    variant="subtle"
-                    onClick={() => {
-                      onClose();
-                      onOpenContent?.(row);
-                    }}
-                  >
-                    <Eye size={16} />
-                  </ActionIcon>
-                </Table.Td>
-              </Table.Tr>
-            ))}
+            {rows.map((row) => {
+              const previewRow = titlePreview[rowKey(row)];
+              return (
+                <Table.Tr key={rowKey(row)}>
+                  <Table.Td>
+                    <Checkbox
+                      aria-label={`Select ${row.name}`}
+                      checked={selected.has(rowKey(row))}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setSelected((current) => {
+                          const next = new Set(current);
+                          if (checked) next.add(rowKey(row));
+                          else next.delete(rowKey(row));
+                          return next;
+                        });
+                      }}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    {previewRow ? previewRow.before || '—' : row.name}
+                  </Table.Td>
+                  <Table.Td>
+                    {previewRow
+                      ? previewRow.after || '—'
+                      : row.tmdb_lookup_title || row.name}
+                  </Table.Td>
+                  <Table.Td>
+                    {row.content_type === 'series' ? 'Series' : 'Movie'}
+                  </Table.Td>
+                  <Table.Td>{row.year || '—'}</Table.Td>
+                  <Table.Td>{row.tmdb_id || '—'}</Table.Td>
+                  <Table.Td>
+                    <Badge color={statusColor(row.tmdb_status)} variant="light">
+                      {row.tmdb_status === 'matched'
+                        ? 'Enriched'
+                        : row.tmdb_status || 'Not enriched'}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <ActionIcon
+                      aria-label={`Details ${row.name}`}
+                      variant="subtle"
+                      onClick={() => {
+                        onClose();
+                        onOpenContent?.(row);
+                      }}
+                    >
+                      <Eye size={16} />
+                    </ActionIcon>
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
           </Table.Tbody>
         </Table>
         {!loading && rows.length === 0 && (

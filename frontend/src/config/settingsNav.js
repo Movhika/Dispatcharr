@@ -2,7 +2,6 @@ import { lazy } from 'react';
 import {
   ArrowLeftRight,
   DatabaseBackup,
-  DatabaseZap,
   FileOutput,
   Gauge,
   Menu,
@@ -51,9 +50,6 @@ const UserLimitsForm = lazy(
 );
 const BackupManager = lazy(
   () => import('../components/backups/BackupManager.jsx')
-);
-const VODMetadataSettingsForm = lazy(
-  () => import('../components/forms/settings/VODMetadataSettingsForm.jsx')
 );
 const SystemResourcesPanel = lazy(
   () => import('../components/forms/settings/SystemResourcesPanel.jsx')
@@ -110,19 +106,6 @@ export const SETTINGS_GROUPS = [
         label: 'Output Profiles',
         icon: FileOutput,
         Component: OutputProfilesTable,
-      },
-    ],
-  },
-  {
-    id: 'vod',
-    label: 'Video on Demand',
-    adminOnly: true,
-    sections: [
-      {
-        id: 'vod-metadata',
-        label: 'VOD Metadata',
-        icon: DatabaseZap,
-        Component: VODMetadataSettingsForm,
       },
     ],
   },

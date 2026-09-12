@@ -83,13 +83,6 @@ vi.mock('../../components/forms/settings/UserLimitsForm', () => ({
     </div>
   ),
 }));
-vi.mock('../../components/forms/settings/VODMetadataSettingsForm', () => ({
-  default: ({ active }) => (
-    <div data-testid="vod-metadata-settings">
-      VODMetadata {active ? 'active' : 'inactive'}
-    </div>
-  ),
-}));
 vi.mock('../../components/ErrorBoundary', () => ({
   default: ({ children }) => <div data-testid="error-boundary">{children}</div>,
 }));
@@ -235,16 +228,6 @@ describe('SettingsPage', () => {
       await waitFor(() => {
         expect(screen.getByTestId('system-settings-form')).toBeInTheDocument();
       });
-    });
-
-    it('renders VOD metadata settings via hash', async () => {
-      renderWithRouter(<SettingsPage />, {
-        initialEntries: ['/settings#vod-metadata'],
-      });
-      await waitFor(() => {
-        expect(screen.getByTestId('vod-metadata-settings')).toBeInTheDocument();
-      });
-      expect(screen.getByText('VOD Metadata')).toBeInTheDocument();
     });
 
     it('passes active=true to rendered component', async () => {

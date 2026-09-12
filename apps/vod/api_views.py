@@ -1484,7 +1484,58 @@ class VODMetadataViewSet(viewsets.ViewSet):
         except ValueError as exc:
             raise DRFValidationError({"title_rules": str(exc)}) from exc
         search = str(request.data.get("search") or "").strip()
+        requested_items = request.data.get("items")
         rows = []
+        if requested_items is not None:
+            if not isinstance(requested_items, list) or len(requested_items) > 100:
+                raise DRFValidationError(
+                    {"items": "Choose at most 100 canonical titles to preview."}
+                )
+            requested_keys = []
+            ids_by_type = {"movie": set(), "series": set()}
+            for item in requested_items:
+                if not isinstance(item, dict):
+                    raise DRFValidationError({"items": "Invalid preview item."})
+                content_type = str(item.get("content_type") or "")
+                if content_type not in ids_by_type:
+                    raise DRFValidationError({"items": "Invalid content type."})
+                try:
+                    content_id = int(item.get("id"))
+                except (TypeError, ValueError) as exc:
+                    raise DRFValidationError({"items": "Invalid content ID."}) from exc
+                requested_keys.append((content_type, content_id))
+                ids_by_type[content_type].add(content_id)
+
+            content_by_key = {}
+            for model, content_type in ((Movie, "movie"), (Series, "series")):
+                for content in model.objects.filter(
+                    id__in=ids_by_type[content_type]
+                ).values("id", "name", "display_name", "year"):
+                    content_by_key[(content_type, content["id"])] = content
+
+            for content_type, content_id in requested_keys:
+                content = content_by_key.get((content_type, content_id))
+                if content is None:
+                    continue
+                before = str(content["display_name"] or content["name"] or "")
+                after = clean_lookup_title(
+                    content["name"],
+                    display_name=content["display_name"],
+                    year=content["year"],
+                    rules=rules,
+                )
+                rows.append(
+                    {
+                        "id": content_id,
+                        "content_type": content_type,
+                        "before": before,
+                        "after": after,
+                        "changed": before != after,
+                        "year": content["year"],
+                    }
+                )
+            return Response({"results": rows})
+
         for model, content_type, relation_name in (
             (Movie, "movie", "m3u_relations"),
             (Series, "series", "m3u_relations"),
@@ -1506,16 +1557,16 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     year=content["year"],
                     rules=rules,
                 )
-                if search or before != after:
-                    rows.append(
-                        {
-                            "id": content["id"],
-                            "content_type": content_type,
-                            "before": before,
-                            "after": after,
-                            "year": content["year"],
-                        }
-                    )
+                rows.append(
+                    {
+                        "id": content["id"],
+                        "content_type": content_type,
+                        "before": before,
+                        "after": after,
+                        "changed": before != after,
+                        "year": content["year"],
+                    }
+                )
         rows.sort(key=lambda row: (row["before"].casefold(), row["content_type"], row["id"]))
         return Response({"results": rows[:50]})
 

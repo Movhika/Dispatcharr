@@ -7,15 +7,27 @@ vi.mock('../../api', () => ({
     getVODMetadataStatus: vi.fn(),
     getAllContent: vi.fn(),
     refreshVODMetadata: vi.fn(),
+    previewVODMetadataTitles: vi.fn(),
+    updateVODMetadataSettings: vi.fn(),
   },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('../forms/settings/VODMetadataSettingsForm', () => ({
+  default: ({ active }) => (
+    <div data-testid="tmdb-settings-form">
+      TMDB settings {active ? 'active' : 'inactive'}
+    </div>
+  ),
+}));
 vi.mock('lucide-react', () => ({
   Eye: () => null,
+  Plus: () => null,
   RefreshCw: () => null,
   Search: () => null,
+  Settings2: () => null,
+  Trash2: () => null,
 }));
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
@@ -81,6 +93,14 @@ vi.mock('@mantine/core', () => {
       </label>
     ),
     Stack: Wrapper,
+    Switch: ({ checked, onChange, 'aria-label': label }) => (
+      <input
+        aria-label={label}
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+      />
+    ),
     Table,
     Text: Wrapper,
     TextInput: ({ label, value, onChange }) => (
@@ -96,6 +116,7 @@ import API from '../../api';
 import VODMetadataModal from '../VODMetadataModal';
 
 const statusResponse = {
+  settings: { title_rules: [] },
   catalog: {
     movies: 100,
     series: 20,
@@ -124,6 +145,17 @@ describe('VODMetadataModal', () => {
     API.getVODMetadataStatus.mockResolvedValue(statusResponse);
     API.getAllContent.mockResolvedValue(contentResponse);
     API.refreshVODMetadata.mockResolvedValue({ status: 'queued' });
+    API.previewVODMetadataTitles.mockResolvedValue({
+      results: [
+        {
+          id: 7,
+          content_type: 'movie',
+          before: 'Bliss',
+          after: 'Clean Bliss',
+        },
+      ],
+    });
+    API.updateVODMetadataSettings.mockResolvedValue(statusResponse);
   });
 
   it('lists canonical titles and refreshes an explicit selection', async () => {
@@ -161,5 +193,53 @@ describe('VODMetadataModal', () => {
       screen.getByRole('button', { name: 'Enrich pending' })
     ).toBeDisabled();
     expect(screen.getByTestId('progress')).toHaveTextContent('32');
+  });
+
+  it('keeps TMDB configuration inside the VOD metadata dialog', async () => {
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'TMDB settings' }));
+    expect(await screen.findByTestId('tmdb-settings-form')).toHaveTextContent(
+      'TMDB settings active'
+    );
+  });
+
+  it('previews lookup rename rules against the visible canonical page', async () => {
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+    expect((await screen.findAllByText('Bliss')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Lookup rename' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    fireEvent.change(screen.getByLabelText('Regular expression'), {
+      target: { value: '\\s+Extended Cut$' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview current page' })
+    );
+
+    await waitFor(() =>
+      expect(API.previewVODMetadataTitles).toHaveBeenCalledWith(
+        [
+          {
+            pattern: '\\s+Extended Cut$',
+            replacement: '',
+            enabled: true,
+          },
+        ],
+        [{ id: 7, content_type: 'movie' }]
+      )
+    );
+    expect(await screen.findByText('Clean Bliss')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save rules' }));
+    await waitFor(() =>
+      expect(API.updateVODMetadataSettings).toHaveBeenCalledWith({
+        title_rules: [
+          {
+            pattern: '\\s+Extended Cut$',
+            replacement: '',
+            enabled: true,
+          },
+        ],
+      })
+    );
   });
 });

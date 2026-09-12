@@ -43,6 +43,16 @@ class TMDBMetadataTests(SimpleTestCase):
                     "Bliss",
                 )
 
+    def test_lookup_title_cleanup_also_cleans_a_canonical_display_name(self):
+        self.assertEqual(
+            clean_lookup_title(
+                "provider fallback",
+                display_name="4K-AMZ - Bliss (2021)",
+                year=2021,
+            ),
+            "Bliss",
+        )
+
     def test_lookup_title_cleanup_applies_ordered_custom_rules(self):
         self.assertEqual(
             clean_lookup_title(
@@ -231,6 +241,9 @@ class VODMetadataAPITests(TestCase):
             auto_enrich=False,
             match_missing=True,
             prefer_artwork=False,
+            title_rules=[
+                {"pattern": r"^AMZ\s*-\s*", "replacement": ""}
+            ],
         )
         request = self.factory.put(
             "/api/vod/metadata/settings/",
@@ -246,6 +259,67 @@ class VODMetadataAPITests(TestCase):
         self.assertTrue(CoreSettings.get_tmdb_match_missing())
         self.assertFalse(CoreSettings.get_tmdb_prefer_artwork())
         self.assertTrue(CoreSettings.get_tmdb_auto_enrich())
+        self.assertEqual(
+            CoreSettings.get_tmdb_title_rules(),
+            [
+                {
+                    "pattern": r"^AMZ\s*-\s*",
+                    "replacement": "",
+                    "enabled": True,
+                }
+            ],
+        )
+
+    def test_title_preview_uses_the_requested_visible_canonical_rows(self):
+        movie = Movie.objects.create(
+            name="DE - Bliss (2021)",
+            display_name="DE - Bliss (2021)",
+            year=2021,
+        )
+        series = Series.objects.create(
+            name="AMZ - The Office [2005]",
+            display_name="AMZ - The Office [2005]",
+            year=2005,
+        )
+        request = self.factory.post(
+            "/api/vod/metadata/title-preview/",
+            {
+                "title_rules": [
+                    {
+                        "pattern": r"^The\s+",
+                        "replacement": "",
+                        "enabled": True,
+                    }
+                ],
+                "items": [
+                    {"id": series.id, "content_type": "series"},
+                    {"id": movie.id, "content_type": "movie"},
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "title_preview"})(
+            request
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [
+                (row["content_type"], row["id"], row["before"], row["after"])
+                for row in response.data["results"]
+            ],
+            [
+                (
+                    "series",
+                    series.id,
+                    "AMZ - The Office [2005]",
+                    "Office",
+                ),
+                ("movie", movie.id, "DE - Bliss (2021)", "Bliss"),
+            ],
+        )
 
     def test_manual_tmdb_match_moves_only_the_selected_provider_source(self):
         account = M3UAccount.objects.create(
