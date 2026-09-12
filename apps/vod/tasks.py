@@ -129,6 +129,8 @@ def _tmdb_content_signature(base_signature, content):
         "base": base_signature,
         "tmdb_id": str(value("tmdb_id") or ""),
         "imdb_id": str(value("imdb_id") or ""),
+        "tmdb_match_id": str(value("tmdb_match_id") or ""),
+        "tmdb_imdb_id": str(value("tmdb_imdb_id") or ""),
         "name": str(value("name") or ""),
         "year": value("year"),
     }
@@ -343,6 +345,8 @@ def enrich_vod_metadata(
             "year",
             "tmdb_id",
             "imdb_id",
+            "tmdb_match_id",
+            "tmdb_imdb_id",
             "tmdb_enrichment_signature",
         )
         for model, media_type, relation_name in (
@@ -400,12 +404,19 @@ def enrich_vod_metadata(
         for model, media_type, content, signature in work:
             content_id = content["id"]
             content_name = content["name"]
-            tmdb_id = str(content["tmdb_id"] or "").strip()
-            match_method = "provider_tmdb_id" if tmdb_id else ""
+            tmdb_id = str(
+                content["tmdb_match_id"] or content["tmdb_id"] or ""
+            ).strip()
+            match_method = (
+                "stored_tmdb_match"
+                if content["tmdb_match_id"]
+                else ("provider_tmdb_id" if tmdb_id else "")
+            )
             metadata = {}
             try:
-                if not tmdb_id and content["imdb_id"]:
-                    tmdb_id = client.find_by_imdb(content["imdb_id"], media_type)
+                imdb_id = content["tmdb_imdb_id"] or content["imdb_id"]
+                if not tmdb_id and imdb_id:
+                    tmdb_id = client.find_by_imdb(imdb_id, media_type)
                     if tmdb_id:
                         match_method = "imdb_id"
                 if not tmdb_id and match_missing:

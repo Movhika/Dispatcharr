@@ -1458,9 +1458,9 @@ class VODMetadataViewSet(viewsets.ViewSet):
                 {"api_token": "Configure a TMDB API read access token first."}
             )
         selections = request.data.get("selections") or []
-        if not isinstance(selections, list) or len(selections) > 500:
+        if not isinstance(selections, list) or not 1 <= len(selections) <= 500:
             raise DRFValidationError(
-                {"selections": "Choose at most 500 canonical titles."}
+                {"selections": "Choose between 1 and 500 canonical titles."}
             )
         movie_ids = []
         series_ids = []
@@ -1480,7 +1480,66 @@ class VODMetadataViewSet(viewsets.ViewSet):
 
         from .tasks import enqueue_tmdb_enrichment
 
-        if selections:
+        state = VODMetadataState.objects.filter(pk=1).first()
+        if state and state.status in {
+            VODMetadataState.Status.QUEUED,
+            VODMetadataState.Status.RUNNING,
+        }:
+            return Response(
+                {"detail": "A TMDB metadata batch is already running."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result = enqueue_tmdb_enrichment(
+            trigger_reason="Manual TMDB metadata refresh",
+            force=True,
+            movie_ids=movie_ids,
+            series_ids=series_ids,
+        )
+        return Response(
+            {**result, "state": _vod_metadata_state_payload()},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=["post"], url_path="reset")
+    def reset(self, request):
+        """Reload selected canonical metadata from provider data, TMDB, or both."""
+        self._admin_only(request)
+        mode = str(request.data.get("mode") or "").strip()
+        if mode not in {"provider", "tmdb", "all"}:
+            raise DRFValidationError(
+                {"mode": "Choose provider, tmdb, or all."}
+            )
+        selections = request.data.get("selections") or []
+        if not isinstance(selections, list) or not 1 <= len(selections) <= 500:
+            raise DRFValidationError(
+                {"selections": "Choose between 1 and 500 canonical titles."}
+            )
+        movie_ids = []
+        series_ids = []
+        for row in selections:
+            if not isinstance(row, dict):
+                raise DRFValidationError({"selections": "Invalid selection."})
+            try:
+                content_id = int(row.get("id"))
+            except (TypeError, ValueError) as exc:
+                raise DRFValidationError(
+                    {"selections": "Invalid content ID."}
+                ) from exc
+            target = movie_ids if row.get("content_type") == "movie" else (
+                series_ids if row.get("content_type") == "series" else None
+            )
+            if target is None:
+                raise DRFValidationError(
+                    {"selections": "Invalid content type."}
+                )
+            target.append(content_id)
+
+        if mode in {"tmdb", "all"}:
+            if not CoreSettings.get_tmdb_api_token():
+                raise DRFValidationError(
+                    {"api_token": "Configure a TMDB API read access token first."}
+                )
             state = VODMetadataState.objects.filter(pk=1).first()
             if state and state.status in {
                 VODMetadataState.Status.QUEUED,
@@ -1491,14 +1550,52 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
 
+        if mode in {"provider", "all"}:
+            from .provider_metadata import (
+                reconcile_movie_provider_metadata,
+                reconcile_series_provider_metadata,
+            )
+
+            reconcile_movie_provider_metadata(movie_ids)
+            reconcile_series_provider_metadata(series_ids)
+
+        # Every reload mode starts by removing our derived TMDB snapshot. In
+        # provider-only mode it deliberately stays empty, so the canonical
+        # title falls back to the freshly projected provider metadata.
+        reset_values = {
+            "display_name": "",
+            "tmdb_metadata": {},
+            "tmdb_poster_url": "",
+            "tmdb_backdrop_url": "",
+            "tmdb_status": "",
+            "tmdb_enriched_at": None,
+            "tmdb_enrichment_signature": "",
+        }
+        Movie.objects.filter(pk__in=movie_ids).update(**reset_values)
+        Series.objects.filter(pk__in=series_ids).update(**reset_values)
+
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation(invalidate_selections=False)
+        if mode == "provider":
+            return Response(
+                {
+                    "reloaded": len(set(movie_ids)) + len(set(series_ids)),
+                    "mode": mode,
+                    "state": _vod_metadata_state_payload(),
+                }
+            )
+
+        from .tasks import enqueue_tmdb_enrichment
+
         result = enqueue_tmdb_enrichment(
-            trigger_reason="Manual TMDB metadata refresh",
-            force=bool(selections),
-            movie_ids=movie_ids if selections else None,
-            series_ids=series_ids if selections else None,
+            trigger_reason="Selected VOD metadata was reset",
+            force=True,
+            movie_ids=movie_ids,
+            series_ids=series_ids,
         )
         return Response(
-            {**result, "state": _vod_metadata_state_payload()},
+            {**result, "mode": mode, "state": _vod_metadata_state_payload()},
             status=status.HTTP_202_ACCEPTED,
         )
 

@@ -1572,6 +1572,13 @@ export default class API {
     });
   }
 
+  static async resetVODMetadata(mode, selections = []) {
+    return await request(`${host}/api/vod/metadata/reset/`, {
+      method: 'POST',
+      body: { mode, selections },
+    });
+  }
+
   static async previewVODMetadataTitles(titleRules, items = [], search = '') {
     return await request(`${host}/api/vod/metadata/title-preview/`, {
       method: 'POST',

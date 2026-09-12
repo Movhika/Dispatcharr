@@ -77,19 +77,12 @@ def normalize_title_rules(values):
 def clean_lookup_title(name, *, display_name="", year=None, rules=None):
     """Create the non-persistent title used for TMDB search and its preview.
 
-    Provider names remain untouched. Built-in structural prefix cleanup runs
-    first, followed by the administrator's ordered replacements. A trailing
-    release year is removed because TMDB receives it in a dedicated parameter.
+    Provider names remain untouched. Only the administrator's ordered
+    replacements may remove provider prefixes or otherwise rewrite the title.
+    A trailing release year is removed because TMDB receives it in a dedicated
+    parameter.
     """
-    from .utils import canonical_output_name
-
-    result = canonical_output_name(name, display_name=display_name).strip()
-    if display_name:
-        # A curated display name normally bypasses prefix cleanup for client
-        # output. TMDB lookup titles are different: provider-style prefixes in
-        # an existing canonical display name must still be cleaned, while the
-        # stored display name itself remains untouched.
-        result = canonical_output_name(result).strip()
+    result = str(display_name or name or "").strip()
     for rule in normalize_title_rules(rules or []):
         if rule["enabled"]:
             result = re.sub(rule["pattern"], rule["replacement"], result)
@@ -101,7 +94,6 @@ def clean_lookup_title(name, *, display_name="", year=None, rules=None):
         )
     else:
         result = re.sub(r"\s*[\(\[]\s*(?:19|20)\d{2}\s*[\)\]]\s*$", "", result)
-    result = re.sub(r"^[\s\-–—:|┃]+|[\s\-–—:|┃]+$", "", result)
     return re.sub(r"\s+", " ", result).strip()
 
 

@@ -30,27 +30,20 @@ from core.models import CoreSettings
 
 
 class TMDBMetadataTests(SimpleTestCase):
-    def test_lookup_title_cleanup_handles_provider_prefixes_and_release_year(self):
-        for raw in (
-            "4K-AMZ - Bliss (2021)",
-            "DE - Bliss (2021)",
-            "AMZ - Bliss (2021)",
-            "┃DE┃ Bliss (2021)",
-        ):
-            with self.subTest(raw=raw):
-                self.assertEqual(
-                    clean_lookup_title(raw, year=2021),
-                    "Bliss",
-                )
+    def test_lookup_title_does_not_hide_provider_prefix_cleanup(self):
+        self.assertEqual(
+            clean_lookup_title("4K-AMZ - Bliss (2021)", year=2021),
+            "4K-AMZ - Bliss",
+        )
 
-    def test_lookup_title_cleanup_also_cleans_a_canonical_display_name(self):
+    def test_lookup_title_uses_the_canonical_display_name_verbatim(self):
         self.assertEqual(
             clean_lookup_title(
                 "provider fallback",
                 display_name="4K-AMZ - Bliss (2021)",
                 year=2021,
             ),
-            "Bliss",
+            "4K-AMZ - Bliss",
         )
 
     def test_lookup_title_cleanup_applies_ordered_custom_rules(self):
@@ -295,6 +288,20 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.data["settings"]["languages"], ["de-DE", "en-US"])
         self.assertTrue(CoreSettings.get_tmdb_match_missing())
 
+    def test_manual_enrichment_requires_an_explicit_selection(self):
+        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        request = self.factory.post(
+            "/api/vod/metadata/refresh/",
+            {"selections": []},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "refresh"})(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("selections", response.data)
+
     def test_api_key_only_update_preserves_library_metadata_preferences(self):
         CoreSettings.set_vod_metadata_settings(
             api_token="old-secret",
@@ -347,6 +354,11 @@ class VODMetadataAPITests(TestCase):
             {
                 "title_rules": [
                     {
+                        "pattern": r"^(?:DE|AMZ)\s*-\s*",
+                        "replacement": "",
+                        "enabled": True,
+                    },
+                    {
                         "pattern": r"^The\s+",
                         "replacement": "",
                         "enabled": True,
@@ -380,6 +392,104 @@ class VODMetadataAPITests(TestCase):
                 ),
                 ("movie", movie.id, "DE - Bliss (2021)", "Bliss"),
             ],
+        )
+
+    @patch("apps.vod.tasks.enqueue_tmdb_enrichment")
+    def test_tmdb_reset_clears_only_curated_snapshot_then_reloads_selection(
+        self, enqueue
+    ):
+        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        movie = Movie.objects.create(
+            name="Provider title",
+            display_name="TMDB title",
+            tmdb_id="123",
+            description="Provider description",
+            tmdb_match_id="123",
+            tmdb_imdb_id="tt123",
+            tmdb_metadata={"id": "123", "status": "matched"},
+            tmdb_status="matched",
+            tmdb_enriched_at=timezone.now(),
+            tmdb_enrichment_signature="old-signature",
+        )
+        enqueue.return_value = {"queued": True, "task_id": "task", "status": "queued"}
+        request = self.factory.post(
+            "/api/vod/metadata/reset/",
+            {
+                "mode": "tmdb",
+                "selections": [{"id": movie.id, "content_type": "movie"}],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "reset"})(request)
+
+        self.assertEqual(response.status_code, 202)
+        movie.refresh_from_db()
+        self.assertEqual(movie.name, "Provider title")
+        self.assertEqual(movie.description, "Provider description")
+        self.assertEqual(movie.tmdb_id, "123")
+        self.assertEqual(movie.display_name, "")
+        self.assertEqual(movie.tmdb_metadata, {})
+        self.assertEqual(movie.tmdb_status, "")
+        self.assertEqual(movie.tmdb_match_id, "123")
+        self.assertEqual(movie.tmdb_imdb_id, "tt123")
+        enqueue.assert_called_once_with(
+            trigger_reason="Selected VOD metadata was reset",
+            force=True,
+            movie_ids=[movie.id],
+            series_ids=[],
+        )
+
+    def test_provider_reset_rebuilds_canonical_fields_from_stored_sources(self):
+        account = M3UAccount.objects.create(
+            name="Provider metadata",
+            server_url="http://provider.example.com",
+            username="user",
+            password="pass",
+            account_type=M3UAccount.Types.XC,
+            is_active=True,
+        )
+        movie = Movie.objects.create(
+            name="Provider title",
+            display_name="TMDB title",
+            description="Stale description",
+            tmdb_metadata={"id": "123", "status": "matched"},
+            tmdb_match_id="123",
+            tmdb_status="matched",
+            tmdb_enriched_at=timezone.now(),
+        )
+        M3UMovieRelation.objects.create(
+            m3u_account=account,
+            movie=movie,
+            stream_id="movie-1",
+            custom_properties={
+                "detailed_info": {
+                    "plot": "Fresh provider description",
+                    "trailer": "provider-trailer",
+                }
+            },
+        )
+        request = self.factory.post(
+            "/api/vod/metadata/reset/",
+            {
+                "mode": "provider",
+                "selections": [{"id": movie.id, "content_type": "movie"}],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "reset"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        movie.refresh_from_db()
+        self.assertEqual(movie.description, "Fresh provider description")
+        self.assertEqual(movie.display_name, "")
+        self.assertEqual(movie.tmdb_metadata, {})
+        self.assertEqual(movie.tmdb_status, "")
+        self.assertEqual(
+            movie.custom_properties["youtube_trailer"], "provider-trailer"
         )
 
     def test_manual_tmdb_match_moves_only_the_selected_provider_source(self):

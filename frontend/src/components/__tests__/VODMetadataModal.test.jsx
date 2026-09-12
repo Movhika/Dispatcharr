@@ -7,6 +7,7 @@ vi.mock('../../api', () => ({
     getVODMetadataStatus: vi.fn(),
     getAllContent: vi.fn(),
     refreshVODMetadata: vi.fn(),
+    resetVODMetadata: vi.fn(),
     previewVODMetadataTitles: vi.fn(),
     updateVODMetadataSettings: vi.fn(),
   },
@@ -25,6 +26,7 @@ vi.mock('lucide-react', () => ({
   Eye: () => null,
   Plus: () => null,
   RefreshCw: () => null,
+  RotateCcw: () => null,
   Search: () => null,
   Settings2: () => null,
   Trash2: () => null,
@@ -32,6 +34,13 @@ vi.mock('lucide-react', () => ({
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
   const Table = ({ children }) => <table>{children}</table>;
+  const Menu = ({ children }) => <div>{children}</div>;
+  Menu.Target = ({ children }) => <>{children}</>;
+  Menu.Dropdown = ({ children }) => <div>{children}</div>;
+  Menu.Label = ({ children }) => <div>{children}</div>;
+  Menu.Item = ({ children, onClick }) => (
+    <button onClick={onClick}>{children}</button>
+  );
   Table.Thead = ({ children }) => <thead>{children}</thead>;
   Table.Tbody = ({ children }) => <tbody>{children}</tbody>;
   Table.Tr = ({ children }) => <tr>{children}</tr>;
@@ -44,6 +53,7 @@ vi.mock('@mantine/core', () => {
       </button>
     ),
     Badge: Wrapper,
+    Box: Wrapper,
     Button: ({ children, onClick, disabled, loading }) => (
       <button disabled={disabled || loading} onClick={onClick}>
         {children}
@@ -57,7 +67,9 @@ vi.mock('@mantine/core', () => {
         onChange={onChange}
       />
     ),
+    Flex: Wrapper,
     Group: Wrapper,
+    Menu,
     Modal: ({ opened, title, children }) =>
       opened ? (
         <div>
@@ -67,6 +79,7 @@ vi.mock('@mantine/core', () => {
       ) : null,
     Pagination: () => null,
     Progress: ({ value }) => <div data-testid="progress">{value}</div>,
+    ScrollArea: Wrapper,
     SegmentedControl: ({ data, onChange }) => (
       <div>
         {data.map((row) => (
@@ -145,6 +158,7 @@ describe('VODMetadataModal', () => {
     API.getVODMetadataStatus.mockResolvedValue(statusResponse);
     API.getAllContent.mockResolvedValue(contentResponse);
     API.refreshVODMetadata.mockResolvedValue({ status: 'queued' });
+    API.resetVODMetadata.mockResolvedValue({ status: 'queued' });
     API.previewVODMetadataTitles.mockResolvedValue({
       results: [
         {
@@ -190,8 +204,11 @@ describe('VODMetadataModal', () => {
       await screen.findByText('Fetching TMDB metadata')
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Enrich pending' })
+      screen.getByRole('button', { name: 'Enrich selected (0)' })
     ).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: 'Enrich pending' })
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId('progress')).toHaveTextContent('32');
   });
 
@@ -227,7 +244,9 @@ describe('VODMetadataModal', () => {
         [{ id: 7, content_type: 'movie' }]
       )
     );
-    expect(await screen.findByText('Clean Bliss')).toBeInTheDocument();
+    expect((await screen.findAllByText('Clean Bliss')).length).toBeGreaterThan(
+      1
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Save rules' }));
     await waitFor(() =>
@@ -240,6 +259,21 @@ describe('VODMetadataModal', () => {
           },
         ],
       })
+    );
+  });
+
+  it('reloads selected metadata from an explicit source choice', async () => {
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+    await screen.findAllByText('Bliss');
+    fireEvent.click(screen.getByLabelText('Select Bliss'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload selected' }));
+    fireEvent.click(screen.getByRole('button', { name: 'TMDB' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload 1 selected' }));
+
+    await waitFor(() =>
+      expect(API.resetVODMetadata).toHaveBeenCalledWith('tmdb', [
+        { id: 7, content_type: 'movie' },
+      ])
     );
   });
 });

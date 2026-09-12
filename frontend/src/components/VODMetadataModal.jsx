@@ -2,12 +2,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Checkbox,
+  Flex,
   Group,
+  Menu,
   Modal,
   Pagination,
   Progress,
+  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
@@ -16,7 +20,15 @@ import {
   TextInput,
   Switch,
 } from '@mantine/core';
-import { Eye, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react';
+import {
+  Eye,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Settings2,
+  Trash2,
+} from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import VODMetadataSettingsForm from './forms/settings/VODMetadataSettingsForm.jsx';
@@ -56,6 +68,8 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
   const [previewingTitles, setPreviewingTitles] = useState(false);
   const [savingTitleRules, setSavingTitleRules] = useState(false);
   const [titleRuleError, setTitleRuleError] = useState('');
+  const [resetMode, setResetMode] = useState('');
+  const [resetting, setResetting] = useState(false);
   const pageSize = 25;
 
   const loadStatus = useCallback(async (hydrateTitleRules = false) => {
@@ -209,7 +223,7 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
     }
   };
 
-  const startRefresh = async (selection = []) => {
+  const startRefresh = async (selection) => {
     setRefreshing(true);
     try {
       await API.refreshVODMetadata(
@@ -218,9 +232,7 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
       await loadStatus();
       showNotification({
         title: 'TMDB enrichment started',
-        message: selection.length
-          ? `${selection.length} selected canonical titles will be refreshed.`
-          : 'New and outdated canonical titles will be processed.',
+        message: `${selection.length} selected canonical titles will be refreshed.`,
         color: 'green',
       });
     } catch (error) {
@@ -231,6 +243,41 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
       });
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const resetSelected = async () => {
+    if (!resetMode || selectedRows.length === 0) return;
+    setResetting(true);
+    try {
+      await API.resetVODMetadata(
+        resetMode,
+        selectedRows.map((row) => ({
+          id: row.id,
+          content_type: row.content_type,
+        }))
+      );
+      setResetMode('');
+      setSelected(new Set());
+      await loadStatus();
+      await loadRows();
+      onUpdated?.();
+      showNotification({
+        title: 'VOD metadata reload started',
+        message:
+          resetMode === 'provider'
+            ? 'Canonical provider metadata was rebuilt from the stored source payloads.'
+            : 'The selected TMDB metadata is being fetched again in the background.',
+        color: 'green',
+      });
+    } catch (error) {
+      showNotification({
+        title: 'VOD metadata could not be reloaded',
+        message: error?.body?.detail || error?.message || 'Please retry.',
+        color: 'red',
+      });
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -318,14 +365,31 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
             >
               Enrich selected ({selectedRows.length})
             </Button>
-            <Button
-              leftSection={<RefreshCw size={16} />}
-              disabled={running}
-              loading={refreshing}
-              onClick={() => startRefresh()}
-            >
-              Enrich pending
-            </Button>
+            <Menu position="bottom-end" withinPortal>
+              <Menu.Target>
+                <Button
+                  variant="default"
+                  leftSection={<RotateCcw size={16} />}
+                  disabled={
+                    running || resetting || selectedRows.length === 0
+                  }
+                >
+                  Reload selected
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>Reload metadata from</Menu.Label>
+                <Menu.Item onClick={() => setResetMode('provider')}>
+                  Provider sources only
+                </Menu.Item>
+                <Menu.Item onClick={() => setResetMode('tmdb')}>
+                  TMDB
+                </Menu.Item>
+                <Menu.Item onClick={() => setResetMode('all')}>
+                  Provider sources and TMDB
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
           </Group>
         </Group>
 
@@ -398,8 +462,9 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
 
             {titleRules.length === 0 && (
               <Text size="sm" c="dimmed">
-                No custom lookup-title rules. Built-in prefix and release-year
-                cleanup still applies.
+                No lookup-title rules. Provider prefixes are never removed
+                automatically. A trailing release year is sent to TMDB as its
+                separate year parameter.
               </Text>
             )}
             {titleRules.map((rule, index) => (
@@ -458,6 +523,50 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
               <Text size="sm" c="red">
                 {titleRuleError}
               </Text>
+            )}
+            {Object.keys(titlePreview).length > 0 && (
+              <Box
+                style={{
+                  border: '1px solid var(--mantine-color-dark-4)',
+                  borderRadius: 6,
+                  padding: 8,
+                }}
+              >
+                <Text size="xs" fw={600} mb={6}>
+                  Ordered rule preview · current page
+                </Text>
+                <ScrollArea h={150} offsetScrollbars>
+                  <Stack gap={4}>
+                    {Object.values(titlePreview).map((row) => (
+                      <Flex
+                        key={`${row.content_type}:${row.id}`}
+                        gap="xs"
+                        align="center"
+                        wrap="nowrap"
+                        style={{ fontFamily: 'monospace' }}
+                      >
+                        <Text
+                          size="xs"
+                          c="dimmed"
+                          style={{ flex: 1, overflowWrap: 'anywhere' }}
+                        >
+                          {row.before || '—'}
+                        </Text>
+                        <Text size="xs" c="gray.6">
+                          →
+                        </Text>
+                        <Text
+                          size="xs"
+                          c={row.changed ? 'teal.4' : 'dimmed'}
+                          style={{ flex: 1, overflowWrap: 'anywhere' }}
+                        >
+                          {row.after || '—'}
+                        </Text>
+                      </Flex>
+                    ))}
+                  </Stack>
+                </ScrollArea>
+              </Box>
             )}
           </Stack>
         )}
@@ -603,6 +712,35 @@ const VODMetadataModal = ({ opened, onClose, onUpdated, onOpenContent }) => {
           </Button>
         </Group>
       </Stack>
+      <Modal
+        opened={Boolean(resetMode)}
+        onClose={() => !resetting && setResetMode('')}
+        title="Reload selected VOD metadata?"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            {resetMode === 'provider' &&
+              'Stored TMDB enrichment will be cleared. Canonical metadata will be rebuilt only from the source payloads stored by the last provider VOD refresh. No provider request is made.'}
+            {resetMode === 'tmdb' &&
+              'Stored TMDB metadata will be cleared and fetched again for the selected canonical titles.'}
+            {resetMode === 'all' &&
+              'Canonical provider metadata will be rebuilt first. Stored TMDB metadata will then be cleared and fetched again.'}
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={resetting}
+              onClick={() => setResetMode('')}
+            >
+              Cancel
+            </Button>
+            <Button loading={resetting} onClick={resetSelected}>
+              Reload {selectedRows.length} selected
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Modal>
   );
 };
