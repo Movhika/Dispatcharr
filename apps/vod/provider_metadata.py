@@ -20,6 +20,7 @@ from .models import Movie, M3UMovieRelation, M3USeriesRelation, Series
 
 
 PROVENANCE_KEY = "_provider_metadata_sources"
+MANUAL_METADATA_KEY = "_manual_metadata"
 
 LANGUAGE_CATEGORY_ALIASES = {
     "de": {"de", "ger", "german", "deutsch"},
@@ -31,6 +32,7 @@ LANGUAGE_CATEGORY_ALIASES = {
 }
 
 SCALAR_FIELDS = {
+    "display_name": ("name", "title"),
     "description": ("plot", "description"),
     "rating": ("rating", "vote_average"),
     "genre": ("genre",),
@@ -236,12 +238,19 @@ def _apply_projection(content, projection, *, content_type):
     changed_fields = []
     previous_properties = content.custom_properties or {}
     previous_sources = previous_properties.get(PROVENANCE_KEY) or {}
+    manual = previous_properties.get(MANUAL_METADATA_KEY) or {}
 
     scalar_definitions = (
         MOVIE_SCALAR_FIELDS if content_type == "movie" else SCALAR_FIELDS
     )
     for field in scalar_definitions:
-        if field in projection["scalar"]:
+        if field in manual:
+            value = manual[field]
+        elif field == "display_name" and content.tmdb_status == "matched":
+            # A completed TMDB title is the canonical layer. Provider refreshes
+            # may continue filling other missing fields underneath it.
+            continue
+        elif field in projection["scalar"]:
             value = projection["scalar"][field]
         elif field in previous_sources:
             value = None if field != "description" and field != "genre" else ""
@@ -257,7 +266,9 @@ def _apply_projection(content, projection, *, content_type):
         if key != PROVENANCE_KEY
     }
     for field in CUSTOM_FIELDS:
-        if field in projection["custom"]:
+        if field in manual:
+            properties[field] = manual[field]
+        elif field in projection["custom"]:
             properties[field] = projection["custom"][field]
         elif field in previous_sources:
             properties.pop(field, None)

@@ -76,6 +76,12 @@ def _tmdb_content_payload(content):
     metadata = (
         content.tmdb_metadata if isinstance(content.tmdb_metadata, dict) else {}
     )
+    from .tmdb import apply_manual_overrides
+
+    metadata = apply_manual_overrides(
+        metadata,
+        metadata.get("_manual_overrides") or {},
+    )
     external_ids = metadata.get("external_ids") or {}
     effective_id = str(
         content.tmdb_match_id
@@ -120,6 +126,9 @@ def _tmdb_content_payload(content):
         "country": metadata.get("country") or "",
         "age_rating": metadata.get("age_rating") or "",
         "youtube_trailer": metadata.get("youtube_trailer") or "",
+        "keywords": metadata.get("keywords") or [],
+        "is_anime": bool(metadata.get("is_anime", False)),
+        "adult": bool(metadata.get("adult", False)),
         "poster_url": metadata.get("poster_url") or "",
         "backdrop_url": metadata.get("backdrop_url") or "",
     }
@@ -1459,6 +1468,285 @@ class VODMetadataViewSet(viewsets.ViewSet):
             bump_catalog_generation(invalidate_selections=False)
         return self.list(request)
 
+    @action(detail=False, methods=["post"], url_path="tmdb-lookup")
+    def tmdb_lookup(self, request):
+        """Search TMDB or preview one exact result without changing the catalog."""
+        self._admin_only(request)
+        token = CoreSettings.get_tmdb_api_token()
+        if not token:
+            raise DRFValidationError(
+                {"api_token": "Configure a TMDB API read access token first."}
+            )
+        content_type = str(request.data.get("content_type") or "")
+        if content_type not in {"movie", "series"}:
+            raise DRFValidationError({"content_type": "Choose movie or series."})
+        media_type = "movie" if content_type == "movie" else "tv"
+        from .tmdb import Client as TMDBClient, TMDBError
+
+        client = TMDBClient(token)
+        tmdb_id = str(request.data.get("tmdb_id") or "").strip()
+        try:
+            if tmdb_id:
+                if not tmdb_id.isdigit() or int(tmdb_id) < 1:
+                    raise DRFValidationError(
+                        {"tmdb_id": "Enter a positive numeric TMDB ID."}
+                    )
+                metadata = client.details(
+                    tmdb_id,
+                    media_type,
+                    CoreSettings.get_tmdb_languages(),
+                    match_method="manual_preview",
+                )
+                languages = CoreSettings.get_tmdb_languages()
+                return Response(
+                    {
+                        "metadata": {
+                            **metadata,
+                            "languages": languages,
+                            "primary_language": languages[0],
+                            "secondary_language": (
+                                languages[1] if len(languages) > 1 else ""
+                            ),
+                        }
+                    }
+                )
+
+            query = str(request.data.get("query") or "").strip()
+            if not query:
+                raise DRFValidationError({"query": "Enter a title to search."})
+            if len(query) > 255:
+                raise DRFValidationError({"query": "The title is too long."})
+            raw_year = request.data.get("year")
+            year = None
+            if raw_year not in (None, ""):
+                try:
+                    year = int(raw_year)
+                except (TypeError, ValueError) as exc:
+                    raise DRFValidationError(
+                        {"year": "Enter a valid release year."}
+                    ) from exc
+                if year < 1800 or year > 2200:
+                    raise DRFValidationError(
+                        {"year": "Enter a valid release year."}
+                    )
+            results = client.search_candidates(
+                query,
+                year,
+                media_type,
+                CoreSettings.get_tmdb_languages()[0],
+            )
+            return Response({"results": results})
+        except TMDBError as exc:
+            raise DRFValidationError({"detail": str(exc)}) from exc
+
+    @action(detail=False, methods=["patch"], url_path="content")
+    def update_content(self, request):
+        """Persist administrator-owned canonical metadata overrides."""
+        self._admin_only(request)
+        content_type = str(request.data.get("content_type") or "")
+        model = Movie if content_type == "movie" else (
+            Series if content_type == "series" else None
+        )
+        if model is None:
+            raise DRFValidationError({"content_type": "Choose movie or series."})
+        try:
+            content_id = int(request.data.get("id"))
+        except (TypeError, ValueError) as exc:
+            raise DRFValidationError({"id": "Invalid canonical content ID."}) from exc
+        values = request.data.get("values")
+        if not isinstance(values, dict):
+            raise DRFValidationError({"values": "Metadata values must be an object."})
+        content = model.objects.filter(pk=content_id).first()
+        if content is None:
+            raise DRFValidationError({"id": "Canonical content was not found."})
+
+        def text_value(key, limit=10000):
+            value = str(values.get(key) or "").strip()
+            if len(value) > limit:
+                raise DRFValidationError({key: f"Maximum length is {limit}."})
+            return value
+
+        title = text_value("title", 255)
+        if not title:
+            raise DRFValidationError({"title": "A canonical title is required."})
+        description = text_value("description", 50000)
+        secondary_title = text_value("secondary_title", 255)
+        secondary_description = text_value("secondary_description", 50000)
+        release_date = text_value("release_date", 32)
+        if release_date and parse_date(release_date) is None:
+            raise DRFValidationError(
+                {"release_date": "Use an ISO date such as 2021-02-05."}
+            )
+        raw_year = values.get("year")
+        year = None
+        if raw_year not in (None, ""):
+            try:
+                year = int(raw_year)
+            except (TypeError, ValueError) as exc:
+                raise DRFValidationError({"year": "Enter a valid year."}) from exc
+            if year < 1800 or year > 2200:
+                raise DRFValidationError({"year": "Enter a valid year."})
+        raw_duration = values.get("duration_minutes")
+        duration_minutes = None
+        if raw_duration not in (None, ""):
+            try:
+                duration_minutes = int(raw_duration)
+            except (TypeError, ValueError) as exc:
+                raise DRFValidationError(
+                    {"duration_minutes": "Enter a duration in minutes."}
+                ) from exc
+            if duration_minutes < 0 or duration_minutes > 10000:
+                raise DRFValidationError(
+                    {"duration_minutes": "Enter a duration in minutes."}
+                )
+
+        external_ids = {
+            "imdb_id": text_value("imdb_id", 50),
+            "tvdb_id": text_value("tvdb_id", 50),
+            "wikidata_id": text_value("wikidata_id", 50),
+        }
+        tmdb_id = text_value("tmdb_id", 50)
+        if tmdb_id and (not tmdb_id.isdigit() or int(tmdb_id) < 1):
+            raise DRFValidationError({"tmdb_id": "Enter a positive numeric TMDB ID."})
+        raw_keywords = values.get("keywords") or []
+        if isinstance(raw_keywords, str):
+            raw_keywords = raw_keywords.split(",")
+        if not isinstance(raw_keywords, list) or len(raw_keywords) > 100:
+            raise DRFValidationError({"keywords": "Enter at most 100 keywords."})
+        keyword_names = []
+        for raw_keyword in raw_keywords:
+            raw_value = (
+                raw_keyword.get("name")
+                if isinstance(raw_keyword, dict)
+                else raw_keyword
+            )
+            keyword = str(raw_value or "").strip()
+            if keyword and keyword.casefold() not in {
+                value.casefold() for value in keyword_names
+            }:
+                keyword_names.append(keyword[:100])
+
+        languages = CoreSettings.get_tmdb_languages()
+        primary_language = languages[0]
+        localized = {
+            primary_language: {
+                "title": title,
+                "overview": description,
+            }
+        }
+        if len(languages) > 1:
+            localized[languages[1]] = {
+                "title": secondary_title,
+                "overview": secondary_description,
+            }
+        genres = [
+            {"id": None, "name": name.strip()}
+            for name in text_value("genre", 1000).split(",")
+            if name.strip()
+        ]
+        manual_overrides = {
+            "localized": localized,
+            "overview": description,
+            "release_date": release_date,
+            "runtime_minutes": duration_minutes,
+            "rating": text_value("rating", 20),
+            "genres": genres,
+            "director": text_value("director", 2000),
+            "actors": text_value("actors", 10000),
+            "crew": text_value("crew", 10000),
+            "country": text_value("country", 1000),
+            "age_rating": text_value("age_rating", 50),
+            "youtube_trailer": text_value("youtube_trailer", 500),
+            "poster_url": text_value("poster_url", 1000),
+            "backdrop_url": text_value("backdrop_url", 1000),
+            "external_ids": external_ids,
+            "imdb_id": external_ids["imdb_id"],
+            "tvdb_id": external_ids["tvdb_id"],
+            "wikidata_id": external_ids["wikidata_id"],
+            "keywords": [
+                {"id": None, "name": keyword} for keyword in keyword_names
+            ],
+            "is_anime": values.get("is_anime") is True,
+            "adult": values.get("adult") is True,
+        }
+        from .tmdb import apply_manual_overrides
+
+        current_metadata = (
+            content.tmdb_metadata
+            if isinstance(content.tmdb_metadata, dict)
+            else {}
+        )
+        metadata = apply_manual_overrides(current_metadata, manual_overrides)
+        if tmdb_id:
+            metadata["id"] = tmdb_id
+        else:
+            metadata.pop("id", None)
+        provider_properties = dict(content.custom_properties or {})
+        provider_properties["_manual_metadata"] = {
+            "display_name": title,
+            "description": description,
+            "year": year,
+            "rating": manual_overrides["rating"],
+            "genre": ", ".join(row["name"] for row in genres),
+            "release_date": release_date,
+            "director": manual_overrides["director"],
+            "actors": manual_overrides["actors"],
+            "crew": manual_overrides["crew"],
+            "country": manual_overrides["country"],
+            "age": manual_overrides["age_rating"],
+            "youtube_trailer": manual_overrides["youtube_trailer"],
+            "movie_image": manual_overrides["poster_url"],
+            "backdrop_path": (
+                [manual_overrides["backdrop_url"]]
+                if manual_overrides["backdrop_url"]
+                else []
+            ),
+        }
+        update = {
+            "display_name": title,
+            "description": description,
+            "year": year,
+            "rating": manual_overrides["rating"],
+            "genre": ", ".join(row["name"] for row in genres),
+            "custom_properties": provider_properties,
+            "tmdb_metadata": metadata,
+            "tmdb_match_id": tmdb_id,
+            "tmdb_imdb_id": external_ids["imdb_id"],
+            "tmdb_poster_url": manual_overrides["poster_url"],
+            "tmdb_backdrop_url": manual_overrides["backdrop_url"],
+            "tmdb_status": "matched" if tmdb_id else "manual",
+            "tmdb_enriched_at": content.tmdb_enriched_at or timezone.now(),
+            "tmdb_enrichment_signature": "",
+            "updated_at": timezone.now(),
+        }
+        if content_type == "movie":
+            update["duration_secs"] = (
+                duration_minutes * 60 if duration_minutes is not None else None
+            )
+        model.objects.filter(pk=content_id).update(**update)
+        content.refresh_from_db()
+
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import (
+            mark_profile_selections_outdated,
+            profile_ids_using_canonical_content,
+        )
+
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="Canonical VOD metadata was edited manually",
+            policy_ids=profile_ids_using_canonical_content(
+                movie_ids=[content_id] if content_type == "movie" else [],
+                series_ids=[content_id] if content_type == "series" else [],
+            ),
+        )
+        return Response(
+            {
+                "tmdb": _tmdb_content_payload(content),
+                "canonical": _canonical_provider_payload(content),
+            }
+        )
+
     @action(detail=False, methods=["post"], url_path="refresh")
     def refresh(self, request):
         self._admin_only(request)
@@ -1608,18 +1896,9 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-        if mode in {"provider", "all"}:
-            from .provider_metadata import (
-                reconcile_movie_provider_metadata,
-                reconcile_series_provider_metadata,
-            )
-
-            reconcile_movie_provider_metadata(movie_ids)
-            reconcile_series_provider_metadata(series_ids)
-
-        # Every reload mode starts by removing our derived TMDB snapshot. In
-        # provider-only mode it deliberately stays empty, so the canonical
-        # title falls back to the freshly projected provider metadata.
+        # Remove the derived TMDB layer before provider reconciliation. This is
+        # important for the provider title fallback: a previous matched status
+        # must not keep blocking the newly projected provider title.
         reset_values = {
             "display_name": "",
             "tmdb_metadata": {},
@@ -1632,14 +1911,52 @@ class VODMetadataViewSet(viewsets.ViewSet):
         Movie.objects.filter(pk__in=movie_ids).update(**reset_values)
         Series.objects.filter(pk__in=series_ids).update(**reset_values)
 
+        if mode in {"provider", "all"}:
+            from .provider_metadata import (
+                MANUAL_METADATA_KEY,
+                reconcile_movie_provider_metadata,
+                reconcile_series_provider_metadata,
+            )
+
+            # Provider/all reset also releases administrator-owned provider
+            # projections before recalculating them from the stored sources.
+            for model, content_ids in (
+                (Movie, movie_ids),
+                (Series, series_ids),
+            ):
+                changed = []
+                for content in model.objects.filter(pk__in=content_ids).only(
+                    "id", "custom_properties"
+                ):
+                    properties = dict(content.custom_properties or {})
+                    if MANUAL_METADATA_KEY not in properties:
+                        continue
+                    properties.pop(MANUAL_METADATA_KEY, None)
+                    content.custom_properties = properties or None
+                    changed.append(content)
+                if changed:
+                    model.objects.bulk_update(
+                        changed, ["custom_properties"], batch_size=500
+                    )
+
+            reconcile_movie_provider_metadata(movie_ids)
+            reconcile_series_provider_metadata(series_ids)
+
         from .catalog_cache import bump_catalog_generation
 
         bump_catalog_generation(invalidate_selections=False)
         if mode == "provider":
-            from .profile_selection import mark_profile_selections_outdated
+            from .profile_selection import (
+                mark_profile_selections_outdated,
+                profile_ids_using_canonical_content,
+            )
 
             mark_profile_selections_outdated(
                 trigger_reason="Canonical VOD metadata was reloaded manually",
+                policy_ids=profile_ids_using_canonical_content(
+                    movie_ids=movie_ids,
+                    series_ids=series_ids,
+                ),
             )
             return Response(
                 {

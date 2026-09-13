@@ -46,6 +46,9 @@ vi.mock('lucide-react', () => ({
   Check: () => <div data-testid="check-icon" />,
   Wrench: () => <div data-testid="wrench-icon" />,
   DatabaseZap: () => <div data-testid="database-zap-icon" />,
+  Pencil: () => <div data-testid="pencil-icon" />,
+  Search: () => <div data-testid="search-icon" />,
+  Save: () => <div data-testid="save-icon" />,
 }));
 
 // Mock Mantine components

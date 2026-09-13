@@ -337,13 +337,14 @@ describe('VODOutputProfilesModal', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Profile')).toHaveValue('9')
     );
+    fetchAccessPolicies.mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() =>
       expect(API.deleteVODAccessPolicy).toHaveBeenCalledWith(9)
     );
     expect(removeAccessPolicy).toHaveBeenCalledWith(9);
-    expect(fetchAccessPolicies).toHaveBeenCalled();
+    expect(fetchAccessPolicies).not.toHaveBeenCalled();
   });
 
   it('allows deleting the default when another active profile can replace it', async () => {

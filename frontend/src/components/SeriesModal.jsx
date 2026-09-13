@@ -46,6 +46,7 @@ import VODSourceList from './VODSourceList.jsx';
 import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import VODExternalIds from './VODExternalIds.jsx';
 import VODEnrichmentButton from './VODEnrichmentButton.jsx';
+import VODCanonicalMetadataModal from './VODCanonicalMetadataModal.jsx';
 
 const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
   return (
@@ -109,14 +110,17 @@ const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
           {displaySeries.episode_count && (
             <Badge color="gray">{displaySeries.episode_count} episodes</Badge>
           )}
-          <VODExternalIds
-            contentType="series"
-            contentId={displaySeries.id}
-            tmdb={displaySeries.tmdb}
-            tmdbId={displaySeries.tmdb_id}
-            imdbId={displaySeries.imdb_id}
-          />
+          {displaySeries.is_anime && <Badge color="pink">Anime</Badge>}
+          {displaySeries.adult && <Badge color="red">Adult</Badge>}
         </Group>
+
+        <VODExternalIds
+          contentType="series"
+          contentId={displaySeries.id}
+          tmdb={displaySeries.tmdb}
+          tmdbId={displaySeries.tmdb_id}
+          imdbId={displaySeries.imdb_id}
+        />
 
         {/* Release date */}
         {displaySeries.release_date && (
@@ -128,6 +132,16 @@ const Series = ({ displaySeries, onClickYouTubeTrailer }) => {
         {displaySeries.genre && (
           <Text size="sm" c="dimmed">
             <strong>Genre:</strong> {displaySeries.genre}
+          </Text>
+        )}
+
+        {displaySeries.keywords?.length > 0 && (
+          <Text size="sm" c="dimmed">
+            <strong>Keywords:</strong>{' '}
+            {displaySeries.keywords
+              .map((row) => (typeof row === 'string' ? row : row?.name))
+              .filter(Boolean)
+              .join(', ')}
           </Text>
         )}
 
@@ -361,6 +375,7 @@ const SeriesModal = ({
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [editingCanonical, setEditingCanonical] = useState(false);
   const [dataView, setDataView] = useState('primary');
   const [loadingProviders, setLoadingProviders] = useState(false);
   const providersRequestIdRef = useRef(0);
@@ -389,9 +404,10 @@ const SeriesModal = ({
             providersData[0] ||
             null;
           setSelectedProvider(provider);
-          return (provider
-            ? fetchSeriesInfo(series.id, provider.id)
-            : fetchSeriesInfo(series.id)
+          return (
+            provider
+              ? fetchSeriesInfo(series.id, provider.id)
+              : fetchSeriesInfo(series.id)
           ).then((details) => ({ details, providerId: provider?.id || null }));
         })
         .then((result) => {
@@ -449,6 +465,7 @@ const SeriesModal = ({
       setProviders([]);
       setSelectedProvider(null);
       setEditingProvider(null);
+      setEditingCanonical(false);
       setDataView('primary');
       setLoadingProviders(false);
     }
@@ -473,7 +490,9 @@ const SeriesModal = ({
     const requestId = ++detailsRequestIdRef.current;
     setLoadingDetails(true);
     setDetailedSeries((current) =>
-      current ? { ...current, episodesList: [], source_metadata: null } : current
+      current
+        ? { ...current, episodesList: [], source_metadata: null }
+        : current
     );
     fetchSeriesInfo(series.id, provider.id)
       .then((details) => {
@@ -638,6 +657,10 @@ const SeriesModal = ({
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
   const metadataMatched = (tmdb.status || series.tmdb_status) === 'matched';
+  const metadataAvailable =
+    metadataMatched ||
+    (tmdb.status || series.tmdb_status) === 'manual' ||
+    Object.keys(localized).length > 0;
   const canonicalSeries = canonicalDetails?.canonical || series;
   const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
@@ -652,7 +675,9 @@ const SeriesModal = ({
         (tmdb.genres || [])
           .map((row) => row.name)
           .filter(Boolean)
-          .join(', ') || canonicalSeries.genre || series.genre,
+          .join(', ') ||
+        canonicalSeries.genre ||
+        series.genre,
       rating: tmdb.rating || canonicalSeries.rating || series.rating,
       release_date: tmdb.release_date || canonicalSeries.release_date || '',
       director: tmdb.director || canonicalSeries.director || '',
@@ -661,9 +686,10 @@ const SeriesModal = ({
       country: tmdb.country || canonicalSeries.country || '',
       age: tmdb.age_rating || canonicalSeries.age || '',
       youtube_trailer:
-        tmdb.youtube_trailer ||
-        canonicalSeries.youtube_trailer ||
-        '',
+        tmdb.youtube_trailer || canonicalSeries.youtube_trailer || '',
+      keywords: tmdb.keywords || [],
+      is_anime: Boolean(tmdb.is_anime),
+      adult: Boolean(tmdb.adult),
       series_image:
         series.artwork_url ||
         tmdb.poster_url ||
@@ -681,7 +707,8 @@ const SeriesModal = ({
   };
   const providerIds = selectedProvider?.provider_external_ids || {};
   const activeProviderDetails =
-    String(detailedSeriesProviderId || '') === String(selectedProvider?.id || '')
+    String(detailedSeriesProviderId || '') ===
+    String(selectedProvider?.id || '')
       ? detailedSeries
       : null;
   const providerSeries = activeProviderDetails
@@ -787,10 +814,7 @@ const SeriesModal = ({
               <Group justify="space-between" pr="xl">
                 {allowSourceEditing ? (
                   <VODEnrichmentButton
-                    contentId={series.id}
-                    contentType="series"
-                    enriched={metadataMatched}
-                    onComplete={reloadAfterEnrichment}
+                    onClick={() => setEditingCanonical(true)}
                   />
                 ) : (
                   <Box />
@@ -801,12 +825,12 @@ const SeriesModal = ({
                     variant={dataView === 'primary' ? 'filled' : 'default'}
                     onClick={() => setDataView('primary')}
                   >
-                    {metadataMatched ? 'Primary' : 'Canonical'}
-                    {metadataMatched && primaryLanguage
+                    {metadataAvailable ? 'Primary' : 'Canonical'}
+                    {metadataAvailable && primaryLanguage
                       ? ` · ${primaryLanguage}`
                       : ''}
                   </Button>
-                  {metadataMatched && secondaryLanguage && (
+                  {metadataAvailable && secondaryLanguage && (
                     <Button
                       size="xs"
                       variant={dataView === 'secondary' ? 'filled' : 'default'}
@@ -824,10 +848,11 @@ const SeriesModal = ({
                   </Button>
                 </Group>
               </Group>
-              {dataView === 'primary' && !metadataMatched && (
+              {dataView === 'primary' && !metadataAvailable && (
                 <Alert color="blue" py="xs">
                   A provider ID may already be known, but no TMDB detail record
-                  is stored yet. Use Enrich with TMDB to load localized data.
+                  is stored yet. Use Edit metadata to search TMDB or enter the
+                  canonical values manually.
                 </Alert>
               )}
               {dataView === 'secondary' && !secondaryTranslationAvailable && (
@@ -1037,6 +1062,14 @@ const SeriesModal = ({
           onMetadataChanged?.();
           onClose();
         }}
+      />
+      <VODCanonicalMetadataModal
+        opened={editingCanonical}
+        onClose={() => setEditingCanonical(false)}
+        content={localizedCanonical(primaryLanguage, false)}
+        contentId={series.id}
+        contentType="series"
+        onSaved={reloadAfterEnrichment}
       />
     </>
   );

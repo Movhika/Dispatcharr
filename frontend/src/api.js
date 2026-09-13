@@ -1579,6 +1579,20 @@ export default class API {
     });
   }
 
+  static async lookupVODTMDB(values) {
+    return await request(`${host}/api/vod/metadata/tmdb-lookup/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async updateCanonicalVODMetadata(contentType, id, values) {
+    return await request(`${host}/api/vod/metadata/content/`, {
+      method: 'PATCH',
+      body: { content_type: contentType, id, values },
+    });
+  }
+
   static async previewVODMetadataTitles(titleRules, items = [], search = '') {
     return await request(`${host}/api/vod/metadata/title-preview/`, {
       method: 'POST',

@@ -736,11 +736,17 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     setDeleting(true);
     try {
       await API.deleteVODAccessPolicy(deletedProfile.id);
-      setCreating(false);
-      setProfileId('');
-      resetDraft();
+      const remainingProfiles = profiles.filter(
+        (profile) => String(profile.id) !== String(deletedProfile.id)
+      );
+      const nextProfile =
+        remainingProfiles.find((profile) => profile.is_default) ||
+        remainingProfiles[0] ||
+        null;
       removeAccessPolicy(deletedProfile.id);
-      await fetchProfiles();
+      setCreating(false);
+      setProfileId(nextProfile ? String(nextProfile.id) : '');
+      resetDraft(nextProfile);
       showNotification({
         title: 'VOD output profile deleted',
         message: `${deletedProfile.name} was removed.`,

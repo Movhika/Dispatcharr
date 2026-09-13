@@ -16,8 +16,11 @@ from apps.vod.models import (
     M3USeriesRelation,
     Movie,
     Series,
+    VODAccessPolicy,
+    VODMovieProfileSelection,
     VODMetadataState,
 )
+from apps.vod.profile_selection import profile_ids_using_canonical_content
 from apps.vod.tasks import enqueue_tmdb_enrichment, reconcile_vod_metadata_queue
 from apps.vod.tmdb import (
     Client,
@@ -89,6 +92,12 @@ class TMDBMetadataTests(SimpleTestCase):
                             "official": True,
                             "size": 1080,
                         }
+                    ]
+                },
+                "keywords": {
+                    "keywords": [
+                        {"id": 210024, "name": "anime"},
+                        {"id": 9715, "name": "superhero"},
                     ]
                 },
                 "release_dates": {
@@ -173,6 +182,14 @@ class TMDBMetadataTests(SimpleTestCase):
         self.assertEqual(metadata["country"], "United States of America")
         self.assertEqual(metadata["youtube_trailer"], "trailer-key")
         self.assertEqual(metadata["age_rating"], "12")
+        self.assertEqual(
+            metadata["keywords"],
+            [
+                {"id": 210024, "name": "anime"},
+                {"id": 9715, "name": "superhero"},
+            ],
+        )
+        self.assertTrue(metadata["is_anime"])
 
     def test_detail_request_includes_richer_movie_metadata(self):
         response = Mock(status_code=200, headers={})
@@ -194,9 +211,22 @@ class TMDBMetadataTests(SimpleTestCase):
                 "watch/providers",
                 "credits",
                 "videos",
+                "keywords",
                 "release_dates",
             }.issubset(appended)
         )
+
+    def test_manual_overrides_keep_the_tmdb_identity(self):
+        from apps.vod.tmdb import apply_manual_overrides
+
+        metadata = apply_manual_overrides(
+            {"id": "613911", "rating": 5.5},
+            {"id": "", "rating": "7.0"},
+        )
+
+        self.assertEqual(metadata["id"], "613911")
+        self.assertEqual(metadata["rating"], "7.0")
+        self.assertEqual(metadata["_manual_overrides"], {"rating": "7.0"})
 
     def test_search_accepts_only_one_exact_title_and_year_match(self):
         response = Mock(status_code=200, headers={})
@@ -248,6 +278,65 @@ class VODMetadataAPITests(TestCase):
         )
         self.factory = APIRequestFactory()
 
+    def test_canonical_changes_only_mark_profiles_that_embed_the_title(self):
+        account = M3UAccount.objects.create(
+            name="Canonical profile scope",
+            server_url="http://provider.example.com",
+            username="user",
+            password="pass",
+            account_type=M3UAccount.Types.XC,
+            is_active=True,
+        )
+        movie = Movie.objects.create(name="Bliss")
+        relation = M3UMovieRelation.objects.create(
+            m3u_account=account,
+            movie=movie,
+            stream_id="movie-1",
+        )
+        compact = VODAccessPolicy.objects.create(
+            name="Compact canonical",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="compact-generation",
+        )
+        provider_variants = VODAccessPolicy.objects.create(
+            name="Provider variants",
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            metadata_source=VODAccessPolicy.MetadataSource.PROVIDER,
+            naming_mode=VODAccessPolicy.NamingMode.MODE_DEFAULT,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="provider-generation",
+        )
+        canonical_variants = VODAccessPolicy.objects.create(
+            name="Canonical variants",
+            export_mode=VODAccessPolicy.ExportMode.VARIANTS,
+            metadata_source=VODAccessPolicy.MetadataSource.CANONICAL,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="canonical-generation",
+        )
+        excluded_compact = VODAccessPolicy.objects.create(
+            name="Excluded compact",
+            export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="excluded-generation",
+        )
+        for policy in (compact, provider_variants, canonical_variants):
+            VODMovieProfileSelection.objects.create(
+                policy=policy,
+                generation=policy.active_selection_generation,
+                movie=movie,
+                relation=relation,
+            )
+
+        policy_ids = profile_ids_using_canonical_content(movie_ids=[movie.id])
+
+        self.assertEqual(
+            policy_ids,
+            sorted([compact.id, canonical_variants.id]),
+        )
+        self.assertNotIn(provider_variants.id, policy_ids)
+        self.assertNotIn(excluded_compact.id, policy_ids)
+
     @patch.dict(
         os.environ,
         {"TMDB_API_READ_ACCESS_TOKEN": "", "TMDB_API_KEY": ""},
@@ -287,6 +376,103 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["settings"]["languages"], ["de-DE", "en-US"])
         self.assertTrue(CoreSettings.get_tmdb_match_missing())
+
+    @patch("apps.vod.tmdb.Client.search_candidates")
+    def test_tmdb_lookup_returns_candidates_without_writing_content(self, search):
+        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        search.return_value = [
+            {
+                "id": "613911",
+                "title": "Bliss",
+                "year": 2021,
+                "overview": "Search preview",
+            }
+        ]
+        request = self.factory.post(
+            "/api/vod/metadata/tmdb-lookup/",
+            {"content_type": "movie", "query": "Bliss", "year": 2021},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view({"post": "tmdb_lookup"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["results"][0]["id"], "613911")
+        search.assert_called_once_with("Bliss", 2021, "movie", "en-US")
+
+    def test_canonical_metadata_editor_persists_keywords_and_manual_values(self):
+        CoreSettings.set_vod_metadata_settings(
+            api_token="stored-secret",
+            languages=["de-DE", "en-US"],
+        )
+        movie = Movie.objects.create(
+            name="Provider Bliss",
+            tmdb_metadata={"id": "613911", "status": "matched"},
+            tmdb_status="matched",
+        )
+        request = self.factory.patch(
+            "/api/vod/metadata/content/",
+            {
+                "content_type": "movie",
+                "id": movie.id,
+                "values": {
+                    "title": "Bliss",
+                    "secondary_title": "Bliss",
+                    "description": "Deutsche Beschreibung",
+                    "secondary_description": "English overview",
+                    "year": "2021",
+                    "release_date": "2021-02-05",
+                    "duration_minutes": "103",
+                    "rating": "6.5",
+                    "genre": "Science Fiction, Drama",
+                    "age_rating": "12",
+                    "director": "Mike Cahill",
+                    "actors": "Owen Wilson, Salma Hayek",
+                    "crew": "Crew Member",
+                    "country": "United States",
+                    "youtube_trailer": "trailer-key",
+                    "poster_url": "https://image.example/poster.jpg",
+                    "backdrop_url": "https://image.example/backdrop.jpg",
+                    "tmdb_id": "613911",
+                    "imdb_id": "tt10333426",
+                    "tvdb_id": "",
+                    "wikidata_id": "Q123",
+                    "keywords": ["anime", "virtual reality"],
+                    "is_anime": True,
+                    "adult": False,
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        with patch(
+            "apps.vod.profile_selection.mark_profile_selections_outdated"
+        ) as mark_outdated:
+            response = VODMetadataViewSet.as_view({"patch": "update_content"})(
+                request
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        movie.refresh_from_db()
+        self.assertEqual(movie.display_name, "Bliss")
+        self.assertEqual(movie.duration_secs, 103 * 60)
+        self.assertEqual(movie.tmdb_match_id, "613911")
+        self.assertEqual(movie.tmdb_metadata["external_ids"]["imdb_id"], "tt10333426")
+        self.assertEqual(
+            [row["name"] for row in movie.tmdb_metadata["keywords"]],
+            ["anime", "virtual reality"],
+        )
+        self.assertTrue(movie.tmdb_metadata["is_anime"])
+        self.assertEqual(
+            movie.custom_properties["_manual_metadata"]["display_name"],
+            "Bliss",
+        )
+        mark_outdated.assert_called_once_with(
+            trigger_reason="Canonical VOD metadata was edited manually",
+            policy_ids=[],
+        )
 
     def test_manual_enrichment_requires_an_explicit_selection(self):
         CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
@@ -497,6 +683,12 @@ class VODMetadataAPITests(TestCase):
             name="Provider title",
             display_name="TMDB title",
             description="Stale description",
+            custom_properties={
+                "_manual_metadata": {
+                    "description": "Manual description",
+                    "youtube_trailer": "manual-trailer",
+                }
+            },
             tmdb_metadata={"id": "123", "status": "matched"},
             tmdb_match_id="123",
             tmdb_status="matched",
@@ -508,6 +700,7 @@ class VODMetadataAPITests(TestCase):
             stream_id="movie-1",
             custom_properties={
                 "detailed_info": {
+                    "name": "Fresh provider title",
                     "plot": "Fresh provider description",
                     "trailer": "provider-trailer",
                 }
@@ -528,12 +721,13 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         movie.refresh_from_db()
         self.assertEqual(movie.description, "Fresh provider description")
-        self.assertEqual(movie.display_name, "")
+        self.assertEqual(movie.display_name, "Fresh provider title")
         self.assertEqual(movie.tmdb_metadata, {})
         self.assertEqual(movie.tmdb_status, "")
         self.assertEqual(
             movie.custom_properties["youtube_trailer"], "provider-trailer"
         )
+        self.assertNotIn("_manual_metadata", movie.custom_properties)
 
     def test_manual_tmdb_match_moves_only_the_selected_provider_source(self):
         account = M3UAccount.objects.create(

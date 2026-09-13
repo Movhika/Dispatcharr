@@ -28,6 +28,7 @@ import VODSourceMetadataModal from './VODSourceMetadataModal.jsx';
 import { getMovieStreamUrl } from '../utils/components/VODModalUtils.js';
 import VODExternalIds from './VODExternalIds.jsx';
 import VODEnrichmentButton from './VODEnrichmentButton.jsx';
+import VODCanonicalMetadataModal from './VODCanonicalMetadataModal.jsx';
 
 const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
   return (
@@ -49,14 +50,17 @@ const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
         {displayVOD.rating && <Badge color="yellow">{displayVOD.rating}</Badge>}
         {displayVOD.age && <Badge color="orange">{displayVOD.age}</Badge>}
         <Badge color="green">Movie</Badge>
-        <VODExternalIds
-          contentType="movie"
-          contentId={displayVOD.id}
-          tmdb={displayVOD.tmdb}
-          tmdbId={displayVOD.tmdb_id}
-          imdbId={displayVOD.imdb_id}
-        />
+        {displayVOD.is_anime && <Badge color="pink">Anime</Badge>}
+        {displayVOD.adult && <Badge color="red">Adult</Badge>}
       </Group>
+
+      <VODExternalIds
+        contentType="movie"
+        contentId={displayVOD.id}
+        tmdb={displayVOD.tmdb}
+        tmdbId={displayVOD.tmdb_id}
+        imdbId={displayVOD.imdb_id}
+      />
 
       {/* Release date */}
       {displayVOD.release_date && (
@@ -68,6 +72,16 @@ const Movie = ({ onClickYouTubeTrailer, displayVOD }) => {
       {displayVOD.genre && (
         <Text size="sm" c="dimmed">
           <strong>Genre:</strong> {displayVOD.genre}
+        </Text>
+      )}
+
+      {displayVOD.keywords?.length > 0 && (
+        <Text size="sm" c="dimmed">
+          <strong>Keywords:</strong>{' '}
+          {displayVOD.keywords
+            .map((row) => (typeof row === 'string' ? row : row?.name))
+            .filter(Boolean)
+            .join(', ')}
         </Text>
       )}
 
@@ -144,6 +158,7 @@ const VODModal = ({
   const [selectedProviderDetailsId, setSelectedProviderDetailsId] =
     useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [editingCanonical, setEditingCanonical] = useState(false);
   const [dataView, setDataView] = useState('primary');
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [loadingSourceDetails, setLoadingSourceDetails] = useState(false);
@@ -181,9 +196,10 @@ const VODModal = ({
             providersData[0] ||
             null;
           setSelectedProvider(provider);
-          return (provider
-            ? fetchMovieDetailsFromProvider(vod.id, provider.id)
-            : fetchMovieDetailsFromProvider(vod.id)
+          return (
+            provider
+              ? fetchMovieDetailsFromProvider(vod.id, provider.id)
+              : fetchMovieDetailsFromProvider(vod.id)
           ).then((details) => ({ details, providerId: provider?.id || null }));
         })
         .then((result) => {
@@ -246,6 +262,7 @@ const VODModal = ({
       setSelectedProviderDetails(null);
       setSelectedProviderDetailsId(null);
       setEditingProvider(null);
+      setEditingCanonical(false);
       setDataView('primary');
       setLoadingProviders(false);
       setLoadingSourceDetails(false);
@@ -393,6 +410,10 @@ const VODModal = ({
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
   const metadataMatched = (tmdb.status || vod.tmdb_status) === 'matched';
+  const metadataAvailable =
+    metadataMatched ||
+    (tmdb.status || vod.tmdb_status) === 'manual' ||
+    Object.keys(localized).length > 0;
   const canonicalVOD = detailedVOD?.canonical || vod;
   const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
@@ -407,7 +428,9 @@ const VODModal = ({
         (tmdb.genres || [])
           .map((row) => row.name)
           .filter(Boolean)
-          .join(', ') || canonicalVOD.genre || vod.genre,
+          .join(', ') ||
+        canonicalVOD.genre ||
+        vod.genre,
       rating: tmdb.rating || canonicalVOD.rating || vod.rating,
       duration_secs:
         (tmdb.runtime_minutes ? tmdb.runtime_minutes * 60 : null) ||
@@ -420,9 +443,10 @@ const VODModal = ({
       country: tmdb.country || canonicalVOD.country || '',
       age: tmdb.age_rating || canonicalVOD.age || '',
       youtube_trailer:
-        tmdb.youtube_trailer ||
-        canonicalVOD.youtube_trailer ||
-        '',
+        tmdb.youtube_trailer || canonicalVOD.youtube_trailer || '',
+      keywords: tmdb.keywords || [],
+      is_anime: Boolean(tmdb.is_anime),
+      adult: Boolean(tmdb.adult),
       movie_image:
         vod.artwork_url ||
         tmdb.poster_url ||
@@ -440,7 +464,8 @@ const VODModal = ({
   };
   const providerIds = selectedProvider?.provider_external_ids || {};
   const activeProviderDetails =
-    String(selectedProviderDetailsId || '') === String(selectedProvider?.id || '')
+    String(selectedProviderDetailsId || '') ===
+    String(selectedProvider?.id || '')
       ? selectedProviderDetails
       : null;
   const providerVOD = activeProviderDetails
@@ -544,10 +569,7 @@ const VODModal = ({
               <Group justify="space-between" pr="xl">
                 {allowSourceEditing ? (
                   <VODEnrichmentButton
-                    contentId={vod.id}
-                    contentType="movie"
-                    enriched={metadataMatched}
-                    onComplete={reloadAfterEnrichment}
+                    onClick={() => setEditingCanonical(true)}
                   />
                 ) : (
                   <Box />
@@ -558,12 +580,12 @@ const VODModal = ({
                     variant={dataView === 'primary' ? 'filled' : 'default'}
                     onClick={() => setDataView('primary')}
                   >
-                    {metadataMatched ? 'Primary' : 'Canonical'}
-                    {metadataMatched && primaryLanguage
+                    {metadataAvailable ? 'Primary' : 'Canonical'}
+                    {metadataAvailable && primaryLanguage
                       ? ` · ${primaryLanguage}`
                       : ''}
                   </Button>
-                  {metadataMatched && secondaryLanguage && (
+                  {metadataAvailable && secondaryLanguage && (
                     <Button
                       size="xs"
                       variant={dataView === 'secondary' ? 'filled' : 'default'}
@@ -581,10 +603,11 @@ const VODModal = ({
                   </Button>
                 </Group>
               </Group>
-              {dataView === 'primary' && !metadataMatched && (
+              {dataView === 'primary' && !metadataAvailable && (
                 <Alert color="blue" py="xs">
                   A provider ID may already be known, but no TMDB detail record
-                  is stored yet. Use Enrich with TMDB to load localized data.
+                  is stored yet. Use Edit metadata to search TMDB or enter the
+                  canonical values manually.
                 </Alert>
               )}
               {dataView === 'secondary' && !secondaryTranslationAvailable && (
@@ -696,6 +719,14 @@ const VODModal = ({
           onMetadataChanged?.();
           onClose();
         }}
+      />
+      <VODCanonicalMetadataModal
+        opened={editingCanonical}
+        onClose={() => setEditingCanonical(false)}
+        content={localizedCanonical(primaryLanguage, false)}
+        contentId={vod.id}
+        contentType="movie"
+        onSaved={reloadAfterEnrichment}
       />
     </>
   );

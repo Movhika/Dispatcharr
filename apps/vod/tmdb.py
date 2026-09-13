@@ -12,7 +12,7 @@ import requests
 
 TMDB_API_ROOT = "https://api.themoviedb.org/3"
 TMDB_IMAGE_ROOT = "https://image.tmdb.org/t/p"
-TMDB_METADATA_SCHEMA = 4
+TMDB_METADATA_SCHEMA = 5
 
 
 class TMDBError(RuntimeError):
@@ -243,6 +243,22 @@ def _youtube_trailer(payload):
     return str(candidates[0].get("key") or "") if candidates else ""
 
 
+def _keywords(payload):
+    keyword_payload = payload.get("keywords") or {}
+    rows = keyword_payload.get("keywords") or keyword_payload.get("results") or []
+    normalized = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name or name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        normalized.append({"id": row.get("id"), "name": name})
+    return normalized
+
+
 def _age_rating(payload, media_type, languages):
     regions = [
         language.partition("-")[2].upper()
@@ -302,6 +318,7 @@ def normalize_details(payload, media_type, languages, *, match_method):
             for country in payload.get("origin_country") or []
             if str(country or "").strip()
         ]
+    keywords = _keywords(payload)
     return {
         "schema": TMDB_METADATA_SCHEMA,
         "id": str(payload.get("id") or ""),
@@ -327,6 +344,10 @@ def normalize_details(payload, media_type, languages, *, match_method):
         "countries": countries,
         "country": ", ".join(countries),
         "youtube_trailer": _youtube_trailer(payload),
+        "keywords": keywords,
+        "is_anime": any(
+            row["name"].strip().casefold() == "anime" for row in keywords
+        ),
         "genres": [
             {"id": row.get("id"), "name": row.get("name") or ""}
             for row in payload.get("genres") or []
@@ -379,6 +400,37 @@ def preferred_title(metadata, language=None):
         if title:
             return str(title).strip()
     return ""
+
+
+def apply_manual_overrides(metadata, overrides):
+    """Overlay administrator-owned values onto a normalized TMDB document.
+
+    Empty strings are intentional here: an administrator can also clear a
+    value. The compact override document is retained so a later TMDB refresh
+    can fetch fresh upstream data without losing local edits.
+    """
+    metadata = dict(metadata or {})
+    overrides = dict(overrides or {})
+    overrides.pop("id", None)
+    for key, value in overrides.items():
+        if key in {"localized", "external_ids"}:
+            current = dict(metadata.get(key) or {})
+            if key == "localized":
+                for language, localized_values in (value or {}).items():
+                    current[language] = {
+                        **dict(current.get(language) or {}),
+                        **dict(localized_values or {}),
+                    }
+            else:
+                current.update(dict(value or {}))
+            metadata[key] = current
+        else:
+            metadata[key] = value
+    if overrides:
+        metadata["_manual_overrides"] = overrides
+    else:
+        metadata.pop("_manual_overrides", None)
+    return metadata
 
 
 class Client:
@@ -453,6 +505,23 @@ class Client:
         return str(rows[0].get("id")) if len(rows) == 1 and rows[0].get("id") else ""
 
     def search(self, query, year, media_type, language):
+        rows = self.search_candidates(query, year, media_type, language)
+        title_keys = ("title", "original_title")
+        wanted = _normalized_title(query)
+        candidates = []
+        for row in rows:
+            names = {_normalized_title(row.get(key)) for key in title_keys}
+            if wanted not in names:
+                continue
+            candidate_year = row.get("year")
+            if year and candidate_year and abs(int(year) - int(candidate_year)) > 1:
+                continue
+            candidates.append(row)
+        if len(candidates) != 1:
+            return ""
+        return str(candidates[0].get("id") or "")
+
+    def search_candidates(self, query, year, media_type, language):
         params = {
             "query": query,
             "language": language,
@@ -463,28 +532,34 @@ class Client:
                 "primary_release_year" if media_type == "movie" else "first_air_date_year"
             ] = year
         payload = self.get(f"search/{'movie' if media_type == 'movie' else 'tv'}", **params)
-        title_keys = (
-            ("title", "original_title")
-            if media_type == "movie"
-            else ("name", "original_name")
+        title_key = "title" if media_type == "movie" else "name"
+        original_title_key = (
+            "original_title" if media_type == "movie" else "original_name"
         )
-        wanted = _normalized_title(query)
+        date_key = "release_date" if media_type == "movie" else "first_air_date"
         candidates = []
         for row in payload.get("results") or []:
-            names = {_normalized_title(row.get(key)) for key in title_keys}
-            if wanted not in names:
+            if not row.get("id"):
                 continue
-            candidate_year = _year(
-                row.get("release_date")
-                if media_type == "movie"
-                else row.get("first_air_date")
+            candidates.append(
+                {
+                    "id": str(row.get("id")),
+                    "title": str(row.get(title_key) or "").strip(),
+                    "original_title": str(row.get(original_title_key) or "").strip(),
+                    "release_date": str(row.get(date_key) or "").strip(),
+                    "year": _year(row.get(date_key)),
+                    "overview": str(row.get("overview") or "").strip(),
+                    "poster_url": image_url(row.get("poster_path"), "w185"),
+                    "backdrop_url": image_url(row.get("backdrop_path"), "w780"),
+                    "rating": row.get("vote_average"),
+                    "popularity": row.get("popularity"),
+                    "original_language": str(
+                        row.get("original_language") or ""
+                    ).strip(),
+                    "adult": bool(row.get("adult", False)),
+                }
             )
-            if year and candidate_year and abs(int(year) - candidate_year) > 1:
-                continue
-            candidates.append(row)
-        if len(candidates) != 1:
-            return ""
-        return str(candidates[0].get("id") or "")
+        return candidates
 
     def details(self, tmdb_id, media_type, languages, *, match_method):
         languages = normalize_languages(languages)
@@ -495,6 +570,7 @@ class Client:
             "watch/providers",
             "credits",
             "videos",
+            "keywords",
             "release_dates" if media_type == "movie" else "content_ratings",
         ]
         payload = self.get(

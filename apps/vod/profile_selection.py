@@ -7,7 +7,7 @@ import uuid
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 from .catalog_cache import selection_catalog_generation
@@ -215,6 +215,50 @@ def mark_profile_selections_outdated(
 
     transaction.on_commit(publish)
     return updated
+
+
+def profile_ids_using_canonical_content(*, movie_ids=(), series_ids=()):
+    """Return prepared profiles whose client output embeds canonical data.
+
+    A canonical metadata edit cannot affect profiles that exclude the title.
+    Provider-only variant profiles are likewise independent unless their name
+    formatter explicitly references the canonical title.
+    """
+    movie_ids = {int(value) for value in movie_ids if value is not None}
+    series_ids = {int(value) for value in series_ids if value is not None}
+    canonical_output = (
+        Q(policy__export_mode=VODAccessPolicy.ExportMode.COMPACT)
+        | Q(policy__metadata_source=VODAccessPolicy.MetadataSource.CANONICAL)
+        | Q(policy__naming_mode=VODAccessPolicy.NamingMode.CANONICAL)
+        | Q(
+            policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE,
+            policy__name_template__contains="{canonical}",
+        )
+    )
+    policy_ids = set()
+    if movie_ids:
+        policy_ids.update(
+            VODMovieProfileSelection.objects.filter(
+                movie_id__in=movie_ids,
+                generation=F("policy__active_selection_generation"),
+                policy__is_active=True,
+            )
+            .filter(canonical_output)
+            .values_list("policy_id", flat=True)
+            .distinct()
+        )
+    if series_ids:
+        policy_ids.update(
+            VODSeriesProfileSelection.objects.filter(
+                series_id__in=series_ids,
+                generation=F("policy__active_selection_generation"),
+                policy__is_active=True,
+            )
+            .filter(canonical_output)
+            .values_list("policy_id", flat=True)
+            .distinct()
+        )
+    return sorted(policy_ids)
 
 
 def _set_profile_progress(policy_id, phase, percent, **details):

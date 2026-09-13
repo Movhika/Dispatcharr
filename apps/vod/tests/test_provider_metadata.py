@@ -34,6 +34,7 @@ class ProviderMetadataProjectionTests(SimpleTestCase):
             category="EN | Movies",
             priority=100,
             basic={
+                "name": "English title",
                 "plot": "English description",
                 "trailer": "english-trailer",
                 "cast": ["Actor One", "Actor Two"],
@@ -44,7 +45,10 @@ class ProviderMetadataProjectionTests(SimpleTestCase):
             2,
             category="┃DE┃ FILME",
             priority=10,
-            basic={"plot": "Deutsche Beschreibung"},
+            basic={
+                "name": "Deutscher Titel",
+                "plot": "Deutsche Beschreibung",
+            },
             account="German provider",
         )
 
@@ -57,6 +61,7 @@ class ProviderMetadataProjectionTests(SimpleTestCase):
         self.assertEqual(
             projection["scalar"]["description"], "Deutsche Beschreibung"
         )
+        self.assertEqual(projection["scalar"]["display_name"], "Deutscher Titel")
         self.assertEqual(
             projection["custom"]["youtube_trailer"], "english-trailer"
         )

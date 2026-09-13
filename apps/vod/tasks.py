@@ -359,9 +359,11 @@ def enrich_vod_metadata(
         TMDBAuthenticationError,
         TMDBError,
         TMDBNotFound,
+        apply_manual_overrides,
         clean_lookup_title,
         preferred_title,
     )
+    from django.db.models.fields.json import KeyTransform
 
     if not acquire_task_lock(TMDB_ENRICHMENT_LOCK_NAME, TMDB_ENRICHMENT_LOCK_ID):
         return {"skipped": "TMDB enrichment is already running"}
@@ -373,6 +375,8 @@ def enrich_vod_metadata(
     started_at = timezone.now()
     changed_movies = 0
     changed_series = 0
+    changed_movie_ids = set()
+    changed_series_ids = set()
     rerun_after = False
     try:
         token = CoreSettings.get_tmdb_api_token()
@@ -408,8 +412,13 @@ def enrich_vod_metadata(
                 model.objects.filter(
                     **{f"{relation_name}__m3u_account__is_active": True}
                 )
+                .annotate(
+                    manual_overrides=KeyTransform(
+                        "_manual_overrides", "tmdb_metadata"
+                    )
+                )
                 .distinct()
-                .values(*query_fields)
+                .values(*query_fields, "manual_overrides")
                 .order_by("id")
             )
             selected_ids = movie_ids if media_type == "movie" else series_ids
@@ -512,6 +521,10 @@ def enrich_vod_metadata(
                     metadata["status"] = "matched"
                     counters["matched"] += int(not content["tmdb_id"])
                     counters["enriched"] += 1
+                metadata = apply_manual_overrides(
+                    metadata,
+                    content.get("manual_overrides"),
+                )
                 consecutive_errors = 0
             except TMDBNotFound:
                 metadata = {
@@ -521,6 +534,10 @@ def enrich_vod_metadata(
                     "localized": {},
                     "fetched_at": timezone.now().isoformat(),
                 }
+                metadata = apply_manual_overrides(
+                    metadata,
+                    content.get("manual_overrides"),
+                )
                 counters["not_found"] += 1
                 consecutive_errors = 0
             except TMDBAuthenticationError:
@@ -564,8 +581,10 @@ def enrich_vod_metadata(
             model.objects.filter(pk=content_id).update(**update)
             if media_type == "movie":
                 changed_movies += 1
+                changed_movie_ids.add(content_id)
             else:
                 changed_series += 1
+                changed_series_ids.add(content_id)
             counters["processed"] += 1
             if (
                 counters["processed"] % TMDB_PROGRESS_INTERVAL == 0
@@ -620,10 +639,17 @@ def enrich_vod_metadata(
             # active and asks the administrator to rebuild explicitly.
             bump_catalog_generation(invalidate_selections=False)
             if not must_rebuild_profiles:
-                from .profile_selection import mark_profile_selections_outdated
+                from .profile_selection import (
+                    mark_profile_selections_outdated,
+                    profile_ids_using_canonical_content,
+                )
 
                 mark_profile_selections_outdated(
                     trigger_reason="Canonical VOD metadata was enriched manually",
+                    policy_ids=profile_ids_using_canonical_content(
+                        movie_ids=changed_movie_ids,
+                        series_ids=changed_series_ids,
+                    ),
                 )
         return {
             **counters,
