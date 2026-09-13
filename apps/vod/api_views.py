@@ -18,7 +18,6 @@ import logging
 import os
 import re
 from datetime import datetime, time, timedelta
-from types import SimpleNamespace
 from apps.accounts.permissions import (
     Authenticated,
     permission_classes_by_action,
@@ -3765,7 +3764,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 JOIN vod_series series ON series.id = relation.series_id
                 WHERE {' AND '.join(series_conditions)}
             )
-            SELECT relation_id, canonical_id, source_name, content_type
+            SELECT relation_id, canonical_id, source_name, content_type,
+                   COUNT(*) OVER() AS total_count
             FROM unified_variants
             ORDER BY LOWER(source_name), relation_id
             LIMIT %s OFFSET %s
@@ -3775,6 +3775,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             cursor.execute(sql, params)
             columns = [column[0] for column in cursor.description]
             rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        total = int(rows[0]["total_count"]) if rows else 0
 
         movie_ids = [
             row["relation_id"] for row in rows if row["content_type"] == "movie"
@@ -3899,20 +3900,21 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 }
             )
 
-        count_sql = f"""
-            SELECT COUNT(*) FROM (
-                SELECT 1 FROM {movie_joins}
-                JOIN vod_movie movies ON movies.id = relation.movie_id
-                WHERE {' AND '.join(movie_conditions)}
-                UNION ALL
-                SELECT 1 FROM {series_joins}
-                JOIN vod_series series ON series.id = relation.series_id
-                WHERE {' AND '.join(series_conditions)}
-            ) counted
-        """
-        with connection.cursor() as cursor:
-            cursor.execute(count_sql, movie_params + series_params)
-            total = cursor.fetchone()[0]
+        if not rows and offset:
+            count_sql = f"""
+                SELECT COUNT(*) FROM (
+                    SELECT 1 FROM {movie_joins}
+                    JOIN vod_movie movies ON movies.id = relation.movie_id
+                    WHERE {' AND '.join(movie_conditions)}
+                    UNION ALL
+                    SELECT 1 FROM {series_joins}
+                    JOIN vod_series series ON series.id = relation.series_id
+                    WHERE {' AND '.join(series_conditions)}
+                ) counted
+            """
+            with connection.cursor() as cursor:
+                cursor.execute(count_sql, movie_params + series_params)
+                total = cursor.fetchone()[0]
         return Response(
             {
                 "count": total,
@@ -3937,9 +3939,17 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     {"count": 0, "next": False, "previous": False, "results": []}
                 )
 
-            # Get pagination parameters
-            page_size = int(request.query_params.get('page_size', 24))
-            page_number = int(request.query_params.get('page', 1))
+            # Keep accidental or malicious requests from hydrating an
+            # unbounded number of large canonical metadata rows at once.
+            try:
+                page_size = max(
+                    1, min(200, int(request.query_params.get("page_size", 24)))
+                )
+                page_number = max(1, int(request.query_params.get("page", 1)))
+            except (TypeError, ValueError):
+                raise DRFValidationError(
+                    {"page": "Page and page_size must be numeric."}
+                )
 
             # Calculate offset for unified pagination
             offset = (page_number - 1) * page_size
@@ -4069,74 +4079,32 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
 
             params = movie_params + series_params
 
-            # Use UNION ALL with ORDER BY and LIMIT/OFFSET for true unified pagination
-            # This is much more efficient than Python sorting
+            # Sort and page only narrow identity rows. Selecting the complete
+            # canonical records here makes PostgreSQL carry large JSON metadata
+            # through both sides of the UNION and into its parallel sort even
+            # though the client only needs one small page. The bounded ORM
+            # queries below hydrate details for those page identities only.
             sql = f"""
             WITH unified_content AS (
                 SELECT
                     movies.id,
-                    movies.uuid,
                     COALESCE(NULLIF(movies.display_name, ''), movies.name) as name,
-                    movies.description,
-                    movies.year,
-                    movies.rating,
-                    movies.genre,
-                    movies.duration_secs as duration,
-                    movies.library_added_at,
-                    movies.created_at,
-                    movies.updated_at,
-                    movies.custom_properties,
-                    movies.tmdb_poster_url,
-                    movies.tmdb_backdrop_url,
-                    movies.tmdb_match_id,
-                    movies.tmdb_id,
-                    movies.tmdb_imdb_id,
-                    movies.imdb_id,
-                    movies.tmdb_metadata,
-                    movies.tmdb_status,
-                    movies.tmdb_enriched_at,
-                    movies.logo_id,
-                    logo.name as logo_name,
-                    logo.url as logo_url,
                     'movie' as content_type
                 FROM vod_movie movies
-                LEFT JOIN vod_vodlogo logo ON movies.logo_id = logo.id
                 WHERE {where_conditions[0]}
 
                 UNION ALL
 
                 SELECT
                     series.id,
-                    series.uuid,
                     COALESCE(NULLIF(series.display_name, ''), series.name) as name,
-                    series.description,
-                    series.year,
-                    series.rating,
-                    series.genre,
-                    NULL as duration,
-                    series.library_added_at,
-                    series.created_at,
-                    series.updated_at,
-                    series.custom_properties,
-                    series.tmdb_poster_url,
-                    series.tmdb_backdrop_url,
-                    series.tmdb_match_id,
-                    series.tmdb_id,
-                    series.tmdb_imdb_id,
-                    series.imdb_id,
-                    series.tmdb_metadata,
-                    series.tmdb_status,
-                    series.tmdb_enriched_at,
-                    series.logo_id,
-                    logo.name as logo_name,
-                    logo.url as logo_url,
                     'series' as content_type
                 FROM vod_series series
-                LEFT JOIN vod_vodlogo logo ON series.logo_id = logo.id
                 WHERE {where_conditions[1]}
             )
-            SELECT * FROM unified_content
-            ORDER BY LOWER(name), id
+            SELECT id, name, content_type, COUNT(*) OVER() AS total_count
+            FROM unified_content
+            ORDER BY LOWER(name), content_type, id
             LIMIT %s OFFSET %s
             """
 
@@ -4148,80 +4116,94 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             with connection.cursor() as cursor:
                 cursor.execute(sql, params)
                 columns = [col[0] for col in cursor.description]
-                results = []
+                page_rows = [
+                    dict(zip(columns, row)) for row in cursor.fetchall()
+                ]
+            total_count = (
+                int(page_rows[0]["total_count"]) if page_rows else 0
+            )
 
-                for row in cursor.fetchall():
-                    item_dict = dict(zip(columns, row))
+            movie_page_ids = [
+                row["id"] for row in page_rows
+                if row["content_type"] == "movie"
+            ]
+            series_page_ids = [
+                row["id"] for row in page_rows
+                if row["content_type"] == "series"
+            ]
+            content_by_key = {
+                ("movie", content.id): content
+                for content in Movie.objects.filter(
+                    pk__in=movie_page_ids
+                ).select_related("logo")
+            }
+            content_by_key.update(
+                {
+                    ("series", content.id): content
+                    for content in Series.objects.filter(
+                        pk__in=series_page_ids
+                    ).select_related("logo")
+                }
+            )
 
-                    # Build logo object in the format expected by frontend
-                    logo_data = None
-                    if item_dict['logo_id']:
-                        logo_data = {
-                            'id': item_dict['logo_id'],
-                            'name': item_dict['logo_name'],
-                            'url': item_dict['logo_url'],
-                            'cache_url': vodlogo_cache_url(
-                                request,
-                                SimpleNamespace(
-                                    id=item_dict['logo_id'],
-                                    url=item_dict['logo_url'],
-                                ),
-                            ),
-                            'movie_count': 0,  # We don't calculate this in raw SQL
-                            'series_count': 0,  # We don't calculate this in raw SQL
-                            'is_used': True
-                        }
-
-                    # Convert to the format expected by frontend
-                    formatted_item = {
-                        'id': item_dict['id'],
-                        'uuid': str(item_dict['uuid']),
-                        'name': item_dict['name'],
-                        'description': item_dict['description'] or '',
-                        'year': item_dict['year'],
-                        'rating': float(item_dict['rating']) if item_dict['rating'] else 0.0,
-                        'genre': item_dict['genre'] or '',
-                        'duration': item_dict['duration'],
-                        'library_added_at': item_dict['library_added_at'].isoformat() if item_dict['library_added_at'] else None,
-                        'created_at': item_dict['created_at'].isoformat() if item_dict['created_at'] else None,
-                        'updated_at': item_dict['updated_at'].isoformat() if item_dict['updated_at'] else None,
-                        'custom_properties': item_dict['custom_properties'] or {},
-                        'tmdb_id': (
-                            item_dict['tmdb_match_id']
-                            or item_dict['tmdb_id']
-                            or ''
-                        ),
-                        'imdb_id': (
-                            item_dict['tmdb_imdb_id']
-                            or item_dict['imdb_id']
-                            or ''
-                        ),
-                        'tmdb_status': item_dict['tmdb_status'] or '',
-                        'tmdb_enriched_at': (
-                            item_dict['tmdb_enriched_at'].isoformat()
-                            if item_dict['tmdb_enriched_at'] else None
-                        ),
-                        'tmdb': _tmdb_content_payload(
-                            SimpleNamespace(
-                                tmdb_metadata=item_dict['tmdb_metadata'] or {},
-                                tmdb_match_id=item_dict['tmdb_match_id'] or '',
-                                tmdb_id=item_dict['tmdb_id'] or '',
-                                tmdb_imdb_id=item_dict['tmdb_imdb_id'] or '',
-                                imdb_id=item_dict['imdb_id'] or '',
-                                tmdb_status=item_dict['tmdb_status'] or '',
-                            )
-                        ),
-                        '_tmdb_poster_url': item_dict['tmdb_poster_url'] or '',
-                        '_tmdb_backdrop_url': item_dict['tmdb_backdrop_url'] or '',
-                        'logo': logo_data,
-                        'content_type': item_dict['content_type']
+            results = []
+            for row in page_rows:
+                content_type = row["content_type"]
+                content = content_by_key.get((content_type, row["id"]))
+                if content is None:
+                    continue
+                logo_data = None
+                if content.logo_id:
+                    logo_data = {
+                        "id": content.logo_id,
+                        "name": content.logo.name,
+                        "url": content.logo.url,
+                        "cache_url": vodlogo_cache_url(request, content.logo),
+                        "movie_count": 0,
+                        "series_count": 0,
+                        "is_used": True,
                     }
-                    formatted_item['tmdb_lookup_title'] = clean_lookup_title(
-                        item_dict['name'],
-                        year=item_dict['year'],
-                        rules=title_rules,
-                    )
-                    results.append(formatted_item)
+                formatted_item = {
+                    "id": content.id,
+                    "uuid": str(content.uuid),
+                    "name": row["name"],
+                    "description": content.description or "",
+                    "year": content.year,
+                    "rating": float(content.rating) if content.rating else 0.0,
+                    "genre": content.genre or "",
+                    "duration": (
+                        content.duration_secs if content_type == "movie" else None
+                    ),
+                    "library_added_at": (
+                        content.library_added_at.isoformat()
+                        if content.library_added_at else None
+                    ),
+                    "created_at": (
+                        content.created_at.isoformat() if content.created_at else None
+                    ),
+                    "updated_at": (
+                        content.updated_at.isoformat() if content.updated_at else None
+                    ),
+                    "custom_properties": content.custom_properties or {},
+                    "tmdb_id": content.tmdb_match_id or content.tmdb_id or "",
+                    "imdb_id": content.tmdb_imdb_id or content.imdb_id or "",
+                    "tmdb_status": content.tmdb_status or "",
+                    "tmdb_enriched_at": (
+                        content.tmdb_enriched_at.isoformat()
+                        if content.tmdb_enriched_at else None
+                    ),
+                    "tmdb": _tmdb_content_payload(content),
+                    "_tmdb_poster_url": content.tmdb_poster_url or "",
+                    "_tmdb_backdrop_url": content.tmdb_backdrop_url or "",
+                    "logo": logo_data,
+                    "content_type": content_type,
+                }
+                formatted_item["tmdb_lookup_title"] = clean_lookup_title(
+                    row["name"],
+                    year=content.year,
+                    rules=title_rules,
+                )
+                results.append(formatted_item)
 
             # Add technical source summaries with two bounded relation queries
             # for the current page.  This keeps the unified list free of N+1
@@ -4316,21 +4298,21 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 elif item["logo"]:
                     item["artwork_url"] = item["logo"]["cache_url"]
 
-            # Get total count estimate (for pagination info)
-            # Use a separate efficient count query
-            count_sql = f"""
-            SELECT COUNT(*) FROM (
-                SELECT 1 FROM vod_movie movies WHERE {where_conditions[0]}
-                UNION ALL
-                SELECT 1 FROM vod_series series WHERE {where_conditions[1]}
-            ) as total_count
-            """
-
-            count_params = params[:-2]  # Remove LIMIT and OFFSET params
-
-            with connection.cursor() as cursor:
-                cursor.execute(count_sql, count_params)
-                total_count = cursor.fetchone()[0]
+            # A window count reuses the already filtered narrow result instead
+            # of repeating both full source/catalog scans for every page. Only
+            # an out-of-range page has no row carrying that count and needs a
+            # small fallback query so the UI can recover its pagination.
+            if not page_rows and offset:
+                count_sql = f"""
+                SELECT COUNT(*) FROM (
+                    SELECT 1 FROM vod_movie movies WHERE {where_conditions[0]}
+                    UNION ALL
+                    SELECT 1 FROM vod_series series WHERE {where_conditions[1]}
+                ) as total_count
+                """
+                with connection.cursor() as cursor:
+                    cursor.execute(count_sql, params[:-2])
+                    total_count = cursor.fetchone()[0]
 
             response_data = {
                 'count': total_count,

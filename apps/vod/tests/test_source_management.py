@@ -2,7 +2,9 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import RequestFactory, TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -3837,9 +3839,18 @@ class VODSourceManagementTests(TestCase):
         )
         force_authenticate(request, user=admin)
 
-        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+        with CaptureQueriesContext(connection) as queries:
+            response = UnifiedContentViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200)
+        page_queries = [
+            query["sql"]
+            for query in queries.captured_queries
+            if "WITH unified_content AS" in query["sql"]
+        ]
+        self.assertEqual(len(page_queries), 1)
+        self.assertIn("COUNT(*) OVER()", page_queries[0])
+        self.assertNotIn("tmdb_metadata", page_queries[0])
         counts = {
             (item["content_type"], item["name"]): item["source_count"]
             for item in response.data["results"]

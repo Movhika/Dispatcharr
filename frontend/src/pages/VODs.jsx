@@ -37,7 +37,7 @@ import {
   SlidersHorizontal,
   Wrench,
 } from 'lucide-react';
-import { useDisclosure } from '@mantine/hooks';
+import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import useAuthStore from '../store/auth';
@@ -125,6 +125,8 @@ const VODsPage = () => {
   const [viewMode, setViewMode] = useState(() =>
     localStorage.getItem('vodsViewMode') === 'posters' ? 'posters' : 'list'
   );
+  const [searchInput, setSearchInput] = useState(filters.search || '');
+  const [debouncedSearch] = useDebouncedValue(searchInput, 350);
   const [categories, setCategories] = useState({});
   const [seriesModalOpened, seriesModalHandlers] = useDisclosure(false);
   const [vodModalOpened, vodModalHandlers] = useDisclosure(false);
@@ -203,6 +205,15 @@ const VODsPage = () => {
   useEffect(() => {
     if (!playlists.length) fetchPlaylists();
   }, [fetchPlaylists, playlists.length]);
+
+  // Keep fast typing local. Updating the shared filters for every character
+  // used to launch overlapping full-catalog PostgreSQL searches ("b", "bl",
+  // "bli", ...), only for all but the last result to be discarded by the UI.
+  useEffect(() => {
+    if (debouncedSearch !== filters.search) {
+      setFilters({ search: debouncedSearch });
+    }
+  }, [debouncedSearch, filters.search, setFilters]);
 
   useEffect(() => {
     if (!vodAllowed || !pageSizeReady) return;
@@ -461,8 +472,8 @@ const VODsPage = () => {
             <TextInput
               placeholder="Search VODs..."
               leftSection={<Search size={16} />}
-              value={filters.search}
-              onChange={(event) => setFilters({ search: event.target.value })}
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
               miw={240}
             />
             <Select

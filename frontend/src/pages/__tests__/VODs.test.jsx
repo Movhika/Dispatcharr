@@ -86,6 +86,7 @@ vi.mock('lucide-react', () => ({
   Wrench: () => null,
 }));
 vi.mock('@mantine/hooks', () => ({
+  useDebouncedValue: (value) => [value],
   useDisclosure: (initial = false) => {
     const [opened, setOpened] = React.useState(initial);
     return [
