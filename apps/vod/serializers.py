@@ -753,7 +753,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "min_resolution", "max_resolution",
             "allow_unknown_metadata", "language_match_mode",
             "source_rules", "category_import_rules",
-            "category_default_actions",
+            "category_default_actions", "content_default_action",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
@@ -763,6 +763,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         category_default_actions = normalized.pop(
             "category_default_actions", None
         )
+        content_default_action = normalized.pop("content_default_action", None)
         if not isinstance(source_rules, list):
             raise serializers.ValidationError(
                 {"source_rules": "Must be an ordered list"}
@@ -902,6 +903,12 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                     )
                 normalized_defaults[scope] = action
             category_default_actions = normalized_defaults
+        if content_default_action is not None:
+            content_default_action = str(content_default_action)
+            if content_default_action not in {"include", "exclude"}:
+                raise serializers.ValidationError(
+                    {"content_default_action": "Use include or exclude"}
+                )
         for field in (
             "required_audio_languages",
             "required_subtitle_languages",
@@ -963,6 +970,27 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"source_rules": {index: "Must be an object"}}
                 )
+            external_id_fields = {
+                "tmdb_id",
+                "tmdb_ids",
+                "imdb_id",
+                "imdb_ids",
+                "tvdb_id",
+                "tvdb_ids",
+                "wikidata_id",
+                "wikidata_ids",
+            }
+            if external_id_fields.intersection(rule):
+                raise serializers.ValidationError(
+                    {
+                        "source_rules": {
+                            index: (
+                                "External IDs identify individual titles and are not "
+                                "supported in reusable content filters"
+                            )
+                        }
+                    }
+                )
             if rule.get("match_field"):
                 match_field = str(rule.get("match_field"))
                 if match_field not in {"category", "stream"}:
@@ -1009,6 +1037,95 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 video_features = normalize_video_features(
                     rule.get("required_video_features") or []
                 )
+                try:
+                    min_resolution = max(
+                        0, int(rule.get("min_resolution") or 0)
+                    )
+                    max_resolution = max(
+                        0, int(rule.get("max_resolution") or 0)
+                    )
+                    min_year = max(0, int(rule.get("min_year") or 0))
+                    max_year = max(0, int(rule.get("max_year") or 0))
+                    min_rating = max(0.0, float(rule.get("min_rating") or 0))
+                    max_rating = max(0.0, float(rule.get("max_rating") or 0))
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: "Resolution, year, and rating must be numeric"
+                            }
+                        }
+                    )
+                if min_resolution and max_resolution and min_resolution > max_resolution:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: "Minimum resolution cannot exceed maximum resolution"
+                            }
+                        }
+                    )
+                if min_year and max_year and min_year > max_year:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: "Minimum year cannot exceed maximum year"
+                            }
+                        }
+                    )
+                if min_rating > 10 or max_rating > 10:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: "Ratings must be between 0 and 10"}}
+                    )
+                if min_rating and max_rating and min_rating > max_rating:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: "Minimum rating cannot exceed maximum rating"
+                            }
+                        }
+                    )
+
+                def normalized_terms(field):
+                    raw_values = rule.get(field) or []
+                    if not isinstance(raw_values, list):
+                        raise serializers.ValidationError(
+                            {"source_rules": {index: {field: "Must be a list"}}}
+                        )
+                    values = []
+                    seen = set()
+                    for raw_value in raw_values[:100]:
+                        term = str(raw_value or "").strip()[:100]
+                        key = term.casefold()
+                        if term and key not in seen:
+                            values.append(term)
+                            seen.add(key)
+                    return values
+
+                genres = normalized_terms("required_genres")
+                keywords = normalized_terms("required_keywords")
+                countries = normalized_terms("required_countries")
+                age_ratings = normalized_terms("required_age_ratings")
+                anime_mode = str(rule.get("anime_mode") or "any")
+                adult_mode = str(rule.get("adult_mode") or "any")
+                metadata_mode = str(rule.get("metadata_mode") or "any")
+                if anime_mode not in {"any", "yes", "no"}:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: {"anime_mode": "Use any, yes, or no"}}}
+                    )
+                if adult_mode not in {"any", "yes", "no"}:
+                    raise serializers.ValidationError(
+                        {"source_rules": {index: {"adult_mode": "Use any, yes, or no"}}}
+                    )
+                if metadata_mode not in {"any", "available", "missing"}:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: {
+                                    "metadata_mode": "Use any, available, or missing"
+                                }
+                            }
+                        }
+                    )
                 duplicate_key = (
                     match_field,
                     regex_pattern,
@@ -1016,10 +1133,23 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                     tuple(audio_languages),
                     tuple(subtitle_languages),
                     tuple(video_features),
+                    min_resolution,
+                    max_resolution,
+                    tuple(value.casefold() for value in genres),
+                    tuple(value.casefold() for value in keywords),
+                    tuple(value.casefold() for value in countries),
+                    tuple(value.casefold() for value in age_ratings),
+                    min_year,
+                    max_year,
+                    min_rating,
+                    max_rating,
+                    anime_mode,
+                    adult_mode,
+                    metadata_mode,
                 )
                 if duplicate_key in seen_stream_filters:
                     raise serializers.ValidationError(
-                        {"source_rules": {index: "Duplicate VOD stream filter"}}
+                        {"source_rules": {index: "Duplicate VOD content filter"}}
                     )
                 seen_stream_filters.add(duplicate_key)
                 normalized_rules.append(
@@ -1032,6 +1162,19 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                         "required_audio_languages": audio_languages,
                         "required_subtitle_languages": subtitle_languages,
                         "required_video_features": video_features,
+                        "min_resolution": min_resolution,
+                        "max_resolution": max_resolution,
+                        "required_genres": genres,
+                        "required_keywords": keywords,
+                        "required_countries": countries,
+                        "required_age_ratings": age_ratings,
+                        "min_year": min_year,
+                        "max_year": max_year,
+                        "min_rating": min_rating,
+                        "max_rating": max_rating,
+                        "anime_mode": anime_mode,
+                        "adult_mode": adult_mode,
+                        "metadata_mode": metadata_mode,
                         "result": result,
                     }
                 )
@@ -1066,8 +1209,11 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             normalized["category_import_rules"] = category_import_rules
         if category_default_actions is not None:
             normalized["category_default_actions"] = category_default_actions
+        if content_default_action is not None:
+            normalized["content_default_action"] = content_default_action
         configuration_fields = {
-            "source_rules", "category_import_rules", "category_default_actions"
+            "source_rules", "category_import_rules", "category_default_actions",
+            "content_default_action",
         }
         if requested_fields <= configuration_fields and all(
             rule.get("match_field") for rule in normalized_rules

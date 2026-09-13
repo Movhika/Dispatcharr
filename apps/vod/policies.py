@@ -22,6 +22,19 @@ DEFAULT_EDITION = {
     "suffix": "",
 }
 
+CANONICAL_CONTENT_FILTER_FIELDS = frozenset(
+    {
+        "required_genres",
+        "required_keywords",
+        "required_countries",
+        "required_age_ratings",
+        "min_year",
+        "max_year",
+        "min_rating",
+        "max_rating",
+    }
+)
+
 
 def policy_for_user(user):
     if not user or not getattr(user, "is_authenticated", False):
@@ -272,6 +285,192 @@ def _relation_source_name(relation):
     )
 
 
+def _canonical_content(relation):
+    """Return the canonical movie/series represented by a source relation."""
+    content = getattr(relation, "movie", None) or getattr(relation, "series", None)
+    if content is not None:
+        return content
+    episode = getattr(relation, "episode", None)
+    if episode is not None:
+        return getattr(episode, "series", None)
+    series_relation = getattr(relation, "series_relation", None)
+    return getattr(series_relation, "series", None)
+
+
+def _metadata_text_values(value):
+    """Flatten common provider/TMDB list shapes into non-empty strings."""
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("value") or ""
+    if isinstance(value, (list, tuple, set)):
+        values = []
+        for item in value:
+            values.extend(_metadata_text_values(item))
+        return values
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
+def _canonical_filter_metadata(relation):
+    """Return reusable canonical metadata for profile content rules.
+
+    External IDs are intentionally omitted. They identify one title and belong
+    to matching/administration, not to reusable output-profile rules.
+    """
+    content = _canonical_content(relation)
+    if content is None:
+        return {
+            "genres": [],
+            "keywords": [],
+            "countries": [],
+            "age_ratings": [],
+            "year": None,
+            "rating": None,
+            "is_anime": False,
+            "is_adult": False,
+            "metadata_available": False,
+        }
+    tmdb_metadata = (
+        content.tmdb_metadata
+        if isinstance(getattr(content, "tmdb_metadata", None), dict)
+        else {}
+    )
+    from .tmdb import apply_manual_overrides
+
+    tmdb_metadata = apply_manual_overrides(
+        tmdb_metadata,
+        tmdb_metadata.get("_manual_overrides") or {},
+    )
+    properties = (
+        content.custom_properties
+        if isinstance(getattr(content, "custom_properties", None), dict)
+        else {}
+    )
+    genres = _metadata_text_values(tmdb_metadata.get("genres"))
+    if not genres:
+        genres = _metadata_text_values(getattr(content, "genre", ""))
+    countries = _metadata_text_values(tmdb_metadata.get("country"))
+    if not countries:
+        countries = _metadata_text_values(properties.get("country"))
+    age_ratings = _metadata_text_values(tmdb_metadata.get("age_rating"))
+    if not age_ratings:
+        age_ratings = _metadata_text_values(
+            properties.get("age_rating") or properties.get("age")
+        )
+    release_date = str(tmdb_metadata.get("release_date") or "")
+    year = getattr(content, "year", None)
+    if not year and len(release_date) >= 4 and release_date[:4].isdigit():
+        year = int(release_date[:4])
+    raw_rating = tmdb_metadata.get("rating")
+    if raw_rating in (None, ""):
+        raw_rating = getattr(content, "rating", None)
+    try:
+        rating = float(raw_rating) if raw_rating not in (None, "") else None
+    except (TypeError, ValueError):
+        rating = None
+    return {
+        "genres": genres,
+        "keywords": _metadata_text_values(tmdb_metadata.get("keywords")),
+        "countries": countries,
+        "age_ratings": age_ratings,
+        "year": year,
+        "rating": rating,
+        "is_anime": bool(tmdb_metadata.get("is_anime", False)),
+        "is_adult": bool(
+            tmdb_metadata.get("adult", False)
+            or getattr(content, "is_adult", False)
+        ),
+        "metadata_available": bool(
+            tmdb_metadata
+            or getattr(content, "tmdb_status", "") in {"matched", "manual"}
+        ),
+    }
+
+
+def _contains_any(observed, requested):
+    observed = {
+        str(value).strip().casefold() for value in observed if str(value).strip()
+    }
+    requested = {
+        str(value).strip().casefold() for value in requested if str(value).strip()
+    }
+    if not requested:
+        return True
+    return not requested.isdisjoint(observed)
+
+
+def _mode_matches(mode, observed):
+    if mode in (None, "", "any"):
+        return True
+    return bool(observed) is (str(mode).lower() == "yes")
+
+
+def _rule_uses_canonical_metadata(rule):
+    return (
+        any(
+            rule.get(field) not in (None, "", 0, 0.0, [], {})
+            for field in CANONICAL_CONTENT_FILTER_FIELDS
+        )
+        or rule.get("anime_mode") in {"yes", "no"}
+        or rule.get("adult_mode") in {"yes", "no"}
+        or rule.get("metadata_mode") in {"available", "missing"}
+    )
+
+
+def content_rules_use_canonical_metadata(rules):
+    return any(
+        isinstance(rule, dict)
+        and rule.get("enabled", True) is not False
+        and _rule_uses_canonical_metadata(rule)
+        for rule in rules or []
+    )
+
+
+def _canonical_content_filter_matches(rule, metadata):
+    for rule_key, metadata_key in (
+        ("required_genres", "genres"),
+        ("required_keywords", "keywords"),
+        ("required_countries", "countries"),
+        ("required_age_ratings", "age_ratings"),
+    ):
+        if not _contains_any(metadata[metadata_key], rule.get(rule_key) or []):
+            return False
+
+    if not _mode_matches(rule.get("anime_mode"), metadata["is_anime"]):
+        return False
+    if not _mode_matches(rule.get("adult_mode"), metadata["is_adult"]):
+        return False
+    metadata_mode = str(rule.get("metadata_mode") or "any")
+    if metadata_mode == "available" and not metadata["metadata_available"]:
+        return False
+    if metadata_mode == "missing" and metadata["metadata_available"]:
+        return False
+
+    year = metadata["year"]
+    min_year = _constraint_int(rule, "min_year")
+    max_year = _constraint_int(rule, "max_year")
+    if (min_year or max_year) and not year:
+        return False
+    if min_year and year < min_year:
+        return False
+    if max_year and year > max_year:
+        return False
+
+    rating = metadata["rating"]
+    try:
+        min_rating = float(rule.get("min_rating") or 0)
+        max_rating = float(rule.get("max_rating") or 0)
+    except (TypeError, ValueError):
+        return False
+    if (min_rating or max_rating) and rating is None:
+        return False
+    if min_rating and rating < min_rating:
+        return False
+    if max_rating and rating > max_rating:
+        return False
+    return True
+
+
 def _stream_filter_metadata_matches(rule, metadata):
     required_audio = _language_set(rule.get("required_audio_languages"))
     observed_audio = _language_set(
@@ -299,6 +498,15 @@ def _stream_filter_metadata_matches(rule, metadata):
         }
         if compatible_required.isdisjoint(observed_features):
             return False
+    min_resolution = _constraint_int(rule, "min_resolution")
+    max_resolution = _constraint_int(rule, "max_resolution")
+    resolution = _vertical_resolution(metadata)
+    if (min_resolution or max_resolution) and not resolution:
+        return False
+    if min_resolution and resolution < min_resolution:
+        return False
+    if max_resolution and resolution > max_resolution:
+        return False
     return True
 
 
@@ -385,7 +593,7 @@ def relation_edition(
 
 
 def relation_stream_filter_match(relation, policy, metadata):
-    """Return ``(rule_id, decision)`` for the first matching stream filter."""
+    """Return ``(rule_id, decision)`` for the first matching content filter."""
     rules = ((policy.hard_constraints if policy else None) or {}).get(
         "source_rules", []
     )
@@ -418,11 +626,17 @@ def relation_stream_filter_match(relation, policy, metadata):
         "category": getattr(category, "name", "") or "",
         "stream": _relation_source_name(relation),
     }
+    canonical_metadata = None
     for pattern, rule in compiled_cache[1]:
         if pattern.search(targets.get(rule.get("match_field"), "")) is None:
             continue
         if not _stream_filter_metadata_matches(rule, metadata):
             continue
+        if _rule_uses_canonical_metadata(rule):
+            if canonical_metadata is None:
+                canonical_metadata = _canonical_filter_metadata(relation)
+            if not _canonical_content_filter_matches(rule, canonical_metadata):
+                continue
         return (
             str(rule.get("id") or ""),
             rule.get("result", "include") != "exclude",
@@ -431,7 +645,7 @@ def relation_stream_filter_match(relation, policy, metadata):
 
 
 def relation_stream_filter_result(relation, policy, metadata):
-    """Return the first matching ordered VOD stream filter decision."""
+    """Return the first matching ordered VOD content-filter decision."""
     match = relation_stream_filter_match(relation, policy, metadata)
     return match[1] if match is not None else None
 
@@ -535,6 +749,19 @@ def relation_policy_evaluation(
                 "stream_filter_include" if decision else "stream_filter_exclude"
             ),
             "rule_id": rule_id,
+        }
+    content_rules = [
+        rule
+        for rule in ((policy.hard_constraints or {}).get("source_rules") or [])
+        if isinstance(rule, dict) and rule.get("enabled", True) is not False
+    ]
+    if content_rules and (policy.hard_constraints or {}).get(
+        "content_default_action", "include"
+    ) == "exclude":
+        return {
+            "allowed": False,
+            "reason": "content_filter_default_exclude",
+            "rule_id": "",
         }
     constraints = relation_constraints(relation, policy)
     allow_unknown = constraints.get("allow_unknown_metadata", True)

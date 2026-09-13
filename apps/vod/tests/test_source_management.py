@@ -393,6 +393,55 @@ class VODSourceManagementTests(TestCase):
         self.assertTrue(relation_allowed(self.english_relation, self.policy))
         self.assertFalse(relation_allowed(self.german_relation, self.policy))
 
+    def test_content_filter_uses_manual_source_metadata_before_category_defaults(self):
+        asset = ensure_source_asset(self.english_relation)
+        self.english_relation.refresh_from_db()
+        asset.manual_metadata = {"audio_languages": ["hin"]}
+        asset.save(update_fields=["manual_metadata", "updated_at"])
+        self.policy.hard_constraints = {
+            "content_default_action": "exclude",
+            "source_rules": [
+                {
+                    "id": "english-dub",
+                    "match_field": "stream",
+                    "regex_pattern": "",
+                    "required_audio_languages": ["eng"],
+                    "result": "include",
+                }
+            ],
+        }
+
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+
+        asset.manual_metadata = {"audio_languages": ["eng"]}
+        asset.save(update_fields=["manual_metadata", "updated_at"])
+        self.english_relation.refresh_from_db()
+
+        self.assertTrue(relation_allowed(self.english_relation, self.policy))
+
+    def test_content_filter_can_exclude_canonical_genre_for_every_source(self):
+        self.movie.tmdb_metadata = {
+            "genres": [{"id": 878, "name": "Science Fiction"}],
+            "keywords": [{"id": 210024, "name": "anime"}],
+        }
+        self.movie.tmdb_status = "matched"
+        self.movie.save(update_fields=["tmdb_metadata", "tmdb_status"])
+        self.policy.hard_constraints = {
+            "content_default_action": "include",
+            "source_rules": [
+                {
+                    "id": "exclude-science-fiction",
+                    "match_field": "stream",
+                    "regex_pattern": "",
+                    "required_genres": ["Science Fiction"],
+                    "result": "exclude",
+                }
+            ],
+        }
+
+        self.assertFalse(relation_allowed(self.english_relation, self.policy))
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
     def test_failover_can_prefer_lower_resolution(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.ranking = [
@@ -2439,6 +2488,60 @@ class VODSourceManagementTests(TestCase):
             data={
                 "name": "Duplicate filters",
                 "hard_constraints": {"source_rules": [rule, rule]},
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("hard_constraints", serializer.errors)
+
+    def test_profile_normalizes_metadata_content_filters_and_default_action(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "English family content",
+                "hard_constraints": {
+                    "content_default_action": "exclude",
+                    "source_rules": [
+                        {
+                            "id": "english-family",
+                            "match_field": "stream",
+                            "regex_pattern": "",
+                            "required_audio_languages": ["en"],
+                            "required_genres": [" Family ", "family"],
+                            "required_keywords": ["animation"],
+                            "adult_mode": "no",
+                            "max_year": 2030,
+                            "min_rating": 5.5,
+                            "result": "include",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        constraints = serializer.validated_data["hard_constraints"]
+        self.assertEqual(constraints["content_default_action"], "exclude")
+        rule = constraints["source_rules"][0]
+        self.assertEqual(rule["required_audio_languages"], ["eng"])
+        self.assertEqual(rule["required_genres"], ["Family"])
+        self.assertEqual(rule["required_keywords"], ["animation"])
+        self.assertEqual(rule["adult_mode"], "no")
+        self.assertEqual(rule["min_rating"], 5.5)
+
+    def test_profile_rejects_external_ids_in_content_filters(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "One title disguised as a reusable rule",
+                "hard_constraints": {
+                    "source_rules": [
+                        {
+                            "match_field": "stream",
+                            "regex_pattern": "",
+                            "tmdb_ids": ["19995"],
+                            "result": "exclude",
+                        }
+                    ]
+                },
             }
         )
 

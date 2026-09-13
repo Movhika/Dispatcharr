@@ -59,6 +59,7 @@ const EMPTY_PROFILE = {
   is_active: true,
   hard_constraints: {
     source_rules: [],
+    content_default_action: 'exclude',
     category_import_rules: [],
     category_default_actions: {
       movie: 'enable',
@@ -109,7 +110,7 @@ const catalogModeLabel = (mode) =>
 const SOURCES_TAB_HELP =
   'Only categories enabled in the M3U account are available here. Manual Allow/Block choices override ordered import rules. Rule edits take effect after Save and apply; Save profile stores the complete profile and starts one rebuild. New provider categories are evaluated after their VOD refresh completes.';
 const CONTENT_RULES_TAB_HELP =
-  'Order matters. The first matching filter decides whether a source is included. The expression matches the source title and can be combined with known technical metadata. Unmatched sources remain available.';
+  'Order matters and the first matching filter decides. Filters can combine effective source metadata (including manual corrections) with reusable canonical metadata. Unmatched content follows the selected default; external IDs are intentionally not filter fields.';
 const EDITIONS_TAB_HELP =
   "First match wins. Compact creates one client entry per canonical title and suffix. Every split stays in the title's output category, and failover stays inside the matching suffix. Unmatched sources use the canonical title without a suffix.";
 const PREVIEW_PAGE_SIZES = [25, 50, 100, 200];
@@ -139,6 +140,10 @@ const profilePayload = (profile) => ({
   is_default: profile.is_default,
   is_active: profile.is_active,
   hard_constraints: {
+    content_default_action:
+      profile.hard_constraints?.content_default_action === 'exclude'
+        ? 'exclude'
+        : 'include',
     source_rules: (profile.hard_constraints?.source_rules || []).map(
       (rule) => ({
         ...rule,
@@ -314,6 +319,16 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       ...EMPTY_PROFILE,
       ...source,
       hard_constraints: {
+        content_default_action: hasOwn(
+          source.hard_constraints,
+          'content_default_action'
+        )
+          ? source.hard_constraints.content_default_action === 'exclude'
+            ? 'exclude'
+            : 'include'
+          : profile
+            ? 'include'
+            : 'exclude',
         source_rules: sourceRules,
         ...(hasOwn(sourceConstraints, 'category_import_rules')
           ? {
@@ -1347,6 +1362,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                       value={draft.hard_constraints.source_rules || []}
                       onChange={(value) =>
                         updateConstraint('source_rules', value)
+                      }
+                      defaultAction={
+                        draft.hard_constraints.content_default_action ||
+                        'include'
+                      }
+                      onDefaultActionChange={(value) =>
+                        updateConstraint('content_default_action', value)
                       }
                       categoryRelationIds={selectedCategoryIds}
                     />

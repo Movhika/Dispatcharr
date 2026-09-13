@@ -22,8 +22,9 @@ import { videoFeatureLabel } from '../utils/vodMetadataOptions.js';
 const REASON_LABELS = {
   eligible: 'Eligible',
   category_not_allowed: 'Category not allowed',
-  stream_filter_include: 'Included by stream filter',
-  stream_filter_exclude: 'Excluded by stream filter',
+  stream_filter_include: 'Included by content filter',
+  stream_filter_exclude: 'Excluded by content filter',
+  content_filter_default_exclude: 'Excluded by unmatched-content default',
   audio_excluded: 'Audio language excluded',
   subtitle_excluded: 'Subtitle language excluded',
   language_not_matched: 'Language rules not matched',

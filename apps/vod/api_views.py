@@ -2694,6 +2694,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             )
 
         from .policies import (
+            _canonical_filter_metadata,
             _vertical_resolution,
             _relation_source_name,
             enabled_category_map,
@@ -2766,6 +2767,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 if len(rows) >= sample_limit:
                     continue
                 content = getattr(relation, canonical_field)
+                canonical_metadata = _canonical_filter_metadata(relation)
                 resolution_height = _vertical_resolution(metadata)
                 rows.append(
                     {
@@ -2789,6 +2791,17 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                         "video_features": normalize_video_features(
                             metadata.get("video_features")
                         ),
+                        "genres": canonical_metadata["genres"],
+                        "keywords": canonical_metadata["keywords"],
+                        "country": canonical_metadata["countries"],
+                        "age_rating": canonical_metadata["age_ratings"],
+                        "year": canonical_metadata["year"],
+                        "rating": canonical_metadata["rating"],
+                        "is_anime": canonical_metadata["is_anime"],
+                        "is_adult": canonical_metadata["is_adult"],
+                        "metadata_available": canonical_metadata[
+                            "metadata_available"
+                        ],
                         "result": "include" if match[1] else "exclude",
                     }
                 )

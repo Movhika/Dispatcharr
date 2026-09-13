@@ -47,6 +47,7 @@ vi.mock('lucide-react', () => ({
   GripVertical: () => null,
   Info: () => null,
   ListOrdered: () => null,
+  Pencil: () => null,
   Plus: () => null,
   RefreshCw: () => null,
   Save: () => null,
@@ -116,6 +117,7 @@ vi.mock('@mantine/core', () => {
       </label>
     ),
     Group: Wrapper,
+    Loader: () => <div>Loading</div>,
     Modal,
     MultiSelect: ({ label, value = [], onChange, data = [], disabled }) => (
       <label>
@@ -148,6 +150,7 @@ vi.mock('@mantine/core', () => {
     ScrollArea: Wrapper,
     SegmentedControl: () => null,
     Select,
+    SimpleGrid: Wrapper,
     Stack: Wrapper,
     Switch: ({ label, checked, onChange }) => (
       <label>
@@ -423,6 +426,7 @@ describe('VODOutputProfilesModal', () => {
           name: 'New profile',
           hard_constraints: {
             source_rules: [],
+            content_default_action: 'exclude',
             category_import_rules: [],
             category_default_actions: {
               movie: 'enable',

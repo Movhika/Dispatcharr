@@ -22,6 +22,7 @@ from .metadata import normalize_source_metadata
 from .policies import (
     _vertical_resolution,
     allowed_category_query,
+    content_rules_use_canonical_metadata,
     policy_category_map,
     relation_edition,
     relation_metadata,
@@ -236,6 +237,15 @@ def profile_ids_using_canonical_content(*, movie_ids=(), series_ids=()):
         )
     )
     policy_ids = set()
+    for policy_id, constraints in VODAccessPolicy.objects.filter(
+        is_active=True
+    ).values_list("id", "hard_constraints"):
+        rules = (constraints or {}).get("source_rules") or []
+        if content_rules_use_canonical_metadata(rules):
+            # A canonical metadata change can make a previously excluded title
+            # eligible, so prepared selection rows alone cannot identify every
+            # affected metadata-filtering profile.
+            policy_ids.add(policy_id)
     if movie_ids:
         policy_ids.update(
             VODMovieProfileSelection.objects.filter(

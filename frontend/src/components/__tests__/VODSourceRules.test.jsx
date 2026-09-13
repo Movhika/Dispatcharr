@@ -41,6 +41,7 @@ vi.mock('lucide-react', () => ({
   Eye: () => null,
   GripVertical: () => null,
   Info: () => null,
+  Pencil: () => null,
   Plus: () => null,
   Trash2: () => null,
 }));
@@ -54,6 +55,7 @@ vi.mock('@mantine/core', () => {
     ),
     Alert: Wrapper,
     Badge: Wrapper,
+    Box: Wrapper,
     Button: ({ children, onClick }) => (
       <button onClick={onClick}>{children}</button>
     ),
@@ -67,20 +69,48 @@ vi.mock('@mantine/core', () => {
         </div>
       ) : null,
     ScrollArea: Wrapper,
-    Select: ({ value, onChange, data = [], 'aria-label': ariaLabel }) => (
-      <select
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {data.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+    NumberInput: ({ label, value = 0, onChange }) => (
+      <label>
+        {label}
+        <input
+          aria-label={label}
+          type="number"
+          value={value}
+          onChange={(event) => onChange?.(Number(event.target.value))}
+        />
+      </label>
+    ),
+    Paper: Wrapper,
+    Select: ({
+      label,
+      value,
+      onChange,
+      data = [],
+      'aria-label': ariaLabel,
+    }) => (
+      <label>
+        {label}
+        <select
+          aria-label={ariaLabel || label}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {data.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
     ),
     Stack: Wrapper,
+    SimpleGrid: Wrapper,
+    Switch: ({ label, checked, onChange }) => (
+      <label>
+        {label}
+        <input type="checkbox" checked={checked} onChange={onChange} />
+      </label>
+    ),
     Table: Wrapper,
     TableTbody: Wrapper,
     TableTd: Wrapper,
@@ -92,6 +122,16 @@ vi.mock('@mantine/core', () => {
       <input aria-label={ariaLabel} value={value} onChange={onChange} />
     ),
     Tooltip: Wrapper,
+    TagsInput: ({ label, value = [], onChange }) => (
+      <label>
+        {label}
+        <input
+          aria-label={label}
+          value={value.join(',')}
+          onChange={(event) => onChange?.(event.target.value.split(','))}
+        />
+      </label>
+    ),
   };
 });
 
@@ -142,12 +182,12 @@ describe('VODSourceRules', () => {
     );
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Preview VOD stream filters' })
+      screen.getByRole('button', { name: 'Preview content filters' })
     );
 
     expect(
       await screen.findByRole('heading', {
-        name: 'VOD stream filter preview',
+        name: 'Content filter preview',
       })
     ).toBeInTheDocument();
     expect(await screen.findByText('3D Movie')).toBeInTheDocument();
@@ -160,5 +200,37 @@ describe('VODSourceRules', () => {
         category_relation_ids: ['7', '9'],
       })
     );
+  });
+
+  it('creates a reusable metadata filter without exposing external IDs', () => {
+    const onChange = vi.fn();
+    const onDefaultActionChange = vi.fn();
+    render(
+      <VODSourceRules
+        value={[]}
+        onChange={onChange}
+        defaultAction="exclude"
+        onDefaultActionChange={onDefaultActionChange}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('Unmatched content'), {
+      target: { value: 'include' },
+    });
+    expect(onDefaultActionChange).toHaveBeenCalledWith('include');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
+    fireEvent.change(screen.getByLabelText('Genre contains'), {
+      target: { value: 'Family,Animation' },
+    });
+    expect(screen.queryByText(/TMDB ID/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save filter' }));
+
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        result: 'include',
+        required_genres: ['Family', 'Animation'],
+      }),
+    ]);
   });
 });
