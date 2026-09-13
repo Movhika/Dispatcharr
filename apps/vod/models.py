@@ -453,6 +453,7 @@ class VODAccessPolicy(models.Model):
         PENDING = "pending", "Pending"
         BUILDING = "building", "Building"
         READY = "ready", "Ready"
+        OUTDATED = "outdated", "Outdated"
         FAILED = "failed", "Failed"
 
     class NamingMode(models.TextChoices):

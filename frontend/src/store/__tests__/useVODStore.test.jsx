@@ -490,6 +490,49 @@ describe('useVODStore', () => {
     );
   });
 
+  it('does not let an old build heartbeat hide an outdated profile', () => {
+    useVODStore.setState({
+      accessPolicies: [
+        {
+          id: 1,
+          name: 'English',
+          selection_status: 'outdated',
+          active_selection_generation: 'last-ready-catalog',
+          selection_completed_at: '2026-09-11T16:00:00Z',
+          selection_progress: {
+            phase: 'Catalog rebuild required',
+            percent: 0,
+            updated_at: '2026-09-11T16:15:00Z',
+          },
+        },
+      ],
+    });
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.applyAccessPolicyProgress({
+        profile_id: 1,
+        selection_status: 'building',
+        selection_progress: {
+          task_id: 'old-task',
+          build_generation: 'old-build',
+          phase: 'Selecting movies sources',
+          percent: 40,
+          updated_at: '2026-09-11T16:10:00Z',
+        },
+      });
+    });
+
+    expect(result.current.accessPolicies[0]).toEqual(
+      expect.objectContaining({
+        selection_status: 'outdated',
+        selection_progress: expect.objectContaining({
+          phase: 'Catalog rebuild required',
+        }),
+      })
+    );
+  });
+
   it('ignores a delayed heartbeat from an older task after a newer task is ready', () => {
     useVODStore.setState({
       accessPolicies: [

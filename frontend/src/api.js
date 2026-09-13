@@ -1611,6 +1611,12 @@ export default class API {
     });
   }
 
+  static async rebuildVODAccessPolicy(id) {
+    return await request(`${host}/api/vod/access-policies/${id}/rebuild/`, {
+      method: 'POST',
+    });
+  }
+
   static async deleteVODAccessPolicy(id) {
     return await request(`${host}/api/vod/access-policies/${id}/`, {
       method: 'DELETE',

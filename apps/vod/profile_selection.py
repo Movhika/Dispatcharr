@@ -166,6 +166,57 @@ def _set_pending_profiles_progress(
     return updated
 
 
+def mark_profile_selections_outdated(
+    *,
+    trigger_reason="VOD metadata changed",
+    policy_ids=None,
+):
+    """Keep serving completed catalogs but require an explicit rebuild.
+
+    Manual metadata edits must be visible to administrators without silently
+    launching a potentially expensive all-profile catalog build. Provider VOD
+    imports and profile saves continue to use the normal automatic enqueue
+    paths.
+    """
+    queryset = VODAccessPolicy.objects.filter(
+        is_active=True,
+        active_selection_generation__gt="",
+        selection_status__in=(
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+            VODAccessPolicy.SelectionStatus.READY,
+            VODAccessPolicy.SelectionStatus.OUTDATED,
+        ),
+    )
+    if policy_ids is not None:
+        queryset = queryset.filter(pk__in=policy_ids)
+    profile_ids = list(queryset.values_list("id", flat=True))
+    if not profile_ids:
+        return 0
+    progress = _progress_payload(
+        "Catalog rebuild required",
+        0,
+        manual_required=True,
+        trigger_reason=trigger_reason,
+    )
+    updated = VODAccessPolicy.objects.filter(pk__in=profile_ids).update(
+        selection_status=VODAccessPolicy.SelectionStatus.OUTDATED,
+        selection_error="",
+        selection_progress=progress,
+    )
+
+    def publish():
+        for policy_id in profile_ids:
+            _publish_profile_progress(
+                policy_id,
+                VODAccessPolicy.SelectionStatus.OUTDATED,
+                progress,
+            )
+
+    transaction.on_commit(publish)
+    return updated
+
+
 def _set_profile_progress(policy_id, phase, percent, **details):
     """Persist coarse build progress without firing policy invalidation signals."""
     # Progress is read and written by background workers while the API polls

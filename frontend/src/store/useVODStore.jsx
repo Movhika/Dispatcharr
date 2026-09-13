@@ -4,7 +4,11 @@ import api from '../api';
 let accessPolicyFetchSequence = 0;
 
 const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
-const TERMINAL_PROFILE_BUILD_STATUSES = new Set(['ready', 'failed']);
+const TERMINAL_PROFILE_BUILD_STATUSES = new Set([
+  'ready',
+  'outdated',
+  'failed',
+]);
 const LIST_CONFIRMATION_FIELD = '_awaitingListConfirmation';
 
 const withoutListConfirmation = (profile) => {
@@ -18,7 +22,7 @@ const lifecycleTimestamp = (profile, statusKind) => {
   const candidates =
     statusKind === 'active'
       ? [progress.updated_at, profile?.selection_started_at, progress.queued_at]
-      : [profile?.selection_completed_at, progress.updated_at];
+      : [progress.updated_at, profile?.selection_completed_at];
   for (const value of candidates) {
     const timestamp = Date.parse(value || '');
     if (Number.isFinite(timestamp)) return timestamp;

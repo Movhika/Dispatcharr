@@ -901,21 +901,20 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         metadata, locked_fields = _validated_manual_source_metadata(
             metadata, locked_fields
         )
-        movie_ids = set(asset.movie_relations.values_list("movie_id", flat=True))
-        series_ids = set(asset.series_relations.values_list("series_id", flat=True))
         # QuerySet.update intentionally avoids the generic source-asset signal:
-        # a single manual edit is applied incrementally below instead of
-        # invalidating and rebuilding every prepared profile.
+        # manual edits keep the completed catalog active and explicitly mark
+        # prepared profiles as outdated below.
         VODSourceAsset.objects.filter(pk=asset.pk).update(
             manual_metadata=metadata,
             locked_fields=locked_fields,
             updated_at=timezone.now(),
         )
-        from .profile_selection import refresh_profile_selections_for_content
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import mark_profile_selections_outdated
 
-        refresh_profile_selections_for_content(
-            movie_ids=movie_ids,
-            series_ids=series_ids,
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD source metadata was edited manually",
         )
         asset.refresh_from_db()
         return Response(self.get_serializer(asset).data)
@@ -1001,11 +1000,12 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                         locked_fields=locked_fields,
                         updated_at=timezone.now(),
                     )
-        from .profile_selection import refresh_profile_selections_for_content
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import mark_profile_selections_outdated
 
-        refresh_profile_selections_for_content(
-            movie_ids=[relation.movie_id] if relation_type == "movie" else [],
-            series_ids=[relation.series_id] if relation_type == "series" else [],
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD source metadata was edited manually",
         )
         return Response(
             {
@@ -1077,8 +1077,6 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         series_target = (
             _materialize_tmdb_target("series", tmdb_id) if series_relations else None
         )
-        old_movie_ids = {relation.movie_id for relation in movie_relations}
-        old_series_ids = {relation.series_id for relation in series_relations}
         with transaction.atomic():
             if movie_relations:
                 M3UMovieRelation.objects.filter(
@@ -1087,11 +1085,12 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             for relation in series_relations:
                 _move_series_relation(relation, series_target)
 
-        from .profile_selection import refresh_profile_selections_for_content
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import mark_profile_selections_outdated
 
-        refresh_profile_selections_for_content(
-            movie_ids=old_movie_ids | ({movie_target.id} if movie_target else set()),
-            series_ids=old_series_ids | ({series_target.id} if series_target else set()),
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="A provider source was assigned to different metadata",
         )
         return Response(
             {
@@ -1190,10 +1189,12 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
                 update_assets(ensure_source_assets(batch))
 
         from .catalog_cache import bump_catalog_generation
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        from .profile_selection import mark_profile_selections_outdated
 
-        bump_catalog_generation(invalidate_selections=True)
-        enqueue_all_profile_selection_rebuilds()
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD source metadata was edited manually",
+        )
         return Response(
             {
                 "updated_sources": len(updated_asset_ids),
@@ -1256,10 +1257,12 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
             )
         model.objects.filter(id__in=relation_ids).update(source_asset=asset)
         from .catalog_cache import bump_catalog_generation
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        from .profile_selection import mark_profile_selections_outdated
 
-        bump_catalog_generation()
-        enqueue_all_profile_selection_rebuilds()
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD provider sources were linked manually",
+        )
         return Response(self.get_serializer(asset).data)
 
 
@@ -1293,10 +1296,15 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
+        relation._skip_vod_profile_invalidation = True
         serializer.save()
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import mark_profile_selections_outdated
 
-        enqueue_all_profile_selection_rebuilds()
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD category metadata defaults changed",
+        )
         return Response(serializer.data)
 
     @action(detail=False, methods=["patch"], url_path="bulk-metadata-defaults")
@@ -1330,10 +1338,12 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
             relations, ["metadata_defaults", "updated_at"], batch_size=1000
         )
         from .catalog_cache import bump_catalog_generation
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        from .profile_selection import mark_profile_selections_outdated
 
-        bump_catalog_generation()
-        enqueue_all_profile_selection_rebuilds()
+        bump_catalog_generation(invalidate_selections=False)
+        mark_profile_selections_outdated(
+            trigger_reason="VOD category metadata defaults changed",
+        )
         return Response({"updated_categories": len(relations)})
 
 
@@ -1627,6 +1637,11 @@ class VODMetadataViewSet(viewsets.ViewSet):
 
         bump_catalog_generation(invalidate_selections=False)
         if mode == "provider":
+            from .profile_selection import mark_profile_selections_outdated
+
+            mark_profile_selections_outdated(
+                trigger_reason="Canonical VOD metadata was reloaded manually",
+            )
             return Response(
                 {
                     "reloaded": len(set(movie_ids)) + len(set(series_ids)),
@@ -1820,6 +1835,28 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     is_default=True
                 )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="rebuild")
+    def rebuild(self, request, pk=None):
+        """Explicitly rebuild one saved output profile catalog."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        policy = self.get_object()
+        if policy.selection_status in {
+            VODAccessPolicy.SelectionStatus.PENDING,
+            VODAccessPolicy.SelectionStatus.BUILDING,
+        }:
+            return Response(VODAccessPolicySerializer(policy).data)
+
+        from .profile_selection import enqueue_profile_selection_rebuild
+
+        enqueue_profile_selection_rebuild(
+            policy.pk,
+            trigger_reason="VOD output profile catalog was rebuilt manually",
+        )
+        policy.refresh_from_db()
+        return Response(VODAccessPolicySerializer(policy).data)
 
     @action(detail=True, methods=["get"], url_path="selections")
     def selections(self, request, pk=None):
@@ -2755,44 +2792,25 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
         profile_update = "not_required"
         affected_titles = 0
         if updated_count:
-            use_background = request.data.get("select_all") is True
             affected_titles = None
-            movie_ids = set()
-            series_ids = set()
-            if not use_background:
-                movie_ids, series_ids, use_background = (
+            if request.data.get("select_all") is not True:
+                movie_ids, series_ids, too_many_titles = (
                     _canonical_content_ids_for_source_assets(
                         updated_asset_ids,
                         limit=PLAYBACK_METADATA_INLINE_TITLE_LIMIT,
                     )
                 )
-                if not use_background:
+                if not too_many_titles:
                     affected_titles = len(movie_ids) + len(series_ids)
 
-            if use_background:
-                from .catalog_cache import bump_catalog_generation
-                from .profile_selection import (
-                    enqueue_all_profile_selection_rebuilds,
-                )
+            from .catalog_cache import bump_catalog_generation
+            from .profile_selection import mark_profile_selections_outdated
 
-                bump_catalog_generation()
-                enqueue_all_profile_selection_rebuilds()
-                profile_update = "queued"
-            elif affected_titles:
-                from .profile_selection import (
-                    refresh_profile_selections_for_content,
-                )
-
-                refresh_result = refresh_profile_selections_for_content(
-                    movie_ids=movie_ids,
-                    series_ids=series_ids,
-                )
-                profile_update = (
-                    "queued"
-                    if refresh_result.get("queued_full_rebuild")
-                    and not refresh_result.get("profiles_updated")
-                    else "inline"
-                )
+            bump_catalog_generation(invalidate_selections=False)
+            mark_profile_selections_outdated(
+                trigger_reason="Playback-derived VOD source metadata was edited",
+            )
+            profile_update = "outdated"
 
         return Response(
             {
@@ -2976,7 +2994,7 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='provider-info')
     def provider_info(self, request, pk=None):
-        """Get detailed movie information from the original provider, throttled to 24h."""
+        """Get provider details, fetching them once unless refresh is forced."""
         movie = self.get_object()
 
         relation_id = request.query_params.get('relation_id')
@@ -3011,14 +3029,8 @@ class MovieViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         force_refresh = request.query_params.get('force_refresh', 'false').lower() == 'true'
-        now = timezone.now()
         detailed_fetched = (relation.custom_properties or {}).get('detailed_fetched', False)
-        needs_refresh = (
-            force_refresh or
-            not detailed_fetched or
-            not relation.last_advanced_refresh or
-            (now - relation.last_advanced_refresh).total_seconds() > 86400
-        )
+        needs_refresh = force_refresh or not detailed_fetched
 
         if needs_refresh:
             # Trigger advanced data refresh

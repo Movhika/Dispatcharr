@@ -46,13 +46,6 @@ const criterionDetails = (criterion) => {
         'Uses the profile-specific provider order configured in this row.',
     };
   }
-  if (criterion === 'bitrate_desc' || criterion === 'bitrate_asc') {
-    return {
-      title: 'Bitrate',
-      description:
-        'Uses an existing provider or playback bitrate when available.',
-    };
-  }
   return {
     title: 'Resolution',
     description: 'Controls quality preference within the configured limits.',
@@ -198,18 +191,6 @@ const SortableCriterion = ({
             data={[
               { value: 'resolution_desc', label: 'Highest first' },
               { value: 'resolution_asc', label: 'Lowest first' },
-            ]}
-            value={criterion}
-            onChange={onDirectionChange}
-          />
-        )}
-        {(criterion === 'bitrate_desc' || criterion === 'bitrate_asc') && (
-          <Select
-            aria-label="Bitrate preference"
-            w={150}
-            data={[
-              { value: 'bitrate_desc', label: 'Highest first' },
-              { value: 'bitrate_asc', label: 'Lowest first' },
             ]}
             value={criterion}
             onChange={onDirectionChange}

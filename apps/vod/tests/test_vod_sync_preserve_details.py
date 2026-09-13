@@ -435,14 +435,14 @@ class VODSyncPreserveDetailsTests(TestCase):
         self.assertTrue((self.relation.custom_properties or {}).get("detailed_fetched"))
 
     @patch("core.xtream_codes.Client")
-    def test_refresh_skips_when_detailed_fetched_and_recent(self, mock_client_cls):
+    def test_refresh_skips_when_details_were_already_fetched(self, mock_client_cls):
         result = refresh_movie_advanced_data(self.relation.id, force_refresh=False)
 
-        self.assertEqual(result, "Advanced data recently fetched, skipping.")
+        self.assertEqual(result, "Advanced data already fetched, skipping.")
         mock_client_cls.assert_not_called()
 
     @patch("core.xtream_codes.Client")
-    def test_refresh_runs_after_age_window(self, mock_client_cls):
+    def test_old_details_refresh_only_when_forced(self, mock_client_cls):
         self.relation.last_advanced_refresh = timezone.now() - timedelta(hours=25)
         self.relation.save(update_fields=["last_advanced_refresh"])
 
@@ -453,7 +453,7 @@ class VODSyncPreserveDetailsTests(TestCase):
             "movie_data": {},
         }
 
-        result = refresh_movie_advanced_data(self.relation.id, force_refresh=False)
+        result = refresh_movie_advanced_data(self.relation.id, force_refresh=True)
 
         self.assertEqual(result, "Advanced data refreshed.")
         mock_client.get_vod_info.assert_called_once()

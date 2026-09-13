@@ -7,6 +7,7 @@ vi.mock('../../api', () => ({
   default: {
     createVODAccessPolicy: vi.fn(),
     updateVODAccessPolicy: vi.fn(),
+    rebuildVODAccessPolicy: vi.fn(),
     deleteVODAccessPolicy: vi.fn(),
     getVODAccessPolicySelections: vi.fn(),
     getVODAccessPolicyCandidates: vi.fn(),
@@ -253,6 +254,16 @@ describe('VODOutputProfilesModal', () => {
       name: 'New profile',
     });
     API.updateVODAccessPolicy.mockResolvedValue(profile);
+    API.rebuildVODAccessPolicy.mockResolvedValue({
+      ...profile,
+      selection_status: 'pending',
+      selection_current: false,
+      selection_progress: {
+        phase: 'Waiting in Celery queue',
+        percent: 0,
+        task_id: 'manual-rebuild',
+      },
+    });
     API.deleteVODAccessPolicy.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
@@ -295,20 +306,26 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText('Content rules')).toBeInTheDocument();
   });
 
-  it('does not require a manual retry for an outdated catalog update', async () => {
+  it('offers a manual rebuild for an outdated catalog', async () => {
     storeProfiles = [
       {
         ...profile,
-        selection_status: 'failed',
+        selection_status: 'outdated',
         selection_current: false,
       },
     ];
     render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
-    expect(await screen.findByText('Failed')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Retry catalog update' })
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText('Outdated')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Rebuild' }));
+
+    await waitFor(() =>
+      expect(API.rebuildVODAccessPolicy).toHaveBeenCalledWith(profile.id)
+    );
+    expect(upsertAccessPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ selection_status: 'pending' }),
+      { force: true }
+    );
   });
 
   it('removes a deleted profile from the local list before polling again', async () => {

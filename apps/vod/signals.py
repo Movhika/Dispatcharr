@@ -71,9 +71,9 @@ RELATION_SELECTION_FIELDS = {
     },
 }
 
-# Technical metadata learned for one concrete source can only change the
-# prepared rows for that movie/series.  Treating such observations like a
-# provider catalog replacement needlessly queues a full scan of every profile.
+# Technical metadata learned or edited for one concrete source can affect
+# constraints, editions and failover. Manual changes mark prepared catalogs as
+# outdated; lazy provider inspection bypasses this signal deliberately.
 SOURCE_ASSET_METADATA_FIELDS = {
     "declared_metadata",
     "observed_metadata",
@@ -97,37 +97,17 @@ RELATION_INCREMENTAL_SELECTION_FIELDS = {
 }
 
 
-def refresh_vod_profiles_for_source_content(instance):
-    """Re-evaluate only canonical titles linked to a changed source row."""
-    movie_ids = set()
-    series_ids = set()
-    if isinstance(instance, M3UMovieRelation):
-        if instance.movie_id:
-            movie_ids.add(instance.movie_id)
-    elif isinstance(instance, M3USeriesRelation):
-        if instance.series_id:
-            series_ids.add(instance.series_id)
-    elif isinstance(instance, VODSourceAsset) and instance.pk:
-        movie_ids.update(
-            M3UMovieRelation.objects.filter(source_asset_id=instance.pk)
-            .values_list("movie_id", flat=True)
-        )
-        series_ids.update(
-            M3USeriesRelation.objects.filter(source_asset_id=instance.pk)
-            .values_list("series_id", flat=True)
-        )
-    if not movie_ids and not series_ids:
-        return
+def mark_vod_profiles_outdated_for_source_content(instance):
+    """Mark prepared catalogs stale without starting background work."""
+    def mark_outdated():
+        bump_catalog_generation(invalidate_selections=False)
+        from .profile_selection import mark_profile_selections_outdated
 
-    def refresh():
-        from .profile_selection import refresh_profile_selections_for_content
-
-        refresh_profile_selections_for_content(
-            movie_ids=movie_ids,
-            series_ids=series_ids,
+        mark_profile_selections_outdated(
+            trigger_reason="VOD source metadata changed",
         )
 
-    transaction.on_commit(refresh)
+    transaction.on_commit(mark_outdated)
 
 
 def invalidate_and_schedule_vod_profiles(trigger_reason=None):
@@ -195,7 +175,7 @@ def invalidate_vod_catalog(
             and changed_fields
             and changed_fields.issubset(SOURCE_ASSET_METADATA_FIELDS)
         ):
-            refresh_vod_profiles_for_source_content(instance)
+            mark_vod_profiles_outdated_for_source_content(instance)
             return
         invalidate_and_schedule_vod_profiles(
             "VOD source metadata was changed manually"
@@ -273,7 +253,7 @@ def invalidate_vod_catalog(
             and update_fields
             and set(update_fields).issubset(incremental_fields)
         ):
-            refresh_vod_profiles_for_source_content(instance)
+            mark_vod_profiles_outdated_for_source_content(instance)
             return
         invalidate_and_schedule_vod_profiles(
             "The selectable VOD source catalog changed"

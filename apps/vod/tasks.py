@@ -615,8 +615,16 @@ def enrich_vod_metadata(
             from .catalog_cache import bump_catalog_generation
 
             # Artwork and external IDs change XC and VOD responses, but do not
-            # change profile membership.
+            # start an output build unless this pass belongs to a changed
+            # provider catalog. Manual enrichment leaves the completed output
+            # active and asks the administrator to rebuild explicitly.
             bump_catalog_generation(invalidate_selections=False)
+            if not must_rebuild_profiles:
+                from .profile_selection import mark_profile_selections_outdated
+
+                mark_profile_selections_outdated(
+                    trigger_reason="Canonical VOD metadata was enriched manually",
+                )
         return {
             **counters,
             "changed_movies": changed_movies,
@@ -3172,17 +3180,18 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
             custom_props['detailed_fetched'] = True
             series_relation.custom_properties = custom_props
             series_relation.last_episode_refresh = timezone.now()
-            # ``sync_relation_declared_metadata`` below persists any technical
-            # metadata and then refreshes only this series in prepared output
-            # profiles. Do not let this operational detail fetch look like a
-            # replacement of the complete provider catalog.
+            # Provider details and episodes are lazy inspector data. They must
+            # not alter a prepared output profile merely because it was opened.
             series_relation._skip_vod_profile_invalidation = True
             series_relation.save(
                 update_fields=["custom_properties", "last_episode_refresh"]
             )
             from .metadata import sync_relation_declared_metadata
 
-            sync_relation_declared_metadata(series_relation)
+            sync_relation_declared_metadata(
+                series_relation,
+                notify_profile_change=False,
+            )
             from .provider_metadata import reconcile_series_provider_metadata
 
             if reconcile_series_provider_metadata([series_relation.series_id]):
@@ -4009,20 +4018,15 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
     """
     Fetch advanced movie data from provider and update Movie and M3UMovieRelation.
 
-    Skips when detailed_fetched is set and last_advanced_refresh is within 24h,
-    unless force_refresh is True.
+    Provider movie files are stable source records. Fetch their advanced data
+    once and keep it until an administrator explicitly requests a refresh.
     """
     try:
         relation = M3UMovieRelation.objects.select_related('movie', 'm3u_account__user_agent').get(id=m3u_movie_relation_id)
         now = timezone.now()
         detailed_fetched = (relation.custom_properties or {}).get('detailed_fetched', False)
-        if (
-            not force_refresh
-            and detailed_fetched
-            and relation.last_advanced_refresh
-            and (now - relation.last_advanced_refresh).total_seconds() < 86400
-        ):
-            return "Advanced data recently fetched, skipping."
+        if not force_refresh and detailed_fetched:
+            return "Advanced data already fetched, skipping."
 
         account = relation.m3u_account
         movie = relation.movie
@@ -4085,7 +4089,10 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                     )
                     from .metadata import sync_relation_declared_metadata
 
-                    sync_relation_declared_metadata(relation)
+                    sync_relation_declared_metadata(
+                        relation,
+                        notify_profile_change=False,
+                    )
                     from .provider_metadata import reconcile_movie_provider_metadata
 
                     if reconcile_movie_provider_metadata([relation.movie_id]):
@@ -4208,13 +4215,16 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
 
                 relation.custom_properties = relation_custom_props
                 relation.last_advanced_refresh = now
-                # The source-asset update below performs a bounded refresh for
-                # this movie when relevant technical metadata actually changed.
+                # Lazy provider details update the inspector cache only; they
+                # must not change or invalidate prepared output catalogs.
                 relation._skip_vod_profile_invalidation = True
                 relation.save(update_fields=['custom_properties', 'last_advanced_refresh'])
                 from .metadata import sync_relation_declared_metadata
 
-                sync_relation_declared_metadata(relation)
+                sync_relation_declared_metadata(
+                    relation,
+                    notify_profile_change=False,
+                )
                 from .provider_metadata import reconcile_movie_provider_metadata
 
                 if reconcile_movie_provider_metadata([relation.movie_id]):

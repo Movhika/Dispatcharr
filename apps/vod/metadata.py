@@ -5,6 +5,7 @@ from collections import defaultdict
 from urllib.parse import urlsplit
 
 from django.db import transaction
+from django.utils import timezone
 
 from .models import (
     M3UEpisodeRelation,
@@ -501,14 +502,22 @@ def relation_declared_metadata(relation):
     return normalize_source_metadata(result)
 
 
-def sync_relation_declared_metadata(relation):
+def sync_relation_declared_metadata(relation, *, notify_profile_change=True):
     """Persist provider/relation metadata on the lazy source-asset index."""
     asset = ensure_source_asset(relation)
     declared = relation_declared_metadata(relation)
     merged = {**(asset.declared_metadata or {}), **declared}
     if merged != (asset.declared_metadata or {}):
         asset.declared_metadata = merged
-        asset.save(update_fields=["declared_metadata", "updated_at"])
+        if notify_profile_change:
+            asset.save(update_fields=["declared_metadata", "updated_at"])
+        else:
+            # Lazy provider details enrich the source inspector only. They
+            # must not make profile output depend on which title was opened.
+            VODSourceAsset.objects.filter(pk=asset.pk).update(
+                declared_metadata=merged,
+                updated_at=timezone.now(),
+            )
     return asset
 
 

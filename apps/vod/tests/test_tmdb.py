@@ -595,7 +595,7 @@ class VODMetadataAPITests(TestCase):
         force_authenticate(confirmed_request, user=self.admin)
         with (
             patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
             ),
             patch("apps.vod.catalog_cache.bump_catalog_generation") as bump_catalog,
         ):
@@ -663,7 +663,7 @@ class VODMetadataAPITests(TestCase):
 
         with (
             patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
             ),
             patch("apps.vod.catalog_cache.bump_catalog_generation") as bump_catalog,
         ):

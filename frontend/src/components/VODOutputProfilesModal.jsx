@@ -29,7 +29,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -262,6 +262,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateError, setCandidateError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
@@ -757,6 +758,34 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     }
   };
 
+  const rebuild = async () => {
+    if (!selectedProfile || draftChanged) return;
+    setRebuilding(true);
+    try {
+      const updated = await API.rebuildVODAccessPolicy(selectedProfile.id);
+      upsertAccessPolicy(updated, { force: true });
+      if (
+        ['pending', 'building'].includes(updated.selection_status) &&
+        !updated.selection_progress?.task_id
+      ) {
+        await fetchProfiles();
+      }
+      showNotification({
+        title: 'VOD output catalog queued',
+        message: 'The saved profile catalog is being rebuilt.',
+        color: 'green',
+      });
+    } catch (error) {
+      showNotification({
+        title: 'VOD output catalog was not queued',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   const startNew = () => {
     setCreating(true);
     setProfileId('');
@@ -811,7 +840,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         label: 'Failed',
         color: 'red',
         description:
-          'The latest XC catalog preparation failed. Correct and save the profile, or wait for the next source change to start a new update.',
+          'The latest XC catalog preparation failed. Correct and save the profile, or rebuild its saved catalog manually.',
       };
     }
     if (['pending', 'building'].includes(selectedProfile.selection_status)) {
@@ -837,7 +866,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       label: 'Outdated',
       color: 'yellow',
       description:
-        'The prepared XC catalog no longer matches the source state.',
+        'The saved profile may be affected by changed metadata. Its last completed catalog remains active until you rebuild it.',
     };
   })();
   const batchWaitingForTurn = Boolean(
@@ -914,6 +943,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               >
                 New
               </Button>
+              {selectedProfile &&
+                ['outdated', 'failed'].includes(
+                  selectedProfile.selection_status
+                ) && (
+                  <Tooltip
+                    label={
+                      draftChanged
+                        ? 'Save or discard the profile changes before rebuilding.'
+                        : 'Build a new catalog from the saved profile and current metadata.'
+                    }
+                  >
+                    <Box>
+                      <Button
+                        variant="default"
+                        leftSection={<RefreshCw size={15} />}
+                        loading={rebuilding}
+                        disabled={draftChanged}
+                        onClick={rebuild}
+                      >
+                        Rebuild
+                      </Button>
+                    </Box>
+                  </Tooltip>
+                )}
               <Button
                 leftSection={<Save size={15} />}
                 loading={saving}

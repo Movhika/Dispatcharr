@@ -679,7 +679,7 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(relation_allowed(self.german_relation, self.policy))
 
-    def test_lowest_bitrate_still_ranks_unknown_after_known(self):
+    def test_legacy_bitrate_ranking_does_not_affect_failover(self):
         self.english_relation.custom_properties = {
             "detailed_info": {"bitrate": 9000}
         }
@@ -689,33 +689,6 @@ class VODSourceManagementTests(TestCase):
 
         ordered = ordered_failover_candidates(
             [self.german_relation, self.english_relation],
-            self.policy,
-        )
-
-        self.assertEqual(
-            [relation.id for relation in ordered],
-            [self.english_relation.id, self.german_relation.id],
-        )
-
-    def test_failover_can_prefer_lower_known_bitrate(self):
-        self.german_relation.custom_properties = {
-            "detailed_info": {"bitrate": 3500}
-        }
-        self.english_relation.custom_properties = {
-            "detailed_info": {"bitrate": 9000}
-        }
-        self.policy.hard_constraints = {"allow_unknown_metadata": True}
-        self.policy.ranking = [
-            "bitrate_asc",
-            "audio_language",
-            "subtitle_language",
-            "resolution_desc",
-            "metadata_completeness",
-        ]
-        self.policy.save(update_fields=["hard_constraints", "ranking", "updated_at"])
-
-        ordered = ordered_failover_candidates(
-            [self.english_relation, self.german_relation],
             self.policy,
         )
 
@@ -1475,15 +1448,15 @@ class VODSourceManagementTests(TestCase):
             trigger_reason="M3U account VOD selection settings changed"
         )
 
-    def test_source_observation_refreshes_only_its_canonical_title(self):
+    def test_source_observation_marks_profiles_outdated(self):
         asset = ensure_source_asset(self.german_relation)
         asset.observed_metadata = {"resolution": "2160p"}
         asset.last_observed_at = timezone.now()
 
         with (
             patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
-            ) as refresh_content,
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
+            ) as mark_outdated,
             patch(
                 "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
             ) as enqueue_all,
@@ -1497,23 +1470,23 @@ class VODSourceManagementTests(TestCase):
                 ]
             )
 
-        refresh_content.assert_called_once_with(
-            movie_ids={self.movie.id},
-            series_ids=set(),
+        mark_outdated.assert_called_once_with(
+            trigger_reason="VOD source metadata changed",
         )
         enqueue_all.assert_not_called()
 
-    def test_relation_detail_metadata_does_not_queue_all_profiles(self):
+    def test_lazy_relation_detail_metadata_does_not_touch_profiles(self):
         self.german_relation.custom_properties = {
             **(self.german_relation.custom_properties or {}),
             "detailed_info": {"video": {"height": 2160}},
         }
         self.german_relation.last_advanced_refresh = timezone.now()
+        self.german_relation._skip_vod_profile_invalidation = True
 
         with (
             patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
-            ) as refresh_content,
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
+            ) as mark_outdated,
             patch(
                 "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
             ) as enqueue_all,
@@ -1523,10 +1496,7 @@ class VODSourceManagementTests(TestCase):
                 update_fields=["custom_properties", "last_advanced_refresh"]
             )
 
-        refresh_content.assert_called_once_with(
-            movie_ids={self.movie.id},
-            series_ids=set(),
-        )
+        mark_outdated.assert_not_called()
         enqueue_all.assert_not_called()
 
     def test_provider_profile_batch_waits_until_all_refreshes_finished(self):
@@ -1961,6 +1931,51 @@ class VODSourceManagementTests(TestCase):
         delay.assert_called_once_with(self.policy.pk)
         enqueue_all.assert_not_called()
 
+    def test_outdated_profile_can_be_rebuilt_manually(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-rebuild-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.OUTDATED,
+            active_selection_generation="last-ready-catalog",
+            selection_progress={
+                "phase": "Catalog rebuild required",
+                "percent": 0,
+            },
+        )
+        request = APIRequestFactory().post(
+            f"/api/vod/access-policies/{self.policy.pk}/rebuild/",
+            {},
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        with (
+            patch("apps.vod.tasks.rebuild_vod_profile_selection.delay") as delay,
+            patch(
+                "apps.vod.profile_selection.transaction.on_commit",
+                side_effect=lambda callback: callback(),
+            ),
+        ):
+            delay.return_value.id = "manual-profile-rebuild"
+            response = VODAccessPolicyViewSet.as_view({"post": "rebuild"})(
+                request,
+                pk=self.policy.pk,
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["selection_status"],
+            VODAccessPolicy.SelectionStatus.PENDING,
+        )
+        self.assertEqual(
+            response.data["selection_progress"]["task_id"],
+            "manual-profile-rebuild",
+        )
+        delay.assert_called_once_with(self.policy.pk)
+
     def test_deleting_default_profile_promotes_an_active_replacement(self):
         admin = get_user_model().objects.create_user(
             username="profile-delete-admin",
@@ -2371,11 +2386,11 @@ class VODSourceManagementTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("ranking", serializer.errors)
 
-    def test_profile_rejects_conflicting_bitrate_ranking_directions(self):
+    def test_profile_rejects_bitrate_ranking(self):
         serializer = VODAccessPolicySerializer(
             data={
-                "name": "Conflicting bitrate directions",
-                "ranking": ["bitrate_desc", "bitrate_asc"],
+                "name": "Unsupported bitrate ranking",
+                "ranking": ["bitrate_desc"],
             }
         )
 
@@ -3095,12 +3110,8 @@ class VODSourceManagementTests(TestCase):
 
         with (
             patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content",
-                return_value={
-                    "profiles_updated": 1,
-                    "queued_full_rebuild": False,
-                },
-            ) as refresh_profiles,
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
+            ) as mark_outdated,
             patch(
                 "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
             ) as enqueue_full_rebuild,
@@ -3113,10 +3124,9 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.data["selected_sessions"], 2)
         self.assertEqual(response.data["updated_sources"], 1)
         self.assertEqual(response.data["affected_titles"], 1)
-        self.assertEqual(response.data["profile_update"], "inline")
-        refresh_profiles.assert_called_once_with(
-            movie_ids={self.movie.id},
-            series_ids=set(),
+        self.assertEqual(response.data["profile_update"], "outdated")
+        mark_outdated.assert_called_once_with(
+            trigger_reason="Playback-derived VOD source metadata was edited",
         )
         enqueue_full_rebuild.assert_not_called()
         asset = VODSourceAsset.objects.get(pk=first.source_asset_id)
@@ -3173,22 +3183,17 @@ class VODSourceManagementTests(TestCase):
         force_authenticate(request, user=admin)
 
         with patch(
-            "apps.vod.profile_selection.refresh_profile_selections_for_content",
-            return_value={
-                "profiles_updated": 1,
-                "queued_full_rebuild": False,
-            },
-        ) as refresh_profiles:
+            "apps.vod.profile_selection.mark_profile_selections_outdated"
+        ) as mark_outdated:
             response = VODPlaybackSessionViewSet.as_view(
                 {"patch": "bulk_metadata"}
             )(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["affected_titles"], 1)
-        self.assertEqual(response.data["profile_update"], "inline")
-        refresh_profiles.assert_called_once_with(
-            movie_ids=set(),
-            series_ids={series.id},
+        self.assertEqual(response.data["profile_update"], "outdated")
+        mark_outdated.assert_called_once_with(
+            trigger_reason="Playback-derived VOD source metadata was edited",
         )
 
     def test_playback_history_select_all_queues_one_full_profile_refresh(self):
@@ -3220,11 +3225,8 @@ class VODSourceManagementTests(TestCase):
         with (
             patch("apps.vod.catalog_cache.bump_catalog_generation") as bump,
             patch(
-                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
-            ) as enqueue_full_rebuild,
-            patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
-            ) as refresh_profiles,
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
+            ) as mark_outdated,
         ):
             response = VODPlaybackSessionViewSet.as_view(
                 {"patch": "bulk_metadata"}
@@ -3234,16 +3236,17 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.data["selected_sessions"], 1)
         self.assertEqual(response.data["updated_sources"], 1)
         self.assertIsNone(response.data["affected_titles"])
-        self.assertEqual(response.data["profile_update"], "queued")
+        self.assertEqual(response.data["profile_update"], "outdated")
         self.assertTrue(
             VODSourceAsset.objects.filter(
                 pk=playback.source_asset_id,
                 manual_metadata__resolution="1080p",
             ).exists()
         )
-        bump.assert_called_once_with()
-        enqueue_full_rebuild.assert_called_once_with()
-        refresh_profiles.assert_not_called()
+        bump.assert_called_once_with(invalidate_selections=False)
+        mark_outdated.assert_called_once_with(
+            trigger_reason="Playback-derived VOD source metadata was edited",
+        )
 
     def test_playback_history_explicit_selection_queues_above_inline_limit(self):
         admin = get_user_model().objects.create_user(
@@ -3274,11 +3277,8 @@ class VODSourceManagementTests(TestCase):
             patch("apps.vod.api_views.PLAYBACK_METADATA_INLINE_TITLE_LIMIT", 0),
             patch("apps.vod.catalog_cache.bump_catalog_generation") as bump,
             patch(
-                "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
-            ) as enqueue_full_rebuild,
-            patch(
-                "apps.vod.profile_selection.refresh_profile_selections_for_content"
-            ) as refresh_profiles,
+                "apps.vod.profile_selection.mark_profile_selections_outdated"
+            ) as mark_outdated,
         ):
             response = VODPlaybackSessionViewSet.as_view(
                 {"patch": "bulk_metadata"}
@@ -3286,10 +3286,11 @@ class VODSourceManagementTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIsNone(response.data["affected_titles"])
-        self.assertEqual(response.data["profile_update"], "queued")
-        bump.assert_called_once_with()
-        enqueue_full_rebuild.assert_called_once_with()
-        refresh_profiles.assert_not_called()
+        self.assertEqual(response.data["profile_update"], "outdated")
+        bump.assert_called_once_with(invalidate_selections=False)
+        mark_outdated.assert_called_once_with(
+            trigger_reason="Playback-derived VOD source metadata was edited",
+        )
 
     def test_metadata_precedence_is_category_provider_observed_manual(self):
         asset = VODSourceAsset.objects.create(
@@ -3392,8 +3393,8 @@ class VODSourceManagementTests(TestCase):
             "manual",
         )
 
-    def test_manual_metadata_incrementally_updates_ready_profiles(self):
-        """One edited title must not queue a full-catalog Celery rebuild."""
+    def test_manual_metadata_marks_ready_profiles_outdated(self):
+        """Manual edits keep the last catalog active until explicit rebuild."""
         build_vod_profile_selection(self.policy.id)
         self.policy.refresh_from_db()
         self.assertEqual(
@@ -3437,26 +3438,22 @@ class VODSourceManagementTests(TestCase):
         self.policy.refresh_from_db()
         self.assertEqual(
             self.policy.selection_status,
-            VODAccessPolicy.SelectionStatus.READY,
+            VODAccessPolicy.SelectionStatus.OUTDATED,
         )
-        self.assertEqual(
-            self.policy.selection_catalog_generation,
-            str(selection_catalog_generation()),
-        )
-        self.assertFalse(
+        self.assertTrue(
             VODMovieProfileSelection.objects.filter(
                 policy=self.policy,
                 generation=self.policy.active_selection_generation,
                 movie=self.movie,
             ).exists()
         )
-        self.assertEqual(self.policy.selection_counts["output_entries"], 0)
+        self.assertEqual(self.policy.selection_counts["output_entries"], 1)
         self.assertEqual(
-            self.policy.selection_counts["movies"]["canonical_titles"], 0
+            self.policy.selection_counts["movies"]["canonical_titles"], 1
         )
         self.assertEqual(
             self.policy.selection_progress["phase"],
-            "Ready after metadata update",
+            "Catalog rebuild required",
         )
         full_rebuild.assert_not_called()
 

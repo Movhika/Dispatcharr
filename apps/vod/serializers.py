@@ -462,9 +462,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def get_selection_current(self, obj):
         active_mode = self.get_selection_active_mode(obj)
 
-        # ``selection_status`` is the lifecycle authority. Every source
-        # invalidation either moves a profile to Pending (and publishes a
-        # rebuild) or updates its prepared rows synchronously. Re-checking the
+        # ``selection_status`` is the lifecycle authority. Provider catalog
+        # changes move a profile to Pending, while manual metadata changes
+        # explicitly mark it Outdated without replacing its active catalog.
+        # Re-checking the
         # global source-generation marker here creates a second, eventually
         # consistent state machine: a catalog which was just activated as
         # Ready can then be presented as Outdated even though its rows and
@@ -546,8 +547,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def validate_ranking(self, value):
         allowed = {
             "audio_language", "subtitle_language", "provider", "resolution",
-            "resolution_desc", "resolution_asc", "bitrate_desc",
-            "bitrate_asc", "metadata_completeness",
+            "resolution_desc", "resolution_asc", "metadata_completeness",
         }
         if not isinstance(value, list) or set(value) - allowed:
             raise serializers.ValidationError(
@@ -564,14 +564,6 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         if len(resolution_directions) > 1:
             raise serializers.ValidationError(
                 "Choose only one resolution ranking direction"
-            )
-        bitrate_directions = {
-            item for item in normalized
-            if item in {"bitrate_desc", "bitrate_asc"}
-        }
-        if len(bitrate_directions) > 1:
-            raise serializers.ValidationError(
-                "Choose only one bitrate ranking direction"
             )
         return list(dict.fromkeys(normalized))
 

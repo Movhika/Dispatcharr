@@ -8,7 +8,6 @@ from django.db.models import Q
 from .catalog_cache import catalog_generation, safe_cache_get, safe_cache_set
 from .metadata import (
     compatible_video_features,
-    normalize_bitrate_kbps,
     normalize_language_list,
     normalize_video_features,
 )
@@ -682,17 +681,10 @@ def _metadata_completeness(metadata):
             bool(metadata.get("subtitle_languages")),
             bool(_vertical_resolution(metadata)),
             bool(metadata.get("container_extension")),
-            bool(_bitrate_kbps(metadata)),
             bool(metadata.get("file_size_bytes")),
             bool(metadata.get("video_features")),
         )
     )
-
-
-def _bitrate_kbps(metadata):
-    return normalize_bitrate_kbps(
-        metadata.get("bitrate_kbps", metadata.get("bitrate"))
-    ) or 0
 
 
 def _provider_preference_score(policy, account_id):
@@ -734,7 +726,6 @@ def relation_rank(
         )
     constraints = relation_constraints(relation, policy)
     resolution = _vertical_resolution(metadata)
-    bitrate = _bitrate_kbps(metadata)
     dimensions = {
         "audio_language": _preference_score(
             metadata.get("audio_languages") or metadata.get("languages"),
@@ -751,10 +742,6 @@ def relation_rank(
         # Ranking is sorted descending. Known low resolutions therefore get a
         # higher inverted score, while unknown metadata remains last.
         "resolution_asc": 10000 - resolution if resolution else -1,
-        "bitrate_desc": bitrate,
-        # A reciprocal keeps every known bitrate ahead of unknown metadata
-        # while still preferring a smaller stream for constrained clients.
-        "bitrate_asc": 1 / bitrate if bitrate else -1,
         "metadata_completeness": _metadata_completeness(metadata),
     }
     requested = [
@@ -768,19 +755,11 @@ def relation_rank(
         ),
         None,
     )
-    requested_bitrate = next(
-        (key for key in requested if key in {"bitrate_desc", "bitrate_asc"}),
-        None,
-    )
     requested = [
         key for key in requested
         if (
             key not in {"resolution_desc", "resolution_asc"}
             or key == requested_resolution
-        )
-        and (
-            key not in {"bitrate_desc", "bitrate_asc"}
-            or key == requested_bitrate
         )
     ]
     allowed_order = [
@@ -788,7 +767,6 @@ def relation_rank(
         "subtitle_language",
         "provider",
         requested_resolution or "resolution_desc",
-        requested_bitrate or "bitrate_desc",
         "metadata_completeness",
     ]
     order = list(

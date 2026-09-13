@@ -13,7 +13,6 @@ describe('VODFailoverRanking', () => {
       'audio_language',
       'subtitle_language',
       'provider',
-      'bitrate_desc',
       'metadata_completeness',
     ]);
   });
@@ -31,11 +30,10 @@ describe('VODFailoverRanking', () => {
       'metadata_completeness',
       'subtitle_language',
       'provider',
-      'bitrate_desc',
     ]);
   });
 
-  it('keeps lowest first as the only bitrate direction', () => {
+  it('drops old bitrate criteria because source detail coverage is sparse', () => {
     expect(
       normalizeVODFailoverRanking([
         'bitrate_asc',
@@ -43,7 +41,6 @@ describe('VODFailoverRanking', () => {
         'metadata_completeness',
       ])
     ).toEqual([
-      'bitrate_asc',
       'audio_language',
       'metadata_completeness',
       'subtitle_language',
