@@ -5,6 +5,13 @@ let accessPolicyFetchSequence = 0;
 
 const ACTIVE_PROFILE_BUILD_STATUSES = new Set(['pending', 'building']);
 const TERMINAL_PROFILE_BUILD_STATUSES = new Set(['ready', 'failed']);
+const LIST_CONFIRMATION_FIELD = '_awaitingListConfirmation';
+
+const withoutListConfirmation = (profile) => {
+  if (!profile?.[LIST_CONFIRMATION_FIELD]) return profile;
+  const { [LIST_CONFIRMATION_FIELD]: _discarded, ...confirmed } = profile;
+  return confirmed;
+};
 
 const lifecycleTimestamp = (profile, statusKind) => {
   const progress = profile?.selection_progress || {};
@@ -459,12 +466,24 @@ const useVODStore = create((set, get) => ({
       if (requestSequence === accessPolicyFetchSequence) {
         set((state) => ({
           accessPolicies: Array.isArray(results)
-            ? results.map((incoming) => {
-                const current = state.accessPolicies.find(
-                  (profile) => String(profile.id) === String(incoming.id)
-                );
-                return mergeAccessPolicyState(current, incoming);
-              })
+            ? [
+                ...results.map((incoming) => {
+                  const current = state.accessPolicies.find(
+                    (profile) => String(profile.id) === String(incoming.id)
+                  );
+                  return withoutListConfirmation(
+                    mergeAccessPolicyState(current, incoming)
+                  );
+                }),
+                ...state.accessPolicies.filter(
+                  (current) =>
+                    current[LIST_CONFIRMATION_FIELD] &&
+                    !results.some(
+                      (incoming) =>
+                        String(incoming.id) === String(current.id)
+                    )
+                ),
+              ].sort((left, right) => left.name.localeCompare(right.name))
             : [],
         }));
       }
@@ -499,7 +518,10 @@ const useVODStore = create((set, get) => ({
     }));
   },
 
-  upsertAccessPolicy: (policy, { force = false } = {}) => {
+  upsertAccessPolicy: (
+    policy,
+    { force = false, preserveIfMissing = false } = {}
+  ) => {
     if (!policy?.id) return;
     // A response requested before this mutation must not restore stale status
     // or category rules after the mutation response has been applied.
@@ -508,15 +530,18 @@ const useVODStore = create((set, get) => ({
       const exists = state.accessPolicies.some(
         (current) => String(current.id) === String(policy.id)
       );
+      const incoming = preserveIfMissing
+        ? { ...policy, [LIST_CONFIRMATION_FIELD]: true }
+        : policy;
       const accessPolicies = exists
         ? state.accessPolicies.map((current) =>
             String(current.id) === String(policy.id)
               ? !force
-                ? mergeAccessPolicyState(current, policy)
-                : policy
+                ? mergeAccessPolicyState(current, incoming)
+                : incoming
               : current
           )
-        : [...state.accessPolicies, policy];
+        : [...state.accessPolicies, incoming];
       return {
         accessPolicies: accessPolicies.sort((left, right) =>
           left.name.localeCompare(right.name)

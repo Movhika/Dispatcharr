@@ -169,6 +169,61 @@ describe('useVODStore', () => {
     );
   });
 
+  it('keeps a newly created profile until the list endpoint confirms it', async () => {
+    const existing = { id: 1, name: 'German', selection_status: 'ready' };
+    const created = {
+      id: 2,
+      name: 'English',
+      selection_status: 'pending',
+      selection_progress: { phase: 'Publishing background task', percent: 0 },
+    };
+    useVODStore.setState({ accessPolicies: [existing] });
+    api.getVODAccessPolicies
+      .mockResolvedValueOnce([existing])
+      .mockResolvedValueOnce([
+        existing,
+        {
+          ...created,
+          selection_status: 'building',
+          selection_progress: { phase: 'Selecting movies', percent: 20 },
+        },
+      ]);
+    const { result } = renderHook(() => useVODStore());
+
+    act(() => {
+      result.current.upsertAccessPolicy(created, {
+        preserveIfMissing: true,
+      });
+    });
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    expect(result.current.accessPolicies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 2,
+          selection_status: 'pending',
+        }),
+      ])
+    );
+
+    await act(async () => {
+      await result.current.fetchAccessPolicies();
+    });
+
+    const confirmed = result.current.accessPolicies.find(
+      (profile) => profile.id === 2
+    );
+    expect(confirmed).toEqual(
+      expect.objectContaining({
+        selection_status: 'building',
+        selection_progress: expect.objectContaining({ percent: 20 }),
+      })
+    );
+    expect(confirmed).not.toHaveProperty('_awaitingListConfirmation');
+  });
+
   it('accepts a completed build with a new catalog generation despite clock skew', async () => {
     useVODStore.setState({
       accessPolicies: [

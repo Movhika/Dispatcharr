@@ -416,7 +416,8 @@ describe('VODOutputProfilesModal', () => {
       )
     );
     expect(upsertAccessPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 8, name: 'New profile' })
+      expect.objectContaining({ id: 8, name: 'New profile' }),
+      { preserveIfMissing: true }
     );
     expect(screen.getByLabelText('Profile')).toHaveValue('8');
     expect(screen.getByText(/Publishing background task/)).toBeInTheDocument();

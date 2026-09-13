@@ -694,7 +694,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       const saved = profileId
         ? await API.updateVODAccessPolicy(profileId, payload)
         : await API.createVODAccessPolicy(payload);
-      upsertAccessPolicy(saved);
+      if (profileId) upsertAccessPolicy(saved);
+      else upsertAccessPolicy(saved, { preserveIfMissing: true });
       resetDraft(saved);
       setCreating(false);
       setProfileId(String(saved.id));
