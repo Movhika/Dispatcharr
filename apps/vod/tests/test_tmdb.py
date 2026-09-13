@@ -379,7 +379,12 @@ class VODMetadataAPITests(TestCase):
 
     @patch("apps.vod.tmdb.Client.search_candidates")
     def test_tmdb_lookup_returns_candidates_without_writing_content(self, search):
-        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        CoreSettings.set_vod_metadata_settings(
+            api_token="stored-secret",
+            languages=["en-US"],
+            auto_enrich=False,
+            match_missing=False,
+        )
         search.return_value = [
             {
                 "id": "613911",
@@ -405,6 +410,8 @@ class VODMetadataAPITests(TestCase):
         CoreSettings.set_vod_metadata_settings(
             api_token="stored-secret",
             languages=["de-DE", "en-US"],
+            auto_enrich=False,
+            match_missing=False,
         )
         movie = Movie.objects.create(
             name="Provider Bliss",
@@ -475,7 +482,12 @@ class VODMetadataAPITests(TestCase):
         )
 
     def test_manual_enrichment_requires_an_explicit_selection(self):
-        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        CoreSettings.set_vod_metadata_settings(
+            api_token="stored-secret",
+            languages=["en-US"],
+            auto_enrich=False,
+            match_missing=False,
+        )
         request = self.factory.post(
             "/api/vod/metadata/refresh/",
             {"selections": []},
@@ -490,7 +502,12 @@ class VODMetadataAPITests(TestCase):
 
     @patch("apps.vod.tasks.enqueue_tmdb_enrichment")
     def test_manual_enrichment_can_select_all_matching_server_side(self, enqueue):
-        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        CoreSettings.set_vod_metadata_settings(
+            api_token="stored-secret",
+            languages=["en-US"],
+            auto_enrich=False,
+            match_missing=False,
+        )
         enqueue.return_value = {
             "queued": True,
             "task_id": "task",
@@ -627,7 +644,12 @@ class VODMetadataAPITests(TestCase):
     def test_tmdb_reset_clears_only_curated_snapshot_then_reloads_selection(
         self, enqueue
     ):
-        CoreSettings.set_vod_metadata_settings(api_token="stored-secret")
+        CoreSettings.set_vod_metadata_settings(
+            api_token="stored-secret",
+            languages=["en-US"],
+            auto_enrich=False,
+            match_missing=False,
+        )
         movie = Movie.objects.create(
             name="Provider title",
             display_name="TMDB title",
@@ -802,7 +824,7 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(relation.movie_id, target.id)
         self.assertEqual(relation.tmdb_override_id, "76600")
         self.assertEqual(response.data["moved_sources"], 1)
-        bump_catalog.assert_not_called()
+        bump_catalog.assert_called_once_with(invalidate_selections=False)
 
     def test_manual_series_match_moves_its_episode_sources(self):
         account = M3UAccount.objects.create(
@@ -872,7 +894,7 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(episode_relation.episode.series_id, target.id)
         self.assertEqual(episode_relation.episode.season_number, 1)
         self.assertEqual(episode_relation.episode.episode_number, 2)
-        bump_catalog.assert_not_called()
+        bump_catalog.assert_called_once_with(invalidate_selections=False)
 
     def test_watchdog_ends_a_lost_running_status(self):
         state = VODMetadataState.objects.create(
