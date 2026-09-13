@@ -140,9 +140,13 @@ const VODModal = ({
   const [trailerUrl, setTrailerUrl] = useState('');
   const [providers, setProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(null);
+  const [selectedProviderDetails, setSelectedProviderDetails] = useState(null);
+  const [selectedProviderDetailsId, setSelectedProviderDetailsId] =
+    useState(null);
   const [editingProvider, setEditingProvider] = useState(null);
   const [dataView, setDataView] = useState('primary');
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const [loadingSourceDetails, setLoadingSourceDetails] = useState(false);
   const providersRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
   const profilePreferenceAppliedRef = useRef('');
@@ -177,15 +181,31 @@ const VODModal = ({
             providersData[0] ||
             null;
           setSelectedProvider(provider);
-          return provider
+          return (provider
             ? fetchMovieDetailsFromProvider(vod.id, provider.id)
-            : fetchMovieDetailsFromProvider(vod.id);
+            : fetchMovieDetailsFromProvider(vod.id)
+          ).then((details) => ({ details, providerId: provider?.id || null }));
         })
-        .then((details) => {
-          if (!details || detailsRequestIdRef.current !== detailsRequestId) {
+        .then((result) => {
+          if (
+            !result?.details ||
+            detailsRequestIdRef.current !== detailsRequestId
+          ) {
             return;
           }
+          const { details, providerId } = result;
           setDetailedVOD(details);
+          setSelectedProviderDetails(details);
+          setSelectedProviderDetailsId(providerId);
+          if (providerId && details.source_metadata) {
+            setProviders((current) =>
+              current.map((provider) =>
+                String(provider.id) === String(providerId)
+                  ? { ...provider, source_metadata: details.source_metadata }
+                  : provider
+              )
+            );
+          }
         })
         .catch((error) => {
           if (detailsRequestIdRef.current !== detailsRequestId) return;
@@ -223,9 +243,12 @@ const VODModal = ({
       setTrailerUrl('');
       setProviders([]);
       setSelectedProvider(null);
+      setSelectedProviderDetails(null);
+      setSelectedProviderDetailsId(null);
       setEditingProvider(null);
       setDataView('primary');
       setLoadingProviders(false);
+      setLoadingSourceDetails(false);
     }
   }, [opened]);
 
@@ -244,15 +267,31 @@ const VODModal = ({
     if (!provider) return;
     profilePreferenceAppliedRef.current = signature;
     setSelectedProvider(provider);
+    setSelectedProviderDetails(null);
+    setSelectedProviderDetailsId(null);
     const requestId = ++detailsRequestIdRef.current;
-    setLoadingDetails(true);
+    setLoadingDetails(false);
+    setLoadingSourceDetails(true);
     fetchMovieDetailsFromProvider(vod.id, provider.id)
       .then((details) => {
-        if (detailsRequestIdRef.current === requestId) setDetailedVOD(details);
+        if (detailsRequestIdRef.current !== requestId) return;
+        setDetailedVOD((current) => current || details);
+        setSelectedProviderDetails(details);
+        setSelectedProviderDetailsId(provider.id);
+        if (details.source_metadata) {
+          setProviders((current) =>
+            current.map((candidate) =>
+              String(candidate.id) === String(provider.id)
+                ? { ...candidate, source_metadata: details.source_metadata }
+                : candidate
+            )
+          );
+        }
       })
       .catch(() => {})
       .finally(() => {
-        if (detailsRequestIdRef.current === requestId) setLoadingDetails(false);
+        if (detailsRequestIdRef.current === requestId)
+          setLoadingSourceDetails(false);
       });
   }, [
     fetchMovieDetailsFromProvider,
@@ -270,18 +309,31 @@ const VODModal = ({
   const onChangeSelectedProvider = (provider) => {
     if (!provider || provider.id === selectedProvider?.id) return;
     setSelectedProvider(provider);
+    setSelectedProviderDetails(null);
+    setSelectedProviderDetailsId(null);
     const requestId = ++detailsRequestIdRef.current;
-    setLoadingDetails(true);
+    setLoadingDetails(false);
+    setLoadingSourceDetails(true);
     fetchMovieDetailsFromProvider(vod.id, provider.id)
       .then((details) => {
-        if (detailsRequestIdRef.current === requestId) {
-          setDetailedVOD(details);
+        if (detailsRequestIdRef.current !== requestId) return;
+        setDetailedVOD((current) => current || details);
+        setSelectedProviderDetails(details);
+        setSelectedProviderDetailsId(provider.id);
+        if (details.source_metadata) {
+          setProviders((current) =>
+            current.map((candidate) =>
+              String(candidate.id) === String(provider.id)
+                ? { ...candidate, source_metadata: details.source_metadata }
+                : candidate
+            )
+          );
         }
       })
       .catch(() => {})
       .finally(() => {
         if (detailsRequestIdRef.current === requestId) {
-          setLoadingDetails(false);
+          setLoadingSourceDetails(false);
         }
       });
   };
@@ -311,7 +363,7 @@ const VODModal = ({
     setSelectedProvider((current) =>
       current?.id === updatedProvider.id ? updatedProvider : current
     );
-    setDetailedVOD((current) =>
+    setSelectedProviderDetails((current) =>
       selectedProvider?.id === updatedProvider.id && current
         ? { ...current, source_metadata: updatedProvider.source_metadata }
         : current
@@ -325,7 +377,11 @@ const VODModal = ({
       vod.id,
       selectedProvider?.id || null
     );
-    if (detailsRequestIdRef.current === requestId) setDetailedVOD(details);
+    if (detailsRequestIdRef.current === requestId) {
+      setDetailedVOD(details);
+      setSelectedProviderDetails(details);
+      setSelectedProviderDetailsId(selectedProvider?.id || null);
+    }
     await onMetadataChanged?.();
   };
 
@@ -383,9 +439,13 @@ const VODModal = ({
     };
   };
   const providerIds = selectedProvider?.provider_external_ids || {};
-  const providerVOD = detailedVOD
+  const activeProviderDetails =
+    String(selectedProviderDetailsId || '') === String(selectedProvider?.id || '')
+      ? selectedProviderDetails
+      : null;
+  const providerVOD = activeProviderDetails
     ? {
-        ...detailedVOD,
+        ...activeProviderDetails,
         tmdb_id: providerIds.tmdb_id || '',
         imdb_id: providerIds.imdb_id || '',
         tmdb: {
@@ -588,13 +648,17 @@ const VODModal = ({
 
               <Group gap="xs">
                 <Title order={4}>Sources ({providers.length})</Title>
-                {loadingProviders && <Loader size="xs" />}
+                {(loadingProviders || loadingSourceDetails) && (
+                  <Loader size="xs" />
+                )}
               </Group>
               {providers.length > 0 ? (
                 <VODSourceList
                   providers={providers}
                   selectedProvider={selectedProvider}
-                  selectedSourceMetadata={detailedVOD?.source_metadata}
+                  selectedSourceMetadata={
+                    activeProviderDetails?.source_metadata
+                  }
                   contentType="movie"
                   disabled={loadingProviders}
                   onSelect={onChangeSelectedProvider}

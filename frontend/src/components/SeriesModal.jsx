@@ -350,6 +350,9 @@ const SeriesModal = ({
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
 
   const [detailedSeries, setDetailedSeries] = useState(null);
+  const [canonicalSeriesDetails, setCanonicalSeriesDetails] = useState(null);
+  const [detailedSeriesProviderId, setDetailedSeriesProviderId] =
+    useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [activeTab, setActiveTab] = useState(null);
   const [expandedEpisode, setExpandedEpisode] = useState(null);
@@ -386,15 +389,31 @@ const SeriesModal = ({
             providersData[0] ||
             null;
           setSelectedProvider(provider);
-          return provider
+          return (provider
             ? fetchSeriesInfo(series.id, provider.id)
-            : fetchSeriesInfo(series.id);
+            : fetchSeriesInfo(series.id)
+          ).then((details) => ({ details, providerId: provider?.id || null }));
         })
-        .then((details) => {
-          if (!details || detailsRequestIdRef.current !== detailsRequestId) {
+        .then((result) => {
+          if (
+            !result?.details ||
+            detailsRequestIdRef.current !== detailsRequestId
+          ) {
             return;
           }
+          const { details, providerId } = result;
           setDetailedSeries(details);
+          setCanonicalSeriesDetails(details);
+          setDetailedSeriesProviderId(providerId);
+          if (providerId && details.source_metadata) {
+            setProviders((current) =>
+              current.map((provider) =>
+                String(provider.id) === String(providerId)
+                  ? { ...provider, source_metadata: details.source_metadata }
+                  : provider
+              )
+            );
+          }
         })
         .catch((error) => {
           if (detailsRequestIdRef.current !== detailsRequestId) return;
@@ -424,6 +443,8 @@ const SeriesModal = ({
       detailsRequestIdRef.current += 1;
       profilePreferenceAppliedRef.current = '';
       setDetailedSeries(null);
+      setCanonicalSeriesDetails(null);
+      setDetailedSeriesProviderId(null);
       setLoadingDetails(false);
       setProviders([]);
       setSelectedProvider(null);
@@ -448,15 +469,27 @@ const SeriesModal = ({
     if (!provider) return;
     profilePreferenceAppliedRef.current = signature;
     setSelectedProvider(provider);
+    setDetailedSeriesProviderId(null);
     const requestId = ++detailsRequestIdRef.current;
     setLoadingDetails(true);
     setDetailedSeries((current) =>
-      current ? { ...current, episodesList: [] } : current
+      current ? { ...current, episodesList: [], source_metadata: null } : current
     );
     fetchSeriesInfo(series.id, provider.id)
       .then((details) => {
-        if (detailsRequestIdRef.current === requestId)
-          setDetailedSeries(details);
+        if (detailsRequestIdRef.current !== requestId) return;
+        setCanonicalSeriesDetails((current) => current || details);
+        setDetailedSeries(details);
+        setDetailedSeriesProviderId(provider.id);
+        if (details.source_metadata) {
+          setProviders((current) =>
+            current.map((candidate) =>
+              String(candidate.id) === String(provider.id)
+                ? { ...candidate, source_metadata: details.source_metadata }
+                : candidate
+            )
+          );
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -532,16 +565,28 @@ const SeriesModal = ({
     if (!provider || provider.id === selectedProvider?.id) return;
     setSelectedProvider(provider);
     if (provider) {
+      setDetailedSeriesProviderId(null);
       const requestId = ++detailsRequestIdRef.current;
       setLoadingDetails(true);
       // Clear episodes immediately so the previous provider's list cannot flash
       setDetailedSeries((prev) =>
-        prev ? { ...prev, episodesList: [] } : prev
+        prev ? { ...prev, episodesList: [], source_metadata: null } : prev
       );
       fetchSeriesInfo(series.id, provider.id)
         .then((details) => {
           if (detailsRequestIdRef.current !== requestId) return;
+          setCanonicalSeriesDetails((current) => current || details);
           setDetailedSeries(details);
+          setDetailedSeriesProviderId(provider.id);
+          if (details.source_metadata) {
+            setProviders((current) =>
+              current.map((candidate) =>
+                String(candidate.id) === String(provider.id)
+                  ? { ...candidate, source_metadata: details.source_metadata }
+                  : candidate
+              )
+            );
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -562,7 +607,8 @@ const SeriesModal = ({
       current?.id === updatedProvider.id ? updatedProvider : current
     );
     setDetailedSeries((current) =>
-      selectedProvider?.id === updatedProvider.id && current
+      String(detailedSeriesProviderId || '') ===
+        String(updatedProvider.id || '') && current
         ? { ...current, source_metadata: updatedProvider.source_metadata }
         : current
     );
@@ -575,19 +621,24 @@ const SeriesModal = ({
       series.id,
       selectedProvider?.id || null
     );
-    if (detailsRequestIdRef.current === requestId) setDetailedSeries(details);
+    if (detailsRequestIdRef.current === requestId) {
+      setDetailedSeries(details);
+      setCanonicalSeriesDetails(details);
+      setDetailedSeriesProviderId(selectedProvider?.id || null);
+    }
     await onMetadataChanged?.();
   };
 
   if (!series) return null;
 
-  const tmdb = detailedSeries?.tmdb || series.tmdb || {};
+  const canonicalDetails = canonicalSeriesDetails || detailedSeries;
+  const tmdb = canonicalDetails?.tmdb || series.tmdb || {};
   const primaryLanguage = tmdb.primary_language || tmdb.languages?.[0] || '';
   const secondaryLanguage =
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
   const metadataMatched = tmdb.status === 'matched';
-  const canonicalSeries = detailedSeries?.canonical || series;
+  const canonicalSeries = canonicalDetails?.canonical || series;
   const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
     return {
@@ -629,9 +680,13 @@ const SeriesModal = ({
     };
   };
   const providerIds = selectedProvider?.provider_external_ids || {};
-  const providerSeries = detailedSeries
+  const activeProviderDetails =
+    String(detailedSeriesProviderId || '') === String(selectedProvider?.id || '')
+      ? detailedSeries
+      : null;
+  const providerSeries = activeProviderDetails
     ? {
-        ...detailedSeries,
+        ...activeProviderDetails,
         tmdb_id: providerIds.tmdb_id || '',
         imdb_id: providerIds.imdb_id || '',
         tmdb: {
@@ -782,7 +837,7 @@ const SeriesModal = ({
                   not copied into the secondary view.
                 </Alert>
               )}
-              {loadingDetails && (
+              {loadingDetails && !canonicalSeriesDetails && (
                 <Group spacing="xs" mb={8}>
                   <Loader size="xs" />
                   <Text size="xs" color="dimmed">
@@ -799,13 +854,15 @@ const SeriesModal = ({
 
               <Group gap="xs" mt="md">
                 <Title order={4}>Sources ({providers.length})</Title>
-                {loadingProviders && <Loader size="xs" />}
+                {(loadingProviders || loadingDetails) && <Loader size="xs" />}
               </Group>
               {providers.length > 0 ? (
                 <VODSourceList
                   providers={providers}
                   selectedProvider={selectedProvider}
-                  selectedSourceMetadata={detailedSeries?.source_metadata}
+                  selectedSourceMetadata={
+                    activeProviderDetails?.source_metadata
+                  }
                   contentType="series"
                   disabled={loadingProviders || loadingDetails}
                   onSelect={onChangeSelectedProvider}

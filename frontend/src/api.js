@@ -4032,7 +4032,8 @@ export default class API {
     try {
       const params = relationId ? `?relation_id=${relationId}` : '';
       const response = await request(
-        `${host}/api/vod/movies/${movieId}/provider-info/${params}`
+        `${host}/api/vod/movies/${movieId}/provider-info/${params}`,
+        { cache: 'no-store' }
       );
       return response;
     } catch (e) {
@@ -4043,7 +4044,8 @@ export default class API {
   static async getMovieProviders(movieId) {
     try {
       const response = await request(
-        `${host}/api/vod/movies/${movieId}/providers/`
+        `${host}/api/vod/movies/${movieId}/providers/`,
+        { cache: 'no-store' }
       );
       return response;
     } catch (e) {
@@ -4054,7 +4056,8 @@ export default class API {
   static async getSeriesProviders(seriesId) {
     try {
       const response = await request(
-        `${host}/api/vod/series/${seriesId}/providers/`
+        `${host}/api/vod/series/${seriesId}/providers/`,
+        { cache: 'no-store' }
       );
       return response;
     } catch (e) {
@@ -4076,7 +4079,8 @@ export default class API {
       const params = new URLSearchParams({ include_episodes: 'true' });
       if (relationId) params.set('relation_id', relationId);
       const response = await request(
-        `${host}/api/vod/series/${seriesId}/provider-info/?${params}`
+        `${host}/api/vod/series/${seriesId}/provider-info/?${params}`,
+        { cache: 'no-store' }
       );
       return response;
     } catch (e) {

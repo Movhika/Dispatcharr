@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import VODModal from '../VODModal';
 import useVODStore from '../../store/useVODStore';
@@ -306,6 +312,9 @@ describe('VODModal', () => {
       expect(mockFetchMovieDetailsFromProvider).toHaveBeenCalledTimes(2)
     );
     expect(
+      screen.queryByText('Loading additional details...')
+    ).not.toBeInTheDocument();
+    expect(
       heading.parentElement.querySelector('[data-testid="loader"]')
     ).not.toBeInTheDocument();
   });
@@ -370,6 +379,62 @@ describe('VODModal', () => {
     await waitFor(() => {
       expect(mockFetchMovieDetailsFromProvider).toHaveBeenCalledWith(1, 2);
     });
+  });
+
+  it('keeps source metadata and canonical details scoped during selection', async () => {
+    let resolveSecondDetails;
+    const providers = [
+      {
+        ...mockProvider,
+        stream_name: 'First source',
+        source_metadata: { values: { bitrate_kbps: 9000 } },
+      },
+      {
+        ...mockProvider,
+        id: 2,
+        stream_id: 'stream-456',
+        stream_name: 'Second source',
+        source_metadata: { values: {} },
+      },
+    ];
+    mockFetchMovieProviders.mockResolvedValue(providers);
+    mockFetchMovieDetailsFromProvider
+      .mockResolvedValueOnce({
+        ...mockVOD,
+        canonical: { ...mockVOD, name: 'Stable canonical title' },
+        source_metadata: { values: { bitrate_kbps: 9000 } },
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondDetails = resolve;
+          })
+      );
+
+    render(<VODModal vod={mockVOD} opened={true} onClose={mockOnClose} />);
+
+    expect(await screen.findByText('Stable canonical title')).toBeInTheDocument();
+    const secondRow = screen.getByText('Second source').closest('tr');
+    fireEvent.click(secondRow);
+
+    expect(within(secondRow).queryByText('9.00 Mbps')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Loading additional details...')
+    ).not.toBeInTheDocument();
+
+    resolveSecondDetails({
+      ...mockVOD,
+      canonical: { ...mockVOD, name: 'Different provider canonical' },
+      source_metadata: { values: { bitrate_kbps: 4200 } },
+    });
+
+    await waitFor(() =>
+      expect(within(secondRow).getByText('4.20 Mbps')).toBeInTheDocument()
+    );
+    expect(screen.getByText('Stable canonical title')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Different provider canonical')
+    ).not.toBeInTheDocument();
   });
 
   it('should select the M3U account independently from the category', async () => {

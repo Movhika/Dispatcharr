@@ -578,6 +578,44 @@ describe('SeriesModal', () => {
       });
     });
 
+    it('keeps primary series metadata stable while changing sources', async () => {
+      let resolveSecondDetails;
+      mockVODStore.fetchSeriesInfo
+        .mockResolvedValueOnce({
+          ...mockDetailedSeries,
+          canonical: { ...mockSeries, name: 'Stable canonical series' },
+        })
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveSecondDetails = resolve;
+            })
+        );
+
+      render(
+        <SeriesModal series={mockSeries} opened={true} onClose={vi.fn()} />
+      );
+
+      expect(
+        await screen.findByText('Stable canonical series')
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Test Series 720p').closest('tr'));
+      expect(
+        screen.queryByText('Loading series details and episodes...')
+      ).not.toBeInTheDocument();
+
+      resolveSecondDetails({
+        ...mockDetailedSeries,
+        canonical: { ...mockSeries, name: 'Different provider series' },
+      });
+
+      await waitFor(() =>
+        expect(mockVODStore.fetchSeriesInfo).toHaveBeenCalledWith(1, 2)
+      );
+      expect(screen.getByText('Stable canonical series')).toBeInTheDocument();
+      expect(screen.queryByText('Different provider series')).not.toBeInTheDocument();
+    });
+
     it('should show loader while fetching providers', () => {
       mockVODStore.fetchSeriesProviders = vi.fn(() => new Promise(() => {}));
 
