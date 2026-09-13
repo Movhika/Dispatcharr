@@ -3792,6 +3792,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     .select_related(
                         "movie__logo", "m3u_account", "category", "source_asset"
                     )
+                    .defer("movie__tmdb_metadata")
                 }
             )
         if series_ids:
@@ -3802,6 +3803,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     .select_related(
                         "series__logo", "m3u_account", "category", "source_asset"
                     )
+                    .defer("series__tmdb_metadata")
                 }
             )
 
@@ -3826,7 +3828,6 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             resolution = effective.get("resolution") or (
                 f"{effective['height']}p" if effective.get("height") else ""
             )
-            tmdb = _tmdb_content_payload(content)
             art = prefer_relation_artwork(
                 relation.custom_properties or {},
                 content.custom_properties or {},
@@ -3893,9 +3894,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         relation
                     ),
                     "tmdb_override_id": relation.tmdb_override_id,
-                    "tmdb": tmdb,
-                    "tmdb_id": tmdb["id"],
-                    "imdb_id": tmdb["external_ids"]["imdb_id"],
+                    "tmdb_id": content.tmdb_match_id or content.tmdb_id or "",
+                    "imdb_id": content.tmdb_imdb_id or content.imdb_id or "",
                     "metadata_requested": bool(content.tmdb_enriched_at),
                 }
             )
@@ -4135,14 +4135,14 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 ("movie", content.id): content
                 for content in Movie.objects.filter(
                     pk__in=movie_page_ids
-                ).select_related("logo")
+                ).select_related("logo").defer("tmdb_metadata")
             }
             content_by_key.update(
                 {
                     ("series", content.id): content
                     for content in Series.objects.filter(
                         pk__in=series_page_ids
-                    ).select_related("logo")
+                    ).select_related("logo").defer("tmdb_metadata")
                 }
             )
 
@@ -4184,7 +4184,9 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     "updated_at": (
                         content.updated_at.isoformat() if content.updated_at else None
                     ),
-                    "custom_properties": content.custom_properties or {},
+                    # Used only while deriving artwork for this page. Provider
+                    # JSON does not belong in the lightweight list response.
+                    "_custom_properties": content.custom_properties or {},
                     "tmdb_id": content.tmdb_match_id or content.tmdb_id or "",
                     "imdb_id": content.tmdb_imdb_id or content.imdb_id or "",
                     "tmdb_status": content.tmdb_status or "",
@@ -4192,7 +4194,6 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         content.tmdb_enriched_at.isoformat()
                         if content.tmdb_enriched_at else None
                     ),
-                    "tmdb": _tmdb_content_payload(content),
                     "_tmdb_poster_url": content.tmdb_poster_url or "",
                     "_tmdb_backdrop_url": content.tmdb_backdrop_url or "",
                     "logo": logo_data,
@@ -4277,7 +4278,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 )
                 art = prefer_relation_artwork(
                     first_relation.custom_properties if first_relation else {},
-                    item["custom_properties"],
+                    item.pop("_custom_properties", {}),
                     tmdb_poster_url=item.pop("_tmdb_poster_url", ""),
                     tmdb_backdrop_url=item.pop("_tmdb_backdrop_url", ""),
                     prefer_tmdb=prefer_tmdb_artwork,

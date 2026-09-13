@@ -637,7 +637,7 @@ const SeriesModal = ({
   const secondaryLanguage =
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
-  const metadataMatched = tmdb.status === 'matched';
+  const metadataMatched = (tmdb.status || series.tmdb_status) === 'matched';
   const canonicalSeries = canonicalDetails?.canonical || series;
   const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};

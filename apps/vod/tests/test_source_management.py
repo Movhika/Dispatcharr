@@ -3851,12 +3851,22 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(len(page_queries), 1)
         self.assertIn("COUNT(*) OVER()", page_queries[0])
         self.assertNotIn("tmdb_metadata", page_queries[0])
+        self.assertFalse(
+            any(
+                '"vod_movie"."tmdb_metadata"' in query["sql"]
+                or '"vod_series"."tmdb_metadata"' in query["sql"]
+                for query in queries.captured_queries
+            )
+        )
         counts = {
             (item["content_type"], item["name"]): item["source_count"]
             for item in response.data["results"]
         }
         self.assertEqual(counts[("movie", "Avatar")], 2)
         self.assertEqual(counts[("series", "Avatar Series")], 2)
+        for item in response.data["results"]:
+            self.assertNotIn("custom_properties", item)
+            self.assertNotIn("tmdb", item)
 
     def test_unified_variant_list_returns_each_exact_provider_source(self):
         self.german_relation.custom_properties = {
@@ -3885,7 +3895,8 @@ class VODSourceManagementTests(TestCase):
         )
         force_authenticate(request, user=admin)
 
-        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+        with CaptureQueriesContext(connection) as queries:
+            response = UnifiedContentViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 2)
@@ -3903,6 +3914,14 @@ class VODSourceManagementTests(TestCase):
             "Avatar (2005)",
         )
         self.assertEqual(rows[self.german_relation.id]["tmdb_id"], "272")
+        self.assertNotIn("tmdb", rows[self.german_relation.id])
+        self.assertFalse(
+            any(
+                '"vod_movie"."tmdb_metadata"' in query["sql"]
+                or '"vod_series"."tmdb_metadata"' in query["sql"]
+                for query in queries.captured_queries
+            )
+        )
 
     def test_missing_external_ids_includes_tvdb_and_wikidata(self):
         self.movie.tmdb_id = None

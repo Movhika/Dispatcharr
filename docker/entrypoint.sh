@@ -89,6 +89,13 @@ if [[ "$DISPATCHARR_ENV" == "aio" ]]; then
 else
     export POSTGRES_HOST=${POSTGRES_HOST:-localhost}
 fi
+
+# The runtime owns /dev/shm, so the application cannot enlarge it itself.
+# Check before PostgreSQL starts and emit one actionable warning for custom AIO
+# deployments that still use Docker's generic 64 MiB default.
+. /app/docker/init/00-check-shm.sh
+check_dispatcharr_shared_memory
+
 export POSTGRES_PORT=${POSTGRES_PORT:-5432}
 export PG_VERSION=$(ls /usr/lib/postgresql/ | sort -V | tail -n 1)
 export PG_BINDIR="/usr/lib/postgresql/${PG_VERSION}/bin"

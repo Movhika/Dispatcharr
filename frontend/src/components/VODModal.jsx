@@ -392,7 +392,7 @@ const VODModal = ({
   const secondaryLanguage =
     tmdb.secondary_language || tmdb.languages?.[1] || '';
   const localized = tmdb.localized || {};
-  const metadataMatched = tmdb.status === 'matched';
+  const metadataMatched = (tmdb.status || vod.tmdb_status) === 'matched';
   const canonicalVOD = detailedVOD?.canonical || vod;
   const localizedCanonical = (language, secondary = false) => {
     const values = localized[language] || {};
