@@ -1302,6 +1302,9 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 class VODPlaybackSessionSerializer(serializers.ModelSerializer):
     content_name = serializers.SerializerMethodField()
     source_effective_metadata = serializers.SerializerMethodField()
+    detail_content_type = serializers.SerializerMethodField()
+    detail_canonical_id = serializers.SerializerMethodField()
+    detail_relation_id = serializers.SerializerMethodField()
     account_name = serializers.CharField(source="m3u_account.name", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
@@ -1347,6 +1350,45 @@ class VODPlaybackSessionSerializer(serializers.ModelSerializer):
             obj.content_name,
             (obj.custom_properties or {}).get("episode_name", ""),
         )
+
+    @staticmethod
+    def _detail_target(obj):
+        cached = getattr(obj, "_vod_detail_target", None)
+        if cached is not None:
+            return cached
+        target = (obj.content_type, obj.canonical_id, obj.relation_id)
+        if obj.content_type == VODSourceAsset.AssetType.EPISODE:
+            target = ("series", None, None)
+            relations = (
+                obj.source_asset.episode_relations.all()
+                if obj.source_asset_id
+                else []
+            )
+            relation = next(
+                (
+                    row
+                    for row in relations
+                    if str(row.pk) == str(obj.relation_id)
+                ),
+                None,
+            )
+            if relation is not None and relation.series_relation_id:
+                target = (
+                    "series",
+                    relation.series_relation.series_id,
+                    relation.series_relation_id,
+                )
+        obj._vod_detail_target = target
+        return target
+
+    def get_detail_content_type(self, obj):
+        return self._detail_target(obj)[0]
+
+    def get_detail_canonical_id(self, obj):
+        return self._detail_target(obj)[1]
+
+    def get_detail_relation_id(self, obj):
+        return self._detail_target(obj)[2]
 
 
 class EnhancedSeriesSerializer(serializers.ModelSerializer):

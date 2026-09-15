@@ -1593,7 +1593,7 @@ export default class API {
     });
   }
 
-  static async previewVODMetadataTitles(titleRules, items = [], search = '') {
+  static async previewVODMetadataTitles(titleRules, items = null, search = '') {
     return await request(`${host}/api/vod/metadata/title-preview/`, {
       method: 'POST',
       body: { title_rules: titleRules, items, search },

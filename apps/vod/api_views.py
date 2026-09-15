@@ -2977,7 +2977,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 rows.append(
                     {
                         "id": relation.id,
+                        "relation_id": relation.id,
                         "content_type": content_type,
+                        "canonical_id": content.id,
                         "title": provider_title,
                         "provider_title": provider_title,
                         "canonical_title": (
@@ -3007,6 +3009,8 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
 class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VODPlaybackSession.objects.select_related(
         "user", "source_asset", "m3u_account", "category"
+    ).prefetch_related(
+        "source_asset__episode_relations__series_relation"
     )
     serializer_class = VODPlaybackSessionSerializer
 
@@ -3065,10 +3069,16 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             if value:
                 queryset = queryset.filter(**{f"{field}_id": value})
 
-        for field in ("status", "mode", "content_type"):
+        for field in ("status", "mode"):
             value = str(filters.get(field) or "").strip()
             if value:
                 queryset = queryset.filter(**{field: value})
+
+        content_type = str(filters.get("content_type") or "").strip()
+        if content_type == "series":
+            queryset = queryset.filter(content_type__in=("series", "episode"))
+        elif content_type:
+            queryset = queryset.filter(content_type=content_type)
 
         started_after = self._datetime_bound(filters.get("started_after"))
         started_before = self._datetime_bound(

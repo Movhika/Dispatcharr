@@ -1875,6 +1875,14 @@ class VODSourceManagementTests(TestCase):
             response.data["results"][0]["canonical_title"],
             "Avatar",
         )
+        self.assertEqual(
+            response.data["results"][0]["canonical_id"],
+            self.movie.id,
+        )
+        self.assertEqual(
+            response.data["results"][0]["relation_id"],
+            self.english_relation.id,
+        )
 
     def test_empty_category_expression_applies_feature_filter_globally(self):
         self.english_category.metadata_defaults = {
@@ -3188,6 +3196,86 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             VODPlaybackSessionSerializer(legacy).data["content_name"],
             provider_title,
+        )
+
+    def test_episode_history_points_to_its_parent_series_detail(self):
+        series = Series.objects.create(name="History Series")
+        category = VODCategory.objects.create(
+            name="HISTORY SERIES", category_type="series"
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=category,
+            enabled=True,
+        )
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=category,
+            external_series_id="history-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Pilot",
+            season_number=1,
+            episode_number=1,
+        )
+        episode_relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="history-series-s01e01",
+        )
+        playback = record_playback_selection(
+            session_id="history-series-episode",
+            user=None,
+            relation=episode_relation,
+            mode=VODPlaybackSession.Mode.PROXY,
+            status=VODPlaybackSession.Status.COMPLETED,
+        )
+
+        data = VODPlaybackSessionSerializer(playback).data
+
+        self.assertEqual(data["detail_content_type"], "series")
+        self.assertEqual(data["detail_canonical_id"], series.id)
+        self.assertEqual(data["detail_relation_id"], series_relation.id)
+
+    def test_series_history_filter_includes_series_episodes(self):
+        admin = get_user_model().objects.create_user(
+            username="history-series-admin",
+            password="test-password",
+            user_level=10,
+        )
+        VODPlaybackSession.objects.create(
+            session_id="history-series-row",
+            content_type=VODSourceAsset.AssetType.SERIES,
+            content_name="Series",
+            mode=VODPlaybackSession.Mode.PROXY,
+        )
+        VODPlaybackSession.objects.create(
+            session_id="history-episode-row",
+            content_type=VODSourceAsset.AssetType.EPISODE,
+            content_name="Episode",
+            mode=VODPlaybackSession.Mode.PROXY,
+        )
+        VODPlaybackSession.objects.create(
+            session_id="history-movie-row",
+            content_type=VODSourceAsset.AssetType.MOVIE,
+            content_name="Movie",
+            mode=VODPlaybackSession.Mode.PROXY,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/playback-sessions/", {"content_type": "series"}
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODPlaybackSessionViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(
+            {row["content_type"] for row in response.data["results"]},
+            {"series", "episode"},
         )
 
     def test_playback_history_filters_by_user_title_and_time_on_the_server(self):

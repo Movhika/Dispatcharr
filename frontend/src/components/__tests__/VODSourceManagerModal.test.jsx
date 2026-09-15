@@ -36,6 +36,7 @@ vi.mock('../VideoFeaturePicker.jsx', () => ({
   ),
 }));
 vi.mock('lucide-react', () => ({
+  Eye: () => null,
   RefreshCw: () => null,
   Trash2: () => null,
   Wrench: () => null,
@@ -191,6 +192,9 @@ const playback = {
   watched_seconds: 125,
   bytes_sent: 1048576,
   source_asset: 9,
+  detail_content_type: 'series',
+  detail_canonical_id: 17,
+  detail_relation_id: 21,
   source_effective_metadata: {
     values: {
       resolution: '1080p',
@@ -257,6 +261,37 @@ describe('VODSourceManagerModal playback history', () => {
         })
       )
     ).toBeInTheDocument();
+  });
+
+  it('opens the canonical VOD detail view from playback history', async () => {
+    const onClose = vi.fn();
+    const onOpenContent = vi.fn();
+    render(
+      <VODSourceManagerModal
+        opened
+        onClose={onClose}
+        onOpenContent={onOpenContent}
+      />
+    );
+    await screen.findByText('Avatar - S01E01');
+    fireEvent.click(screen.getByLabelText('Open details for Avatar - S01E01'));
+
+    expect(onClose).toHaveBeenCalled();
+    expect(onOpenContent).toHaveBeenCalledWith({
+      id: 17,
+      content_type: 'series',
+      contentType: 'series',
+      relation_id: 21,
+      name: 'Avatar - S01E01',
+    });
+  });
+
+  it('offers movies and series without a separate episode filter', async () => {
+    render(<VODSourceManagerModal opened onClose={vi.fn()} />);
+    await screen.findByText('Avatar - S01E01');
+    expect(screen.getByLabelText('Type')).toHaveTextContent('Movies');
+    expect(screen.getByLabelText('Type')).toHaveTextContent('Series');
+    expect(screen.getByLabelText('Type')).not.toHaveTextContent('Episode');
   });
 
   it('saves manual metadata as locked source data', async () => {

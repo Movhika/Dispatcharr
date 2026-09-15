@@ -19,88 +19,10 @@ import { ExternalLink, Search, Save } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
-
-const emptyValues = {
-  title: '',
-  secondary_title: '',
-  description: '',
-  secondary_description: '',
-  year: '',
-  release_date: '',
-  duration_minutes: '',
-  rating: '',
-  genre: '',
-  age_rating: '',
-  director: '',
-  actors: '',
-  crew: '',
-  country: '',
-  youtube_trailer: '',
-  poster_url: '',
-  backdrop_url: '',
-  tmdb_id: '',
-  imdb_id: '',
-  tvdb_id: '',
-  wikidata_id: '',
-  keywords: [],
-  is_anime: false,
-  adult: false,
-};
-
-const metadataValues = (content = {}) => {
-  const tmdb = content.tmdb || {};
-  const primaryLanguage =
-    tmdb.primary_language || tmdb.languages?.[0] || 'en-US';
-  const secondaryLanguage =
-    tmdb.secondary_language || tmdb.languages?.[1] || '';
-  const primary = tmdb.localized?.[primaryLanguage] || {};
-  const secondary = tmdb.localized?.[secondaryLanguage] || {};
-  return {
-    ...emptyValues,
-    title: primary.title || content.name || '',
-    secondary_title: secondary.title || '',
-    description: primary.overview || content.description || '',
-    secondary_description: secondary.overview || '',
-    year: content.year ? String(content.year) : '',
-    release_date: tmdb.release_date || content.release_date || '',
-    duration_minutes: tmdb.runtime_minutes
-      ? String(tmdb.runtime_minutes)
-      : content.duration_secs
-        ? String(Math.round(content.duration_secs / 60))
-        : '',
-    rating: String(tmdb.rating || content.rating || ''),
-    genre:
-      (tmdb.genres || [])
-        .map((row) => row.name)
-        .filter(Boolean)
-        .join(', ') ||
-      content.genre ||
-      '',
-    age_rating: tmdb.age_rating || content.age || '',
-    director: tmdb.director || content.director || '',
-    actors: tmdb.actors || content.actors || content.cast || '',
-    crew: tmdb.crew || content.crew || '',
-    country: tmdb.country || content.country || '',
-    youtube_trailer: tmdb.youtube_trailer || content.youtube_trailer || '',
-    poster_url:
-      tmdb.poster_url ||
-      content.movie_image ||
-      content.series_image ||
-      content.logo?.cache_url ||
-      content.logo?.url ||
-      '',
-    backdrop_url: tmdb.backdrop_url || content.backdrop_path?.[0] || '',
-    tmdb_id: String(tmdb.id || content.tmdb_id || ''),
-    imdb_id: String(tmdb.external_ids?.imdb_id || content.imdb_id || ''),
-    tvdb_id: String(tmdb.external_ids?.tvdb_id || ''),
-    wikidata_id: String(tmdb.external_ids?.wikidata_id || ''),
-    keywords: (tmdb.keywords || [])
-      .map((row) => (typeof row === 'string' ? row : row?.name))
-      .filter(Boolean),
-    is_anime: Boolean(tmdb.is_anime),
-    adult: Boolean(tmdb.adult || content.is_adult),
-  };
-};
+import {
+  canonicalMetadataValues,
+  EMPTY_CANONICAL_METADATA_VALUES,
+} from '../utils/vodCanonicalMetadata.js';
 
 const VODCanonicalMetadataModal = ({
   opened,
@@ -110,7 +32,7 @@ const VODCanonicalMetadataModal = ({
   contentType,
   onSaved,
 }) => {
-  const [values, setValues] = useState(emptyValues);
+  const [values, setValues] = useState(EMPTY_CANONICAL_METADATA_VALUES);
   const [searchTitle, setSearchTitle] = useState('');
   const [searchYear, setSearchYear] = useState('');
   const [results, setResults] = useState([]);
@@ -125,7 +47,7 @@ const VODCanonicalMetadataModal = ({
 
   useEffect(() => {
     if (!opened) return;
-    const next = metadataValues(content);
+    const next = canonicalMetadataValues(content);
     setValues(next);
     setSearchTitle(next.title);
     setSearchYear(next.year);
@@ -163,7 +85,9 @@ const VODCanonicalMetadataModal = ({
         content_type: contentType,
         tmdb_id: candidateId,
       });
-      const candidateValues = metadataValues({ tmdb: response.metadata });
+      const candidateValues = canonicalMetadataValues({
+        tmdb: response.metadata,
+      });
       setValues({ ...candidateValues, tmdb_id: String(candidateId) });
     } catch (error) {
       showNotification({

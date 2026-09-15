@@ -10,6 +10,7 @@ import {
   Modal,
   NumberInput,
   Paper,
+  Progress,
   ScrollArea,
   Select,
   SimpleGrid,
@@ -141,7 +142,7 @@ const ruleSummary = (rule) => {
   if (rule.anime_mode !== 'any') conditions.push(`Anime is ${rule.anime_mode}`);
   if (rule.adult_mode !== 'any') conditions.push(`Adult is ${rule.adult_mode}`);
   if (rule.metadata_mode !== 'any') {
-    conditions.push(`Canonical details are ${rule.metadata_mode}`);
+    conditions.push(`Content metadata is ${rule.metadata_mode}`);
   }
   if (rule.tmdb_mode !== 'any') {
     conditions.push(`TMDB ID is ${rule.tmdb_mode}`);
@@ -203,11 +204,13 @@ const VODSourceRules = ({
   categoryRelationIds = [],
   defaultAction = 'include',
   onDefaultActionChange,
+  onOpenDetails,
 }) => {
   const [previewOpened, setPreviewOpened] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [preview, setPreview] = useState({ count: 0, results: [] });
+  const [previewElapsed, setPreviewElapsed] = useState(0);
   const [editorOpened, setEditorOpened] = useState(false);
   const [editorRule, setEditorRule] = useState(createRule());
   const sensors = useSensors(
@@ -256,6 +259,7 @@ const VODSourceRules = ({
     setPreviewOpened(true);
     setPreviewLoading(true);
     setPreviewError('');
+    setPreviewElapsed(0);
     setPreview({ count: 0, results: [] });
     try {
       setPreview(
@@ -272,6 +276,16 @@ const VODSourceRules = ({
       setPreviewLoading(false);
     }
   };
+
+  React.useEffect(() => {
+    if (!previewLoading) return undefined;
+    const startedAt = Date.now();
+    const timer = window.setInterval(
+      () => setPreviewElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000
+    );
+    return () => window.clearInterval(timer);
+  }, [previewLoading]);
   const previewEditorRule = () => {
     const sourceRules = normalized.some((rule) => rule.id === editorRule.id)
       ? normalized.map((rule) =>
@@ -531,7 +545,7 @@ const VODSourceRules = ({
             </Alert>
           )}
 
-          <Text fw={600}>Canonical details</Text>
+          <Text fw={600}>Content metadata</Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TagsInput
               label={
@@ -632,8 +646,8 @@ const VODSourceRules = ({
             />
             <Select
               label={
-                <FilterLabel tooltip="Canonical details are the shared title-level information such as descriptions, genres, keywords, cast, artwork, and external IDs. Missing means that no canonical TMDB or manual detail record is stored; provider-source fields alone do not count.">
-                  Canonical details
+                <FilterLabel tooltip="Content metadata is the shared title-level information such as descriptions, genres, keywords, cast, artwork, and external IDs. Missing means that no TMDB or manual content record is stored; provider-source fields alone do not count.">
+                  Content metadata
                 </FilterLabel>
               }
               data={[
@@ -670,11 +684,14 @@ const VODSourceRules = ({
             />
           </SimpleGrid>
 
-          {editorInvalid && (
+          {Boolean(
+            editorRule.min_resolution &&
+            editorRule.max_resolution &&
+            Number(editorRule.min_resolution) >
+              Number(editorRule.max_resolution)
+          ) && (
             <Alert color="red">
-              {!hasFilterCondition(editorRule)
-                ? 'Choose at least one metadata condition.'
-                : 'A minimum cannot be greater than its maximum.'}
+              A minimum cannot be greater than its maximum.
             </Alert>
           )}
           <Group justify="space-between">
@@ -710,9 +727,18 @@ const VODSourceRules = ({
             Only sources for which this filter is the first match are shown.
           </Text>
           {previewLoading && (
-            <Group justify="center" py="xl">
-              <Loader />
-            </Group>
+            <Stack gap="xs" py="xl">
+              <Group justify="center" gap="xs">
+                <Loader size="sm" />
+                <Text size="sm" fw={600}>
+                  Applying the ordered filters to the selected provider sources
+                </Text>
+              </Group>
+              <Progress value={100} animated striped />
+              <Text size="xs" c="dimmed" ta="center">
+                Reading source and content metadata · {previewElapsed}s elapsed
+              </Text>
+            </Stack>
           )}
           {previewError && <Alert color="red">{previewError}</Alert>}
           {!previewLoading && !previewError && (
@@ -734,6 +760,7 @@ const VODSourceRules = ({
                   getCanonicalTitle={(row) => row.canonical_title}
                   getProviderName={(row) => row.m3u_account_name}
                   getCategoryName={(row) => row.category_name}
+                  onOpenDetails={onOpenDetails}
                   emptyText="No source has this filter as its first match."
                   minWidth={760}
                 />

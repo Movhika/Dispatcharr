@@ -26,7 +26,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { Trash2, Wrench } from 'lucide-react';
+import { Eye, Trash2, Wrench } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
@@ -105,7 +105,7 @@ const playbackDayLabel = (value) =>
     month: 'short',
     day: 'numeric',
   });
-const VODSourceManagerModal = ({ opened, onClose }) => {
+const VODSourceManagerModal = ({ opened, onClose, onOpenContent }) => {
   const [playbacks, setPlaybacks] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -485,7 +485,10 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
             <Select
               clearable
               label="Type"
-              data={['movie', 'series', 'episode']}
+              data={[
+                { value: 'movie', label: 'Movies' },
+                { value: 'series', label: 'Series' },
+              ]}
               value={filters.content_type || null}
               onChange={(value) => updateFilter('content_type', value || '')}
               w={130}
@@ -667,6 +670,23 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
                         <TableTd>{formatBytes(playback.bytes_sent)}</TableTd>
                         <TableTd>
                           <Group gap={4} wrap="nowrap">
+                            <ActionIcon
+                              aria-label={`Open details for ${playback.content_name}`}
+                              variant="subtle"
+                              disabled={!playback.detail_canonical_id}
+                              onClick={() => {
+                                onClose();
+                                onOpenContent?.({
+                                  id: playback.detail_canonical_id,
+                                  content_type: playback.detail_content_type,
+                                  contentType: playback.detail_content_type,
+                                  relation_id: playback.detail_relation_id,
+                                  name: playback.content_name,
+                                });
+                              }}
+                            >
+                              <Eye size={16} />
+                            </ActionIcon>
                             <ActionIcon
                               aria-label="Edit source metadata"
                               variant="subtle"

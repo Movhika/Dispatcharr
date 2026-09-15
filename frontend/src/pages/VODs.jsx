@@ -1092,10 +1092,6 @@ const VODsPage = () => {
           <VODMetadataModal
             opened={metadataOpened}
             onClose={metadataHandlers.close}
-            onUpdated={fetchContent}
-            onOpenContent={(item) =>
-              openItem({ ...item, contentType: item.content_type })
-            }
           />
         </Suspense>
       </ErrorBoundary>
@@ -1112,6 +1108,7 @@ const VODsPage = () => {
           <VODSourceManagerModal
             opened={sourceManagerOpened}
             onClose={sourceManagerHandlers.close}
+            onOpenContent={openItem}
           />
         </Suspense>
       </ErrorBoundary>

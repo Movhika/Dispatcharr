@@ -5,9 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../api', () => ({
   default: {
     getVODMetadataStatus: vi.fn(),
-    getAllContent: vi.fn(),
-    refreshVODMetadata: vi.fn(),
-    resetVODMetadata: vi.fn(),
     previewVODMetadataTitles: vi.fn(),
     updateVODMetadataSettings: vi.fn(),
   },
@@ -25,22 +22,11 @@ vi.mock('../forms/settings/VODMetadataSettingsForm', () => ({
 vi.mock('lucide-react', () => ({
   Eye: () => null,
   Plus: () => null,
-  RefreshCw: () => null,
-  RotateCcw: () => null,
-  Search: () => null,
-  Settings2: () => null,
   Trash2: () => null,
 }));
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
   const Table = ({ children }) => <table>{children}</table>;
-  const Menu = ({ children }) => <div>{children}</div>;
-  Menu.Target = ({ children }) => <>{children}</>;
-  Menu.Dropdown = ({ children }) => <div>{children}</div>;
-  Menu.Label = ({ children }) => <div>{children}</div>;
-  Menu.Item = ({ children, onClick }) => (
-    <button onClick={onClick}>{children}</button>
-  );
   Table.Thead = ({ children }) => <thead>{children}</thead>;
   Table.Tbody = ({ children }) => <tbody>{children}</tbody>;
   Table.Tr = ({ children }) => <tr>{children}</tr>;
@@ -52,24 +38,14 @@ vi.mock('@mantine/core', () => {
         {children}
       </button>
     ),
-    Badge: Wrapper,
     Box: Wrapper,
     Button: ({ children, onClick, disabled, loading }) => (
       <button disabled={disabled || loading} onClick={onClick}>
         {children}
       </button>
     ),
-    Checkbox: ({ checked, onChange, 'aria-label': label }) => (
-      <input
-        aria-label={label}
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-      />
-    ),
     Flex: Wrapper,
     Group: Wrapper,
-    Menu,
     Modal: ({ opened, title, children }) =>
       opened ? (
         <div>
@@ -77,34 +53,7 @@ vi.mock('@mantine/core', () => {
           {children}
         </div>
       ) : null,
-    Pagination: () => null,
-    Progress: ({ value }) => <div data-testid="progress">{value}</div>,
     ScrollArea: Wrapper,
-    SegmentedControl: ({ data, onChange }) => (
-      <div>
-        {data.map((row) => (
-          <button key={row.value} onClick={() => onChange(row.value)}>
-            {row.label}
-          </button>
-        ))}
-      </div>
-    ),
-    Select: ({ label, data = [], value, onChange }) => (
-      <label>
-        {label}
-        <select
-          value={value || ''}
-          onChange={(event) => onChange(event.target.value || null)}
-        >
-          <option value="" />
-          {data.map((row) => (
-            <option key={row.value} value={row.value}>
-              {row.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    ),
     Stack: Wrapper,
     Switch: ({ checked, onChange, 'aria-label': label }) => (
       <input
@@ -115,188 +64,105 @@ vi.mock('@mantine/core', () => {
       />
     ),
     Table,
+    Tabs: Wrapper,
+    TabsList: Wrapper,
+    TabsPanel: Wrapper,
+    TabsTab: ({ children }) => <button>{children}</button>,
     Text: Wrapper,
-    TextInput: ({ label, value, onChange }) => (
+    TextInput: ({ label, value, onChange, description }) => (
       <label>
         {label}
+        {description}
         <input aria-label={label} value={value} onChange={onChange} />
       </label>
     ),
+    Tooltip: Wrapper,
   };
 });
 
 import API from '../../api';
 import VODMetadataModal from '../VODMetadataModal';
 
-const statusResponse = {
-  settings: { title_rules: [] },
-  catalog: {
-    movies: 100,
-    series: 20,
-    enriched_movies: 80,
-    enriched_series: 10,
-  },
-  state: { status: 'complete', progress: { percent: 100 } },
+const savedRule = {
+  pattern: '4K-D+ -',
+  replacement: ' ',
+  enabled: true,
 };
-const contentResponse = {
-  count: 1,
-  results: [
-    {
-      id: 7,
-      content_type: 'movie',
-      name: 'Bliss',
-      year: 2021,
-      tmdb_id: '613911',
-      tmdb_status: '',
-    },
-  ],
+const statusResponse = {
+  settings: { title_rules: [savedRule] },
 };
 
 describe('VODMetadataModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     API.getVODMetadataStatus.mockResolvedValue(statusResponse);
-    API.getAllContent.mockResolvedValue(contentResponse);
-    API.refreshVODMetadata.mockResolvedValue({ status: 'queued' });
-    API.resetVODMetadata.mockResolvedValue({ status: 'queued' });
     API.previewVODMetadataTitles.mockResolvedValue({
       results: [
         {
           id: 7,
           content_type: 'movie',
-          before: 'Bliss',
-          after: 'Clean Bliss',
+          before: '4K-D+ - Bliss (2021)',
+          after: '4K-D+ - Bliss',
+          changed: true,
+          year: 2021,
         },
       ],
     });
     API.updateVODMetadataSettings.mockResolvedValue(statusResponse);
   });
 
-  it('lists canonical titles and refreshes an explicit selection', async () => {
+  it('contains only TMDB settings and title cleanup tabs', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-    expect((await screen.findAllByText('Bliss')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByLabelText('Select Bliss'));
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Enrich selected (1)' })
-    );
-    await waitFor(() =>
-      expect(API.refreshVODMetadata).toHaveBeenCalledWith([
-        { id: 7, content_type: 'movie' },
-      ])
-    );
+    expect(await screen.findByText('TMDB settings active')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'TMDB settings' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Title cleanup' })).toBeVisible();
+    expect(screen.queryByText('Enrich selected')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reload selected')).not.toBeInTheDocument();
   });
 
-  it('enriches every canonical title matching the active filters', async () => {
-    API.getAllContent.mockResolvedValue({ ...contentResponse, count: 100 });
-    render(<VODMetadataModal opened onClose={vi.fn()} />);
-    await screen.findAllByText('Bliss');
-    fireEvent.click(screen.getByLabelText('Select this page'));
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Select all 100 matching titles',
-      })
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Enrich selected (100)' })
-    );
-
-    await waitFor(() =>
-      expect(API.refreshVODMetadata).toHaveBeenCalledWith([], {
-        select_all: true,
-        exclude_selections: [],
-        filters: { type: 'all', search: '', metadata_status: '' },
-      })
-    );
-  });
-
-  it('shows durable progress and disables refresh while active', async () => {
-    API.getVODMetadataStatus.mockResolvedValue({
-      ...statusResponse,
-      state: {
-        status: 'running',
-        progress: {
-          phase: 'Fetching TMDB metadata',
-          percent: 32,
-          processed: 32,
-          total: 100,
-        },
-      },
-    });
+  it('warns when a plus sign is acting as a regex quantifier', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
     expect(
-      await screen.findByText('Fetching TMDB metadata')
+      await screen.findByText(/repeats the preceding regex token/i)
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Enrich selected (0)' })
-    ).toBeDisabled();
-    expect(
-      screen.queryByRole('button', { name: 'Enrich pending' })
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId('progress')).toHaveTextContent('32');
   });
 
-  it('keeps TMDB configuration inside the VOD metadata dialog', async () => {
+  it('previews ordered cleanup rules against stored VOD titles', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'TMDB settings' }));
-    expect(await screen.findByTestId('tmdb-settings-form')).toHaveTextContent(
-      'TMDB settings active'
-    );
-  });
-
-  it('previews lookup rename rules against the visible canonical page', async () => {
-    render(<VODMetadataModal opened onClose={vi.fn()} />);
-    expect((await screen.findAllByText('Bliss')).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Lookup rename' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
-    fireEvent.change(screen.getByLabelText('Regular expression'), {
-      target: { value: '\\s+Extended Cut$' },
+    await screen.findByDisplayValue('4K-D+ -');
+    fireEvent.change(screen.getByLabelText('Preview titles containing'), {
+      target: { value: 'Bliss' },
     });
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Preview current page' })
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Preview titles' }));
 
     await waitFor(() =>
       expect(API.previewVODMetadataTitles).toHaveBeenCalledWith(
-        [
-          {
-            pattern: '\\s+Extended Cut$',
-            replacement: '',
-            enabled: true,
-          },
-        ],
-        [{ id: 7, content_type: 'movie' }]
+        [savedRule],
+        null,
+        'Bliss'
       )
     );
-    expect((await screen.findAllByText('Clean Bliss')).length).toBeGreaterThan(
-      1
-    );
+    expect(await screen.findByText('4K-D+ - Bliss')).toBeInTheDocument();
+  });
 
+  it('saves title cleanup independently from TMDB settings', async () => {
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+    const input = await screen.findByLabelText('Rule 1 · regular expression');
+    fireEvent.change(input, {
+      target: { value: '^4K-D\\+\\s*-\\s*' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save rules' }));
+
     await waitFor(() =>
       expect(API.updateVODMetadataSettings).toHaveBeenCalledWith({
         title_rules: [
           {
-            pattern: '\\s+Extended Cut$',
-            replacement: '',
+            pattern: '^4K-D\\+\\s*-\\s*',
+            replacement: ' ',
             enabled: true,
           },
         ],
       })
-    );
-  });
-
-  it('reloads selected metadata from an explicit source choice', async () => {
-    render(<VODMetadataModal opened onClose={vi.fn()} />);
-    await screen.findAllByText('Bliss');
-    fireEvent.click(screen.getByLabelText('Select Bliss'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reload selected' }));
-    fireEvent.click(screen.getByRole('button', { name: 'TMDB' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Reload 1 selected' }));
-
-    await waitFor(() =>
-      expect(API.resetVODMetadata).toHaveBeenCalledWith('tmdb', [
-        { id: 7, content_type: 'movie' },
-      ])
     );
   });
 });

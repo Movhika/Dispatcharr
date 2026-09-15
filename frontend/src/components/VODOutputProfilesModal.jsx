@@ -451,8 +451,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   }, [fetchProfiles, opened, selectedProfileId, selectedSelectionStatus]);
 
   useEffect(() => {
-    if (!candidateTarget || !selectedProfile?.id) {
+    if (
+      !candidateTarget ||
+      !selectedProfile?.id ||
+      candidateTarget.profile_context === false
+    ) {
       setCandidateData(null);
+      setCandidateLoading(false);
       setCandidateError('');
       return;
     }
@@ -965,7 +970,10 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       candidateTarget
         ? {
             id: candidateTarget.canonical_id,
-            name: candidateTarget.name,
+            name:
+              candidateTarget.name ||
+              candidateTarget.canonical_title ||
+              candidateTarget.provider_title,
             year: candidateTarget.year,
           }
         : null,
@@ -1425,6 +1433,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                         updateConstraint('content_default_action', value)
                       }
                       categoryRelationIds={selectedCategoryIds}
+                      onOpenDetails={(row) =>
+                        setCandidateTarget({ ...row, profile_context: false })
+                      }
                     />
                   </Paper>
                 </Box>

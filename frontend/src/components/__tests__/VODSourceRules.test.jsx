@@ -61,6 +61,7 @@ vi.mock('@mantine/core', () => {
     ),
     Group: Wrapper,
     Loader: () => <div>Loading</div>,
+    Progress: () => <div>Progress</div>,
     Modal: ({ children, opened, title }) =>
       opened ? (
         <div>
@@ -175,11 +176,13 @@ describe('VODSourceRules', () => {
   });
 
   it('opens a draft preview for the clicked ordered filter', async () => {
+    const onOpenDetails = vi.fn();
     render(
       <VODSourceRules
         value={rules}
         onChange={vi.fn()}
         categoryRelationIds={['7', '9']}
+        onOpenDetails={onOpenDetails}
       />
     );
 
@@ -194,6 +197,15 @@ describe('VODSourceRules', () => {
     ).toBeInTheDocument();
     expect(await screen.findByText('Provider 3D Movie')).toBeInTheDocument();
     expect(screen.getByText('Canonical Movie')).toBeInTheDocument();
+    expect(screen.queryByText('Canonical title')).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open details for Provider 3D Movie',
+      })
+    );
+    expect(onOpenDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 42, canonical_title: 'Canonical Movie' })
+    );
     await waitFor(() =>
       expect(API.previewVODAccessPolicyStreamFilter).toHaveBeenCalledWith({
         source_rules: expect.arrayContaining([
