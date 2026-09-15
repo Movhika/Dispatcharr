@@ -1118,10 +1118,7 @@ def _xc_uses_curated_metadata(policy):
     """Whether the profile projects canonical/TMDB descriptive metadata."""
     if not policy:
         return False
-    return (
-        policy.export_mode == "compact"
-        or getattr(policy, "metadata_source", "provider") == "canonical"
-    )
+    return getattr(policy, "metadata_source", "provider") == "canonical"
 
 
 def _xc_genre_names(value):

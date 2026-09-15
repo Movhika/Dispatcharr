@@ -469,6 +469,7 @@ class VODAccessPolicy(models.Model):
     class CanonicalTitleSource(models.TextChoices):
         PRIMARY = "primary", "Primary canonical title"
         SECONDARY = "secondary", "Secondary canonical title"
+        PROVIDER = "provider", "Provider title"
 
     name = models.CharField(max_length=255, unique=True)
     export_mode = models.CharField(
@@ -499,12 +500,12 @@ class VODAccessPolicy(models.Model):
     naming_mode = models.CharField(
         max_length=20,
         choices=NamingMode.choices,
-        default=NamingMode.MODE_DEFAULT,
+        default=NamingMode.TEMPLATE,
     )
     name_template = models.CharField(
         max_length=500,
         blank=True,
-        default="{canonical} {edition}",
+        default="{title} ({year}) {edition}",
         help_text="Output title template used when naming_mode is template.",
     )
     metadata_source = models.CharField(
@@ -512,8 +513,8 @@ class VODAccessPolicy(models.Model):
         choices=MetadataSource.choices,
         default=MetadataSource.PROVIDER,
         help_text=(
-            "Metadata projected to clients for variants output. Compact "
-            "always uses canonical metadata."
+            "Descriptive metadata projected to clients independently of the "
+            "selected output title."
         ),
     )
     canonical_title_source = models.CharField(
@@ -521,8 +522,8 @@ class VODAccessPolicy(models.Model):
         choices=CanonicalTitleSource.choices,
         default=CanonicalTitleSource.PRIMARY,
         help_text=(
-            "Localized canonical title used by variant output formats. A "
-            "missing localized title falls back to the original provider title."
+            "Title represented by the {title} output placeholder. Provider "
+            "titles are available only for variants output."
         ),
     )
     users = models.ManyToManyField(

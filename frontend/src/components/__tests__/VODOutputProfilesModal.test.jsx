@@ -666,6 +666,8 @@ describe('VODOutputProfilesModal', () => {
       {
         ...profile,
         export_mode: 'variants',
+        naming_mode: 'provider',
+        name_template: '',
         selection_active_mode: 'variants',
         selection_counts: {
           ...profile.selection_counts,
@@ -681,25 +683,23 @@ describe('VODOutputProfilesModal', () => {
         name: 'Variants — every allowed provider source as a separate entry',
       })
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Client metadata')).toHaveValue('provider');
-    expect(screen.getByLabelText('Client title')).toHaveValue('provider');
+    const metadataSelect = screen.getAllByLabelText('Metadata')[0];
+    expect(metadataSelect).toHaveValue('provider');
+    expect(screen.getByLabelText('Title')).toHaveValue('provider');
     expect(screen.queryByText('Failover priority')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Client title')).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Client metadata'), {
+    fireEvent.change(metadataSelect, {
       target: { value: 'canonical' },
     });
-    fireEvent.change(screen.getByLabelText('Client title'), {
-      target: { value: 'template' },
-    });
-    fireEvent.change(screen.getByLabelText('Output title format'), {
+    fireEvent.change(screen.getByLabelText('Output format'), {
       target: { value: '[{resolution}]' },
     });
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText('Output title format'), {
-      target: { value: '{canonical} [{resolution}]' },
+    fireEvent.change(screen.getByLabelText('Output format'), {
+      target: { value: '{title} [{resolution}] {features}' },
     });
-    expect(screen.getByLabelText('Canonical title')).toHaveValue('primary');
-    fireEvent.change(screen.getByLabelText('Canonical title'), {
+    fireEvent.change(screen.getByLabelText('Title'), {
       target: { value: 'secondary' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
@@ -710,10 +710,35 @@ describe('VODOutputProfilesModal', () => {
         expect.objectContaining({
           metadata_source: 'canonical',
           naming_mode: 'template',
-          name_template: '{canonical} [{resolution}]',
+          name_template: '{title} [{resolution}] {features}',
           canonical_title_source: 'secondary',
         })
       )
     );
+  });
+
+  it('offers compact output formatting with canonical titles and editions', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    await screen.findByDisplayValue('German HD');
+    expect(screen.getByLabelText('Output')).toHaveValue('compact');
+    expect(screen.getByLabelText('Output format')).toHaveValue(
+      '{title} ({year}) {edition}'
+    );
+    expect(screen.getByLabelText('Title')).not.toHaveValue('provider');
+    expect(
+      screen.queryByRole('option', {
+        name: 'Provider — original source title',
+      })
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Output format'), {
+      target: { value: '{title} {provider}' },
+    });
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Output format'), {
+      target: { value: '{title} ({year}) {edition}' },
+    });
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
   });
 });

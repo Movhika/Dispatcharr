@@ -227,18 +227,26 @@ def profile_ids_using_canonical_content(*, movie_ids=(), series_ids=()):
     """
     movie_ids = {int(value) for value in movie_ids if value is not None}
     series_ids = {int(value) for value in series_ids if value is not None}
+    canonical_template_title = (
+        Q(policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE)
+        & ~Q(
+            policy__canonical_title_source=(
+                VODAccessPolicy.CanonicalTitleSource.PROVIDER
+            )
+        )
+        & (
+            Q(policy__name_template__contains="{title}")
+            | Q(policy__name_template__contains="{canonical}")
+        )
+    )
     canonical_output = (
-        Q(policy__export_mode=VODAccessPolicy.ExportMode.COMPACT)
-        | Q(policy__metadata_source=VODAccessPolicy.MetadataSource.CANONICAL)
+        Q(policy__metadata_source=VODAccessPolicy.MetadataSource.CANONICAL)
         | Q(policy__naming_mode=VODAccessPolicy.NamingMode.CANONICAL)
         | Q(
-            policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE,
-            policy__name_template__contains="{canonical}",
+            policy__export_mode=VODAccessPolicy.ExportMode.COMPACT,
+            policy__naming_mode=VODAccessPolicy.NamingMode.MODE_DEFAULT,
         )
-        | Q(
-            policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE,
-            policy__name_template__contains="{title}",
-        )
+        | canonical_template_title
     )
     policy_ids = set()
     for policy_id, constraints in VODAccessPolicy.objects.filter(
@@ -385,12 +393,9 @@ def profile_selection_signature(policy):
         "metadata_source": policy.metadata_source,
         "category_rules": category_rules,
     }
-    if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
-        # Bump only one-relation-per-entry catalogs when their snapshot
-        # semantics change. The queue reconciler can then rebuild existing
-        # Variant generations without invalidating Compact profiles.
-        payload["variants_output_schema"] = 3
-        payload["canonical_title_source"] = policy.canonical_title_source
+    # Title source now controls the generic {title} token in both modes.
+    payload["output_format_schema"] = 4
+    payload["canonical_title_source"] = policy.canonical_title_source
     encoded = json.dumps(
         payload,
         sort_keys=True,

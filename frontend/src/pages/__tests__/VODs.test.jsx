@@ -348,6 +348,24 @@ describe('VODsPage list and bulk editing', () => {
     expect(screen.getByTestId('pagination')).toBeInTheDocument();
   });
 
+  it('does not allow selecting variants in the poster wall', async () => {
+    state.filters.representation = 'variants';
+    state.currentPageContent[0].relation_id = 101;
+    state.currentPageContent[0].is_variant = true;
+    state.currentPageContent[1].relation_id = 202;
+    state.currentPageContent[1].is_variant = true;
+    render(<VODsPage />);
+
+    await screen.findByText('Movie A');
+    fireEvent.click(screen.getByLabelText('Poster wall'));
+
+    expect(screen.queryByLabelText('Select Movie A')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Edit selected/ })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+  });
+
   it('bulk-updates selected provider variants only', async () => {
     state.filters.representation = 'variants';
     state.currentPageContent[0].relation_id = 101;

@@ -163,7 +163,7 @@ class CoreSettingsViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="resources")
     def resources(self, request):
-        """Return a small, read-only snapshot of this Dispatcharr process."""
+        """Return a read-only process, container, shared-memory and disk snapshot."""
         if getattr(request.user, "user_level", 0) < 10:
             raise PermissionDenied("Only administrators can view resource usage.")
         import psutil
@@ -175,21 +175,45 @@ class CoreSettingsViewSet(viewsets.ModelViewSet):
             started_at = process.create_time()
         system_memory = psutil.virtual_memory()
 
-        # In a container psutil can report host RAM. Prefer cgroup v2 values
-        # when the runtime exposes a finite limit.
+        # psutil reports host RAM from inside a container. cgroup v2's
+        # memory.current remains the authoritative whole-container usage even
+        # when the operator intentionally leaves memory.max unlimited.
         memory_used = process_memory
         memory_total = system_memory.total
+        memory_limit = None
+        memory_limited = False
         try:
             with open("/sys/fs/cgroup/memory.max", encoding="utf-8") as handle:
                 raw_limit = handle.read().strip()
             with open("/sys/fs/cgroup/memory.current", encoding="utf-8") as handle:
                 raw_used = handle.read().strip()
-            if raw_limit.isdigit() and raw_used.isdigit():
-                cgroup_total = int(raw_limit)
-                if 0 < cgroup_total < system_memory.total:
-                    memory_total = cgroup_total
-                    memory_used = int(raw_used)
+            if raw_used.isdigit():
+                memory_used = int(raw_used)
+            if raw_limit.isdigit():
+                cgroup_limit = int(raw_limit)
+                if cgroup_limit > 0:
+                    memory_limit = cgroup_limit
+                    memory_total = cgroup_limit
+                    memory_limited = True
         except (OSError, ValueError):
+            pass
+
+        shared_memory = {
+            "path": "/dev/shm",
+            "used_bytes": 0,
+            "total_bytes": 0,
+            "free_bytes": 0,
+            "percent": 0,
+        }
+        try:
+            shm = psutil.disk_usage("/dev/shm")
+            shared_memory.update(
+                used_bytes=shm.used,
+                total_bytes=shm.total,
+                free_bytes=shm.free,
+                percent=shm.percent,
+            )
+        except OSError:
             pass
 
         storage_path = "/data" if os.path.isdir("/data") else str(django_settings.BASE_DIR)
@@ -205,9 +229,13 @@ class CoreSettingsViewSet(viewsets.ModelViewSet):
                 "memory": {
                     "used_bytes": memory_used,
                     "total_bytes": memory_total,
+                    "limit_bytes": memory_limit,
+                    "host_total_bytes": system_memory.total,
+                    "limited": memory_limited,
                     "percent": round((memory_used / memory_total) * 100, 1)
                     if memory_total else 0,
                 },
+                "shared_memory": shared_memory,
                 "storage": {
                     "path": storage_path,
                     "used_bytes": storage.used,

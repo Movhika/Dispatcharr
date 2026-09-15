@@ -18,16 +18,19 @@ const formatBytes = (value) => {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 };
 
-const Meter = ({ title, value, total, percent, detail }) => (
+const Meter = ({ title, value, total, percent, detail, unlimited = false }) => (
   <Paper withBorder p="md">
     <Stack gap={6}>
       <Group justify="space-between">
         <Text fw={600}>{title}</Text>
-        <Text size="sm">{Number(percent || 0).toFixed(1)}%</Text>
+        <Text size="sm">
+          {unlimited ? 'Unlimited' : `${Number(percent || 0).toFixed(1)}%`}
+        </Text>
       </Group>
-      <Progress value={Number(percent) || 0} />
+      {!unlimited && <Progress value={Number(percent) || 0} />}
       <Text size="sm" c="dimmed">
-        {formatBytes(value)} / {formatBytes(total)}
+        {formatBytes(value)}
+        {!unlimited && ` / ${formatBytes(total)}`}
         {detail ? ` · ${detail}` : ''}
       </Text>
     </Stack>
@@ -59,7 +62,7 @@ const SystemResourcesPanel = ({ active = true }) => {
         <Stack gap={0}>
           <Text fw={600}>Dispatcharr resources</Text>
           <Text size="sm" c="dimmed">
-            Live process, container memory and data-volume usage.
+            Live container, web process, shared-memory and data-volume usage.
           </Text>
         </Stack>
         <Button
@@ -75,11 +78,23 @@ const SystemResourcesPanel = ({ active = true }) => {
       {data && (
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <Meter
-            title="Memory"
+            title="Container memory"
             value={data.memory.used_bytes}
             total={data.memory.total_bytes}
             percent={data.memory.percent}
-            detail={`app ${formatBytes(data.process.memory_bytes)}`}
+            unlimited={!data.memory.limited}
+            detail={
+              data.memory.limited
+                ? 'configured container limit'
+                : `host ${formatBytes(data.memory.host_total_bytes)}`
+            }
+          />
+          <Meter
+            title="Shared memory"
+            value={data.shared_memory?.used_bytes}
+            total={data.shared_memory?.total_bytes}
+            percent={data.shared_memory?.percent}
+            detail="/dev/shm"
           />
           <Meter
             title="Storage"
@@ -90,12 +105,13 @@ const SystemResourcesPanel = ({ active = true }) => {
           />
           <Paper withBorder p="md">
             <Group justify="space-between">
-              <Text fw={600}>App process</Text>
+              <Text fw={600}>Web process</Text>
               <Text size="sm">
                 CPU {Number(data.process.cpu_percent || 0).toFixed(1)}%
               </Text>
             </Group>
             <Text size="sm" c="dimmed">
+              {formatBytes(data.process.memory_bytes)} RSS ·{' '}
               {data.process.threads} threads · started{' '}
               {new Date(data.process.started_at * 1000).toLocaleString()}
             </Text>

@@ -55,49 +55,53 @@ def policy_output_name(
     edition = edition or {}
     metadata = metadata or {}
     provider = get_vod_source_name(relation, getattr(content, "name", "") or "")
-    canonical_title_source = getattr(policy, "canonical_title_source", "primary")
+    title_source = getattr(policy, "canonical_title_source", "primary")
     selected_canonical_title = ""
-    tmdb_metadata = getattr(content, "tmdb_metadata", None)
-    if isinstance(tmdb_metadata, dict):
-        localized = tmdb_metadata.get("localized") or {}
-        try:
-            from core.models import CoreSettings
-
-            languages = (
-                list(canonical_languages)
-                if canonical_languages is not None
-                else CoreSettings.get_tmdb_languages()
-            )
-        except Exception:
-            languages = []
-        language_index = 1 if canonical_title_source == "secondary" else 0
-        if len(languages) > language_index:
-            language_values = localized.get(languages[language_index]) or {}
-            selected_canonical_title = str(
-                language_values.get("title") or ""
-            ).strip()
-    if canonical_title_source == "primary":
-        selected_canonical_title = (
-            str(getattr(content, "display_name", "") or "").strip()
-            or selected_canonical_title
-            or str(getattr(content, "name", "") or "").strip()
-        )
-
-    if selected_canonical_title:
-        canonical = canonical_output_name(
-            getattr(content, "name", "") or "",
-            display_name=selected_canonical_title,
-            year=getattr(content, "year", None),
-        )
-        title = canonical_output_name(
-            getattr(content, "name", "") or "",
-            display_name=selected_canonical_title,
-        )
-    else:
-        # Secondary localization is optional. Never leak a different canonical
-        # language into its place; retain this concrete provider title instead.
-        canonical = provider
+    if title_source == "provider":
         title = provider
+        canonical = provider
+    else:
+        tmdb_metadata = getattr(content, "tmdb_metadata", None)
+        if isinstance(tmdb_metadata, dict):
+            localized = tmdb_metadata.get("localized") or {}
+            try:
+                from core.models import CoreSettings
+
+                languages = (
+                    list(canonical_languages)
+                    if canonical_languages is not None
+                    else CoreSettings.get_tmdb_languages()
+                )
+            except Exception:
+                languages = []
+            language_index = 1 if title_source == "secondary" else 0
+            if len(languages) > language_index:
+                language_values = localized.get(languages[language_index]) or {}
+                selected_canonical_title = str(
+                    language_values.get("title") or ""
+                ).strip()
+        if title_source == "primary":
+            selected_canonical_title = (
+                str(getattr(content, "display_name", "") or "").strip()
+                or selected_canonical_title
+                or str(getattr(content, "name", "") or "").strip()
+            )
+
+        if selected_canonical_title:
+            title = canonical_output_name(
+                getattr(content, "name", "") or "",
+                display_name=selected_canonical_title,
+            )
+            canonical = canonical_output_name(
+                getattr(content, "name", "") or "",
+                display_name=selected_canonical_title,
+                year=getattr(content, "year", None),
+            )
+        else:
+            # A secondary localization is optional. Falling back to this
+            # concrete source title keeps every variants entry identifiable.
+            title = provider
+            canonical = provider
     suffix = str(edition.get("suffix") or "").strip()
     naming_mode = getattr(policy, "naming_mode", "mode_default")
     if naming_mode == "provider":
@@ -109,6 +113,8 @@ def policy_output_name(
     if naming_mode == "canonical":
         return " ".join(part for part in (canonical, suffix) if part).strip()
 
+    raw_features = metadata.get("video_features") or metadata.get("features") or []
+    features = [raw_features] if isinstance(raw_features, str) else raw_features
     values = {
         "canonical": canonical,
         "title": title,
@@ -138,12 +144,23 @@ def policy_output_name(
             or getattr(relation, "container_extension", "")
             or ""
         ).lower(),
+        "features": "+".join(
+            str(feature).upper()
+            for feature in features
+            if str(feature).strip()
+        ),
     }
-    template = getattr(policy, "name_template", "") or "{canonical} {edition}"
+    template = getattr(policy, "name_template", "") or (
+        "{title} ({year}) {edition}"
+        if getattr(policy, "export_mode", "compact") == "compact"
+        else "{title}"
+    )
     try:
         rendered = template.format_map(values)
     except (KeyError, ValueError):
         rendered = " ".join(part for part in (canonical, suffix) if part)
+    # Optional values should not leave visibly empty wrappers in client names.
+    rendered = re.sub(r"\(\s*\)|\[\s*\]", "", rendered)
     return re.sub(r"\s+", " ", rendered).strip() or provider or canonical
 
 

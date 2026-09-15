@@ -977,7 +977,7 @@ class VODSourceManagementTests(TestCase):
         self.german_category.save(update_fields=["metadata_defaults"])
         self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
         self.policy.naming_mode = VODAccessPolicy.NamingMode.TEMPLATE
-        self.policy.name_template = "{canonical} {provider}"
+        self.policy.name_template = "{title} ({year}) {provider}"
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.edition_rules = [
             {
@@ -2715,7 +2715,7 @@ class VODSourceManagementTests(TestCase):
             data={
                 "name": "Invalid title template",
                 "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
-                "name_template": "{canonical} {unknown_value}",
+                "name_template": "{title} {unknown_value}",
             }
         )
 
@@ -2728,14 +2728,14 @@ class VODSourceManagementTests(TestCase):
                 "name": "Unsafe Compact naming",
                 "export_mode": VODAccessPolicy.ExportMode.COMPACT,
                 "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
-                "name_template": "{canonical} {provider}",
+                "name_template": "{title} {provider}",
             }
         )
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("name_template", serializer.errors)
 
-    def test_profile_template_requires_a_canonical_or_provider_title(self):
+    def test_profile_template_requires_title_placeholder(self):
         serializer = VODAccessPolicySerializer(
             data={
                 "name": "Missing title field",
@@ -2747,6 +2747,71 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("name_template", serializer.errors)
+
+    def test_compact_template_accepts_canonical_title_year_and_edition(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Localized compact output",
+                "export_mode": VODAccessPolicy.ExportMode.COMPACT,
+                "metadata_source": VODAccessPolicy.MetadataSource.PROVIDER,
+                "canonical_title_source": (
+                    VODAccessPolicy.CanonicalTitleSource.SECONDARY
+                ),
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": "{title} ({year}) {edition}",
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_compact_template_rejects_provider_title_source(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Invalid provider compact output",
+                "export_mode": VODAccessPolicy.ExportMode.COMPACT,
+                "canonical_title_source": (
+                    VODAccessPolicy.CanonicalTitleSource.PROVIDER
+                ),
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": "{title} ({year}) {edition}",
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("canonical_title_source", serializer.errors)
+
+    def test_variants_template_accepts_provider_fields_and_features(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Detailed source variants",
+                "export_mode": VODAccessPolicy.ExportMode.VARIANTS,
+                "canonical_title_source": (
+                    VODAccessPolicy.CanonicalTitleSource.PROVIDER
+                ),
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": (
+                    "{title} {provider} {dub} {sub} {resolution} "
+                    "{format} {features}"
+                ),
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_variants_created_without_format_receive_safe_defaults(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Default source variants",
+                "export_mode": VODAccessPolicy.ExportMode.VARIANTS,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data["naming_mode"],
+            VODAccessPolicy.NamingMode.TEMPLATE,
+        )
+        self.assertEqual(serializer.validated_data["name_template"], "{title}")
 
     @patch.object(
         CoreSettings,
@@ -2765,7 +2830,7 @@ class VODSourceManagementTests(TestCase):
         self.german_relation.save(update_fields=["custom_properties"])
         self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
         self.policy.naming_mode = VODAccessPolicy.NamingMode.TEMPLATE
-        self.policy.name_template = "{canonical} [{resolution}]"
+        self.policy.name_template = "{title} [{resolution}]"
         self.policy.canonical_title_source = (
             VODAccessPolicy.CanonicalTitleSource.SECONDARY
         )
@@ -2778,6 +2843,30 @@ class VODSourceManagementTests(TestCase):
         )
 
         self.assertEqual(output_name, "Provider Avatar UHD [2160p]")
+
+    def test_provider_title_and_features_fill_generic_variant_template(self):
+        self.german_relation.custom_properties = {
+            "movie_data": {"name": "Provider Avatar UHD"}
+        }
+        self.german_relation.save(update_fields=["custom_properties"])
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.naming_mode = VODAccessPolicy.NamingMode.TEMPLATE
+        self.policy.name_template = "{title} [{features}]"
+        self.policy.canonical_title_source = (
+            VODAccessPolicy.CanonicalTitleSource.PROVIDER
+        )
+
+        output_name = policy_output_name(
+            self.movie,
+            self.german_relation,
+            self.policy,
+            metadata={"video_features": ["hdr10", "dolby_vision"]},
+        )
+
+        self.assertEqual(
+            output_name,
+            "Provider Avatar UHD [HDR10+DOLBY_VISION]",
+        )
 
     def test_profile_keeps_simplified_stream_filter_payload_compact(self):
         serializer = VODAccessPolicySerializer(

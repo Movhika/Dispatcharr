@@ -440,7 +440,7 @@ const VODsPage = () => {
           <Group gap="md">
             <Title order={2}>Video on Demand</Title>
             <Text c="dimmed">
-              {filters.representation === 'variants'
+              {filters.representation === 'variants' && viewMode === 'list'
                 ? `${selectedCount} selected · `
                 : ''}
               {totalCount} matching
@@ -465,6 +465,8 @@ const VODsPage = () => {
               value={viewMode}
               onChange={(value) => {
                 setViewMode(value);
+                setSelected(new Set());
+                setSelectAllMatching(false);
                 localStorage.setItem('vodsViewMode', value);
               }}
               data={[
@@ -496,16 +498,17 @@ const VODsPage = () => {
                 >
                   Output profiles
                 </Button>
-                {filters.representation === 'variants' && (
-                  <Button
-                    variant="default"
-                    leftSection={<Wrench size={16} />}
-                    disabled={selectedCount === 0}
-                    onClick={bulkEditorHandlers.open}
-                  >
-                    Edit selected ({selectedCount})
-                  </Button>
-                )}
+                {filters.representation === 'variants' &&
+                  viewMode === 'list' && (
+                    <Button
+                      variant="default"
+                      leftSection={<Wrench size={16} />}
+                      disabled={selectedCount === 0}
+                      onClick={bulkEditorHandlers.open}
+                    >
+                      Edit selected ({selectedCount})
+                    </Button>
+                  )}
                 <Button
                   variant="default"
                   leftSection={<History size={16} />}
@@ -915,28 +918,6 @@ const VODsPage = () => {
                     cursor: 'pointer',
                   }}
                 >
-                  {user?.user_level >= 10 &&
-                    filters.representation === 'variants' && (
-                      <Checkbox
-                        aria-label={`Select ${item.name}`}
-                        checked={
-                          selectAllMatching
-                            ? !selected.has(itemKey(item))
-                            : selected.has(itemKey(item))
-                        }
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                        onChange={(event) =>
-                          toggleItem(itemKey(item), event.currentTarget.checked)
-                        }
-                        style={{
-                          position: 'absolute',
-                          top: 8,
-                          left: 8,
-                          zIndex: 2,
-                        }}
-                      />
-                    )}
                   {logoUrl(item) ? (
                     <Image
                       src={logoUrl(item)}

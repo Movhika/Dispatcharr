@@ -590,8 +590,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
     def validate_name_template(self, value):
         template = str(value or "").strip()
         allowed = {
-            "canonical", "title", "year", "edition", "edition_name",
-            "provider", "source", "dub", "sub", "resolution", "format",
+            "title", "year", "edition", "provider", "dub", "sub",
+            "resolution", "format", "features",
         }
         try:
             fields = {
@@ -619,18 +619,45 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 VODAccessPolicy.ExportMode.COMPACT,
             ),
         )
+        if self.instance is None:
+            attrs.setdefault("naming_mode", VODAccessPolicy.NamingMode.TEMPLATE)
+            attrs.setdefault(
+                "name_template",
+                "{title}"
+                if export_mode == VODAccessPolicy.ExportMode.VARIANTS
+                else "{title} ({year}) {edition}",
+            )
         naming_mode = attrs.get(
             "naming_mode",
             getattr(
                 self.instance,
                 "naming_mode",
-                VODAccessPolicy.NamingMode.MODE_DEFAULT,
+                VODAccessPolicy.NamingMode.TEMPLATE,
             ),
         )
         template = attrs.get(
             "name_template",
             getattr(self.instance, "name_template", ""),
         )
+        title_source = attrs.get(
+            "canonical_title_source",
+            getattr(
+                self.instance,
+                "canonical_title_source",
+                VODAccessPolicy.CanonicalTitleSource.PRIMARY,
+            ),
+        )
+        if (
+            export_mode == VODAccessPolicy.ExportMode.COMPACT
+            and title_source == VODAccessPolicy.CanonicalTitleSource.PROVIDER
+        ):
+            raise serializers.ValidationError(
+                {
+                    "canonical_title_source": (
+                        "Provider titles are available only for variants output"
+                    )
+                }
+            )
         if naming_mode != VODAccessPolicy.NamingMode.TEMPLATE:
             return attrs
         if not template:
@@ -644,23 +671,23 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             )
             if field_name
         }
-        if fields.isdisjoint({"canonical", "title", "source"}):
+        if "title" not in fields:
             raise serializers.ValidationError(
                 {
                     "name_template": (
-                        "Include {canonical} or {title} for a canonical title, "
-                        "or {source} for the provider title"
+                        "Include {title}; the separate title setting decides "
+                        "whether it contains a canonical or provider title"
                     )
                 }
             )
         if export_mode == VODAccessPolicy.ExportMode.COMPACT:
-            compact_fields = {"canonical", "title", "year", "edition"}
+            compact_fields = {"title", "year", "edition"}
             if fields - compact_fields:
                 raise serializers.ValidationError(
                     {
                         "name_template": (
-                            "Compact output supports only {canonical}, {title}, "
-                            "{year}, and {edition}"
+                            "Compact output supports only {title}, {year}, "
+                            "and {edition}"
                         )
                     }
                 )
