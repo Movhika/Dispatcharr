@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
-  Checkbox,
   Divider,
   Group,
   Image,
@@ -17,9 +15,10 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { DatabaseZap, Search, Save } from 'lucide-react';
+import { ExternalLink, Search, Save } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
+import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
 
 const emptyValues = {
   title: '',
@@ -103,12 +102,6 @@ const metadataValues = (content = {}) => {
   };
 };
 
-const isBlank = (value) =>
-  value === '' ||
-  value === null ||
-  value === undefined ||
-  (Array.isArray(value) && value.length === 0);
-
 const VODCanonicalMetadataModal = ({
   opened,
   onClose,
@@ -124,8 +117,6 @@ const VODCanonicalMetadataModal = ({
   const [searching, setSearching] = useState(false);
   const [loadingCandidate, setLoadingCandidate] = useState('');
   const [saving, setSaving] = useState(false);
-  const [overwriteExisting, setOverwriteExisting] = useState(false);
-  const [previewedCandidate, setPreviewedCandidate] = useState(null);
 
   const primaryLanguage =
     content?.tmdb?.primary_language || content?.tmdb?.languages?.[0] || 'en-US';
@@ -139,8 +130,6 @@ const VODCanonicalMetadataModal = ({
     setSearchTitle(next.title);
     setSearchYear(next.year);
     setResults([]);
-    setPreviewedCandidate(null);
-    setOverwriteExisting(false);
   }, [content, opened]);
 
   const setValue = (key, value) =>
@@ -156,7 +145,6 @@ const VODCanonicalMetadataModal = ({
         year: searchYear,
       });
       setResults(response.results || []);
-      setPreviewedCandidate(null);
     } catch (error) {
       showNotification({
         title: 'TMDB search failed',
@@ -176,21 +164,7 @@ const VODCanonicalMetadataModal = ({
         tmdb_id: candidateId,
       });
       const candidateValues = metadataValues({ tmdb: response.metadata });
-      setValues((current) => {
-        const next = { ...current };
-        Object.entries(candidateValues).forEach(([key, value]) => {
-          if (overwriteExisting || isBlank(current[key])) next[key] = value;
-        });
-        next.tmdb_id = String(candidateId);
-        return next;
-      });
-      setPreviewedCandidate(
-        results.find((row) => String(row.id) === String(candidateId)) || {
-          id: candidateId,
-          title: candidateValues.title,
-          year: candidateValues.year,
-        }
-      );
+      setValues({ ...candidateValues, tmdb_id: String(candidateId) });
     } catch (error) {
       showNotification({
         title: 'TMDB preview failed',
@@ -206,7 +180,11 @@ const VODCanonicalMetadataModal = ({
     if (!values.title.trim()) return;
     setSaving(true);
     try {
-      await API.updateCanonicalVODMetadata(contentType, contentId, values);
+      const response = await API.updateCanonicalVODMetadata(
+        contentType,
+        contentId,
+        values
+      );
       await onSaved?.();
       showNotification({
         title: 'Canonical metadata saved',
@@ -215,6 +193,7 @@ const VODCanonicalMetadataModal = ({
         color: 'green',
       });
       onClose();
+      showVODProfileRebuildNotice(response);
     } catch (error) {
       showNotification({
         title: 'Metadata was not saved',
@@ -269,7 +248,18 @@ const VODCanonicalMetadataModal = ({
         loading={loadingCandidate === String(candidate.id)}
         onClick={() => loadCandidate(candidate.id)}
       >
-        Preview
+        Load
+      </Button>
+      <Button
+        component="a"
+        size="xs"
+        variant="subtle"
+        leftSection={<ExternalLink size={14} />}
+        href={`https://www.themoviedb.org/${contentType === 'series' ? 'tv' : 'movie'}/${candidate.id}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        TMDB
       </Button>
     </Group>
   ));
@@ -315,31 +305,16 @@ const VODCanonicalMetadataModal = ({
                 Search TMDB
               </Button>
             </Group>
-            <Checkbox
-              checked={overwriteExisting}
-              onChange={(event) =>
-                setOverwriteExisting(event.currentTarget.checked)
-              }
-              label="Replace existing values when loading a TMDB result"
-            />
             {results.length > 0 && (
               <ScrollArea h={220} offsetScrollbars>
                 <Stack gap="xs">{candidateRows}</Stack>
               </ScrollArea>
             )}
-            {!searching &&
-              results.length === 0 &&
-              previewedCandidate === null && (
-                <Text size="xs" c="dimmed">
-                  Search results are only a preview. Nothing changes until you
-                  save.
-                </Text>
-              )}
-            {previewedCandidate && (
-              <Alert color="blue" icon={<DatabaseZap size={16} />}>
-                TMDB {previewedCandidate.id} was loaded into the form. Review
-                and adjust every value below before saving.
-              </Alert>
+            {!searching && results.length === 0 && (
+              <Text size="xs" c="dimmed">
+                Search results are only a preview. Nothing changes until you
+                save.
+              </Text>
             )}
           </Stack>
         </Box>

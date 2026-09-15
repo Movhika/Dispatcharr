@@ -1,5 +1,11 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -77,10 +83,12 @@ vi.mock('../../components/VideoFeaturePicker.jsx', () => ({
 vi.mock('lucide-react', () => ({
   DatabaseZap: () => null,
   Eye: () => null,
+  Filter: () => null,
   History: () => null,
   LayoutGrid: (props) => <span {...props}>Poster wall</span>,
   List: (props) => <span {...props}>List view</span>,
   Play: () => null,
+  RefreshCw: () => null,
   Search: () => null,
   SlidersHorizontal: () => null,
   Wrench: () => null,
@@ -183,6 +191,9 @@ vi.mock('@mantine/core', () => {
         {total}
       </button>
     ),
+    Popover: Wrapper,
+    PopoverDropdown: Wrapper,
+    PopoverTarget: Wrapper,
     SegmentedControl: ({ value, onChange, data }) => (
       <div data-testid="type-control">
         {data.map((item) => (
@@ -197,6 +208,7 @@ vi.mock('@mantine/core', () => {
       </div>
     ),
     Select,
+    SimpleGrid: Wrapper,
     Stack: Wrapper,
     Table: Wrapper,
     TableTbody: Wrapper,
@@ -216,6 +228,7 @@ import API from '../../api';
 import useAuthStore from '../../store/auth';
 import usePlaylistsStore from '../../store/playlists';
 import useVODStore from '../../store/useVODStore';
+import { showVODProfileRebuildNotice } from '../../utils/vodProfileUpdates.js';
 import VODsPage from '../VODs';
 
 describe('VODsPage list and bulk editing', () => {
@@ -354,6 +367,31 @@ describe('VODsPage list and bulk editing', () => {
     expect(setFilters).toHaveBeenCalledWith({ search: 'avatar' });
     fireEvent.click(screen.getByTestId('pagination'));
     expect(setPage).toHaveBeenCalledWith(2);
+  });
+
+  it('explains that changed VOD data needs an output profile rebuild', async () => {
+    render(<VODsPage />);
+    await screen.findByText('Movie A');
+
+    act(() =>
+      showVODProfileRebuildNotice({
+        profile_update: 'outdated',
+        profiles_affected: 2,
+      })
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Output profile rebuild required',
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('2 prepared output profiles are now outdated.')
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open output profiles' })
+    );
+    expect(await screen.findByTestId('profiles-modal')).toBeInTheDocument();
   });
 
   it('selects every VOD matching the active filters across pages', async () => {

@@ -13,8 +13,12 @@ import {
   LoadingOverlay,
   Modal,
   Pagination,
+  Popover,
+  PopoverDropdown,
+  PopoverTarget,
   SegmentedControl,
   Select,
+  SimpleGrid,
   Stack,
   Table,
   TableTbody,
@@ -29,6 +33,7 @@ import {
 import {
   DatabaseZap,
   Eye,
+  Filter,
   History,
   LayoutGrid,
   List,
@@ -51,6 +56,8 @@ import {
 import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { LanguageSelect } from '../components/LanguagePicker.jsx';
 import VODMetadataFields from '../components/VODMetadataFields.jsx';
+import VODProfileRebuildNotice from '../components/VODProfileRebuildNotice.jsx';
+import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
 import VideoFeaturePicker from '../components/VideoFeaturePicker.jsx';
 import {
   CONTAINER_EXTENSION_OPTIONS,
@@ -306,6 +313,7 @@ const VODsPage = () => {
           }
         : { filters };
       let movedSources = 0;
+      let movedResponse = null;
       if (bulkTmdbId.trim()) {
         try {
           const moved = await API.updateVODRelationTmdbMatch(
@@ -313,6 +321,7 @@ const VODsPage = () => {
             selectAllMatching ? [] : selections,
             { ...selectionOptions, confirmed }
           );
+          movedResponse = moved;
           movedSources = moved.moved_sources || 0;
         } catch (error) {
           if (error?.status === 409 && error?.body?.requires_confirmation) {
@@ -329,6 +338,14 @@ const VODsPage = () => {
             selectionOptions
           )
         : { updated_sources: 0 };
+      const profilesAffected = Math.max(
+        Number(movedResponse?.profiles_affected || 0),
+        Number(result?.profiles_affected || 0)
+      );
+      showVODProfileRebuildNotice({
+        profile_update: profilesAffected ? 'outdated' : 'not_required',
+        profiles_affected: profilesAffected,
+      });
       showNotification({
         title: 'Source metadata updated',
         message: `${result.updated_sources || 0} source editions updated${movedSources ? `; ${movedSources} moved to the selected TMDB title` : ''}.`,
@@ -362,6 +379,26 @@ const VODsPage = () => {
     .map((playlist) => ({ value: String(playlist.id), label: playlist.name }));
   const totalPages = Math.ceil(totalCount / pageSize);
   const showTypeControl = typeOptions.length > 1;
+  const advancedFilterCount = [
+    filters.audio_language,
+    filters.subtitle_language,
+    filters.resolution,
+    filters.container_extension,
+    filters.video_feature,
+    filters.metadata_status,
+  ].filter(Boolean).length;
+
+  const clearAdvancedFilters = () => {
+    setFilters({
+      audio_language: '',
+      subtitle_language: '',
+      resolution: '',
+      container_extension: '',
+      video_feature: '',
+      metadata_status: '',
+    });
+    setPage(1);
+  };
 
   if (!vodAllowed) {
     return <Navigate to="/channels" replace />;
@@ -457,118 +494,156 @@ const VODsPage = () => {
           </Group>
         </Group>
 
-        <Stack gap="xs">
-          <Group gap="md" align="end">
-            {showTypeControl && (
-              <SegmentedControl
-                value={filters.type}
-                onChange={(value) => {
-                  setFilters({ type: value, category: '' });
-                  setPage(1);
-                }}
-                data={typeOptions}
-              />
-            )}
-            <TextInput
-              placeholder="Search VODs..."
-              leftSection={<Search size={16} />}
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              miw={240}
-            />
-            <Select
-              placeholder="M3U account"
-              data={m3uOptions}
-              value={filters.m3u_account || null}
+        <Group gap="md" align="end" wrap="wrap">
+          {showTypeControl && (
+            <SegmentedControl
+              value={filters.type}
               onChange={(value) => {
-                setFilters({ m3u_account: value || '', category: '' });
+                setFilters({ type: value, category: '' });
                 setPage(1);
               }}
-              searchable
-              clearable
-              miw={180}
+              data={typeOptions}
             />
-            <Select
-              placeholder="Category"
-              data={categoryOptions}
-              value={filters.category}
-              onChange={(value) => {
-                setFilters({ category: value || '' });
-                setPage(1);
-              }}
-              clearable
-              miw={180}
-            />
-            <Select
-              placeholder="Metadata"
-              data={[
-                { value: 'missing_tmdb', label: 'No TMDB ID' },
-                {
-                  value: 'missing_external_ids',
-                  label: 'No external ID',
-                },
-                {
-                  value: 'missing_metadata',
-                  label: 'TMDB details not enriched',
-                },
-              ]}
-              value={filters.metadata_status || null}
-              onChange={(value) => {
-                setFilters({ metadata_status: value || '' });
-                setPage(1);
-              }}
-              clearable
-              w={175}
-            />
-          </Group>
-          <Group gap="md" align="end">
-            <LanguageSelect
-              label="DUB"
-              value={filters.audio_language}
-              onChange={(value) => setFilters({ audio_language: value })}
-              w={155}
-            />
-            <LanguageSelect
-              label="SUB"
-              value={filters.subtitle_language}
-              onChange={(value) => setFilters({ subtitle_language: value })}
-              w={155}
-            />
-            <Select
-              label="Resolution"
-              placeholder="Any"
-              clearable
-              data={RESOLUTION_VALUES}
-              value={filters.resolution || null}
-              onChange={(value) => setFilters({ resolution: value || '' })}
-              w={130}
-            />
-            <Select
-              label="Format"
-              placeholder="Any"
-              clearable
-              searchable
-              data={CONTAINER_EXTENSION_OPTIONS}
-              value={filters.container_extension || null}
-              onChange={(value) =>
-                setFilters({ container_extension: value || '' })
-              }
-              w={115}
-            />
-            <Box w={190}>
-              <VideoFeaturePicker
-                label="Feature"
-                emptyLabel="Any"
-                value={filters.video_feature ? [filters.video_feature] : []}
-                onChange={(value) =>
-                  setFilters({
-                    video_feature: value[value.length - 1] || '',
-                  })
-                }
-              />
-            </Box>
-          </Group>
-        </Stack>
+          )}
+          <TextInput
+            placeholder="Search VODs..."
+            leftSection={<Search size={16} />}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            miw={240}
+          />
+          <Select
+            placeholder="M3U account"
+            data={m3uOptions}
+            value={filters.m3u_account || null}
+            onChange={(value) => {
+              setFilters({ m3u_account: value || '', category: '' });
+              setPage(1);
+            }}
+            searchable
+            clearable
+            miw={180}
+          />
+          <Select
+            placeholder="Category"
+            data={categoryOptions}
+            value={filters.category}
+            onChange={(value) => {
+              setFilters({ category: value || '' });
+              setPage(1);
+            }}
+            clearable
+            miw={180}
+          />
+          <Popover
+            width={470}
+            position="bottom-end"
+            shadow="md"
+            withArrow
+            withinPortal
+          >
+            <PopoverTarget>
+              <Button
+                variant={advancedFilterCount ? 'light' : 'default'}
+                aria-label="Additional VOD filters"
+                leftSection={<Filter size={17} />}
+              >
+                Filters{advancedFilterCount ? ` (${advancedFilterCount})` : ''}
+              </Button>
+            </PopoverTarget>
+            <PopoverDropdown>
+              <Stack gap="sm">
+                <SimpleGrid cols={2}>
+                  <LanguageSelect
+                    label="DUB"
+                    value={filters.audio_language}
+                    onChange={(value) => {
+                      setFilters({ audio_language: value });
+                      setPage(1);
+                    }}
+                  />
+                  <LanguageSelect
+                    label="SUB"
+                    value={filters.subtitle_language}
+                    onChange={(value) => {
+                      setFilters({ subtitle_language: value });
+                      setPage(1);
+                    }}
+                  />
+                  <Select
+                    label="Resolution"
+                    placeholder="Any"
+                    clearable
+                    data={RESOLUTION_VALUES}
+                    value={filters.resolution || null}
+                    onChange={(value) => {
+                      setFilters({ resolution: value || '' });
+                      setPage(1);
+                    }}
+                  />
+                  <Select
+                    label="Format"
+                    placeholder="Any"
+                    clearable
+                    searchable
+                    data={CONTAINER_EXTENSION_OPTIONS}
+                    value={filters.container_extension || null}
+                    onChange={(value) => {
+                      setFilters({ container_extension: value || '' });
+                      setPage(1);
+                    }}
+                  />
+                  <Box>
+                    <VideoFeaturePicker
+                      label="Feature"
+                      emptyLabel="Any"
+                      value={
+                        filters.video_feature ? [filters.video_feature] : []
+                      }
+                      onChange={(value) => {
+                        setFilters({
+                          video_feature: value[value.length - 1] || '',
+                        });
+                        setPage(1);
+                      }}
+                    />
+                  </Box>
+                  <Select
+                    label="Metadata"
+                    placeholder="Any"
+                    data={[
+                      { value: 'missing_tmdb', label: 'No TMDB ID' },
+                      {
+                        value: 'missing_external_ids',
+                        label: 'No external ID',
+                      },
+                      {
+                        value: 'missing_metadata',
+                        label: 'TMDB details not enriched',
+                      },
+                    ]}
+                    value={filters.metadata_status || null}
+                    onChange={(value) => {
+                      setFilters({ metadata_status: value || '' });
+                      setPage(1);
+                    }}
+                    clearable
+                  />
+                </SimpleGrid>
+                <Group justify="flex-end">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    disabled={!advancedFilterCount}
+                    onClick={clearAdvancedFilters}
+                  >
+                    Clear filters
+                  </Button>
+                </Group>
+              </Stack>
+            </PopoverDropdown>
+          </Popover>
+        </Group>
 
         <Box
           data-testid="vod-list-scroll"
@@ -989,6 +1064,7 @@ const VODsPage = () => {
           />
         </Suspense>
       </ErrorBoundary>
+      <VODProfileRebuildNotice onOpenProfiles={profilesHandlers.open} />
     </Box>
   );
 };

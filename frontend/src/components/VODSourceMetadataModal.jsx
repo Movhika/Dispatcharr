@@ -13,6 +13,7 @@ import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { showNotification } from '../utils/notificationUtils';
 import { VOD_METADATA_FIELDS } from '../utils/vodMetadataOptions.js';
 import VODMetadataFields from './VODMetadataFields.jsx';
+import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
 
 const editableValues = (provider) => {
   const values = provider?.source_metadata?.values || {};
@@ -143,6 +144,7 @@ const VODSourceMetadataModal = ({
       source_asset: result.source_asset,
       source_metadata: result.source_metadata,
     });
+    return result;
   };
 
   const save = async () => {
@@ -155,7 +157,7 @@ const VODSourceMetadataModal = ({
         moved = await moveSource();
         if (!moved) return;
       }
-      await saveSourceMetadata();
+      const metadataResult = await saveSourceMetadata();
       if (moved) onMoved?.(moved);
       showNotification({
         title: 'Source metadata saved',
@@ -163,6 +165,12 @@ const VODSourceMetadataModal = ({
         color: 'green',
       });
       onClose();
+      showVODProfileRebuildNotice(
+        Number(moved?.profiles_affected || 0) >=
+          Number(metadataResult?.profiles_affected || 0)
+          ? moved
+          : metadataResult
+      );
     } catch (error) {
       showNotification({
         title: 'Source metadata could not be saved',
@@ -178,7 +186,7 @@ const VODSourceMetadataModal = ({
     setSaving(true);
     try {
       const moved = await moveSource(true);
-      await saveSourceMetadata();
+      const metadataResult = await saveSourceMetadata();
       setConfirmation(null);
       onMoved?.(moved);
       showNotification({
@@ -187,6 +195,12 @@ const VODSourceMetadataModal = ({
         color: 'green',
       });
       onClose();
+      showVODProfileRebuildNotice(
+        Number(moved?.profiles_affected || 0) >=
+          Number(metadataResult?.profiles_affected || 0)
+          ? moved
+          : metadataResult
+      );
     } catch (error) {
       showNotification({
         title: 'TMDB assignment could not be changed',

@@ -848,13 +848,6 @@ const SeriesModal = ({
                   </Button>
                 </Group>
               </Group>
-              {dataView === 'primary' && !metadataAvailable && (
-                <Alert color="blue" py="xs">
-                  A provider ID may already be known, but no TMDB detail record
-                  is stored yet. Use Edit metadata to search TMDB or enter the
-                  canonical values manually.
-                </Alert>
-              )}
               {dataView === 'secondary' && !secondaryTranslationAvailable && (
                 <Alert color="yellow" py="xs">
                   TMDB returned no separate {secondaryLanguage} translation for

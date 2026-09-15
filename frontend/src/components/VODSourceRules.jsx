@@ -257,7 +257,7 @@ const VODSourceRules = ({
       editorRule.max_rating &&
       Number(editorRule.min_rating) > Number(editorRule.max_rating));
 
-  const previewRule = async (ruleId) => {
+  const previewRule = async (ruleId, sourceRules = normalized) => {
     setPreviewOpened(true);
     setPreviewLoading(true);
     setPreviewError('');
@@ -265,9 +265,10 @@ const VODSourceRules = ({
     try {
       setPreview(
         await API.previewVODAccessPolicyStreamFilter({
-          source_rules: normalized,
+          source_rules: sourceRules,
           target_rule_id: ruleId,
           category_relation_ids: categoryRelationIds,
+          restrict_to_categories: true,
         })
       );
     } catch (error) {
@@ -275,6 +276,14 @@ const VODSourceRules = ({
     } finally {
       setPreviewLoading(false);
     }
+  };
+  const previewEditorRule = () => {
+    const sourceRules = normalized.some((rule) => rule.id === editorRule.id)
+      ? normalized.map((rule) =>
+          rule.id === editorRule.id ? editorRule : rule
+        )
+      : [...normalized, editorRule];
+    previewRule(editorRule.id, sourceRules);
   };
 
   return (
@@ -284,7 +293,9 @@ const VODSourceRules = ({
           <Text fw={700}>Content filters</Text>
           <Text size="xs" c="dimmed">
             All filled conditions inside a filter must match. Manual source
-            metadata overrides imported and detected values.
+            metadata overrides imported and detected values. Preview evaluates
+            the current draft and selected source categories without saving or
+            rebuilding the profile.
           </Text>
         </Stack>
         <Group align="end">
@@ -463,7 +474,8 @@ const VODSourceRules = ({
               min={0}
               step={240}
               suffix="p"
-              value={editorRule.min_resolution || 0}
+              placeholder="No minimum"
+              value={editorRule.min_resolution || ''}
               onChange={(min_resolution) =>
                 setEditorRule((current) => ({ ...current, min_resolution }))
               }
@@ -473,7 +485,8 @@ const VODSourceRules = ({
               min={0}
               step={240}
               suffix="p"
-              value={editorRule.max_resolution || 0}
+              placeholder="No maximum"
+              value={editorRule.max_resolution || ''}
               onChange={(max_resolution) =>
                 setEditorRule((current) => ({ ...current, max_resolution }))
               }
@@ -541,7 +554,8 @@ const VODSourceRules = ({
               label="Minimum year"
               min={0}
               max={9999}
-              value={editorRule.min_year || 0}
+              placeholder="No minimum"
+              value={editorRule.min_year || ''}
               onChange={(min_year) =>
                 setEditorRule((current) => ({ ...current, min_year }))
               }
@@ -550,7 +564,8 @@ const VODSourceRules = ({
               label="Maximum year"
               min={0}
               max={9999}
-              value={editorRule.max_year || 0}
+              placeholder="No maximum"
+              value={editorRule.max_year || ''}
               onChange={(max_year) =>
                 setEditorRule((current) => ({ ...current, max_year }))
               }
@@ -561,7 +576,8 @@ const VODSourceRules = ({
               max={10}
               step={0.1}
               decimalScale={1}
-              value={editorRule.min_rating || 0}
+              placeholder="No minimum"
+              value={editorRule.min_rating || ''}
               onChange={(min_rating) =>
                 setEditorRule((current) => ({ ...current, min_rating }))
               }
@@ -572,7 +588,8 @@ const VODSourceRules = ({
               max={10}
               step={0.1}
               decimalScale={1}
-              value={editorRule.max_rating || 0}
+              placeholder="No maximum"
+              value={editorRule.max_rating || ''}
               onChange={(max_rating) =>
                 setEditorRule((current) => ({ ...current, max_rating }))
               }
@@ -631,13 +648,23 @@ const VODSourceRules = ({
                 : 'A minimum cannot be greater than its maximum.'}
             </Alert>
           )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setEditorOpened(false)}>
-              Cancel
+          <Group justify="space-between">
+            <Button
+              variant="light"
+              leftSection={<Eye size={15} />}
+              disabled={editorInvalid}
+              onClick={previewEditorRule}
+            >
+              Preview draft
             </Button>
-            <Button disabled={editorInvalid} onClick={saveRule}>
-              Save filter
-            </Button>
+            <Group>
+              <Button variant="default" onClick={() => setEditorOpened(false)}>
+                Cancel
+              </Button>
+              <Button disabled={editorInvalid} onClick={saveRule}>
+                Save filter
+              </Button>
+            </Group>
           </Group>
         </Stack>
       </Modal>
@@ -664,6 +691,10 @@ const VODSourceRules = ({
               <Text fw={600}>
                 {preview.count || 0} matching sources
                 {preview.truncated ? ' (first 200 shown)' : ''}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Evaluated against {preview.inventory_count || 0} sources from
+                the currently selected provider categories.
               </Text>
               <ScrollArea h="min(62vh, 620px)" type="auto">
                 <Table striped withTableBorder stickyHeader miw={900}>

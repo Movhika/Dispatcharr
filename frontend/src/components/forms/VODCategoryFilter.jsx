@@ -26,6 +26,7 @@ import VODMetadataFields from '../VODMetadataFields.jsx';
 import M3UGroupRules from './M3UGroupRules.jsx';
 import { normalizeLanguageCodes } from '../../utils/languageCodes.js';
 import M3UDeveloperCatalog from './M3UDeveloperCatalog.jsx';
+import { showVODProfileRebuildNotice } from '../../utils/vodProfileUpdates.js';
 
 const VODCategoryFilter = ({
   playlist = null,
@@ -156,7 +157,7 @@ const VODCategoryFilter = ({
     );
     setSaving(true);
     try {
-      await API.bulkUpdateVODCategoryMetadata(
+      const response = await API.bulkUpdateVODCategoryMetadata(
         targets.map((category) => category.relation_id),
         values
       );
@@ -179,6 +180,7 @@ const VODCategoryFilter = ({
         color: 'green',
       });
       setEditorOpen(false);
+      showVODProfileRebuildNotice(response);
     } finally {
       setSaving(false);
     }
@@ -278,17 +280,19 @@ const VODCategoryFilter = ({
             {profileMode ? 'Block selected' : 'Disable selected'}
           </Button>
           {profileMode ? (
-            <Button
-              variant="default"
-              size="xs"
-              disabled={!selected.size}
-              onClick={() => {
-                onClearOverrides?.([...selected]);
-                setSelected(new Set());
-              }}
-            >
-              Use rules for selected
-            </Button>
+            <Tooltip label="Remove manual Allow/Block overrides so the selected categories follow the ordered import rules and unmatched default again.">
+              <Button
+                variant="default"
+                size="xs"
+                disabled={!selected.size}
+                onClick={() => {
+                  onClearOverrides?.([...selected]);
+                  setSelected(new Set());
+                }}
+              >
+                Reset selected to rules
+              </Button>
+            </Tooltip>
           ) : (
             <Button
               variant="default"

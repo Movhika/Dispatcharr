@@ -9,10 +9,14 @@ import {
   Modal,
   Paper,
   Pagination,
+  Popover,
+  PopoverDropdown,
+  PopoverTarget,
   Progress,
   ScrollArea,
   SegmentedControl,
   Select,
+  SimpleGrid,
   Stack,
   Switch,
   Table,
@@ -29,7 +33,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Eye, Filter, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -286,6 +290,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     resolution: '',
     container_extension: '',
     video_feature: '',
+    metadata_status: '',
   });
 
   const selectedProfile = profiles.find(
@@ -607,11 +612,12 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         .filter(
           (category) =>
             category.category_type === filters.type &&
-            (!filters.m3u_account ||
-              (category.m3u_accounts || []).some(
-                (relation) =>
-                  String(relation.m3u_account) === filters.m3u_account
-              ))
+            (category.m3u_accounts || []).some(
+              (relation) =>
+                relation.enabled !== false &&
+                (!filters.m3u_account ||
+                  String(relation.m3u_account) === filters.m3u_account)
+            )
         )
         .map((category) => ({
           value: String(category.id),
@@ -638,6 +644,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               type: filters.type,
               search: filters.search,
               category: filters.category,
+              metadata_status: filters.metadata_status,
             }
           : filters;
       const params = Object.fromEntries(
@@ -833,6 +840,30 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     selectedProfile?.selection_active_mode ||
     counts.export_mode ||
     (selectedProfile?.selection_current ? selectedProfile.export_mode : '');
+  const advancedPreviewFilterCount = [
+    ...(activeMode !== 'compact'
+      ? [
+          filters.audio_language,
+          filters.subtitle_language,
+          filters.resolution,
+          filters.container_extension,
+          filters.video_feature,
+        ]
+      : []),
+    filters.metadata_status,
+  ].filter(Boolean).length;
+  const clearAdvancedPreviewFilters = () => {
+    setFilters((current) => ({
+      ...current,
+      audio_language: '',
+      subtitle_language: '',
+      resolution: '',
+      container_extension: '',
+      video_feature: '',
+      metadata_status: '',
+    }));
+    setPage(1);
+  };
   const buildStartedAt =
     selectedProfile?.selection_status === 'pending'
       ? buildProgress.queued_at ||
@@ -1492,75 +1523,141 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     }}
                     miw={180}
                   />
-                  {activeMode !== 'compact' && (
-                    <>
-                      <LanguageSelect
-                        label="DUB"
-                        value={filters.audio_language}
-                        onChange={(value) => {
-                          setFilters({
-                            ...filters,
-                            audio_language: value,
-                          });
-                          setPage(1);
-                        }}
-                        w={160}
-                      />
-                      <LanguageSelect
-                        label="SUB"
-                        value={filters.subtitle_language}
-                        onChange={(value) => {
-                          setFilters({
-                            ...filters,
-                            subtitle_language: value,
-                          });
-                          setPage(1);
-                        }}
-                        w={160}
-                      />
-                      <Select
-                        label="Resolution"
-                        clearable
-                        data={RESOLUTION_VALUES}
-                        value={filters.resolution || null}
-                        onChange={(value) => {
-                          setFilters({ ...filters, resolution: value || '' });
-                          setPage(1);
-                        }}
-                        w={120}
-                      />
-                      <Select
-                        label="Format"
-                        clearable
-                        data={CONTAINER_EXTENSION_OPTIONS}
-                        value={filters.container_extension || null}
-                        onChange={(value) => {
-                          setFilters({
-                            ...filters,
-                            container_extension: value || '',
-                          });
-                          setPage(1);
-                        }}
-                        w={105}
-                      />
-                      <Box w={190}>
-                        <VideoFeaturePicker
-                          label="Features"
-                          emptyLabel="Any"
-                          value={
-                            filters.video_feature ? [filters.video_feature] : []
-                          }
-                          onChange={(value) => {
-                            setFilters({
-                              ...filters,
-                              video_feature: value[value.length - 1] || '',
-                            });
-                            setPage(1);
-                          }}
-                        />
-                      </Box>
-                    </>
-                  )}
+                  <Popover
+                    width={470}
+                    position="bottom-end"
+                    shadow="md"
+                    withArrow
+                    withinPortal
+                  >
+                    <PopoverTarget>
+                      <Button
+                        variant={
+                          advancedPreviewFilterCount ? 'light' : 'default'
+                        }
+                        leftSection={<Filter size={17} />}
+                        aria-label="Additional output preview filters"
+                      >
+                        Filters
+                        {advancedPreviewFilterCount
+                          ? ` (${advancedPreviewFilterCount})`
+                          : ''}
+                      </Button>
+                    </PopoverTarget>
+                    <PopoverDropdown>
+                      <Stack gap="sm">
+                        <SimpleGrid cols={2}>
+                          {activeMode !== 'compact' && (
+                            <>
+                              <LanguageSelect
+                                label="DUB"
+                                value={filters.audio_language}
+                                onChange={(value) => {
+                                  setFilters({
+                                    ...filters,
+                                    audio_language: value,
+                                  });
+                                  setPage(1);
+                                }}
+                              />
+                              <LanguageSelect
+                                label="SUB"
+                                value={filters.subtitle_language}
+                                onChange={(value) => {
+                                  setFilters({
+                                    ...filters,
+                                    subtitle_language: value,
+                                  });
+                                  setPage(1);
+                                }}
+                              />
+                              <Select
+                                label="Resolution"
+                                placeholder="Any"
+                                clearable
+                                data={RESOLUTION_VALUES}
+                                value={filters.resolution || null}
+                                onChange={(value) => {
+                                  setFilters({
+                                    ...filters,
+                                    resolution: value || '',
+                                  });
+                                  setPage(1);
+                                }}
+                              />
+                              <Select
+                                label="Format"
+                                placeholder="Any"
+                                clearable
+                                data={CONTAINER_EXTENSION_OPTIONS}
+                                value={filters.container_extension || null}
+                                onChange={(value) => {
+                                  setFilters({
+                                    ...filters,
+                                    container_extension: value || '',
+                                  });
+                                  setPage(1);
+                                }}
+                              />
+                              <Box>
+                                <VideoFeaturePicker
+                                  label="Features"
+                                  emptyLabel="Any"
+                                  value={
+                                    filters.video_feature
+                                      ? [filters.video_feature]
+                                      : []
+                                  }
+                                  onChange={(value) => {
+                                    setFilters({
+                                      ...filters,
+                                      video_feature:
+                                        value[value.length - 1] || '',
+                                    });
+                                    setPage(1);
+                                  }}
+                                />
+                              </Box>
+                            </>
+                          )}
+                          <Select
+                            label="Metadata"
+                            placeholder="Any"
+                            clearable
+                            data={[
+                              { value: 'missing_tmdb', label: 'No TMDB ID' },
+                              {
+                                value: 'missing_external_ids',
+                                label: 'No external ID',
+                              },
+                              {
+                                value: 'missing_metadata',
+                                label: 'TMDB details not enriched',
+                              },
+                            ]}
+                            value={filters.metadata_status || null}
+                            onChange={(value) => {
+                              setFilters({
+                                ...filters,
+                                metadata_status: value || '',
+                              });
+                              setPage(1);
+                            }}
+                          />
+                        </SimpleGrid>
+                        <Group justify="flex-end">
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            disabled={!advancedPreviewFilterCount}
+                            onClick={clearAdvancedPreviewFilters}
+                          >
+                            Clear filters
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </PopoverDropdown>
+                  </Popover>
                 </Group>
                 <Group justify="space-between">
                   <Text fw={500}>

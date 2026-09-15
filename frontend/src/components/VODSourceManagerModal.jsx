@@ -33,6 +33,7 @@ import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { VOD_METADATA_FIELDS } from '../utils/vodMetadataOptions.js';
 import ConfirmationDialog from './ConfirmationDialog.jsx';
 import VODMetadataFields from './VODMetadataFields.jsx';
+import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
 
 const EMPTY_FILTERS = {
   search: '',
@@ -329,7 +330,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
     }
     setSaving(true);
     try {
-      await API.updateVODSourceManualMetadata(
+      const result = await API.updateVODSourceManualMetadata(
         manualPlayback.source_asset,
         metadata,
         Object.keys(metadata)
@@ -341,6 +342,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
       });
       setManualPlayback(null);
       await load();
+      showVODProfileRebuildNotice(result);
     } finally {
       setSaving(false);
     }
@@ -386,6 +388,7 @@ const VODSourceManagerModal = ({ opened, onClose }) => {
       setBulkOpen(false);
       clearSelection();
       await load();
+      showVODProfileRebuildNotice(result);
     } finally {
       setSaving(false);
     }

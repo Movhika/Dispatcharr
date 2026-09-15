@@ -1650,6 +1650,29 @@ class VODSourceManagementTests(TestCase):
             ["ger"],
         )
 
+    def test_profile_preview_filters_by_current_canonical_metadata_state(self):
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="profile-metadata-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        self.movie.tmdb_status = "matched"
+        self.movie.save(update_fields=["tmdb_status", "updated_at"])
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {"type": "movie", "metadata_status": "missing_metadata"},
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 0)
+
     def test_compact_preview_reports_all_eligible_failover_sources(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.save(update_fields=["hard_constraints", "updated_at"])
@@ -1841,6 +1864,38 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(
             response.data["results"][0]["id"], self.english_relation.id
         )
+
+    def test_draft_filter_preview_can_explicitly_restrict_to_no_categories(self):
+        admin = get_user_model().objects.create_user(
+            username="empty-draft-filter-preview-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().post(
+            "/api/vod/access-policies/preview-stream-filter/",
+            {
+                "target_rule_id": "english-only",
+                "category_relation_ids": [],
+                "restrict_to_categories": True,
+                "source_rules": [
+                    {
+                        "id": "english-only",
+                        "required_audio_languages": ["eng"],
+                        "result": "include",
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view(
+            {"post": "preview_stream_filter"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["inventory_count"], 0)
+        self.assertEqual(response.data["count"], 0)
 
     def test_pending_profile_previews_and_serves_last_completed_generation(self):
         build_vod_profile_selection(self.policy.id)
@@ -3540,6 +3595,8 @@ class VODSourceManagementTests(TestCase):
             )(request)
 
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["profile_update"], "outdated")
+        self.assertEqual(response.data["profiles_affected"], 1)
         self.policy.refresh_from_db()
         self.assertEqual(
             self.policy.selection_status,

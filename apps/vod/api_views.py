@@ -921,11 +921,16 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD source metadata was edited manually",
         )
         asset.refresh_from_db()
-        return Response(self.get_serializer(asset).data)
+        payload = dict(self.get_serializer(asset).data)
+        payload.update(
+            profile_update="outdated" if affected_profiles else "not_required",
+            profiles_affected=affected_profiles,
+        )
+        return Response(payload)
 
     @action(
         detail=False,
@@ -1012,13 +1017,17 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD source metadata was edited manually",
         )
         return Response(
             {
                 "source_asset": asset.pk,
                 "source_metadata": effective_relation_metadata(relation),
+                "profile_update": (
+                    "outdated" if affected_profiles else "not_required"
+                ),
+                "profiles_affected": affected_profiles,
             }
         )
 
@@ -1097,12 +1106,16 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="A provider source was assigned to different metadata",
         )
         return Response(
             {
                 "moved_sources": len(relations),
+                "profile_update": (
+                    "outdated" if affected_profiles else "not_required"
+                ),
+                "profiles_affected": affected_profiles,
                 "targets": {
                     "movie": _tmdb_content_payload(movie_target)
                     if movie_target else None,
@@ -1200,13 +1213,17 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD source metadata was edited manually",
         )
         return Response(
             {
                 "updated_sources": len(updated_asset_ids),
                 "updated_titles": 0,
+                "profile_update": (
+                    "outdated" if affected_profiles else "not_required"
+                ),
+                "profiles_affected": affected_profiles,
             }
         )
 
@@ -1268,10 +1285,15 @@ class VODSourceAssetViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD provider sources were linked manually",
         )
-        return Response(self.get_serializer(asset).data)
+        payload = dict(self.get_serializer(asset).data)
+        payload.update(
+            profile_update="outdated" if affected_profiles else "not_required",
+            profiles_affected=affected_profiles,
+        )
+        return Response(payload)
 
 
 class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1310,10 +1332,15 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD category metadata defaults changed",
         )
-        return Response(serializer.data)
+        payload = dict(serializer.data)
+        payload.update(
+            profile_update="outdated" if affected_profiles else "not_required",
+            profiles_affected=affected_profiles,
+        )
+        return Response(payload)
 
     @action(detail=False, methods=["patch"], url_path="bulk-metadata-defaults")
     def bulk_metadata_defaults(self, request):
@@ -1349,10 +1376,18 @@ class M3UVODCategoryRelationViewSet(viewsets.ReadOnlyModelViewSet):
         from .profile_selection import mark_profile_selections_outdated
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="VOD category metadata defaults changed",
         )
-        return Response({"updated_categories": len(relations)})
+        return Response(
+            {
+                "updated_categories": len(relations),
+                "profile_update": (
+                    "outdated" if affected_profiles else "not_required"
+                ),
+                "profiles_affected": affected_profiles,
+            }
+        )
 
 
 class VODMetadataViewSet(viewsets.ViewSet):
@@ -1733,7 +1768,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
         )
 
         bump_catalog_generation(invalidate_selections=False)
-        mark_profile_selections_outdated(
+        affected_profiles = mark_profile_selections_outdated(
             trigger_reason="Canonical VOD metadata was edited manually",
             policy_ids=profile_ids_using_canonical_content(
                 movie_ids=[content_id] if content_type == "movie" else [],
@@ -1744,6 +1779,10 @@ class VODMetadataViewSet(viewsets.ViewSet):
             {
                 "tmdb": _tmdb_content_payload(content),
                 "canonical": _canonical_provider_payload(content),
+                "profile_update": (
+                    "outdated" if affected_profiles else "not_required"
+                ),
+                "profiles_affected": affected_profiles,
             }
         )
 
@@ -2225,6 +2264,13 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             )
         if request.query_params.get("category"):
             queryset = queryset.filter(category_id=request.query_params["category"])
+        metadata_status = str(
+            request.query_params.get("metadata_status") or ""
+        ).strip()
+        if metadata_status:
+            queryset = queryset.filter(
+                _vod_metadata_filter_q(metadata_status, prefix=f"{canonical}__")
+            )
         if request.query_params.get("container_extension"):
             queryset = queryset.filter(
                 container_extension__iexact=request.query_params[
@@ -2666,6 +2712,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         source_rules = request.data.get("source_rules", [])
         target_rule_id = str(request.data.get("target_rule_id") or "")
         category_relation_ids = request.data.get("category_relation_ids", [])
+        restrict_to_categories = (
+            request.data.get("restrict_to_categories") is True
+        )
         if not isinstance(category_relation_ids, list):
             return Response(
                 {"detail": "category_relation_ids must be a list"},
@@ -2702,7 +2751,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             relation_stream_filter_match,
         )
 
-        if category_relation_ids:
+        if restrict_to_categories or category_relation_ids:
             category_relations = list(
                 M3UVODCategoryRelation.objects.filter(
                     pk__in=category_relation_ids,
@@ -3136,10 +3185,14 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
             from .profile_selection import mark_profile_selections_outdated
 
             bump_catalog_generation(invalidate_selections=False)
-            mark_profile_selections_outdated(
+            affected_profiles = mark_profile_selections_outdated(
                 trigger_reason="Playback-derived VOD source metadata was edited",
             )
-            profile_update = "outdated"
+            profile_update = (
+                "outdated" if affected_profiles else "not_required"
+            )
+        else:
+            affected_profiles = 0
 
         return Response(
             {
@@ -3147,6 +3200,7 @@ class VODPlaybackSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 "updated_sources": updated_count,
                 "affected_titles": affected_titles,
                 "profile_update": profile_update,
+                "profiles_affected": affected_profiles,
             }
         )
 

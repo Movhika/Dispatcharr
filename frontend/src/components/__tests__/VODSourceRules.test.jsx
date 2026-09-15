@@ -198,7 +198,33 @@ describe('VODSourceRules', () => {
         ]),
         target_rule_id: 'exclude-3d',
         category_relation_ids: ['7', '9'],
+        restrict_to_categories: true,
       })
+    );
+  });
+
+  it('previews an edited draft before the filter or profile is saved', async () => {
+    render(
+      <VODSourceRules
+        value={rules}
+        onChange={vi.fn()}
+        categoryRelationIds={['7']}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit content filter' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Preview draft' }));
+
+    await waitFor(() =>
+      expect(API.previewVODAccessPolicyStreamFilter).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_rule_id: 'exclude-3d',
+          category_relation_ids: ['7'],
+          restrict_to_categories: true,
+        })
+      )
     );
   });
 

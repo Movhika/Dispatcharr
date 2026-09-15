@@ -44,6 +44,7 @@ vi.mock('../VideoFeaturePicker.jsx', () => ({
 }));
 vi.mock('lucide-react', () => ({
   Eye: () => null,
+  Filter: () => null,
   GripVertical: () => null,
   Info: () => null,
   ListOrdered: () => null,
@@ -147,6 +148,9 @@ vi.mock('@mantine/core', () => {
     Progress: ({ value }) => (
       <div aria-label="Catalog preparation progress">{value}</div>
     ),
+    Popover: Wrapper,
+    PopoverDropdown: Wrapper,
+    PopoverTarget: Wrapper,
     ScrollArea: Wrapper,
     SegmentedControl: () => null,
     Select,
