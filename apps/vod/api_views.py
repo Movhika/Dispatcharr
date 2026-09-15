@@ -2863,9 +2863,8 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             )
 
         from .policies import (
-            _canonical_filter_metadata,
-            _vertical_resolution,
             _relation_source_name,
+            content_rules_use_canonical_metadata,
             enabled_category_map,
             relation_metadata,
             relation_stream_filter_match,
@@ -2903,11 +2902,47 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         matching_count = 0
         inventory_count = 0
         sample_limit = 200
+        truncated = False
+        needs_canonical_metadata = content_rules_use_canonical_metadata(
+            normalized_rules
+        )
 
         for content_type, relation_model, canonical_field in (
             ("movie", M3UMovieRelation, "movie"),
             ("series", M3USeriesRelation, "series"),
         ):
+            only_fields = [
+                "id",
+                "m3u_account",
+                "m3u_account__name",
+                "category",
+                "category__name",
+                "source_asset",
+                "source_asset__declared_metadata",
+                "source_asset__observed_metadata",
+                "source_asset__manual_metadata",
+                "custom_properties",
+                canonical_field,
+                f"{canonical_field}__name",
+                f"{canonical_field}__display_name",
+            ]
+            if content_type == "movie":
+                only_fields.append("container_extension")
+            if needs_canonical_metadata:
+                only_fields.extend(
+                    [
+                        f"{canonical_field}__custom_properties",
+                        f"{canonical_field}__tmdb_metadata",
+                        f"{canonical_field}__tmdb_status",
+                        f"{canonical_field}__tmdb_match_id",
+                        f"{canonical_field}__tmdb_id",
+                        f"{canonical_field}__genre",
+                        f"{canonical_field}__year",
+                        f"{canonical_field}__rating",
+                    ]
+                )
+                if content_type == "movie":
+                    only_fields.append("movie__is_adult")
             queryset = (
                 relation_model.objects.filter(
                     m3u_account__is_active=True,
@@ -2919,6 +2954,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "category",
                     "source_asset",
                 )
+                .only(*only_fields)
                 .order_by("pk")
             )
             for relation in queryset.iterator(chunk_size=2000):
@@ -2932,55 +2968,36 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 match = relation_stream_filter_match(relation, policy, metadata)
                 if match is None or match[0] != target_rule_id:
                     continue
-                matching_count += 1
                 if len(rows) >= sample_limit:
-                    continue
+                    truncated = True
+                    break
+                matching_count += 1
                 content = getattr(relation, canonical_field)
-                canonical_metadata = _canonical_filter_metadata(relation)
-                resolution_height = _vertical_resolution(metadata)
+                provider_title = _relation_source_name(relation)
                 rows.append(
                     {
                         "id": relation.id,
                         "content_type": content_type,
-                        "title": _relation_source_name(relation),
+                        "title": provider_title,
+                        "provider_title": provider_title,
+                        "canonical_title": (
+                            content.display_name or content.name or ""
+                        ),
                         "m3u_account_name": relation.m3u_account.name,
                         "category_name": (
                             relation.category.name if relation.category else ""
                         ),
-                        "audio_languages": metadata.get("audio_languages")
-                        or metadata.get("languages")
-                        or [],
-                        "subtitle_languages": metadata.get(
-                            "subtitle_languages"
-                        )
-                        or [],
-                        "resolution": (
-                            f"{resolution_height}p" if resolution_height else ""
-                        ),
-                        "video_features": normalize_video_features(
-                            metadata.get("video_features")
-                        ),
-                        "genres": canonical_metadata["genres"],
-                        "keywords": canonical_metadata["keywords"],
-                        "country": canonical_metadata["countries"],
-                        "age_rating": canonical_metadata["age_ratings"],
-                        "year": canonical_metadata["year"],
-                        "rating": canonical_metadata["rating"],
-                        "is_anime": canonical_metadata["is_anime"],
-                        "is_adult": canonical_metadata["is_adult"],
-                        "metadata_available": canonical_metadata[
-                            "metadata_available"
-                        ],
-                        "tmdb_available": canonical_metadata["tmdb_available"],
                         "result": "include" if match[1] else "exclude",
                     }
                 )
+            if truncated:
+                break
 
         return Response(
             {
                 "count": matching_count,
                 "inventory_count": inventory_count,
-                "truncated": matching_count > sample_limit,
+                "truncated": truncated,
                 "first_match_wins": True,
                 "results": rows,
             }

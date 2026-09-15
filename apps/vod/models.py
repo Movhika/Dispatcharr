@@ -466,6 +466,10 @@ class VODAccessPolicy(models.Model):
         PROVIDER = "provider", "Provider metadata"
         CANONICAL = "canonical", "Canonical / TMDB metadata"
 
+    class CanonicalTitleSource(models.TextChoices):
+        PRIMARY = "primary", "Primary canonical title"
+        SECONDARY = "secondary", "Secondary canonical title"
+
     name = models.CharField(max_length=255, unique=True)
     export_mode = models.CharField(
         max_length=10,
@@ -510,6 +514,15 @@ class VODAccessPolicy(models.Model):
         help_text=(
             "Metadata projected to clients for variants output. Compact "
             "always uses canonical metadata."
+        ),
+    )
+    canonical_title_source = models.CharField(
+        max_length=10,
+        choices=CanonicalTitleSource.choices,
+        default=CanonicalTitleSource.PRIMARY,
+        help_text=(
+            "Localized canonical title used by variant output formats. A "
+            "missing localized title falls back to the original provider title."
         ),
     )
     users = models.ManyToManyField(

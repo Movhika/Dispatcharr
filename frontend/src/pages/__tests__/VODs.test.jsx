@@ -343,7 +343,8 @@ describe('VODsPage list and bulk editing', () => {
     await screen.findByText('Movie A');
     fireEvent.click(screen.getByLabelText('Poster wall'));
     expect(localStorage.getItem('vodsViewMode')).toBe('posters');
-    expect(screen.getByText('Movie · 2025 · 3 sources')).toBeInTheDocument();
+    expect(screen.getByText('Movie · 2025')).toBeInTheDocument();
+    expect(screen.getByText('3 sources')).toBeInTheDocument();
     expect(screen.getByTestId('pagination')).toBeInTheDocument();
   });
 

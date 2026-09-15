@@ -442,7 +442,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "export_mode", "is_default", "is_active",
             "hard_constraints", "ranking", "provider_order", "edition_rules",
-            "naming_mode", "name_template", "metadata_source", "users",
+            "naming_mode", "name_template", "metadata_source",
+            "canonical_title_source", "users",
             "category_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",
@@ -636,14 +637,23 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"name_template": "Enter a custom output title format"}
             )
+        fields = {
+            field_name
+            for _literal, field_name, _format_spec, _conversion in (
+                string.Formatter().parse(template)
+            )
+            if field_name
+        }
+        if fields.isdisjoint({"canonical", "title", "source"}):
+            raise serializers.ValidationError(
+                {
+                    "name_template": (
+                        "Include {canonical} or {title} for a canonical title, "
+                        "or {source} for the provider title"
+                    )
+                }
+            )
         if export_mode == VODAccessPolicy.ExportMode.COMPACT:
-            fields = {
-                field_name
-                for _literal, field_name, _format_spec, _conversion in (
-                    string.Formatter().parse(template)
-                )
-                if field_name
-            }
             compact_fields = {"canonical", "title", "year", "edition"}
             if fields - compact_fields:
                 raise serializers.ValidationError(

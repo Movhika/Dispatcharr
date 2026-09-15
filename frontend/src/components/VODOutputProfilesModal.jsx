@@ -72,6 +72,7 @@ const EMPTY_PROFILE = {
   naming_mode: 'mode_default',
   name_template: '',
   metadata_source: 'canonical',
+  canonical_title_source: 'primary',
   category_rules: [],
 };
 
@@ -83,6 +84,16 @@ const metadataText = (metadata, field) => {
 
 const hasOwn = (object, key) =>
   Object.prototype.hasOwnProperty.call(object || {}, key);
+
+const outputTitleFields = (template) => {
+  const fields = new Set();
+  for (const match of String(template || '').matchAll(
+    /{([a-z_]+)(?:![^}:]+)?(?::[^}]+)?}/gi
+  )) {
+    fields.add(match[1].toLowerCase());
+  }
+  return fields;
+};
 
 const formatDuration = (seconds) => {
   const rounded = Math.max(Math.round(seconds || 0), 0);
@@ -214,12 +225,17 @@ const profilePayload = (profile) => ({
       : 'mode_default',
   name_template:
     profile.export_mode === 'variants' && profile.naming_mode === 'template'
-      ? profile.name_template.trim() || '{canonical}'
+      ? profile.name_template.trim()
       : '',
   metadata_source:
     profile.export_mode === 'variants'
       ? profile.metadata_source || 'provider'
       : 'canonical',
+  canonical_title_source:
+    profile.export_mode === 'variants' &&
+    profile.canonical_title_source === 'secondary'
+      ? 'secondary'
+      : 'primary',
   category_rules: (profile.category_rules || [])
     .map((rule) => ({
       category_relation: Number(rule.category_relation),
@@ -351,6 +367,8 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             ? '{canonical}'
             : '',
       metadata_source: source.metadata_source || 'provider',
+      canonical_title_source:
+        source.canonical_title_source === 'secondary' ? 'secondary' : 'primary',
       category_rules: source.category_rules || [],
     };
     setDraft(nextDraft);
@@ -776,8 +794,18 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
   };
 
   const draftChanged = profileDraftSignature(draft) !== savedDraftSignature;
+  const titleFields = outputTitleFields(draft.name_template);
+  const customTitleInvalid = Boolean(
+    draft.export_mode === 'variants' &&
+    draft.naming_mode === 'template' &&
+    !['canonical', 'title', 'source'].some((field) => titleFields.has(field))
+  );
+  const usesCanonicalTitle =
+    titleFields.has('canonical') || titleFields.has('title');
   const canSave = Boolean(
-    draft.name.trim() && (creating || (selectedProfile && draftChanged))
+    draft.name.trim() &&
+    !customTitleInvalid &&
+    (creating || (selectedProfile && draftChanged))
   );
   const counts = selectedProfile?.selection_counts || {};
   const buildProgress = selectedProfile?.selection_progress || {};
@@ -1235,18 +1263,51 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                             }
                           />
                           {draft.naming_mode === 'template' && (
-                            <TextInput
-                              label="Output title format"
-                              description="Available: {canonical}, {title}, {year}, {provider}, {source}, {dub}, {sub}, {resolution}, {format}"
-                              placeholder="{canonical}"
-                              value={draft.name_template}
-                              onChange={(event) =>
-                                setDraft({
-                                  ...draft,
-                                  name_template: event.currentTarget.value,
-                                })
-                              }
-                            />
+                            <>
+                              <TextInput
+                                label="Output title format"
+                                description="Titles: {canonical} (with year), {title} (without year), {source} (provider title). Also available: {year}, {provider}, {dub}, {sub}, {resolution}, {format}."
+                                placeholder="{canonical}"
+                                value={draft.name_template}
+                                error={
+                                  customTitleInvalid
+                                    ? 'Include {canonical} or {title}, or use {source} for the provider title.'
+                                    : null
+                                }
+                                onChange={(event) =>
+                                  setDraft({
+                                    ...draft,
+                                    name_template: event.currentTarget.value,
+                                  })
+                                }
+                              />
+                              {usesCanonicalTitle && (
+                                <Select
+                                  label="Canonical title"
+                                  description="If this localized title is empty, the original provider title is used."
+                                  data={[
+                                    {
+                                      value: 'primary',
+                                      label: 'Primary language',
+                                    },
+                                    {
+                                      value: 'secondary',
+                                      label: 'Secondary language',
+                                    },
+                                  ]}
+                                  value={draft.canonical_title_source}
+                                  onChange={(value) =>
+                                    setDraft({
+                                      ...draft,
+                                      canonical_title_source:
+                                        value === 'secondary'
+                                          ? 'secondary'
+                                          : 'primary',
+                                    })
+                                  }
+                                />
+                              )}
+                            </>
                           )}
                         </>
                       )}

@@ -693,7 +693,6 @@ const VODsPage = () => {
                   <TextInput
                     type="date"
                     label="Added since"
-                    description="First import into this VOD library"
                     value={filters.library_added_after || ''}
                     onChange={(event) => {
                       setFilters({
@@ -818,13 +817,18 @@ const VODsPage = () => {
                     </TableTd>
                     <TableTd>{item.year || '—'}</TableTd>
                     <TableTd>
-                      <ClampedCellText
-                        value={
-                          item.is_variant
-                            ? `${item.m3u_account?.name || 'Unknown'} · ${item.category?.name || 'Uncategorized'}`
-                            : sourceCount(item)
-                        }
-                      />
+                      {item.is_variant ? (
+                        <Stack gap={1}>
+                          <ClampedCellText
+                            value={item.m3u_account?.name || 'Unknown'}
+                          />
+                          <Text size="xs" c="dimmed" lineClamp={2}>
+                            {item.category?.name || 'Uncategorized'}
+                          </Text>
+                        </Stack>
+                      ) : (
+                        <ClampedCellText value={sourceCount(item)} />
+                      )}
                     </TableTd>
                     <TableTd>
                       <ClampedCellText value={item.genre} />
@@ -959,9 +963,11 @@ const VODsPage = () => {
                     <Text size="xs" c="dimmed">
                       {item.contentType === 'series' ? 'Series' : 'Movie'}
                       {item.year ? ` · ${item.year}` : ''}
+                    </Text>
+                    <Text size="xs" c="dimmed" lineClamp={2}>
                       {item.is_variant
-                        ? ` · ${item.m3u_account?.name || 'Unknown source'}`
-                        : ` · ${sourceCount(item)} sources`}
+                        ? item.m3u_account?.name || 'Unknown source'
+                        : `${sourceCount(item)} sources`}
                     </Text>
                   </Stack>
                 </Box>

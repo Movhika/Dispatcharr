@@ -49,20 +49,55 @@ def policy_output_name(
     *,
     edition=None,
     metadata=None,
+    canonical_languages=None,
 ):
     """Render a profile title without mutating canonical or provider data."""
     edition = edition or {}
     metadata = metadata or {}
     provider = get_vod_source_name(relation, getattr(content, "name", "") or "")
-    canonical = canonical_output_name(
-        getattr(content, "name", "") or "",
-        display_name=getattr(content, "display_name", "") or "",
-        year=getattr(content, "year", None),
-    )
-    title = canonical_output_name(
-        getattr(content, "name", "") or "",
-        display_name=getattr(content, "display_name", "") or "",
-    )
+    canonical_title_source = getattr(policy, "canonical_title_source", "primary")
+    selected_canonical_title = ""
+    tmdb_metadata = getattr(content, "tmdb_metadata", None)
+    if isinstance(tmdb_metadata, dict):
+        localized = tmdb_metadata.get("localized") or {}
+        try:
+            from core.models import CoreSettings
+
+            languages = (
+                list(canonical_languages)
+                if canonical_languages is not None
+                else CoreSettings.get_tmdb_languages()
+            )
+        except Exception:
+            languages = []
+        language_index = 1 if canonical_title_source == "secondary" else 0
+        if len(languages) > language_index:
+            language_values = localized.get(languages[language_index]) or {}
+            selected_canonical_title = str(
+                language_values.get("title") or ""
+            ).strip()
+    if canonical_title_source == "primary":
+        selected_canonical_title = (
+            str(getattr(content, "display_name", "") or "").strip()
+            or selected_canonical_title
+            or str(getattr(content, "name", "") or "").strip()
+        )
+
+    if selected_canonical_title:
+        canonical = canonical_output_name(
+            getattr(content, "name", "") or "",
+            display_name=selected_canonical_title,
+            year=getattr(content, "year", None),
+        )
+        title = canonical_output_name(
+            getattr(content, "name", "") or "",
+            display_name=selected_canonical_title,
+        )
+    else:
+        # Secondary localization is optional. Never leak a different canonical
+        # language into its place; retain this concrete provider title instead.
+        canonical = provider
+        title = provider
     suffix = str(edition.get("suffix") or "").strip()
     naming_mode = getattr(policy, "naming_mode", "mode_default")
     if naming_mode == "provider":

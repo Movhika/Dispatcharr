@@ -20,6 +20,7 @@ import {
 } from '@mantine/core';
 import { Info, RefreshCw } from 'lucide-react';
 import API from '../../api';
+import VODSourcePreviewTable from '../VODSourcePreviewTable.jsx';
 
 const M3UDeveloperCatalog = ({
   accountId,
@@ -135,25 +136,33 @@ const M3UDeveloperCatalog = ({
         {summaryOnly ? 'imported content entries' : 'parsed entries'}
       </Text>
       <ScrollArea h={lockedScope ? '62vh' : '55vh'}>
-        <Table
-          striped
-          highlightOnHover
-          withTableBorder
-          stickyHeader
-          miw={summaryOnly ? 420 : 760}
-        >
-          <TableThead>
-            <TableTr>
-              <TableTh>Original provider name</TableTh>
-              {!summaryOnly && nameTransform && <TableTh>Output name</TableTh>}
-              {!summaryOnly && <TableTh w="55%">Properties</TableTh>}
-            </TableTr>
-          </TableThead>
-          <TableTbody>
-            {(result.results || []).map((row, index, rows) => (
-              <React.Fragment key={`${scope}:${row.id}`}>
-                {!summaryOnly &&
-                  (index === 0 || rows[index - 1]?.group !== row.group) && (
+        {summaryOnly ? (
+          <VODSourcePreviewTable
+            rows={result.results || []}
+            loading={loading}
+            getRowKey={(row) => `${scope}:${row.id}`}
+            getProviderTitle={(row) => row.name}
+            emptyText="No imported content found."
+          />
+        ) : (
+          <Table
+            striped
+            highlightOnHover
+            withTableBorder
+            stickyHeader
+            miw={760}
+          >
+            <TableThead>
+              <TableTr>
+                <TableTh>Original provider name</TableTh>
+                {nameTransform && <TableTh>Output name</TableTh>}
+                <TableTh w="55%">Properties</TableTh>
+              </TableTr>
+            </TableThead>
+            <TableTbody>
+              {(result.results || []).map((row, index, rows) => (
+                <React.Fragment key={`${scope}:${row.id}`}>
+                  {(index === 0 || rows[index - 1]?.group !== row.group) && (
                     <TableTr
                       style={{
                         position: 'sticky',
@@ -167,48 +176,48 @@ const M3UDeveloperCatalog = ({
                       </TableTh>
                     </TableTr>
                   )}
-                <TableTr>
-                  <TableTd>
-                    <Text fw={500}>{row.name || '—'}</Text>
-                    {!summaryOnly && (
+                  <TableTr>
+                    <TableTd>
+                      <Text fw={500}>{row.name || '—'}</Text>
                       <Text size="xs" c="dimmed">
                         Provider ID: {row.provider_id || '—'} · Internal ID:{' '}
                         {row.id}
                       </Text>
+                      {row.url && (
+                        <Code
+                          fz="xs"
+                          style={{
+                            wordBreak: 'break-all',
+                            whiteSpace: 'normal',
+                          }}
+                        >
+                          {row.url}
+                        </Code>
+                      )}
+                    </TableTd>
+                    {nameTransform && (
+                      <TableTd>{nameTransform(row.name || '', row)}</TableTd>
                     )}
-                    {!summaryOnly && row.url && (
-                      <Code
-                        fz="xs"
-                        style={{ wordBreak: 'break-all', whiteSpace: 'normal' }}
-                      >
-                        {row.url}
-                      </Code>
-                    )}
-                  </TableTd>
-                  {!summaryOnly && nameTransform && (
-                    <TableTd>{nameTransform(row.name || '', row)}</TableTd>
-                  )}
-                  {!summaryOnly && (
                     <TableTd>
                       <Code block>
                         {JSON.stringify(row.properties || {}, null, 2)}
                       </Code>
                     </TableTd>
-                  )}
+                  </TableTr>
+                </React.Fragment>
+              ))}
+              {!loading && (result.results || []).length === 0 && (
+                <TableTr>
+                  <TableTd colSpan={nameTransform ? 3 : 2}>
+                    <Text ta="center" c="dimmed" py="xl">
+                      No parsed entries found.
+                    </Text>
+                  </TableTd>
                 </TableTr>
-              </React.Fragment>
-            ))}
-            {!loading && (result.results || []).length === 0 && (
-              <TableTr>
-                <TableTd colSpan={summaryOnly ? 1 : nameTransform ? 3 : 2}>
-                  <Text ta="center" c="dimmed" py="xl">
-                    No parsed entries found.
-                  </Text>
-                </TableTd>
-              </TableTr>
-            )}
-          </TableTbody>
-        </Table>
+              )}
+            </TableTbody>
+          </Table>
+        )}
       </ScrollArea>
       {totalPages > 1 && (
         <Pagination value={page} onChange={setPage} total={totalPages} />

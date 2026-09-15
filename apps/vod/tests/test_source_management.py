@@ -80,6 +80,7 @@ from apps.vod.tasks import (
     rebuild_vod_profile_selection,
     reconcile_vod_profile_selection_queue,
 )
+from apps.vod.utils import policy_output_name
 
 
 class VODSourceManagementTests(TestCase):
@@ -1866,6 +1867,14 @@ class VODSourceManagementTests(TestCase):
             response.data["results"][0]["id"], self.english_relation.id
         )
         self.assertEqual(response.data["results"][0]["result"], "exclude")
+        self.assertEqual(
+            response.data["results"][0]["provider_title"],
+            "Avatar",
+        )
+        self.assertEqual(
+            response.data["results"][0]["canonical_title"],
+            "Avatar",
+        )
 
     def test_empty_category_expression_applies_feature_filter_globally(self):
         self.english_category.metadata_defaults = {
@@ -2725,6 +2734,50 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("name_template", serializer.errors)
+
+    def test_profile_template_requires_a_canonical_or_provider_title(self):
+        serializer = VODAccessPolicySerializer(
+            data={
+                "name": "Missing title field",
+                "export_mode": VODAccessPolicy.ExportMode.VARIANTS,
+                "naming_mode": VODAccessPolicy.NamingMode.TEMPLATE,
+                "name_template": "{provider} {resolution}",
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("name_template", serializer.errors)
+
+    @patch.object(
+        CoreSettings,
+        "get_tmdb_languages",
+        return_value=["de-DE", "en-US"],
+    )
+    def test_missing_secondary_title_falls_back_to_provider_title(self, _languages):
+        self.movie.display_name = "Avatar Deutsch"
+        self.movie.tmdb_metadata = {
+            "localized": {"de-DE": {"title": "Avatar Deutsch"}}
+        }
+        self.movie.save(update_fields=["display_name", "tmdb_metadata"])
+        self.german_relation.custom_properties = {
+            "movie_data": {"name": "Provider Avatar UHD"}
+        }
+        self.german_relation.save(update_fields=["custom_properties"])
+        self.policy.export_mode = VODAccessPolicy.ExportMode.VARIANTS
+        self.policy.naming_mode = VODAccessPolicy.NamingMode.TEMPLATE
+        self.policy.name_template = "{canonical} [{resolution}]"
+        self.policy.canonical_title_source = (
+            VODAccessPolicy.CanonicalTitleSource.SECONDARY
+        )
+
+        output_name = policy_output_name(
+            self.movie,
+            self.german_relation,
+            self.policy,
+            metadata={"resolution": "2160p"},
+        )
+
+        self.assertEqual(output_name, "Provider Avatar UHD [2160p]")
 
     def test_profile_keeps_simplified_stream_filter_payload_compact(self):
         serializer = VODAccessPolicySerializer(

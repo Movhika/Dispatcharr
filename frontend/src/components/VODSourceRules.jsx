@@ -15,12 +15,6 @@ import {
   SimpleGrid,
   Stack,
   Switch,
-  Table,
-  TableTbody,
-  TableTd,
-  TableTh,
-  TableThead,
-  TableTr,
   TagsInput,
   Text,
   TextInput,
@@ -46,6 +40,7 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { Eye, GripVertical, Info, Pencil, Plus, Trash2 } from 'lucide-react';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
+import VODSourcePreviewTable from './VODSourcePreviewTable.jsx';
 import API from '../api.js';
 
 const RULE_DEFAULTS = {
@@ -711,8 +706,8 @@ const VODSourceRules = ({
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            The complete ordered draft is evaluated. Only sources for which this
-            filter is the first match are shown.
+            The ordered draft is applied to the sources allowed in this profile.
+            Only sources for which this filter is the first match are shown.
           </Text>
           {previewLoading && (
             <Group justify="center" py="xl">
@@ -723,74 +718,25 @@ const VODSourceRules = ({
           {!previewLoading && !previewError && (
             <>
               <Text fw={600}>
-                {preview.count || 0} matching sources
-                {preview.truncated ? ' (first 200 shown)' : ''}
+                {preview.truncated
+                  ? `${preview.count || 0}+ matching sources (first 200 shown)`
+                  : `${preview.count || 0} matching sources`}
               </Text>
               <Text size="xs" c="dimmed">
-                Evaluated against {preview.inventory_count || 0} sources from
-                the currently selected provider categories.
+                Examined {preview.inventory_count || 0} sources from the
+                currently selected provider categories.
               </Text>
               <ScrollArea h="min(62vh, 620px)" type="auto">
-                <Table striped withTableBorder stickyHeader miw={900}>
-                  <TableThead>
-                    <TableTr>
-                      <TableTh>Title</TableTh>
-                      <TableTh>Provider source</TableTh>
-                      <TableTh>Technical metadata</TableTh>
-                      <TableTh>Canonical details</TableTh>
-                      <TableTh>Result</TableTh>
-                    </TableTr>
-                  </TableThead>
-                  <TableTbody>
-                    {!preview.results?.length && (
-                      <TableTr>
-                        <TableTd colSpan={5}>
-                          <Text ta="center" c="dimmed" py="lg">
-                            No source has this filter as its first match.
-                          </Text>
-                        </TableTd>
-                      </TableTr>
-                    )}
-                    {(preview.results || []).map((row) => (
-                      <TableTr key={`${row.content_type}-${row.id}`}>
-                        <TableTd>{row.title}</TableTd>
-                        <TableTd>
-                          <Text size="sm">{row.m3u_account_name}</Text>
-                          <Text size="xs" c="dimmed">
-                            {row.category_name || '—'}
-                          </Text>
-                        </TableTd>
-                        <TableTd>
-                          <Text size="xs">
-                            DUB {joinValues(row.audio_languages) || '—'} · SUB{' '}
-                            {joinValues(row.subtitle_languages) || '—'}
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            {row.resolution || '—'} ·{' '}
-                            {joinValues(row.video_features) || 'No features'}
-                          </Text>
-                        </TableTd>
-                        <TableTd>
-                          <Text size="xs">
-                            {joinValues(row.genres) || 'No genre'} ·{' '}
-                            {row.year || 'No year'}
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            {joinValues(row.keywords) || 'No keywords'} · TMDB
-                            ID {row.tmdb_available ? 'available' : 'missing'}
-                          </Text>
-                        </TableTd>
-                        <TableTd>
-                          <Badge
-                            color={row.result === 'exclude' ? 'red' : 'green'}
-                          >
-                            {row.result}
-                          </Badge>
-                        </TableTd>
-                      </TableTr>
-                    ))}
-                  </TableTbody>
-                </Table>
+                <VODSourcePreviewTable
+                  rows={preview.results || []}
+                  getRowKey={(row) => `${row.content_type}-${row.id}`}
+                  getProviderTitle={(row) => row.provider_title || row.title}
+                  getCanonicalTitle={(row) => row.canonical_title}
+                  getProviderName={(row) => row.m3u_account_name}
+                  getCategoryName={(row) => row.category_name}
+                  emptyText="No source has this filter as its first match."
+                  minWidth={760}
+                />
               </ScrollArea>
             </>
           )}

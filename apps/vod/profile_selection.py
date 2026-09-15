@@ -235,6 +235,10 @@ def profile_ids_using_canonical_content(*, movie_ids=(), series_ids=()):
             policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE,
             policy__name_template__contains="{canonical}",
         )
+        | Q(
+            policy__naming_mode=VODAccessPolicy.NamingMode.TEMPLATE,
+            policy__name_template__contains="{title}",
+        )
     )
     policy_ids = set()
     for policy_id, constraints in VODAccessPolicy.objects.filter(
@@ -385,7 +389,8 @@ def profile_selection_signature(policy):
         # Bump only one-relation-per-entry catalogs when their snapshot
         # semantics change. The queue reconciler can then rebuild existing
         # Variant generations without invalidating Compact profiles.
-        payload["variants_output_schema"] = 2
+        payload["variants_output_schema"] = 3
+        payload["canonical_title_source"] = policy.canonical_title_source
     encoded = json.dumps(
         payload,
         sort_keys=True,
@@ -624,7 +629,10 @@ def _selection_rows_for_canonical_ids(
     """Prepare selected rows for a small set of canonical titles."""
     if not canonical_ids:
         return []
+    from core.models import CoreSettings
+
     category_mapping = policy_category_map(policy)
+    canonical_languages = CoreSettings.get_tmdb_languages()
     candidates = (
         relation_model.objects.filter(
             m3u_account__is_active=True,
@@ -676,6 +684,7 @@ def _selection_rows_for_canonical_ids(
                     getattr(relation, canonical_field.removesuffix("_id")),
                     metadata,
                     category_mapping,
+                    canonical_languages,
                 ),
             )
         )
@@ -888,7 +897,14 @@ def _metadata_columns(metadata, relation):
     }
 
 
-def _edition_columns(policy, relation, content, metadata, category_mapping):
+def _edition_columns(
+    policy,
+    relation,
+    content,
+    metadata,
+    category_mapping,
+    canonical_languages=None,
+):
     if policy.export_mode == VODAccessPolicy.ExportMode.VARIANTS:
         edition = {
             "key": "default",
@@ -905,6 +921,7 @@ def _edition_columns(policy, relation, content, metadata, category_mapping):
                 policy,
                 edition=edition,
                 metadata=metadata,
+                canonical_languages=canonical_languages,
             )[:500],
         }
     edition = relation_edition(
@@ -923,6 +940,7 @@ def _edition_columns(policy, relation, content, metadata, category_mapping):
             policy,
             edition=edition,
             metadata=metadata,
+            canonical_languages=canonical_languages,
         )[:500],
     }
 
@@ -941,7 +959,10 @@ def _build_type(
     scan_stage_index,
     store_stage_index,
 ):
+    from core.models import CoreSettings
+
     category_mapping = policy_category_map(policy)
+    canonical_languages = CoreSettings.get_tmdb_languages()
     candidates = (
         relation_model.objects.filter(
             m3u_account__is_active=True,
@@ -1055,6 +1076,7 @@ def _build_type(
                     getattr(relation, canonical.removesuffix("_id")),
                     metadata,
                     category_mapping,
+                    canonical_languages,
                 ),
             }
             rows.append(selection_model(**values))

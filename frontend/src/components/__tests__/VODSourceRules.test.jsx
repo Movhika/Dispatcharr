@@ -160,6 +160,8 @@ describe('VODSourceRules', () => {
           id: 42,
           content_type: 'movie',
           title: '3D Movie',
+          provider_title: 'Provider 3D Movie',
+          canonical_title: 'Canonical Movie',
           m3u_account_name: 'Provider',
           category_name: 'ANIME',
           audio_languages: ['eng'],
@@ -190,7 +192,8 @@ describe('VODSourceRules', () => {
         name: 'Content filter preview',
       })
     ).toBeInTheDocument();
-    expect(await screen.findByText('3D Movie')).toBeInTheDocument();
+    expect(await screen.findByText('Provider 3D Movie')).toBeInTheDocument();
+    expect(screen.getByText('Canonical Movie')).toBeInTheDocument();
     await waitFor(() =>
       expect(API.previewVODAccessPolicyStreamFilter).toHaveBeenCalledWith({
         source_rules: expect.arrayContaining([

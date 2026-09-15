@@ -692,7 +692,15 @@ describe('VODOutputProfilesModal', () => {
       target: { value: 'template' },
     });
     fireEvent.change(screen.getByLabelText('Output title format'), {
+      target: { value: '[{resolution}]' },
+    });
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Output title format'), {
       target: { value: '{canonical} [{resolution}]' },
+    });
+    expect(screen.getByLabelText('Canonical title')).toHaveValue('primary');
+    fireEvent.change(screen.getByLabelText('Canonical title'), {
+      target: { value: 'secondary' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
@@ -703,6 +711,7 @@ describe('VODOutputProfilesModal', () => {
           metadata_source: 'canonical',
           naming_mode: 'template',
           name_template: '{canonical} [{resolution}]',
+          canonical_title_source: 'secondary',
         })
       )
     );
