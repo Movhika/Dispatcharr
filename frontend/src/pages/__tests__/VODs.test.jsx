@@ -16,6 +16,7 @@ vi.mock('../../api', () => ({
   default: {
     bulkUpdateVODSourceMetadata: vi.fn(),
     updateVODRelationTmdbMatch: vi.fn(),
+    getVODMetadataStatus: vi.fn(),
   },
 }));
 vi.mock('../../utils/pages/VODsUtils.js', () => ({
@@ -299,6 +300,7 @@ describe('VODsPage list and bulk editing', () => {
     fetchCategories.mockResolvedValue(undefined);
     API.bulkUpdateVODSourceMetadata.mockResolvedValue({ updated_sources: 3 });
     API.updateVODRelationTmdbMatch.mockResolvedValue({ moved_sources: 1 });
+    API.getVODMetadataStatus.mockResolvedValue({ settings: {} });
     state.filters.representation = 'canonical';
     state.filters.metadata_status = '';
     state.currentPageContent[0].relation_id = undefined;

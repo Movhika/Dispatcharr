@@ -179,13 +179,14 @@ describe('VODMetadataModal', () => {
           {
             match_type: 'regex',
             value: '4K-D+ -',
-            action: 'replace',
-            replacement: ' ',
+            action: 'remove',
+            replacement: '',
             enabled: true,
           },
         ],
         null,
-        'Bliss'
+        'Bliss',
+        {}
       )
     );
     expect(await screen.findByText('4K-D+ - Bliss')).toBeInTheDocument();
@@ -196,9 +197,6 @@ describe('VODMetadataModal', () => {
     await screen.findByDisplayValue('4K-D+ -');
     fireEvent.change(screen.getByLabelText('Rule 1 · match'), {
       target: { value: 'starts_with' },
-    });
-    fireEvent.change(screen.getByLabelText('Action'), {
-      target: { value: 'remove' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save rules' }));
 

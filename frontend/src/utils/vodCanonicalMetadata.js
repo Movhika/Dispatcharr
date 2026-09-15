@@ -23,6 +23,8 @@ export const EMPTY_CANONICAL_METADATA_VALUES = {
   keywords: [],
   is_anime: false,
   adult: false,
+  clean_title: '',
+  tmdb_lookup_excluded: false,
 };
 
 export const canonicalMetadataValues = (content = {}) => {
@@ -79,5 +81,9 @@ export const canonicalMetadataValues = (content = {}) => {
       .filter(Boolean),
     is_anime: Boolean(tmdb.is_anime),
     adult: Boolean(tmdb.adult || content.is_adult),
+    clean_title: tmdb.clean_title || content.clean_title || '',
+    tmdb_lookup_excluded: Boolean(
+      tmdb.lookup_excluded || content.tmdb_lookup_excluded
+    ),
   };
 };

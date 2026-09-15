@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useState } from 'react';
 import {
   Button,
   Group,
@@ -32,14 +32,14 @@ const VODMetadataSettingsForm = ({
   onSaved,
 }) => {
   const [token, setToken] = useState('');
-  const [primaryLanguage, setPrimaryLanguage] = useState(null);
+  const [primaryLanguage, setPrimaryLanguage] = useState('en-US');
   const [secondaryLanguage, setSecondaryLanguage] = useState('');
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [matchMissing, setMatchMissing] = useState(false);
   const [preferArtwork, setPreferArtwork] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!status) return;
     const settings = status.settings || {};
     const languages = settings.languages || ['en-US'];
@@ -91,7 +91,7 @@ const VODMetadataSettingsForm = ({
     }
   };
 
-  if (loading || (!status && !error) || (status && !primaryLanguage)) {
+  if (loading || (!status && !error)) {
     return (
       <Group justify="center" gap="xs" py="xl">
         <Loader size="sm" />

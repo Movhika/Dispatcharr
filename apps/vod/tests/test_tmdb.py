@@ -74,8 +74,7 @@ class TMDBMetadataTests(SimpleTestCase):
             {
                 "match_type": "contains",
                 "value": "Director.Cut",
-                "action": "replace",
-                "replacement": "Extended",
+                "action": "remove",
             },
             {
                 "match_type": "ends_with",
@@ -89,7 +88,7 @@ class TMDBMetadataTests(SimpleTestCase):
                 year=2021,
                 rules=rules,
             ),
-            "Bliss Extended",
+            "Bliss",
         )
 
     def test_legacy_title_rule_is_preserved_as_advanced_regex(self):
@@ -106,6 +105,24 @@ class TMDBMetadataTests(SimpleTestCase):
                     "enabled": True,
                 }
             ],
+        )
+
+    def test_search_outcome_distinguishes_no_match_and_ambiguous_match(self):
+        client = Client("token")
+        client.search_candidates = Mock(return_value=[])
+        self.assertEqual(
+            client.search_outcome("Bliss", 2021, "movie", "en-US"),
+            ("", "not_found", 0),
+        )
+        client.search_candidates = Mock(
+            return_value=[
+                {"id": "1", "title": "Bliss", "year": 2021},
+                {"id": "2", "title": "Bliss", "year": 2021},
+            ]
+        )
+        self.assertEqual(
+            client.search_outcome("Bliss", 2021, "movie", "en-US"),
+            ("", "ambiguous", 2),
         )
 
     def test_normalizes_original_localized_and_watch_provider_data(self):
@@ -687,6 +704,43 @@ class VODMetadataAPITests(TestCase):
                 ("movie", movie.id, "DE - Bliss (2021)", "Bliss"),
             ],
         )
+
+    @patch("apps.vod.profile_selection.mark_profile_selections_outdated")
+    def test_title_cleanup_persists_clean_title_and_lookup_exclusion(
+        self, mark_outdated
+    ):
+        movie = Movie.objects.create(
+            name="4K-AMZ - Bliss (2021)",
+            display_name="4K-AMZ - Bliss (2021)",
+            year=2021,
+        )
+        request = self.factory.post(
+            "/api/vod/metadata/apply-title-cleanup/",
+            {
+                "title_rules": [
+                    {
+                        "match_type": "starts_with",
+                        "value": "4K-AMZ - ",
+                        "action": "remove",
+                    }
+                ],
+                "selections": [{"id": movie.id, "content_type": "movie"}],
+                "tmdb_lookup_excluded": True,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = VODMetadataViewSet.as_view(
+            {"post": "apply_title_cleanup"}
+        )(request)
+
+        self.assertEqual(response.status_code, 200)
+        movie.refresh_from_db()
+        self.assertEqual(movie.clean_title, "Bliss")
+        self.assertTrue(movie.tmdb_lookup_excluded)
+        self.assertEqual(movie.tmdb_enrichment_signature, "")
+        self.assertEqual(response.data["updated"], 1)
 
     @patch("apps.vod.tasks.enqueue_tmdb_enrichment")
     def test_tmdb_reset_clears_only_curated_snapshot_then_reloads_selection(

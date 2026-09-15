@@ -74,4 +74,25 @@ describe('VODFailoverRanking', () => {
 
     expect(onProviderOrderChange).toHaveBeenCalledWith(['7', '11']);
   });
+
+  it('can disable a ranking criterion without removing its position', () => {
+    const onDisabledChange = vi.fn();
+    render(
+      <MantineProvider>
+        <VODFailoverRanking
+          value={['audio_language', 'provider']}
+          onChange={vi.fn()}
+          disabled={[]}
+          onDisabledChange={onDisabledChange}
+        />
+      </MantineProvider>
+    );
+
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'Enable DUB language preference',
+      })
+    );
+    expect(onDisabledChange).toHaveBeenCalledWith(['audio_language']);
+  });
 });

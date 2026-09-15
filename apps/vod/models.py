@@ -110,6 +110,12 @@ class Series(models.Model):
         blank=True,
         help_text="Optional canonical title used for compact client output.",
     )
+    clean_title = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Rule-derived title used for TMDB lookup and title fallback.",
+    )
+    tmdb_lookup_excluded = models.BooleanField(default=False, db_index=True)
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)
@@ -179,6 +185,12 @@ class Movie(models.Model):
         blank=True,
         help_text="Optional canonical title used for compact client output.",
     )
+    clean_title = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Rule-derived title used for TMDB lookup and title fallback.",
+    )
+    tmdb_lookup_excluded = models.BooleanField(default=False, db_index=True)
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)

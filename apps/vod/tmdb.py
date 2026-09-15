@@ -45,11 +45,10 @@ def normalize_languages(values):
 
 
 TITLE_RULE_MATCH_TYPES = {"starts_with", "contains", "ends_with", "regex"}
-TITLE_RULE_ACTIONS = {"remove", "replace"}
 
 
 def normalize_title_rules(values):
-    """Validate ordered literal or advanced replacements for TMDB lookups."""
+    """Validate ordered removal rules for TMDB lookup titles."""
     if not isinstance(values, list):
         raise ValueError("Title rules must be a list")
     rules = []
@@ -68,17 +67,11 @@ def normalize_title_rules(values):
             if raw.get("value") is not None
             else raw.get("pattern") or ""
         ).strip()
-        action = str(raw.get("action") or "").strip().lower()
-        replacement = str(raw.get("replacement") or "")
-        if not action:
-            action = "replace" if replacement else "remove"
-        if action not in TITLE_RULE_ACTIONS:
-            raise ValueError(f"Title rule {index + 1} has an invalid action")
-        if action == "remove":
-            replacement = ""
+        action = "remove"
+        replacement = ""
         if not value:
             raise ValueError(f"Title rule {index + 1} needs match text")
-        if len(value) > 255 or len(replacement) > 255:
+        if len(value) > 255:
             raise ValueError(f"Title rule {index + 1} is too long")
         if match_type == "regex":
             try:
@@ -550,6 +543,13 @@ class Client:
         return str(rows[0].get("id")) if len(rows) == 1 and rows[0].get("id") else ""
 
     def search(self, query, year, media_type, language):
+        match_id, _status, _count = self.search_outcome(
+            query, year, media_type, language
+        )
+        return match_id
+
+    def search_outcome(self, query, year, media_type, language):
+        """Return an exact match plus a visible zero/ambiguous outcome."""
         rows = self.search_candidates(query, year, media_type, language)
         title_keys = ("title", "original_title")
         wanted = _normalized_title(query)
@@ -562,9 +562,11 @@ class Client:
             if year and candidate_year and abs(int(year) - int(candidate_year)) > 1:
                 continue
             candidates.append(row)
-        if len(candidates) != 1:
-            return ""
-        return str(candidates[0].get("id") or "")
+        if not candidates:
+            return "", "not_found", 0
+        if len(candidates) > 1:
+            return "", "ambiguous", len(candidates)
+        return str(candidates[0].get("id") or ""), "matched", 1
 
     def search_candidates(self, query, year, media_type, language):
         params = {

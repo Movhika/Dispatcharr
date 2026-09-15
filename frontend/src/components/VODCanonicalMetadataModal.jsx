@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box,
+  Alert,
   Button,
   Divider,
   Group,
@@ -39,6 +40,7 @@ const VODCanonicalMetadataModal = ({
   const [searching, setSearching] = useState(false);
   const [loadingCandidate, setLoadingCandidate] = useState('');
   const [saving, setSaving] = useState(false);
+  const [searched, setSearched] = useState(false);
 
   const primaryLanguage =
     content?.tmdb?.primary_language || content?.tmdb?.languages?.[0] || 'en-US';
@@ -49,9 +51,10 @@ const VODCanonicalMetadataModal = ({
     if (!opened) return;
     const next = canonicalMetadataValues(content);
     setValues(next);
-    setSearchTitle(next.title);
+    setSearchTitle(next.clean_title || next.title);
     setSearchYear(next.year);
     setResults([]);
+    setSearched(false);
   }, [content, opened]);
 
   const setValue = (key, value) =>
@@ -60,6 +63,8 @@ const VODCanonicalMetadataModal = ({
   const searchTMDB = async () => {
     if (!searchTitle.trim()) return;
     setSearching(true);
+    setSearched(false);
+    setResults([]);
     try {
       const response = await API.lookupVODTMDB({
         content_type: contentType,
@@ -67,6 +72,7 @@ const VODCanonicalMetadataModal = ({
         year: searchYear,
       });
       setResults(response.results || []);
+      setSearched(true);
     } catch (error) {
       showNotification({
         title: 'TMDB search failed',
@@ -88,7 +94,12 @@ const VODCanonicalMetadataModal = ({
       const candidateValues = canonicalMetadataValues({
         tmdb: response.metadata,
       });
-      setValues({ ...candidateValues, tmdb_id: String(candidateId) });
+      setValues((current) => ({
+        ...candidateValues,
+        tmdb_id: String(candidateId),
+        clean_title: current.clean_title,
+        tmdb_lookup_excluded: current.tmdb_lookup_excluded,
+      }));
     } catch (error) {
       showNotification({
         title: 'TMDB preview failed',
@@ -229,12 +240,27 @@ const VODCanonicalMetadataModal = ({
                 Search TMDB
               </Button>
             </Group>
+            {searched && !searching && results.length === 0 && (
+              <Alert color="red" title="No TMDB match">
+                Adjust the cleanup title or year and search again.
+              </Alert>
+            )}
+            {searched && !searching && results.length > 1 && (
+              <Alert color="yellow" title="Multiple TMDB matches">
+                Review the candidates and load the correct title.
+              </Alert>
+            )}
+            {searched && !searching && results.length === 1 && (
+              <Alert color="green" title="One TMDB match found">
+                Load the result to review its metadata before saving.
+              </Alert>
+            )}
             {results.length > 0 && (
               <ScrollArea h={220} offsetScrollbars>
                 <Stack gap="xs">{candidateRows}</Stack>
               </ScrollArea>
             )}
-            {!searching && results.length === 0 && (
+            {!searched && !searching && results.length === 0 && (
               <Text size="xs" c="dimmed">
                 Search results are only a preview. Nothing changes until you
                 save.
@@ -244,6 +270,24 @@ const VODCanonicalMetadataModal = ({
         </Box>
 
         <Divider label="Canonical values" labelPosition="left" />
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <TextInput
+            label="Cleanup title"
+            description="Stored lookup title used before the provider title."
+            value={values.clean_title}
+            onChange={(event) =>
+              setValue('clean_title', event.currentTarget.value)
+            }
+          />
+          <Switch
+            mt={28}
+            checked={values.tmdb_lookup_excluded}
+            onChange={(event) =>
+              setValue('tmdb_lookup_excluded', event.currentTarget.checked)
+            }
+            label="Exclude from automatic TMDB lookup"
+          />
+        </SimpleGrid>
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <TextInput
             label={`Primary title · ${primaryLanguage}`}

@@ -964,11 +964,13 @@ def relation_rank(
     dimensions = {
         "audio_language": _preference_score(
             metadata.get("audio_languages") or metadata.get("languages"),
-            constraints.get("required_audio_languages"),
+            constraints.get("audio_language_order")
+            or constraints.get("required_audio_languages"),
         ),
         "subtitle_language": _preference_score(
             metadata.get("subtitle_languages"),
-            constraints.get("required_subtitle_languages"),
+            constraints.get("subtitle_language_order")
+            or constraints.get("required_subtitle_languages"),
         ),
         "provider": _provider_preference_score(policy, relation.m3u_account_id),
         # Existing policies used "resolution". Keep it as a high-first alias.
@@ -983,6 +985,10 @@ def relation_rank(
         "resolution_desc" if key == "resolution" else key
         for key in list((policy.ranking if policy else None) or [])
     ]
+    disabled = {
+        "resolution_desc" if key == "resolution" else key
+        for key in constraints.get("disabled_ranking", [])
+    }
     requested_resolution = next(
         (
             key for key in requested
@@ -1006,7 +1012,10 @@ def relation_rank(
     ]
     order = list(
         dict.fromkeys(
-            [key for key in requested + allowed_order if key in dimensions]
+            [
+                key for key in requested + allowed_order
+                if key in dimensions and key not in disabled
+            ]
         )
     )
     return (

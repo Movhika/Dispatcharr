@@ -58,6 +58,7 @@ import { normalizeLanguageCodes } from '../utils/languageCodes.js';
 import { LanguageSelect } from '../components/LanguagePicker.jsx';
 import VODMetadataFields from '../components/VODMetadataFields.jsx';
 import VODProfileRebuildNotice from '../components/VODProfileRebuildNotice.jsx';
+import VODMetadataModal from '../components/VODMetadataModal.jsx';
 import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
 import VideoFeaturePicker from '../components/VideoFeaturePicker.jsx';
 import {
@@ -79,10 +80,6 @@ const VODSourceManagerModal = React.lazy(
 const VODOutputProfilesModal = React.lazy(
   () => import('../components/VODOutputProfilesModal')
 );
-const VODMetadataModal = React.lazy(
-  () => import('../components/VODMetadataModal')
-);
-
 const itemKey = (item) => `${item.contentType}:${item.relation_id || item.id}`;
 const logoUrl = (item) =>
   item.artwork_url ||
@@ -152,6 +149,9 @@ const VODsPage = () => {
   const [sourceManagerOpened, sourceManagerHandlers] = useDisclosure(false);
   const [profilesOpened, profilesHandlers] = useDisclosure(false);
   const [metadataOpened, metadataHandlers] = useDisclosure(false);
+  const [metadataInitialTab, setMetadataInitialTab] = useState('tmdb');
+  const [metadataStatus, setMetadataStatus] = useState(null);
+  const [metadataStatusLoading, setMetadataStatusLoading] = useState(false);
   const [bulkEditorOpened, bulkEditorHandlers] = useDisclosure(false);
 
   const items = useMemo(
@@ -171,6 +171,22 @@ const VODsPage = () => {
   const selectedCount = selectAllMatching
     ? Math.max(0, totalCount - selected.size)
     : selected.size;
+  const canonicalSelectionContext = useMemo(() => {
+    if (filters.representation !== 'canonical' || !selectedCount) return null;
+    const rows = [...selected].map((key) => {
+      const [content_type, id] = key.split(':');
+      return { content_type, id: Number(id) };
+    });
+    return {
+      count: selectedCount,
+      selections: selectAllMatching ? [] : rows,
+      select_all: selectAllMatching,
+      exclude_selections: selectAllMatching ? rows : [],
+      filters: {
+        ...filters,
+      },
+    };
+  }, [filters, selectAllMatching, selected, selectedCount]);
 
   // Hydrate page size from localStorage before the first content fetch so a
   // stored size that differs from the store default does not cause a refetch.
@@ -224,6 +240,13 @@ const VODsPage = () => {
   useEffect(() => {
     if (!playlists.length) fetchPlaylists();
   }, [fetchPlaylists, playlists.length]);
+
+  useEffect(() => {
+    if (!vodAllowed || user?.user_level < 10) return;
+    API.getVODMetadataStatus(true)
+      .then(setMetadataStatus)
+      .catch(() => setMetadataStatus(null));
+  }, [user?.user_level, vodAllowed]);
 
   // Keep fast typing local. Updating the shared filters for every character
   // used to launch overlapping full-catalog PostgreSQL searches ("b", "bl",
@@ -286,6 +309,27 @@ const VODsPage = () => {
   const toggleAllMatching = (checked) => {
     setSelectAllMatching(checked);
     setSelected(new Set());
+  };
+
+  const openMetadata = async (tab) => {
+    setMetadataInitialTab(tab);
+    if (!metadataStatus) {
+      setMetadataStatusLoading(true);
+      try {
+        const status = await API.getVODMetadataStatus(true);
+        setMetadataStatus(status);
+      } catch (error) {
+        showNotification({
+          title: 'TMDB settings could not be loaded',
+          message: error?.message || 'Please retry.',
+          color: 'red',
+        });
+        return;
+      } finally {
+        setMetadataStatusLoading(false);
+      }
+    }
+    metadataHandlers.open();
   };
 
   const openItem = (item) => {
@@ -440,7 +484,7 @@ const VODsPage = () => {
           <Group gap="md">
             <Title order={2}>Video on Demand</Title>
             <Text c="dimmed">
-              {filters.representation === 'variants' && viewMode === 'list'
+              {viewMode === 'list'
                 ? `${selectedCount} selected · `
                 : ''}
               {totalCount} matching
@@ -486,11 +530,24 @@ const VODsPage = () => {
                   <Button
                     variant="default"
                     leftSection={<DatabaseZap size={16} />}
-                    onClick={metadataHandlers.open}
+                    loading={metadataStatusLoading}
+                    onClick={() => openMetadata('tmdb')}
                   >
                     Metadata
                   </Button>
                 )}
+                {filters.representation === 'canonical' &&
+                  viewMode === 'list' && (
+                    <Button
+                      variant="default"
+                      leftSection={<Wrench size={16} />}
+                      disabled={selectedCount === 0}
+                      loading={metadataStatusLoading}
+                      onClick={() => openMetadata('cleanup')}
+                    >
+                      Edit selected ({selectedCount})
+                    </Button>
+                  )}
                 <Button
                   variant="default"
                   leftSection={<SlidersHorizontal size={16} />}
@@ -738,8 +795,7 @@ const VODsPage = () => {
             >
               <TableThead>
                 <TableTr>
-                  {user?.user_level >= 10 &&
-                    filters.representation === 'variants' && (
+                  {user?.user_level >= 10 && (
                       <TableTh w={44}>
                         <Checkbox
                           aria-label="Select all filtered VODs"
@@ -777,8 +833,7 @@ const VODsPage = () => {
               <TableTbody>
                 {items.map((item) => (
                   <TableTr key={itemKey(item)}>
-                    {user?.user_level >= 10 &&
-                      filters.representation === 'variants' && (
+                    {user?.user_level >= 10 && (
                         <TableTd>
                           <Checkbox
                             aria-label={`Select ${item.name}`}
@@ -811,8 +866,24 @@ const VODsPage = () => {
                     </TableTd>
                     <TableTd>
                       <Text fw={500}>{item.name}</Text>
-                      <Text size="xs" c="dimmed">
-                        {item.tmdb_id ? `TMDB ${item.tmdb_id}` : 'No TMDB ID'}
+                      <Text
+                        size="xs"
+                        c={
+                          item.tmdb_lookup_excluded ||
+                          ['not_found', 'ambiguous'].includes(item.tmdb_status)
+                            ? 'orange.5'
+                            : 'dimmed'
+                        }
+                      >
+                        {item.tmdb_lookup_excluded
+                          ? 'TMDB lookup excluded'
+                          : item.tmdb_status === 'ambiguous'
+                            ? 'Multiple TMDB matches'
+                            : item.tmdb_status === 'not_found'
+                              ? 'No TMDB match found'
+                              : item.tmdb_id
+                                ? `TMDB ${item.tmdb_id}`
+                                : 'No TMDB ID'}
                       </Text>
                     </TableTd>
                     <TableTd>
@@ -937,8 +1008,15 @@ const VODsPage = () => {
                       <Play size={36} color="var(--mantine-color-dimmed)" />
                     </Flex>
                   )}
-                  <Stack gap={2} p="xs">
-                    <Text fw={600} size="sm" lineClamp={2}>
+                  <Stack gap={2} p="xs" pr="sm">
+                    <Text
+                      fw={600}
+                      size="sm"
+                      lineClamp={2}
+                      title={item.name}
+                      pr={2}
+                      style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                    >
                       {item.name}
                     </Text>
                     <Text size="xs" c="dimmed">
@@ -1091,7 +1169,19 @@ const VODsPage = () => {
         <Suspense fallback={<LoadingOverlay />}>
           <VODMetadataModal
             opened={metadataOpened}
-            onClose={metadataHandlers.close}
+            onClose={() => {
+              metadataHandlers.close();
+              setMetadataInitialTab('tmdb');
+            }}
+            initialStatus={metadataStatus}
+            initialTab={metadataInitialTab}
+            selectionContext={
+              metadataInitialTab === 'cleanup'
+                ? canonicalSelectionContext
+                : null
+            }
+            onStatusChange={setMetadataStatus}
+            onCatalogChanged={() => fetchContent()}
           />
         </Suspense>
       </ErrorBoundary>

@@ -432,6 +432,9 @@ describe('VODOutputProfilesModal', () => {
             source_rules: [],
             content_default_action: 'exclude',
             category_import_rules: [],
+            disabled_ranking: [],
+            audio_language_order: [],
+            subtitle_language_order: [],
           },
           provider_order: [22, 11],
         })

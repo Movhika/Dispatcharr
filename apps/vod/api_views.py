@@ -95,6 +95,9 @@ def _tmdb_content_payload(content):
         "provider_id": str(content.tmdb_id or ""),
         "match_method": metadata.get("match_method") or "",
         "status": content.tmdb_status or "",
+        "candidate_count": int(metadata.get("candidate_count") or 0),
+        "clean_title": content.clean_title or "",
+        "lookup_excluded": bool(content.tmdb_lookup_excluded),
         "external_ids": {
             "imdb_id": str(
                 external_ids.get("imdb_id")
@@ -1515,13 +1518,30 @@ class VODMetadataViewSet(viewsets.ViewSet):
                 "Only administrators can manage VOD metadata enrichment."
             )
 
-    def list(self, request):
-        self._admin_only(request)
+    @staticmethod
+    def _settings_payload():
         settings = CoreSettings.get_vod_settings()
         env_configured = bool(
             os.environ.get("TMDB_API_READ_ACCESS_TOKEN")
             or os.environ.get("TMDB_API_KEY")
         )
+        return {
+            "token_configured": bool(CoreSettings.get_tmdb_api_token()),
+            "token_source": "environment" if env_configured else (
+                "stored" if settings.get("tmdb_api_token") else ""
+            ),
+            "languages": CoreSettings.get_tmdb_languages(),
+            "auto_enrich": CoreSettings.get_tmdb_auto_enrich(),
+            "match_missing": CoreSettings.get_tmdb_match_missing(),
+            "prefer_artwork": CoreSettings.get_tmdb_prefer_artwork(),
+            "title_rules": CoreSettings.get_tmdb_title_rules(),
+        }
+
+    def list(self, request):
+        self._admin_only(request)
+        settings_payload = self._settings_payload()
+        if request.query_params.get("settings_only") == "1":
+            return Response({"settings": settings_payload})
         movie_total = Movie.objects.filter(
             m3u_relations__m3u_account__is_active=True
         ).distinct().count()
@@ -1530,17 +1550,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
         ).distinct().count()
         return Response(
             {
-                "settings": {
-                    "token_configured": bool(CoreSettings.get_tmdb_api_token()),
-                    "token_source": "environment" if env_configured else (
-                        "stored" if settings.get("tmdb_api_token") else ""
-                    ),
-                    "languages": CoreSettings.get_tmdb_languages(),
-                    "auto_enrich": CoreSettings.get_tmdb_auto_enrich(),
-                    "match_missing": CoreSettings.get_tmdb_match_missing(),
-                    "prefer_artwork": CoreSettings.get_tmdb_prefer_artwork(),
-                    "title_rules": CoreSettings.get_tmdb_title_rules(),
-                },
+                "settings": settings_payload,
                 "catalog": {
                     "movies": movie_total,
                     "series": series_total,
@@ -1615,7 +1625,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
             from .catalog_cache import bump_catalog_generation
 
             bump_catalog_generation(invalidate_selections=False)
-        return self.list(request)
+        return Response({"settings": self._settings_payload()})
 
     @action(detail=False, methods=["post"], url_path="tmdb-lookup")
     def tmdb_lookup(self, request):
@@ -1755,6 +1765,16 @@ class VODMetadataViewSet(viewsets.ViewSet):
             "wikidata_id": text_value("wikidata_id", 50),
         }
         tmdb_id = text_value("tmdb_id", 50)
+        clean_title = (
+            text_value("clean_title", 255)
+            if "clean_title" in values
+            else content.clean_title
+        )
+        tmdb_lookup_excluded = (
+            values.get("tmdb_lookup_excluded") is True
+            if "tmdb_lookup_excluded" in values
+            else content.tmdb_lookup_excluded
+        )
         if tmdb_id and (not tmdb_id.isdigit() or int(tmdb_id) < 1):
             raise DRFValidationError({"tmdb_id": "Enter a positive numeric TMDB ID."})
         raw_keywords = values.get("keywords") or []
@@ -1853,6 +1873,8 @@ class VODMetadataViewSet(viewsets.ViewSet):
         }
         update = {
             "display_name": title,
+            "clean_title": clean_title,
+            "tmdb_lookup_excluded": tmdb_lookup_excluded,
             "description": description,
             "year": year,
             "rating": manual_overrides["rating"],
@@ -1968,11 +1990,23 @@ class VODMetadataViewSet(viewsets.ViewSet):
                 "missing_metadata",
             }:
                 raise DRFValidationError({"filters": "Invalid metadata state."})
-            selection_filters = {
-                "type": content_type,
-                "search": str(filters.get("search") or "").strip()[:255],
-                "metadata_status": metadata_status,
+            allowed_filter_names = {
+                "type", "search", "category", "m3u_account",
+                "audio_language", "subtitle_language", "resolution",
+                "container_extension", "video_feature", "metadata_status",
+                "genre", "anime_mode", "adult_mode", "library_added_after",
+                "library_added_before",
             }
+            selection_filters = {
+                key: value
+                for key, value in filters.items()
+                if key in allowed_filter_names
+            }
+            selection_filters["type"] = content_type
+            selection_filters["search"] = str(
+                selection_filters.get("search") or ""
+            ).strip()[:255]
+            selection_filters["metadata_status"] = metadata_status
 
         from .tasks import enqueue_tmdb_enrichment
 
@@ -2146,8 +2180,10 @@ class VODMetadataViewSet(viewsets.ViewSet):
             raise DRFValidationError({"title_rules": str(exc)}) from exc
         search = str(request.data.get("search") or "").strip()
         requested_items = request.data.get("items")
+        select_all = request.data.get("select_all") is True
+        exclusions = request.data.get("exclude_selections") or []
         rows = []
-        if requested_items is not None:
+        if requested_items is not None and not select_all:
             if not isinstance(requested_items, list) or len(requested_items) > 100:
                 raise DRFValidationError(
                     {"items": "Choose at most 100 canonical titles to preview."}
@@ -2171,7 +2207,13 @@ class VODMetadataViewSet(viewsets.ViewSet):
             for model, content_type in ((Movie, "movie"), (Series, "series")):
                 for content in model.objects.filter(
                     id__in=ids_by_type[content_type]
-                ).values("id", "name", "display_name", "year"):
+                ).filter(
+                    Q(tmdb_match_id=""),
+                    Q(tmdb_id__isnull=True) | Q(tmdb_id=""),
+                ).values(
+                    "id", "name", "display_name", "clean_title", "year",
+                    "tmdb_lookup_excluded",
+                ):
                     content_by_key[(content_type, content["id"])] = content
 
             for content_type, content_id in requested_keys:
@@ -2190,26 +2232,60 @@ class VODMetadataViewSet(viewsets.ViewSet):
                         "id": content_id,
                         "content_type": content_type,
                         "before": before,
+                        "current": content["clean_title"] or "",
                         "after": after,
                         "changed": before != after,
                         "year": content["year"],
+                        "lookup_excluded": content["tmdb_lookup_excluded"],
                     }
                 )
             return Response({"results": rows})
+
+        excluded_ids = {"movie": set(), "series": set()}
+        if select_all:
+            if not isinstance(exclusions, list) or len(exclusions) > 500:
+                raise DRFValidationError(
+                    {"exclude_selections": "Choose at most 500 exclusions."}
+                )
+            for item in exclusions:
+                content_type = str((item or {}).get("content_type") or "")
+                if content_type not in excluded_ids:
+                    raise DRFValidationError(
+                        {"exclude_selections": "Invalid content type."}
+                    )
+                try:
+                    excluded_ids[content_type].add(int(item.get("id")))
+                except (TypeError, ValueError) as exc:
+                    raise DRFValidationError(
+                        {"exclude_selections": "Invalid content ID."}
+                    ) from exc
+            filtered_movies, filtered_series = _filtered_vod_content(
+                request.data.get("filters") or {}
+            )
 
         for model, content_type, relation_name in (
             (Movie, "movie", "m3u_relations"),
             (Series, "series", "m3u_relations"),
         ):
-            queryset = model.objects.filter(
-                **{f"{relation_name}__m3u_account__is_active": True}
+            if select_all:
+                queryset = (
+                    filtered_movies if content_type == "movie"
+                    else filtered_series
+                ).exclude(pk__in=excluded_ids[content_type])
+            else:
+                queryset = model.objects.filter(
+                    **{f"{relation_name}__m3u_account__is_active": True}
+                )
+            queryset = queryset.filter(
+                Q(tmdb_match_id=""), Q(tmdb_id__isnull=True) | Q(tmdb_id="")
             ).distinct()
             if search:
                 queryset = queryset.filter(
                     Q(name__icontains=search) | Q(display_name__icontains=search)
                 )
             for content in queryset.values(
-                "id", "name", "display_name", "year"
+                "id", "name", "display_name", "clean_title", "year",
+                "tmdb_lookup_excluded",
             ).order_by("id")[:100]:
                 before = str(content["display_name"] or content["name"] or "")
                 after = clean_lookup_title(
@@ -2223,13 +2299,140 @@ class VODMetadataViewSet(viewsets.ViewSet):
                         "id": content["id"],
                         "content_type": content_type,
                         "before": before,
+                        "current": content["clean_title"] or "",
                         "after": after,
                         "changed": before != after,
                         "year": content["year"],
+                        "lookup_excluded": content["tmdb_lookup_excluded"],
                     }
                 )
         rows.sort(key=lambda row: (row["before"].casefold(), row["content_type"], row["id"]))
         return Response({"results": rows[:50]})
+
+    @action(detail=False, methods=["post"], url_path="apply-title-cleanup")
+    def apply_title_cleanup(self, request):
+        """Persist rule-derived lookup titles for selected canonical rows."""
+        self._admin_only(request)
+        from .catalog_cache import bump_catalog_generation
+        from .profile_selection import (
+            mark_profile_selections_outdated,
+            profile_ids_using_canonical_content,
+        )
+        from .tmdb import clean_lookup_title, normalize_title_rules
+
+        try:
+            rules = normalize_title_rules(
+                request.data.get("title_rules", CoreSettings.get_tmdb_title_rules())
+            )
+        except ValueError as exc:
+            raise DRFValidationError({"title_rules": str(exc)}) from exc
+        selections = request.data.get("selections") or []
+        select_all = request.data.get("select_all") is True
+        exclusions = request.data.get("exclude_selections") or []
+        filters = request.data.get("filters") or {}
+        if not isinstance(selections, list) or not isinstance(exclusions, list):
+            raise DRFValidationError({"selections": "Invalid selection."})
+        if select_all and (selections or len(exclusions) > 500):
+            raise DRFValidationError(
+                {"selections": "Select-all accepts at most 500 exclusions."}
+            )
+        if not select_all and not 1 <= len(selections) <= 500:
+            raise DRFValidationError(
+                {"selections": "Choose between 1 and 500 canonical titles."}
+            )
+
+        def ids_by_type(rows):
+            result = {"movie": set(), "series": set()}
+            for row in rows:
+                content_type = str((row or {}).get("content_type") or "")
+                if content_type not in result:
+                    raise DRFValidationError({"selections": "Invalid content type."})
+                try:
+                    result[content_type].add(int(row.get("id")))
+                except (TypeError, ValueError) as exc:
+                    raise DRFValidationError({"selections": "Invalid content ID."}) from exc
+            return result
+
+        selected = ids_by_type(selections)
+        excluded = ids_by_type(exclusions)
+        filtered_movies, filtered_series = (
+            _filtered_vod_content(filters)
+            if select_all
+            else (Movie.objects.none(), Series.objects.none())
+        )
+        changed = {"movie": [], "series": []}
+        output_changed = {"movie": [], "series": []}
+        set_excluded = request.data.get("tmdb_lookup_excluded")
+        for model, content_type in (
+            (Movie, "movie"),
+            (Series, "series"),
+        ):
+            queryset = model.objects.all()
+            if select_all:
+                queryset = (
+                    filtered_movies if content_type == "movie" else filtered_series
+                )
+                queryset = queryset.exclude(pk__in=excluded[content_type])
+            else:
+                queryset = queryset.filter(pk__in=selected[content_type])
+            updates = []
+            for content in queryset.only(
+                "id", "name", "display_name", "clean_title", "year",
+                "tmdb_lookup_excluded",
+            ).iterator(chunk_size=500):
+                clean_title = clean_lookup_title(
+                    content.name,
+                    display_name=content.display_name,
+                    year=content.year,
+                    rules=rules,
+                )[:255]
+                lookup_excluded = (
+                    set_excluded
+                    if isinstance(set_excluded, bool)
+                    else content.tmdb_lookup_excluded
+                )
+                if (
+                    clean_title == content.clean_title
+                    and lookup_excluded == content.tmdb_lookup_excluded
+                ):
+                    continue
+                if clean_title != content.clean_title:
+                    output_changed[content_type].append(content.id)
+                content.clean_title = clean_title
+                content.tmdb_lookup_excluded = lookup_excluded
+                content.tmdb_enrichment_signature = ""
+                updates.append(content)
+                changed[content_type].append(content.id)
+            if updates:
+                model.objects.bulk_update(
+                    updates,
+                    [
+                        "clean_title", "tmdb_lookup_excluded",
+                        "tmdb_enrichment_signature",
+                    ],
+                    batch_size=500,
+                )
+
+        changed_count = len(changed["movie"]) + len(changed["series"])
+        affected_profiles = []
+        if changed_count:
+            bump_catalog_generation(invalidate_selections=False)
+        output_changed_count = (
+            len(output_changed["movie"]) + len(output_changed["series"])
+        )
+        if output_changed_count:
+            affected_profiles = mark_profile_selections_outdated(
+                trigger_reason="Canonical VOD cleanup titles changed",
+                policy_ids=profile_ids_using_canonical_content(
+                    movie_ids=output_changed["movie"],
+                    series_ids=output_changed["series"],
+                ),
+            )
+        return Response({
+            "updated": changed_count,
+            "profile_update": "outdated" if affected_profiles else "not_required",
+            "profiles_affected": affected_profiles,
+        })
 
 
 class VODAccessPolicyViewSet(viewsets.ModelViewSet):
@@ -4721,6 +4924,8 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     "tmdb_id": content.tmdb_match_id or content.tmdb_id or "",
                     "imdb_id": content.tmdb_imdb_id or content.imdb_id or "",
                     "tmdb_status": content.tmdb_status or "",
+                    "clean_title": content.clean_title or "",
+                    "tmdb_lookup_excluded": bool(content.tmdb_lookup_excluded),
                     "tmdb_enriched_at": (
                         content.tmdb_enriched_at.isoformat()
                         if content.tmdb_enriched_at else None

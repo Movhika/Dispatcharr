@@ -3,7 +3,6 @@ import {
   ActionIcon,
   Box,
   Button,
-  Flex,
   Group,
   Modal,
   ScrollArea,
@@ -59,11 +58,6 @@ const MATCH_TYPE_OPTIONS = [
   { value: 'regex', label: 'Advanced regex' },
 ];
 
-const ACTION_OPTIONS = [
-  { value: 'remove', label: 'Remove' },
-  { value: 'replace', label: 'Replace with' },
-];
-
 const matchPlaceholder = (matchType) => {
   if (matchType === 'starts_with') return 'For example 4K-D+ -';
   if (matchType === 'contains') return 'Text anywhere in the title';
@@ -71,7 +65,15 @@ const matchPlaceholder = (matchType) => {
   return 'Regular expression';
 };
 
-const VODMetadataModal = ({ opened, onClose }) => {
+const VODMetadataModal = ({
+  opened,
+  onClose,
+  initialStatus = null,
+  initialTab = 'tmdb',
+  selectionContext = null,
+  onStatusChange,
+  onCatalogChanged,
+}) => {
   const [activeTab, setActiveTab] = useState('tmdb');
   const [metadataStatus, setMetadataStatus] = useState(null);
   const [titleRules, setTitleRules] = useState([]);
@@ -82,17 +84,26 @@ const VODMetadataModal = ({ opened, onClose }) => {
   const [previewingTitles, setPreviewingTitles] = useState(false);
   const [savingTitleRules, setSavingTitleRules] = useState(false);
   const [titleRuleError, setTitleRuleError] = useState('');
+  const [applyingSelection, setApplyingSelection] = useState(false);
+
+  const hydrateStatus = useCallback((status) => {
+    setMetadataStatus(status);
+    const rules = normalizeRules(status?.settings?.title_rules).map((rule) => ({
+      ...rule,
+      action: 'remove',
+      replacement: '',
+    }));
+    setTitleRules(rules);
+    setSavedTitleRules(rules);
+    setTitlePreview([]);
+    setTitleRuleError('');
+  }, []);
 
   const loadRules = useCallback(async () => {
     setLoadingRules(true);
     try {
-      const status = await API.getVODMetadataStatus();
-      setMetadataStatus(status);
-      const rules = normalizeRules(status?.settings?.title_rules);
-      setTitleRules(rules);
-      setSavedTitleRules(rules);
-      setTitlePreview([]);
-      setTitleRuleError('');
+      const status = await API.getVODMetadataStatus(true);
+      hydrateStatus(status);
     } catch (error) {
       setMetadataStatus(null);
       setTitleRuleError(
@@ -103,18 +114,16 @@ const VODMetadataModal = ({ opened, onClose }) => {
     } finally {
       setLoadingRules(false);
     }
-  }, []);
+  }, [hydrateStatus]);
 
   useEffect(() => {
-    if (opened) loadRules();
-    else setActiveTab('tmdb');
-  }, [loadRules, opened]);
+    if (!opened) return;
+    setActiveTab(initialTab);
+    if (initialStatus) hydrateStatus(initialStatus);
+    else loadRules();
+  }, [hydrateStatus, initialStatus, initialTab, loadRules, opened]);
 
-  const titleRulesValid = titleRules.every(
-    (rule) =>
-      rule.value.trim() &&
-      (rule.action !== 'replace' || rule.replacement.length > 0)
-  );
+  const titleRulesValid = titleRules.every((rule) => rule.value.trim());
   const titleRulesDirty =
     rulesFingerprint(titleRules) !== rulesFingerprint(savedTitleRules);
   const enabledRuleCount = useMemo(
@@ -134,11 +143,7 @@ const VODMetadataModal = ({ opened, onClose }) => {
 
   const previewTitleRules = async (rules = titleRules) => {
     if (
-      !rules.every(
-        (rule) =>
-          rule.value.trim() &&
-          (rule.action !== 'replace' || rule.replacement.length > 0)
-      )
+      !rules.every((rule) => rule.value.trim())
     ) {
       return;
     }
@@ -147,8 +152,17 @@ const VODMetadataModal = ({ opened, onClose }) => {
     try {
       const response = await API.previewVODMetadataTitles(
         rules,
-        null,
-        previewSearch.trim()
+        selectionContext && !selectionContext.select_all
+          ? selectionContext.selections.slice(0, 100)
+          : null,
+        previewSearch.trim(),
+        selectionContext?.select_all
+          ? {
+              select_all: true,
+              filters: selectionContext.filters,
+              exclude_selections: selectionContext.exclude_selections,
+            }
+          : {}
       );
       setTitlePreview(response.results || []);
     } catch (error) {
@@ -175,6 +189,8 @@ const VODMetadataModal = ({ opened, onClose }) => {
       const saved = normalizeRules(next?.settings?.title_rules);
       setTitleRules(saved);
       setSavedTitleRules(saved);
+      setMetadataStatus(next);
+      onStatusChange?.(next);
       await previewTitleRules(saved);
       showNotification({
         title: 'Title cleanup saved',
@@ -190,6 +206,50 @@ const VODMetadataModal = ({ opened, onClose }) => {
       );
     } finally {
       setSavingTitleRules(false);
+    }
+  };
+
+  const runSelectionAction = async (action, lookupExcluded) => {
+    if (!selectionContext) return;
+    setApplyingSelection(true);
+    setTitleRuleError('');
+    try {
+      let result;
+      if (action === 'enrich') {
+        result = await API.refreshVODMetadata([], {
+          ...selectionContext,
+          force: true,
+        });
+        showNotification({
+          title: 'TMDB enrichment queued',
+          message: `${selectionContext.count} selected titles will be processed.`,
+          color: 'green',
+        });
+      } else {
+        result = await API.applyVODTitleCleanup(titleRules, {
+          ...selectionContext,
+          ...(typeof lookupExcluded === 'boolean'
+            ? { tmdb_lookup_excluded: lookupExcluded }
+            : {}),
+        });
+        showNotification({
+          title:
+            typeof lookupExcluded === 'boolean'
+              ? lookupExcluded
+                ? 'TMDB lookup disabled'
+                : 'TMDB lookup enabled'
+              : 'Cleanup titles saved',
+          message: `${result.updated || 0} canonical titles were updated.`,
+          color: 'green',
+        });
+      }
+      onCatalogChanged?.(result);
+    } catch (error) {
+      setTitleRuleError(
+        error?.body?.detail || error?.message || 'The selected action failed.'
+      );
+    } finally {
+      setApplyingSelection(false);
     }
   };
 
@@ -213,21 +273,15 @@ const VODMetadataModal = ({ opened, onClose }) => {
             status={metadataStatus}
             loading={!metadataStatus && loadingRules}
             error={!metadataStatus ? titleRuleError : ''}
-            onSaved={setMetadataStatus}
+            onSaved={(next) => {
+              hydrateStatus(next);
+              onStatusChange?.(next);
+            }}
           />
         </TabsPanel>
 
         <TabsPanel value="cleanup" pt="md">
           <Stack gap="md">
-            <Text size="sm" c="dimmed">
-              These ordered rules only prepare the search title sent to TMDB.
-              Stored provider and canonical titles remain unchanged. Simple
-              rules match their text literally, including characters such as +.
-              Advanced regex is available only for exceptional cases. No
-              provider prefix is removed automatically; the release year is sent
-              to TMDB separately.
-            </Text>
-
             <Group justify="space-between" align="end" wrap="wrap">
               <TextInput
                 label="Preview titles containing"
@@ -282,6 +336,48 @@ const VODMetadataModal = ({ opened, onClose }) => {
               </Group>
             </Group>
 
+            {selectionContext && (
+              <Group justify="space-between" wrap="wrap">
+                <Text size="sm" fw={600}>
+                  {selectionContext.count} canonical titles selected
+                </Text>
+                <Group gap="xs">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    loading={applyingSelection}
+                    disabled={!titleRulesValid}
+                    onClick={() => runSelectionAction('cleanup')}
+                  >
+                    Apply cleanup
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="default"
+                    loading={applyingSelection}
+                    onClick={() => runSelectionAction('cleanup', true)}
+                  >
+                    Exclude from TMDB
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="default"
+                    loading={applyingSelection}
+                    onClick={() => runSelectionAction('cleanup', false)}
+                  >
+                    Allow TMDB lookup
+                  </Button>
+                  <Button
+                    size="xs"
+                    loading={applyingSelection}
+                    onClick={() => runSelectionAction('enrich')}
+                  >
+                    Get TMDB data
+                  </Button>
+                </Group>
+              </Group>
+            )}
+
             {!titleRules.length && !loadingRules && (
               <Text size="sm" c="dimmed">
                 No title-cleanup rules are configured.
@@ -332,36 +428,6 @@ const VODMetadataModal = ({ opened, onClose }) => {
                         })
                       }
                       style={{ flex: 2 }}
-                    />
-                    <Select
-                      label="Action"
-                      data={ACTION_OPTIONS}
-                      value={rule.action}
-                      allowDeselect={false}
-                      onChange={(value) =>
-                        updateTitleRule(index, {
-                          action: value || 'remove',
-                          ...(value === 'remove' ? { replacement: '' } : {}),
-                        })
-                      }
-                      w={145}
-                    />
-                    <TextInput
-                      label="Replace with"
-                      placeholder="Replacement text"
-                      value={rule.replacement}
-                      disabled={rule.action !== 'replace'}
-                      error={
-                        rule.action === 'replace' && !rule.replacement.length
-                          ? 'Replacement required'
-                          : null
-                      }
-                      onChange={(event) =>
-                        updateTitleRule(index, {
-                          replacement: event.currentTarget.value,
-                        })
-                      }
-                      style={{ flex: 1 }}
                     />
                     <Switch
                       aria-label={`Enable title cleanup rule ${index + 1}`}
@@ -445,16 +511,6 @@ const VODMetadataModal = ({ opened, onClose }) => {
               </Stack>
             )}
 
-            {!previewingTitles &&
-              titlePreview.length === 0 &&
-              !titleRuleError && (
-                <Flex justify="center" py="md">
-                  <Text size="sm" c="dimmed">
-                    Preview the current rules against a sample of stored VOD
-                    titles before saving.
-                  </Text>
-                </Flex>
-              )}
           </Stack>
         </TabsPanel>
       </Tabs>

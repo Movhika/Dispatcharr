@@ -1,5 +1,13 @@
 import React, { useMemo } from 'react';
-import { ActionIcon, Group, Paper, Select, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Group,
+  Paper,
+  Select,
+  Stack,
+  Switch,
+  Text,
+} from '@mantine/core';
 import {
   closestCenter,
   DndContext,
@@ -19,18 +27,19 @@ import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { ChevronDown, ChevronUp, GripVertical, Trash2 } from 'lucide-react';
 import { normalizeVODFailoverRanking } from '../utils/vodFailoverRanking.js';
+import { LANGUAGE_OPTIONS } from '../utils/languageCodes.js';
 
 const criterionDetails = (criterion) => {
   if (criterion === 'audio_language') {
     return {
       title: 'DUB language preference',
-      description: 'Uses the order of the allowed DUB languages above.',
+      description: 'Prefers the first matching language in this row.',
     };
   }
   if (criterion === 'subtitle_language') {
     return {
       title: 'SUB language preference',
-      description: 'Uses the order of the allowed SUB languages above.',
+      description: 'Prefers the first matching language in this row.',
     };
   }
   if (criterion === 'metadata_completeness') {
@@ -52,7 +61,7 @@ const criterionDetails = (criterion) => {
   };
 };
 
-const ProviderOrder = ({ value, options, onChange }) => {
+const ProviderOrder = ({ value, options, onChange, itemLabel = 'provider' }) => {
   const order = [...new Set((value || []).map(String))];
   const labels = new Map(
     (options || []).map((option) => [String(option.value), option.label])
@@ -75,7 +84,7 @@ const ProviderOrder = ({ value, options, onChange }) => {
             <Group justify="space-between" wrap="nowrap">
               <Text size="sm" truncate>
                 {labels.get(providerId) ||
-                  `Unavailable provider (${providerId})`}
+                  `Unavailable ${itemLabel} (${providerId})`}
               </Text>
               <Group gap={4} wrap="nowrap">
                 <ActionIcon
@@ -110,6 +119,10 @@ const ProviderOrder = ({ value, options, onChange }) => {
             </Group>
           </Paper>
         ))
+      ) : itemLabel === 'language' ? (
+        <Text size="xs" c="dimmed">
+          Add languages from highest to lowest preference.
+        </Text>
       ) : (
         <Text size="xs" c="dimmed">
           No profile-specific order. The global M3U account priority remains the
@@ -117,8 +130,8 @@ const ProviderOrder = ({ value, options, onChange }) => {
         </Text>
       )}
       <Select
-        aria-label="Add provider preference"
-        placeholder="Add provider"
+        aria-label={`Add ${itemLabel} preference`}
+        placeholder={`Add ${itemLabel}`}
         searchable
         disabled={!available.length}
         data={available}
@@ -137,6 +150,10 @@ const SortableCriterion = ({
   providerOrder,
   providerOptions,
   onProviderOrderChange,
+  enabled,
+  onEnabledChange,
+  languageOrder,
+  onLanguageOrderChange,
 }) => {
   const {
     attributes,
@@ -156,7 +173,7 @@ const SortableCriterion = ({
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.65 : 1,
+        opacity: enabled ? (isDragging ? 0.65 : 1) : 0.55,
         position: 'relative',
         zIndex: isDragging ? 2 : 0,
         height: '100%',
@@ -183,7 +200,12 @@ const SortableCriterion = ({
             </Text>
           </Stack>
         </Group>
-        {(criterion === 'resolution_desc' ||
+        <Switch
+          aria-label={`Enable ${details.title}`}
+          checked={enabled}
+          onChange={(event) => onEnabledChange(event.currentTarget.checked)}
+        />
+        {enabled && (criterion === 'resolution_desc' ||
           criterion === 'resolution_asc') && (
           <Select
             aria-label="Resolution preference"
@@ -197,11 +219,19 @@ const SortableCriterion = ({
           />
         )}
       </Group>
-      {criterion === 'provider' && (
+      {enabled && criterion === 'provider' && (
         <ProviderOrder
           value={providerOrder}
           options={providerOptions}
           onChange={onProviderOrderChange}
+        />
+      )}
+      {enabled && ['audio_language', 'subtitle_language'].includes(criterion) && (
+        <ProviderOrder
+          value={languageOrder}
+          options={LANGUAGE_OPTIONS}
+          onChange={onLanguageOrderChange}
+          itemLabel="language"
         />
       )}
     </Paper>
@@ -214,6 +244,12 @@ const VODFailoverRanking = ({
   providerOrder = [],
   providerOptions = [],
   onProviderOrderChange,
+  disabled = [],
+  onDisabledChange,
+  audioLanguageOrder = [],
+  subtitleLanguageOrder = [],
+  onAudioLanguageOrderChange,
+  onSubtitleLanguageOrderChange,
 }) => {
   const ranking = useMemo(() => normalizeVODFailoverRanking(value), [value]);
   const sensors = useSensors(
@@ -234,6 +270,13 @@ const VODFailoverRanking = ({
     onChange(
       ranking.map((criterion) => (criterion === current ? next : criterion))
     );
+  };
+
+  const toggleCriterion = (criterion, enabled) => {
+    const next = new Set(disabled);
+    if (enabled) next.delete(criterion);
+    else next.add(criterion);
+    onDisabledChange?.([...next]);
   };
 
   return (
@@ -261,6 +304,20 @@ const VODFailoverRanking = ({
                 providerOrder={providerOrder}
                 providerOptions={providerOptions}
                 onProviderOrderChange={onProviderOrderChange}
+                enabled={!disabled.includes(criterion)}
+                onEnabledChange={(enabled) =>
+                  toggleCriterion(criterion, enabled)
+                }
+                languageOrder={
+                  criterion === 'audio_language'
+                    ? audioLanguageOrder
+                    : subtitleLanguageOrder
+                }
+                onLanguageOrderChange={
+                  criterion === 'audio_language'
+                    ? onAudioLanguageOrderChange
+                    : onSubtitleLanguageOrderChange
+                }
               />
             ))}
           </Stack>

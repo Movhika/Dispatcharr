@@ -65,6 +65,9 @@ const EMPTY_PROFILE = {
     source_rules: [],
     content_default_action: 'exclude',
     category_import_rules: [],
+    disabled_ranking: [],
+    audio_language_order: [],
+    subtitle_language_order: [],
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
   provider_order: [],
@@ -241,6 +244,13 @@ const profilePayload = (profile) => ({
           })),
         }
       : {}),
+    disabled_ranking: profile.hard_constraints?.disabled_ranking || [],
+    audio_language_order: normalizeLanguageCodes(
+      profile.hard_constraints?.audio_language_order || []
+    ),
+    subtitle_language_order: normalizeLanguageCodes(
+      profile.hard_constraints?.subtitle_language_order || []
+    ),
   },
   ranking: normalizeVODFailoverRanking(
     profile.ranking || DEFAULT_VOD_FAILOVER_RANKING
@@ -383,6 +393,13 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
             ? 'include'
             : 'exclude',
         source_rules: sourceRules,
+        disabled_ranking: sourceConstraints.disabled_ranking || [],
+        audio_language_order: normalizeLanguageCodes(
+          sourceConstraints.audio_language_order || []
+        ),
+        subtitle_language_order: normalizeLanguageCodes(
+          sourceConstraints.subtitle_language_order || []
+        ),
         ...(hasOwn(sourceConstraints, 'category_import_rules')
           ? {
               category_import_rules:
@@ -1449,10 +1466,26 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                     <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
                       <VODFailoverRanking
                         value={draft.ranking}
+                        disabled={draft.hard_constraints.disabled_ranking || []}
+                        audioLanguageOrder={
+                          draft.hard_constraints.audio_language_order || []
+                        }
+                        subtitleLanguageOrder={
+                          draft.hard_constraints.subtitle_language_order || []
+                        }
                         providerOrder={draft.provider_order}
                         providerOptions={failoverAccountOptions}
                         onChange={(ranking) =>
                           setDraft((current) => ({ ...current, ranking }))
+                        }
+                        onDisabledChange={(disabledRanking) =>
+                          updateConstraint('disabled_ranking', disabledRanking)
+                        }
+                        onAudioLanguageOrderChange={(languages) =>
+                          updateConstraint('audio_language_order', languages)
+                        }
+                        onSubtitleLanguageOrderChange={(languages) =>
+                          updateConstraint('subtitle_language_order', languages)
                         }
                         onProviderOrderChange={(providerOrder) =>
                           setDraft((current) => ({

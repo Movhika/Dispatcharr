@@ -16,27 +16,9 @@ def _first_text(*values):
     return None
 
 
-_CANONICAL_PREFIX_PATTERNS = (
-    re.compile(r"^\s*[┃|]\s*[^┃|]{1,20}\s*[┃|]\s*"),
-    re.compile(r"^\s*\[[A-Z0-9+._ -]{1,20}\]\s*", re.IGNORECASE),
-    re.compile(r"^\s*[A-Z0-9+._-]{1,20}\s+-\s+"),
-)
-
-
 def canonical_output_name(name, *, display_name="", year=None):
-    """Build a lightweight client title without changing provider editions.
-
-    A manually stored display name always wins. Otherwise only common,
-    structurally delimited provider/category prefixes are removed. The raw
-    relation name remains untouched for variants output.
-    """
+    """Build a client title without making implicit provider-prefix guesses."""
     result = _first_text(display_name, name) or ""
-    if not _first_text(display_name):
-        for pattern in _CANONICAL_PREFIX_PATTERNS:
-            cleaned = pattern.sub("", result, count=1).strip()
-            if cleaned != result.strip():
-                result = cleaned
-                break
     if year and not re.search(rf"\({re.escape(str(year))}\)\s*$", result):
         result = f"{result} ({year})"
     return result
@@ -81,11 +63,26 @@ def policy_output_name(
                     language_values.get("title") or ""
                 ).strip()
         if title_source == "primary":
-            selected_canonical_title = (
-                str(getattr(content, "display_name", "") or "").strip()
-                or selected_canonical_title
-                or str(getattr(content, "name", "") or "").strip()
-            )
+            display_title = str(
+                getattr(content, "display_name", "") or ""
+            ).strip()
+            clean_title = str(
+                getattr(content, "clean_title", "") or ""
+            ).strip()
+            if getattr(content, "tmdb_status", "") in {"matched", "manual"}:
+                selected_canonical_title = (
+                    display_title
+                    or selected_canonical_title
+                    or clean_title
+                    or str(getattr(content, "name", "") or "").strip()
+                )
+            else:
+                selected_canonical_title = (
+                    clean_title
+                    or display_title
+                    or selected_canonical_title
+                    or str(getattr(content, "name", "") or "").strip()
+                )
 
         if selected_canonical_title:
             title = canonical_output_name(

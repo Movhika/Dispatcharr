@@ -1552,10 +1552,13 @@ export default class API {
     });
   }
 
-  static async getVODMetadataStatus() {
-    return await request(`${host}/api/vod/metadata/`, {
-      cache: 'no-store',
-    });
+  static async getVODMetadataStatus(settingsOnly = false) {
+    return await request(
+      `${host}/api/vod/metadata/${settingsOnly ? '?settings_only=1' : ''}`,
+      {
+        cache: 'no-store',
+      }
+    );
   }
 
   static async updateVODMetadataSettings(values) {
@@ -1593,10 +1596,22 @@ export default class API {
     });
   }
 
-  static async previewVODMetadataTitles(titleRules, items = null, search = '') {
+  static async previewVODMetadataTitles(
+    titleRules,
+    items = null,
+    search = '',
+    selectionOptions = {}
+  ) {
     return await request(`${host}/api/vod/metadata/title-preview/`, {
       method: 'POST',
-      body: { title_rules: titleRules, items, search },
+      body: { title_rules: titleRules, items, search, ...selectionOptions },
+    });
+  }
+
+  static async applyVODTitleCleanup(titleRules, selectionOptions = {}) {
+    return await request(`${host}/api/vod/metadata/apply-title-cleanup/`, {
+      method: 'POST',
+      body: { title_rules: titleRules, ...selectionOptions },
     });
   }
 

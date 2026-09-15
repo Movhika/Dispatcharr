@@ -791,6 +791,8 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "allow_unknown_metadata", "language_match_mode",
             "source_rules", "category_import_rules",
             "category_default_actions", "content_default_action",
+            "disabled_ranking", "audio_language_order",
+            "subtitle_language_order",
         }
         if set(value) - allowed:
             raise serializers.ValidationError("Contains unsupported fields")
@@ -799,6 +801,42 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         category_import_rules = normalized.pop("category_import_rules", None)
         normalized.pop("category_default_actions", None)
         content_default_action = normalized.pop("content_default_action", None)
+        disabled_ranking = normalized.pop("disabled_ranking", [])
+        audio_language_order = normalized.pop("audio_language_order", [])
+        subtitle_language_order = normalized.pop("subtitle_language_order", [])
+        supported_ranking = {
+            "audio_language", "subtitle_language", "provider",
+            "resolution", "resolution_desc", "resolution_asc",
+            "metadata_completeness",
+        }
+        if not isinstance(disabled_ranking, list) or (
+            set(disabled_ranking) - supported_ranking
+        ):
+            raise serializers.ValidationError(
+                {"disabled_ranking": "Use only supported failover criteria"}
+            )
+        disabled_ranking = list(dict.fromkeys(
+            "resolution_desc" if item == "resolution" else item
+            for item in disabled_ranking
+        ))
+        for field, languages in (
+            ("audio_language_order", audio_language_order),
+            ("subtitle_language_order", subtitle_language_order),
+        ):
+            if not isinstance(languages, list):
+                raise serializers.ValidationError({field: "Must be a list"})
+            normalized_languages = normalize_language_list(languages)
+            try:
+                validate_source_metadata({
+                    "audio_languages" if field == "audio_language_order"
+                    else "subtitle_languages": normalized_languages
+                })
+            except ValueError as exc:
+                raise serializers.ValidationError({field: str(exc)})
+            if field == "audio_language_order":
+                audio_language_order = normalized_languages
+            else:
+                subtitle_language_order = normalized_languages
         if not isinstance(source_rules, list):
             raise serializers.ValidationError(
                 {"source_rules": "Must be an ordered list"}
@@ -1227,12 +1265,17 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 }
             )
         normalized["source_rules"] = normalized_rules
+        normalized["disabled_ranking"] = disabled_ranking
+        normalized["audio_language_order"] = audio_language_order
+        normalized["subtitle_language_order"] = subtitle_language_order
         if category_import_rules is not None:
             normalized["category_import_rules"] = category_import_rules
         if content_default_action is not None:
             normalized["content_default_action"] = content_default_action
         configuration_fields = {
             "source_rules", "category_import_rules", "content_default_action",
+            "disabled_ranking", "audio_language_order",
+            "subtitle_language_order",
         }
         if requested_fields <= configuration_fields and all(
             rule.get("match_field") for rule in normalized_rules

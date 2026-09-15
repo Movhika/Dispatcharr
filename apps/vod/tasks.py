@@ -142,45 +142,20 @@ def _tmdb_content_signature(base_signature, content):
 
 
 def _filter_manual_tmdb_selection(queryset, media_type, filters):
-    """Apply the small canonical filter set used by the metadata dialog."""
+    """Restrict a manual batch to the exact canonical VOD list selection.
+
+    The list filter owns a few relation-aware predicates (account, category,
+    source languages and technical properties). Reuse that query here so a
+    select-all action cannot silently extend beyond what the administrator saw.
+    The import is deliberately local: api_views already imports task entry
+    points during application startup.
+    """
     filters = filters if isinstance(filters, dict) else {}
-    content_type = str(filters.get("type") or "all")
-    if (
-        (content_type == "movies" and media_type != "movie")
-        or (content_type == "series" and media_type != "tv")
-    ):
-        return queryset.none()
+    from .api_views import _filtered_vod_content
 
-    search = str(filters.get("search") or "").strip()
-    if search:
-        queryset = queryset.filter(
-            Q(display_name__icontains=search)
-            | (
-                (Q(display_name="") | Q(display_name__isnull=True))
-                & Q(name__icontains=search)
-            )
-        )
-
-    metadata_status = str(filters.get("metadata_status") or "").strip()
-    missing_tmdb = Q(tmdb_match_id="") & (
-        Q(tmdb_id__isnull=True) | Q(tmdb_id="")
-    )
-    if metadata_status == "missing_tmdb":
-        queryset = queryset.filter(missing_tmdb)
-    elif metadata_status == "missing_external_ids":
-        queryset = queryset.filter(
-            missing_tmdb,
-            Q(tmdb_imdb_id=""),
-            Q(imdb_id__isnull=True) | Q(imdb_id=""),
-        ).filter(
-            Q(tmdb_metadata__external_ids__tvdb_id__isnull=True)
-            | Q(tmdb_metadata__external_ids__tvdb_id=""),
-            Q(tmdb_metadata__external_ids__wikidata_id__isnull=True)
-            | Q(tmdb_metadata__external_ids__wikidata_id=""),
-        )
-    elif metadata_status == "missing_metadata":
-        queryset = queryset.exclude(tmdb_status="matched")
-    return queryset
+    movies, series = _filtered_vod_content(filters)
+    selected = movies if media_type == "movie" else series
+    return queryset.filter(id__in=selected.values("id"))
 
 
 def _set_tmdb_state(status, *, task_id=None, progress=None, error=None, **dates):
@@ -397,6 +372,8 @@ def enrich_vod_metadata(
             "id",
             "name",
             "display_name",
+            "clean_title",
+            "tmdb_lookup_excluded",
             "year",
             "tmdb_id",
             "imdb_id",
@@ -433,6 +410,7 @@ def enrich_vod_metadata(
             )
             if excluded_ids:
                 queryset = queryset.exclude(id__in=excluded_ids)
+            queryset = queryset.exclude(tmdb_lookup_excluded=True)
             for content in queryset.iterator(chunk_size=1000):
                 signature = _tmdb_content_signature(base_signature, content)
                 if force or content["tmdb_enrichment_signature"] != signature:
@@ -473,6 +451,12 @@ def enrich_vod_metadata(
         for model, media_type, content, signature in work:
             content_id = content["id"]
             content_name = content["name"]
+            lookup_title = content["clean_title"] or clean_lookup_title(
+                content_name,
+                display_name=content["display_name"],
+                year=content["year"],
+                rules=title_rules,
+            )
             tmdb_id = str(
                 content["tmdb_match_id"] or content["tmdb_id"] or ""
             ).strip()
@@ -482,6 +466,8 @@ def enrich_vod_metadata(
                 else ("provider_tmdb_id" if tmdb_id else "")
             )
             metadata = {}
+            search_status = None
+            candidate_count = 0
             try:
                 imdb_id = content["tmdb_imdb_id"] or content["imdb_id"]
                 if not tmdb_id and imdb_id:
@@ -489,14 +475,8 @@ def enrich_vod_metadata(
                     if tmdb_id:
                         match_method = "imdb_id"
                 if not tmdb_id and match_missing:
-                    query = clean_lookup_title(
-                        content_name,
-                        display_name=content["display_name"],
-                        year=content["year"],
-                        rules=title_rules,
-                    )
-                    tmdb_id = client.search(
-                        query,
+                    tmdb_id, search_status, candidate_count = client.search_outcome(
+                        lookup_title,
                         content["year"],
                         media_type,
                         languages[0],
@@ -506,7 +486,16 @@ def enrich_vod_metadata(
                 if not tmdb_id:
                     metadata = {
                         "schema": 1,
-                        "status": "missing_id",
+                        "status": (
+                            search_status
+                            if match_missing and search_status
+                            else "missing_id"
+                        ),
+                        "candidate_count": (
+                            candidate_count
+                            if match_missing
+                            else 0
+                        ),
                         "localized": {},
                         "fetched_at": timezone.now().isoformat(),
                     }
@@ -562,6 +551,7 @@ def enrich_vod_metadata(
                 continue
 
             update = {
+                "clean_title": lookup_title[:255],
                 "tmdb_metadata": metadata,
                 "tmdb_match_id": str(metadata.get("id") or ""),
                 "tmdb_imdb_id": str(metadata.get("imdb_id") or ""),
