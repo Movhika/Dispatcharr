@@ -44,29 +44,54 @@ def normalize_languages(values):
     return languages or ["en-US"]
 
 
+TITLE_RULE_MATCH_TYPES = {"starts_with", "contains", "ends_with", "regex"}
+TITLE_RULE_ACTIONS = {"remove", "replace"}
+
+
 def normalize_title_rules(values):
-    """Validate ordered regex replacements used only for TMDB lookup names."""
+    """Validate ordered literal or advanced replacements for TMDB lookups."""
     if not isinstance(values, list):
         raise ValueError("Title rules must be a list")
     rules = []
     for index, raw in enumerate(values[:20]):
         if not isinstance(raw, dict):
             raise ValueError(f"Title rule {index + 1} must be an object")
-        pattern = str(raw.get("pattern") or "").strip()
+
+        # Rules stored before the literal editor used ``pattern`` only. Keep
+        # those as advanced expressions instead of silently changing their
+        # behavior.
+        match_type = str(raw.get("match_type") or "regex").strip().lower()
+        if match_type not in TITLE_RULE_MATCH_TYPES:
+            raise ValueError(f"Title rule {index + 1} has an invalid match type")
+        value = str(
+            raw.get("value")
+            if raw.get("value") is not None
+            else raw.get("pattern") or ""
+        ).strip()
+        action = str(raw.get("action") or "").strip().lower()
         replacement = str(raw.get("replacement") or "")
-        if not pattern:
-            raise ValueError(f"Title rule {index + 1} needs a pattern")
-        if len(pattern) > 255 or len(replacement) > 255:
+        if not action:
+            action = "replace" if replacement else "remove"
+        if action not in TITLE_RULE_ACTIONS:
+            raise ValueError(f"Title rule {index + 1} has an invalid action")
+        if action == "remove":
+            replacement = ""
+        if not value:
+            raise ValueError(f"Title rule {index + 1} needs match text")
+        if len(value) > 255 or len(replacement) > 255:
             raise ValueError(f"Title rule {index + 1} is too long")
-        try:
-            re.compile(pattern)
-        except re.error as exc:
-            raise ValueError(
-                f"Title rule {index + 1} has an invalid expression: {exc}"
-            ) from exc
+        if match_type == "regex":
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(
+                    f"Title rule {index + 1} has an invalid expression: {exc}"
+                ) from exc
         rules.append(
             {
-                "pattern": pattern,
+                "match_type": match_type,
+                "value": value,
+                "action": action,
                 "replacement": replacement,
                 "enabled": raw.get("enabled") is not False,
             }
@@ -84,8 +109,19 @@ def clean_lookup_title(name, *, display_name="", year=None, rules=None):
     """
     result = str(display_name or name or "").strip()
     for rule in normalize_title_rules(rules or []):
-        if rule["enabled"]:
-            result = re.sub(rule["pattern"], rule["replacement"], result)
+        if not rule["enabled"]:
+            continue
+        value = rule["value"]
+        replacement = rule["replacement"]
+        match_type = rule["match_type"]
+        if match_type == "starts_with" and result.startswith(value):
+            result = replacement + result[len(value):]
+        elif match_type == "contains":
+            result = result.replace(value, replacement)
+        elif match_type == "ends_with" and result.endswith(value):
+            result = result[:-len(value)] + replacement
+        elif match_type == "regex":
+            result = re.sub(value, replacement, result)
     if year:
         result = re.sub(
             rf"\s*[\(\[]\s*{re.escape(str(year))}\s*[\)\]]\s*$",

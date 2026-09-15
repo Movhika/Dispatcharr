@@ -13,9 +13,9 @@ vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
 vi.mock('../forms/settings/VODMetadataSettingsForm', () => ({
-  default: ({ active }) => (
+  default: ({ status }) => (
     <div data-testid="tmdb-settings-form">
-      TMDB settings {active ? 'active' : 'inactive'}
+      TMDB settings {status ? 'loaded' : 'loading'}
     </div>
   ),
 }));
@@ -54,6 +54,22 @@ vi.mock('@mantine/core', () => {
         </div>
       ) : null,
     ScrollArea: Wrapper,
+    Select: ({ label, data, value, onChange }) => (
+      <label>
+        {label}
+        <select
+          aria-label={label}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        >
+          {data.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    ),
     Stack: Wrapper,
     Switch: ({ checked, onChange, 'aria-label': label }) => (
       <input
@@ -69,11 +85,16 @@ vi.mock('@mantine/core', () => {
     TabsPanel: Wrapper,
     TabsTab: ({ children }) => <button>{children}</button>,
     Text: Wrapper,
-    TextInput: ({ label, value, onChange, description }) => (
+    TextInput: ({ label, value, onChange, description, disabled }) => (
       <label>
         {label}
         {description}
-        <input aria-label={label} value={value} onChange={onChange} />
+        <input
+          aria-label={label}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+        />
       </label>
     ),
     Tooltip: Wrapper,
@@ -113,11 +134,28 @@ describe('VODMetadataModal', () => {
 
   it('contains only TMDB settings and title cleanup tabs', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-    expect(await screen.findByText('TMDB settings active')).toBeInTheDocument();
+    expect(await screen.findByText('TMDB settings loaded')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'TMDB settings' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Title cleanup' })).toBeVisible();
     expect(screen.queryByText('Enrich selected')).not.toBeInTheDocument();
     expect(screen.queryByText('Reload selected')).not.toBeInTheDocument();
+  });
+
+  it('does not render placeholder metadata settings while loading', async () => {
+    let resolveStatus;
+    API.getVODMetadataStatus.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStatus = resolve;
+      })
+    );
+
+    render(<VODMetadataModal opened onClose={vi.fn()} />);
+
+    expect(screen.getByText('TMDB settings loading')).toBeInTheDocument();
+    expect(API.getVODMetadataStatus).toHaveBeenCalledTimes(1);
+    resolveStatus(statusResponse);
+    expect(await screen.findByText('TMDB settings loaded')).toBeInTheDocument();
+    expect(API.getVODMetadataStatus).toHaveBeenCalledTimes(1);
   });
 
   it('warns when a plus sign is acting as a regex quantifier', async () => {
@@ -137,7 +175,15 @@ describe('VODMetadataModal', () => {
 
     await waitFor(() =>
       expect(API.previewVODMetadataTitles).toHaveBeenCalledWith(
-        [savedRule],
+        [
+          {
+            match_type: 'regex',
+            value: '4K-D+ -',
+            action: 'replace',
+            replacement: ' ',
+            enabled: true,
+          },
+        ],
         null,
         'Bliss'
       )
@@ -145,11 +191,14 @@ describe('VODMetadataModal', () => {
     expect(await screen.findByText('4K-D+ - Bliss')).toBeInTheDocument();
   });
 
-  it('saves title cleanup independently from TMDB settings', async () => {
+  it('converts an existing regex rule to a literal starts-with rule', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
-    const input = await screen.findByLabelText('Rule 1 · regular expression');
-    fireEvent.change(input, {
-      target: { value: '^4K-D\\+\\s*-\\s*' },
+    await screen.findByDisplayValue('4K-D+ -');
+    fireEvent.change(screen.getByLabelText('Rule 1 · match'), {
+      target: { value: 'starts_with' },
+    });
+    fireEvent.change(screen.getByLabelText('Action'), {
+      target: { value: 'remove' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save rules' }));
 
@@ -157,8 +206,10 @@ describe('VODMetadataModal', () => {
       expect(API.updateVODMetadataSettings).toHaveBeenCalledWith({
         title_rules: [
           {
-            pattern: '^4K-D\\+\\s*-\\s*',
-            replacement: ' ',
+            match_type: 'starts_with',
+            value: '4K-D+ -',
+            action: 'remove',
+            replacement: '',
             enabled: true,
           },
         ],

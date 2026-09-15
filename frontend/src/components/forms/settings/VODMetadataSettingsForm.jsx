@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Group,
+  Loader,
   PasswordInput,
   Select,
   Stack,
   Switch,
+  Text,
 } from '@mantine/core';
 import API from '../../../api';
 import { showNotification } from '../../../utils/notificationUtils';
@@ -23,34 +25,30 @@ const LANGUAGE_OPTIONS = [
   ['tr-TR', 'Turkish (tr-TR)'],
 ].map(([value, label]) => ({ value, label }));
 
-const VODMetadataSettingsForm = ({ active = true, onSaved }) => {
-  const [status, setStatus] = useState(null);
+const VODMetadataSettingsForm = ({
+  status,
+  loading = false,
+  error = '',
+  onSaved,
+}) => {
   const [token, setToken] = useState('');
-  const [primaryLanguage, setPrimaryLanguage] = useState('en-US');
+  const [primaryLanguage, setPrimaryLanguage] = useState(null);
   const [secondaryLanguage, setSecondaryLanguage] = useState('');
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [matchMissing, setMatchMissing] = useState(false);
   const [preferArtwork, setPreferArtwork] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const applyStatus = useCallback((next) => {
-    setStatus(next);
-    const settings = next?.settings || {};
+  useEffect(() => {
+    if (!status) return;
+    const settings = status.settings || {};
     const languages = settings.languages || ['en-US'];
     setPrimaryLanguage(languages[0] || 'en-US');
     setSecondaryLanguage(languages[1] || '');
     setAutoEnrich(settings.auto_enrich !== false);
     setMatchMissing(Boolean(settings.match_missing));
     setPreferArtwork(settings.prefer_artwork !== false);
-  }, []);
-
-  const load = useCallback(async () => {
-    applyStatus(await API.getVODMetadataStatus());
-  }, [applyStatus]);
-
-  useEffect(() => {
-    if (active) load();
-  }, [active, load]);
+  }, [status]);
 
   const languages = useMemo(
     () =>
@@ -71,7 +69,6 @@ const VODMetadataSettingsForm = ({ active = true, onSaved }) => {
       };
       if (token.trim()) payload.api_token = token.trim();
       const next = await API.updateVODMetadataSettings(payload);
-      applyStatus(next);
       onSaved?.(next);
       setToken('');
       showNotification({
@@ -93,6 +90,25 @@ const VODMetadataSettingsForm = ({ active = true, onSaved }) => {
       setSaving(false);
     }
   };
+
+  if (loading || (!status && !error) || (status && !primaryLanguage)) {
+    return (
+      <Group justify="center" gap="xs" py="xl">
+        <Loader size="sm" />
+        <Text size="sm" c="dimmed">
+          Loading TMDB settings
+        </Text>
+      </Group>
+    );
+  }
+
+  if (!status) {
+    return (
+      <Text size="sm" c="red">
+        {error || 'The TMDB settings could not be loaded.'}
+      </Text>
+    );
+  }
 
   const environmentToken = status?.settings?.token_source === 'environment';
   return (

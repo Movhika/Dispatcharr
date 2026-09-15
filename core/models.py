@@ -820,7 +820,7 @@ class CoreSettings(models.Model):
 
     @classmethod
     def get_tmdb_title_rules(cls):
-        """Return ordered, bounded regex replacements for TMDB title lookup."""
+        """Return ordered, bounded cleanup rules for TMDB title lookup."""
         raw = cls.get_vod_settings().get("tmdb_title_rules") or []
         if not isinstance(raw, list):
             return []
@@ -828,13 +828,33 @@ class CoreSettings(models.Model):
         for row in raw[:20]:
             if not isinstance(row, dict):
                 continue
-            pattern = str(row.get("pattern") or "").strip()
-            if not pattern:
+            match_type = str(row.get("match_type") or "regex").strip().lower()
+            if match_type not in {
+                "starts_with",
+                "contains",
+                "ends_with",
+                "regex",
+            }:
                 continue
+            value = str(
+                row.get("value")
+                if row.get("value") is not None
+                else row.get("pattern") or ""
+            ).strip()
+            if not value:
+                continue
+            replacement = str(row.get("replacement") or "")[:255]
+            action = str(row.get("action") or "").strip().lower()
+            if action not in {"remove", "replace"}:
+                action = "replace" if replacement else "remove"
+            if action == "remove":
+                replacement = ""
             rules.append(
                 {
-                    "pattern": pattern[:255],
-                    "replacement": str(row.get("replacement") or "")[:255],
+                    "match_type": match_type,
+                    "value": value[:255],
+                    "action": action,
+                    "replacement": replacement,
                     "enabled": row.get("enabled") is not False,
                 }
             )

@@ -64,6 +64,50 @@ class TMDBMetadataTests(SimpleTestCase):
         with self.assertRaisesRegex(ValueError, "invalid expression"):
             normalize_title_rules([{"pattern": "[", "replacement": ""}])
 
+    def test_literal_title_cleanup_does_not_interpret_regex_characters(self):
+        rules = [
+            {
+                "match_type": "starts_with",
+                "value": "4K-D+ -",
+                "action": "remove",
+            },
+            {
+                "match_type": "contains",
+                "value": "Director.Cut",
+                "action": "replace",
+                "replacement": "Extended",
+            },
+            {
+                "match_type": "ends_with",
+                "value": " [DUB]",
+                "action": "remove",
+            },
+        ]
+        self.assertEqual(
+            clean_lookup_title(
+                "4K-D+ - Bliss Director.Cut (2021) [DUB]",
+                year=2021,
+                rules=rules,
+            ),
+            "Bliss Extended",
+        )
+
+    def test_legacy_title_rule_is_preserved_as_advanced_regex(self):
+        self.assertEqual(
+            normalize_title_rules(
+                [{"pattern": r"^AMZ\s*-\s*", "replacement": ""}]
+            ),
+            [
+                {
+                    "match_type": "regex",
+                    "value": r"^AMZ\s*-\s*",
+                    "action": "remove",
+                    "replacement": "",
+                    "enabled": True,
+                }
+            ],
+        )
+
     def test_normalizes_original_localized_and_watch_provider_data(self):
         metadata = normalize_details(
             {
@@ -579,7 +623,9 @@ class VODMetadataAPITests(TestCase):
             CoreSettings.get_tmdb_title_rules(),
             [
                 {
-                    "pattern": r"^AMZ\s*-\s*",
+                    "match_type": "regex",
+                    "value": r"^AMZ\s*-\s*",
+                    "action": "remove",
                     "replacement": "",
                     "enabled": True,
                 }

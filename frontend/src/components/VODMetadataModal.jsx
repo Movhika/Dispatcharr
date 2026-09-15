@@ -7,6 +7,7 @@ import {
   Group,
   Modal,
   ScrollArea,
+  Select,
   Stack,
   Switch,
   Table,
@@ -24,21 +25,55 @@ import { showNotification } from '../utils/notificationUtils';
 import VODMetadataSettingsForm from './forms/settings/VODMetadataSettingsForm.jsx';
 
 const normalizeRules = (rules) =>
-  (Array.isArray(rules) ? rules : []).map((rule) => ({
-    pattern: String(rule?.pattern || ''),
-    replacement: String(rule?.replacement || ''),
-    enabled: rule?.enabled !== false,
-  }));
+  (Array.isArray(rules) ? rules : []).map((rule) => {
+    const replacement = String(rule?.replacement || '');
+    return {
+      match_type: ['starts_with', 'contains', 'ends_with', 'regex'].includes(
+        rule?.match_type
+      )
+        ? rule.match_type
+        : 'regex',
+      value: String(rule?.value ?? rule?.pattern ?? ''),
+      action:
+        rule?.action === 'remove' || rule?.action === 'replace'
+          ? rule.action
+          : replacement
+            ? 'replace'
+            : 'remove',
+      replacement,
+      enabled: rule?.enabled !== false,
+    };
+  });
 
 const rulesFingerprint = (rules) => JSON.stringify(normalizeRules(rules));
 
-const quantifierWarning = (pattern) =>
-  /(^|[^\\])\+/.test(pattern)
+const quantifierWarning = (rule) =>
+  rule.match_type === 'regex' && /(^|[^\\])\+/.test(rule.value)
     ? '“+” repeats the preceding regex token. Use “\\+” to match a literal plus sign.'
     : '';
 
+const MATCH_TYPE_OPTIONS = [
+  { value: 'starts_with', label: 'Starts with' },
+  { value: 'contains', label: 'Contains' },
+  { value: 'ends_with', label: 'Ends with' },
+  { value: 'regex', label: 'Advanced regex' },
+];
+
+const ACTION_OPTIONS = [
+  { value: 'remove', label: 'Remove' },
+  { value: 'replace', label: 'Replace with' },
+];
+
+const matchPlaceholder = (matchType) => {
+  if (matchType === 'starts_with') return 'For example 4K-D+ -';
+  if (matchType === 'contains') return 'Text anywhere in the title';
+  if (matchType === 'ends_with') return 'Text at the end of the title';
+  return 'Regular expression';
+};
+
 const VODMetadataModal = ({ opened, onClose }) => {
   const [activeTab, setActiveTab] = useState('tmdb');
+  const [metadataStatus, setMetadataStatus] = useState(null);
   const [titleRules, setTitleRules] = useState([]);
   const [savedTitleRules, setSavedTitleRules] = useState([]);
   const [previewSearch, setPreviewSearch] = useState('');
@@ -52,12 +87,14 @@ const VODMetadataModal = ({ opened, onClose }) => {
     setLoadingRules(true);
     try {
       const status = await API.getVODMetadataStatus();
+      setMetadataStatus(status);
       const rules = normalizeRules(status?.settings?.title_rules);
       setTitleRules(rules);
       setSavedTitleRules(rules);
       setTitlePreview([]);
       setTitleRuleError('');
     } catch (error) {
+      setMetadataStatus(null);
       setTitleRuleError(
         error?.body?.detail ||
           error?.message ||
@@ -73,7 +110,11 @@ const VODMetadataModal = ({ opened, onClose }) => {
     else setActiveTab('tmdb');
   }, [loadRules, opened]);
 
-  const titleRulesValid = titleRules.every((rule) => rule.pattern.trim());
+  const titleRulesValid = titleRules.every(
+    (rule) =>
+      rule.value.trim() &&
+      (rule.action !== 'replace' || rule.replacement.length > 0)
+  );
   const titleRulesDirty =
     rulesFingerprint(titleRules) !== rulesFingerprint(savedTitleRules);
   const enabledRuleCount = useMemo(
@@ -92,7 +133,15 @@ const VODMetadataModal = ({ opened, onClose }) => {
   };
 
   const previewTitleRules = async (rules = titleRules) => {
-    if (!rules.every((rule) => rule.pattern.trim())) return;
+    if (
+      !rules.every(
+        (rule) =>
+          rule.value.trim() &&
+          (rule.action !== 'replace' || rule.replacement.length > 0)
+      )
+    ) {
+      return;
+    }
     setPreviewingTitles(true);
     setTitleRuleError('');
     try {
@@ -160,16 +209,23 @@ const VODMetadataModal = ({ opened, onClose }) => {
         </TabsList>
 
         <TabsPanel value="tmdb" pt="md">
-          <VODMetadataSettingsForm active={opened && activeTab === 'tmdb'} />
+          <VODMetadataSettingsForm
+            status={metadataStatus}
+            loading={!metadataStatus && loadingRules}
+            error={!metadataStatus ? titleRuleError : ''}
+            onSaved={setMetadataStatus}
+          />
         </TabsPanel>
 
         <TabsPanel value="cleanup" pt="md">
           <Stack gap="md">
             <Text size="sm" c="dimmed">
-              These ordered regular-expression replacements only prepare the
-              search title sent to TMDB. Stored provider and canonical titles
-              remain unchanged. No provider prefix is removed automatically; the
-              release year is sent to TMDB separately.
+              These ordered rules only prepare the search title sent to TMDB.
+              Stored provider and canonical titles remain unchanged. Simple
+              rules match their text literally, including characters such as +.
+              Advanced regex is available only for exceptional cases. No
+              provider prefix is removed automatically; the release year is sent
+              to TMDB separately.
             </Text>
 
             <Group justify="space-between" align="end" wrap="wrap">
@@ -191,7 +247,13 @@ const VODMetadataModal = ({ opened, onClose }) => {
                   onClick={() => {
                     setTitleRules((current) => [
                       ...current,
-                      { pattern: '', replacement: '', enabled: true },
+                      {
+                        match_type: 'starts_with',
+                        value: '',
+                        action: 'remove',
+                        replacement: '',
+                        enabled: true,
+                      },
                     ]);
                     setTitlePreview([]);
                     setTitleRuleError('');
@@ -227,7 +289,7 @@ const VODMetadataModal = ({ opened, onClose }) => {
             )}
 
             {titleRules.map((rule, index) => {
-              const warning = quantifierWarning(rule.pattern);
+              const warning = quantifierWarning(rule);
               return (
                 <Box
                   key={index}
@@ -238,29 +300,62 @@ const VODMetadataModal = ({ opened, onClose }) => {
                   }}
                 >
                   <Group align="end" wrap="nowrap">
+                    <Select
+                      label={`Rule ${index + 1} · match`}
+                      data={MATCH_TYPE_OPTIONS}
+                      value={rule.match_type}
+                      allowDeselect={false}
+                      onChange={(value) =>
+                        updateTitleRule(index, {
+                          match_type: value || 'starts_with',
+                        })
+                      }
+                      w={170}
+                    />
                     <TextInput
-                      label={`Rule ${index + 1} · regular expression`}
+                      label={
+                        rule.match_type === 'regex'
+                          ? 'Regular expression'
+                          : 'Match text'
+                      }
                       description={
-                        index === 0
-                          ? 'Use ^ for a prefix. Escape literal regex characters such as + with a backslash.'
+                        rule.match_type === 'regex'
+                          ? 'Advanced: regex metacharacters are active.'
                           : undefined
                       }
-                      placeholder="For example ^4K-D\\+\\s*-\\s*"
-                      value={rule.pattern}
-                      error={
-                        !rule.pattern.trim() ? 'Expression required' : null
-                      }
+                      placeholder={matchPlaceholder(rule.match_type)}
+                      value={rule.value}
+                      error={!rule.value.trim() ? 'Match text required' : null}
                       onChange={(event) =>
                         updateTitleRule(index, {
-                          pattern: event.currentTarget.value,
+                          value: event.currentTarget.value,
                         })
                       }
                       style={{ flex: 2 }}
                     />
+                    <Select
+                      label="Action"
+                      data={ACTION_OPTIONS}
+                      value={rule.action}
+                      allowDeselect={false}
+                      onChange={(value) =>
+                        updateTitleRule(index, {
+                          action: value || 'remove',
+                          ...(value === 'remove' ? { replacement: '' } : {}),
+                        })
+                      }
+                      w={145}
+                    />
                     <TextInput
                       label="Replace with"
-                      placeholder="Empty removes the match"
+                      placeholder="Replacement text"
                       value={rule.replacement}
+                      disabled={rule.action !== 'replace'}
+                      error={
+                        rule.action === 'replace' && !rule.replacement.length
+                          ? 'Replacement required'
+                          : null
+                      }
                       onChange={(event) =>
                         updateTitleRule(index, {
                           replacement: event.currentTarget.value,
