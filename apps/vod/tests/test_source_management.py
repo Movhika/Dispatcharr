@@ -170,10 +170,6 @@ class VODSourceManagementTests(TestCase):
                     "order": 0,
                 }
             ],
-            "category_default_actions": {
-                "movie": "disable",
-                "series": "disable",
-            },
         }
 
         self.assertTrue(relation_allowed(self.german_relation, self.policy))
@@ -209,7 +205,6 @@ class VODSourceManagementTests(TestCase):
                     "action": "enable",
                 }
             ],
-            "category_default_actions": {"movie": "disable"},
         }
 
         self.assertTrue(relation_allowed(self.german_relation, self.policy))
@@ -226,7 +221,6 @@ class VODSourceManagementTests(TestCase):
                     "action": "enable",
                 }
             ],
-            "category_default_actions": {"movie": "disable"},
         }
         VODPolicyCategory.objects.create(
             policy=self.policy,
@@ -248,7 +242,6 @@ class VODSourceManagementTests(TestCase):
                     "action": "enable",
                 }
             ],
-            "category_default_actions": {"movie": "enable"},
         }
         self.english_category.enabled = False
         self.english_category.save(update_fields=["enabled"])
@@ -257,13 +250,7 @@ class VODSourceManagementTests(TestCase):
         self.assertFalse(relation_allowed(self.english_relation, self.policy))
 
     def test_dynamic_profile_can_block_every_globally_enabled_category(self):
-        self.policy.hard_constraints = {
-            "category_import_rules": [],
-            "category_default_actions": {
-                "movie": "disable",
-                "series": "disable",
-            },
-        }
+        self.policy.hard_constraints = {"category_import_rules": []}
 
         query = allowed_category_query(self.policy)
 
@@ -441,6 +428,27 @@ class VODSourceManagementTests(TestCase):
 
         self.assertFalse(relation_allowed(self.english_relation, self.policy))
         self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
+    def test_content_filter_can_match_missing_tmdb_id(self):
+        self.policy.hard_constraints = {
+            "content_default_action": "include",
+            "source_rules": [
+                {
+                    "id": "exclude-missing-tmdb",
+                    "match_field": "stream",
+                    "regex_pattern": "",
+                    "tmdb_mode": "missing",
+                    "result": "exclude",
+                }
+            ],
+        }
+
+        self.assertFalse(relation_allowed(self.german_relation, self.policy))
+
+        self.movie.tmdb_match_id = "19995"
+        self.movie.save(update_fields=["tmdb_match_id"])
+
+        self.assertTrue(relation_allowed(self.german_relation, self.policy))
 
     def test_failover_can_prefer_lower_resolution(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
@@ -1673,6 +1681,40 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 0)
 
+    def test_profile_preview_filters_by_genre_anime_and_adult_flags(self):
+        self.policy.hard_constraints = {"allow_unknown_metadata": True}
+        self.policy.save(update_fields=["hard_constraints", "updated_at"])
+        self.movie.tmdb_metadata = {
+            "genres": [{"id": 878, "name": "Science Fiction"}],
+            "is_anime": True,
+            "adult": False,
+        }
+        self.movie.save(update_fields=["tmdb_metadata", "updated_at"])
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="profile-canonical-filter-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            f"/api/vod/access-policies/{self.policy.id}/selections/",
+            {
+                "type": "movie",
+                "genre": "science fiction",
+                "anime_mode": "yes",
+                "adult_mode": "no",
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request,
+            pk=self.policy.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+
     def test_compact_preview_reports_all_eligible_failover_sources(self):
         self.policy.hard_constraints = {"allow_unknown_metadata": True}
         self.policy.save(update_fields=["hard_constraints", "updated_at"])
@@ -2564,6 +2606,7 @@ class VODSourceManagementTests(TestCase):
                             "required_genres": [" Family ", "family"],
                             "required_keywords": ["animation"],
                             "adult_mode": "no",
+                            "tmdb_mode": "missing",
                             "max_year": 2030,
                             "min_rating": 5.5,
                             "result": "include",
@@ -2581,6 +2624,7 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(rule["required_genres"], ["Family"])
         self.assertEqual(rule["required_keywords"], ["animation"])
         self.assertEqual(rule["adult_mode"], "no")
+        self.assertEqual(rule["tmdb_mode"], "missing")
         self.assertEqual(rule["min_rating"], 5.5)
 
     def test_profile_rejects_external_ids_in_content_filters(self):
@@ -2723,10 +2767,6 @@ class VODSourceManagementTests(TestCase):
                             "action": "enable",
                         }
                     ],
-                    "category_default_actions": {
-                        "movie": "disable",
-                        "series": "enable",
-                    },
                 },
             }
         )
@@ -2738,17 +2778,13 @@ class VODSourceManagementTests(TestCase):
             {
                 "source_rules",
                 "category_import_rules",
-                "category_default_actions",
             },
         )
         self.assertEqual(
             constraints["category_import_rules"][0]["m3u_account_id"],
             self.account_a.id,
         )
-        self.assertEqual(
-            constraints["category_default_actions"]["movie"],
-            "disable",
-        )
+        self.assertNotIn("category_default_actions", constraints)
 
     def test_admin_can_replace_vod_output_profile_categories(self):
         admin = get_user_model().objects.create_user(
@@ -3941,6 +3977,60 @@ class VODSourceManagementTests(TestCase):
                 recent_movie.library_added_at,
             )
 
+        variant_request = APIRequestFactory().get(
+            "/api/vod/",
+            {
+                **query,
+                "representation": "variants",
+            },
+        )
+        force_authenticate(variant_request, user=admin)
+        variant_response = UnifiedContentViewSet.as_view({"get": "list"})(
+            variant_request
+        )
+
+        self.assertEqual(variant_response.status_code, 200, variant_response.data)
+        self.assertEqual(variant_response.data["count"], 1)
+        self.assertEqual(
+            variant_response.data["results"][0]["canonical_id"],
+            recent_movie.id,
+        )
+
+    def test_unified_list_filters_genre_anime_and_adult_flags(self):
+        self.movie.genre = ""
+        self.movie.is_adult = False
+        self.movie.tmdb_metadata = {
+            "genres": [{"id": 878, "name": "Science Fiction"}],
+            "is_anime": True,
+            "adult": False,
+        }
+        self.movie.save(
+            update_fields=["genre", "is_adult", "tmdb_metadata", "updated_at"]
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-canonical-filter-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/",
+            {
+                "type": "movies",
+                "genre": "science fiction",
+                "anime_mode": "yes",
+                "adult_mode": "no",
+                "page_size": 24,
+            },
+        )
+        force_authenticate(request, user=admin)
+
+        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.movie.id)
+        self.assertNotIn("description", response.data["results"][0])
+
     def test_unified_list_reports_movie_and_series_edition_counts(self):
         series = Series.objects.create(name="Avatar Series", year=2005)
         german_series = VODCategory.objects.create(
@@ -4027,6 +4117,7 @@ class VODSourceManagementTests(TestCase):
         for item in response.data["results"]:
             self.assertNotIn("custom_properties", item)
             self.assertNotIn("tmdb", item)
+            self.assertNotIn("description", item)
 
     def test_unified_variant_list_returns_each_exact_provider_source(self):
         self.german_relation.custom_properties = {
@@ -4075,6 +4166,7 @@ class VODSourceManagementTests(TestCase):
         )
         self.assertEqual(rows[self.german_relation.id]["tmdb_id"], "272")
         self.assertNotIn("tmdb", rows[self.german_relation.id])
+        self.assertNotIn("description", rows[self.german_relation.id])
         self.assertFalse(
             any(
                 '"vod_movie"."tmdb_metadata"' in query["sql"]

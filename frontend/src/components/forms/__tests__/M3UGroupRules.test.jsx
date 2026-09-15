@@ -316,6 +316,7 @@ describe('M3UGroupRules', () => {
       target: { value: '^HINDI' },
     });
     expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByText('If no rule matches')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Save and apply'));
     expect(onChange).toHaveBeenCalledWith([

@@ -228,7 +228,7 @@ describe('VODSourceRules', () => {
     );
   });
 
-  it('creates a reusable metadata filter without exposing external IDs', () => {
+  it('creates a reusable metadata filter with TMDB presence, not exact IDs', () => {
     const onChange = vi.fn();
     const onDefaultActionChange = vi.fn();
     render(
@@ -249,13 +249,18 @@ describe('VODSourceRules', () => {
     fireEvent.change(screen.getByLabelText('Genre contains'), {
       target: { value: 'Family,Animation' },
     });
-    expect(screen.queryByText(/TMDB ID/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('TMDB ID'), {
+      target: { value: 'missing' },
+    });
+    expect(screen.queryByText(/IMDb ID/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save filter' }));
 
     expect(onChange).toHaveBeenCalledWith([
       expect.objectContaining({
         result: 'include',
         required_genres: ['Family', 'Animation'],
+        tmdb_mode: 'missing',
       }),
     ]);
   });

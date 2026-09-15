@@ -130,7 +130,9 @@ class TMDBMetadataTests(SimpleTestCase):
                             "iso_639_1": "en",
                             "iso_3166_1": "US",
                             "data": {
-                                "title": "Avatar: The Way of Water",
+                                # TMDB sometimes leaves a translated title
+                                # blank even though the overview is localized.
+                                "title": "",
                                 "overview": "English overview",
                             },
                         },

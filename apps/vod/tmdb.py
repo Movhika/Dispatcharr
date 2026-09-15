@@ -127,6 +127,10 @@ def _localized_values(payload, media_type, languages):
     translations = (payload.get("translations") or {}).get("translations") or []
     values = {}
     title_key = "title" if media_type == "movie" else "name"
+    original_title_key = (
+        "original_title" if media_type == "movie" else "original_name"
+    )
+    original_language = str(payload.get("original_language") or "").lower()
     for language in languages:
         row = _translation_for_language(translations, language)
         data = row.get("data") if isinstance(row, dict) else {}
@@ -141,6 +145,11 @@ def _localized_values(payload, media_type, languages):
             title = title or payload.get(title_key)
             overview = overview or payload.get("overview")
             tagline = tagline or payload.get("tagline")
+        # TMDB often supplies an overview/tagline translation while leaving
+        # its translated title empty. If this language is the title's original
+        # language, the explicit original title is the authoritative fallback.
+        if not title and language.split("-", 1)[0].lower() == original_language:
+            title = payload.get(original_title_key) or payload.get(title_key)
         values[language] = {
             "title": str(title or "").strip(),
             "overview": str(overview or "").strip(),

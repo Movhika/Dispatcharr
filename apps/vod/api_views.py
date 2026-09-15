@@ -688,6 +688,9 @@ def _filtered_vod_content(filters):
         movies = movies.filter(_vod_metadata_filter_q(metadata_status))
         series = series.filter(_vod_metadata_filter_q(metadata_status))
 
+    movies = _apply_vod_canonical_filters(movies, filters, "movie")
+    series = _apply_vod_canonical_filters(series, filters, "series")
+
     return movies.distinct(), series.distinct()
 
 
@@ -764,6 +767,111 @@ def _vod_metadata_sql_condition(value, alias):
     return ""
 
 
+def _parse_vod_filter_datetime(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    parsed_value = parse_datetime(raw_value)
+    if parsed_value is None:
+        parsed_date = parse_date(raw_value)
+        if parsed_date is not None:
+            parsed_value = datetime.combine(parsed_date, time.min)
+    if parsed_value is None:
+        raise DRFValidationError("Enter a valid ISO 8601 date or date and time.")
+    if timezone.is_naive(parsed_value):
+        parsed_value = timezone.make_aware(parsed_value)
+    return parsed_value
+
+
+def _apply_vod_canonical_filters(queryset, filters, content_type, prefix=""):
+    """Apply title-level list filters to a Movie/Series queryset."""
+    filters = filters if isinstance(filters, dict) else {}
+    field = lambda name: f"{prefix}{name}"
+    genre = str(filters.get("genre") or "").strip()
+    if genre:
+        queryset = queryset.filter(
+            Q(**{f'{field("genre")}__icontains': genre})
+            | Q(**{f'{field("tmdb_metadata")}__genres__icontains': genre})
+        )
+
+    anime_mode = str(filters.get("anime_mode") or "").strip()
+    if anime_mode == "yes":
+        queryset = queryset.filter(
+            **{f'{field("tmdb_metadata")}__is_anime': True}
+        )
+    elif anime_mode == "no":
+        queryset = queryset.exclude(
+            **{f'{field("tmdb_metadata")}__is_anime': True}
+        )
+
+    adult_query = Q(**{f'{field("tmdb_metadata")}__adult': True})
+    if content_type == "movie":
+        adult_query |= Q(**{field("is_adult"): True})
+    adult_mode = str(filters.get("adult_mode") or "").strip()
+    if adult_mode == "yes":
+        queryset = queryset.filter(adult_query)
+    elif adult_mode == "no":
+        queryset = queryset.exclude(adult_query)
+
+    added_after = _parse_vod_filter_datetime(filters.get("library_added_after"))
+    if added_after is not None:
+        queryset = queryset.filter(
+            **{f'{field("library_added_at")}__gte': added_after}
+        )
+    added_before = _parse_vod_filter_datetime(filters.get("library_added_before"))
+    if added_before is not None:
+        queryset = queryset.filter(
+            **{f'{field("library_added_at")}__lte': added_before}
+        )
+    return queryset
+
+
+def _vod_canonical_sql_filters(filters, alias, content_type):
+    """Return SQL predicates and parameters matching the ORM helper above."""
+    filters = filters if isinstance(filters, dict) else {}
+    conditions = []
+    params = []
+    genre = str(filters.get("genre") or "").strip()
+    if genre:
+        value = f"%{genre.lower()}%"
+        conditions.append(
+            "(LOWER(COALESCE({alias}.genre, '')) LIKE %s OR "
+            "LOWER(COALESCE(({alias}.tmdb_metadata -> 'genres')::text, '')) "
+            "LIKE %s)".format(alias=alias)
+        )
+        params.extend([value, value])
+
+    anime_mode = str(filters.get("anime_mode") or "").strip()
+    if anime_mode in {"yes", "no"}:
+        operator = "=" if anime_mode == "yes" else "<>"
+        conditions.append(
+            f"LOWER(COALESCE({alias}.tmdb_metadata ->> 'is_anime', 'false')) "
+            f"{operator} 'true'"
+        )
+
+    adult_mode = str(filters.get("adult_mode") or "").strip()
+    if adult_mode in {"yes", "no"}:
+        adult_expression = (
+            f"({alias}.is_adult = TRUE OR "
+            f"LOWER(COALESCE({alias}.tmdb_metadata ->> 'adult', 'false')) = 'true')"
+            if content_type == "movie"
+            else f"LOWER(COALESCE({alias}.tmdb_metadata ->> 'adult', 'false')) = 'true'"
+        )
+        conditions.append(
+            adult_expression if adult_mode == "yes" else f"NOT ({adult_expression})"
+        )
+
+    added_after = _parse_vod_filter_datetime(filters.get("library_added_after"))
+    if added_after is not None:
+        conditions.append(f"{alias}.library_added_at >= %s")
+        params.append(added_after)
+    added_before = _parse_vod_filter_datetime(filters.get("library_added_before"))
+    if added_before is not None:
+        conditions.append(f"{alias}.library_added_at <= %s")
+        params.append(added_before)
+    return conditions, params
+
+
 def _selected_relation_queryset(request, relation_type):
     relation_model, canonical_field = (
         (M3UMovieRelation, "movie")
@@ -816,6 +924,12 @@ def _selected_relation_queryset(request, relation_type):
         queryset = queryset.filter(
             _vod_metadata_filter_q(metadata_status, f"{canonical_field}__")
         )
+    queryset = _apply_vod_canonical_filters(
+        queryset,
+        filters,
+        relation_type,
+        prefix=f"{canonical_field}__",
+    )
     return queryset
 
 
@@ -2271,6 +2385,12 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(
                 _vod_metadata_filter_q(metadata_status, prefix=f"{canonical}__")
             )
+        queryset = _apply_vod_canonical_filters(
+            queryset,
+            request.query_params,
+            content_type,
+            prefix=f"{canonical}__",
+        )
         if request.query_params.get("container_extension"):
             queryset = queryset.filter(
                 container_extension__iexact=request.query_params[
@@ -2851,6 +2971,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                         "metadata_available": canonical_metadata[
                             "metadata_available"
                         ],
+                        "tmdb_available": canonical_metadata["tmdb_available"],
                         "result": "include" if match[1] else "exclude",
                     }
                 )
@@ -4109,6 +4230,16 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             movie_conditions.append(movie_metadata_condition)
         if series_metadata_condition:
             series_conditions.append(series_metadata_condition)
+        movie_canonical_conditions, movie_canonical_params = (
+            _vod_canonical_sql_filters(request.query_params, "movies", "movie")
+        )
+        series_canonical_conditions, series_canonical_params = (
+            _vod_canonical_sql_filters(request.query_params, "series", "series")
+        )
+        movie_conditions.extend(movie_canonical_conditions)
+        movie_params.extend(movie_canonical_params)
+        series_conditions.extend(series_canonical_conditions)
+        series_params.extend(series_canonical_params)
 
         movie_title = """COALESCE(
             relation.custom_properties -> 'detailed_info' ->> 'name',
@@ -4241,7 +4372,6 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     "content_type": row["content_type"],
                     "name": _relation_provider_title(relation),
                     "canonical_name": content.display_name or content.name,
-                    "description": content.description or "",
                     "year": content.year,
                     "rating": content.rating or "",
                     "genre": content.genre or "",
@@ -4433,33 +4563,24 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 where_conditions[0] += f" AND {movie_metadata_condition}"
             if series_metadata_condition and series_enabled and series_allowed:
                 where_conditions[1] += f" AND {series_metadata_condition}"
-
-            library_bounds = (
-                ("library_added_after", ">="),
-                ("library_added_before", "<="),
+            movie_canonical_conditions, movie_canonical_params = (
+                _vod_canonical_sql_filters(
+                    request.query_params, "movies", "movie"
+                )
             )
-            for parameter, operator in library_bounds:
-                raw_value = request.query_params.get(parameter, "")
-                if not raw_value:
-                    continue
-                parsed_value = parse_datetime(raw_value)
-                if parsed_value is None:
-                    return Response(
-                        {parameter: "Enter a valid ISO 8601 date and time."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                if timezone.is_naive(parsed_value):
-                    parsed_value = timezone.make_aware(parsed_value)
-                if movie_enabled and movies_allowed:
-                    where_conditions[0] += (
-                        f" AND movies.library_added_at {operator} %s"
-                    )
-                    movie_params.append(parsed_value)
-                if series_enabled and series_allowed:
-                    where_conditions[1] += (
-                        f" AND series.library_added_at {operator} %s"
-                    )
-                    series_params.append(parsed_value)
+            series_canonical_conditions, series_canonical_params = (
+                _vod_canonical_sql_filters(
+                    request.query_params, "series", "series"
+                )
+            )
+            if movie_enabled and movies_allowed:
+                for condition in movie_canonical_conditions:
+                    where_conditions[0] += f" AND {condition}"
+                movie_params.extend(movie_canonical_params)
+            if series_enabled and series_allowed:
+                for condition in series_canonical_conditions:
+                    where_conditions[1] += f" AND {condition}"
+                series_params.extend(series_canonical_params)
 
             params = movie_params + series_params
 
@@ -4551,7 +4672,6 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                     "id": content.id,
                     "uuid": str(content.uuid),
                     "name": row["name"],
-                    "description": content.description or "",
                     "year": content.year,
                     "rating": float(content.rating) if content.rating else 0.0,
                     "genre": content.genre or "",

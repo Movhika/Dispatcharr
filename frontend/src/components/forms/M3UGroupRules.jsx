@@ -117,7 +117,8 @@ const M3UGroupRules = ({
   }, [load]);
 
   useEffect(() => {
-    if (profileMode) setRules(value || []);
+    if (!profileMode) return;
+    setRules(value || []);
   }, [profileMode, value]);
 
   const commitRules = (next) => {
@@ -390,7 +391,7 @@ const M3UGroupRules = ({
       {rules.length === 0 ? (
         <Alert color="gray" variant="light">
           {profileMode
-            ? 'No rule configured. Save and apply an empty draft to clear existing profile rules; the profile default decides unmatched categories.'
+            ? 'No rule configured. Save and apply an empty draft to clear existing profile rules. Categories without a matching rule stay blocked unless they are allowed directly in Sources.'
             : 'No rule configured. New unmatched groups are imported inactive.'}
         </Alert>
       ) : (

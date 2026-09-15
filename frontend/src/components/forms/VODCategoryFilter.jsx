@@ -36,10 +36,7 @@ const VODCategoryFilter = ({
   mode = 'account',
   rules = [],
   onRulesChange,
-  defaultAction = 'enable',
-  onDefaultActionChange,
   accountOptions = [],
-  onClearOverrides,
 }) => {
   const profileMode = mode === 'profile';
   const categories = useVODStore((s) => s.categories);
@@ -217,11 +214,11 @@ const VODCategoryFilter = ({
           >
             Import rules
           </Button>
-          <Text size="xs" c="dimmed">
-            {profileMode
-              ? `New unmatched categories are ${defaultAction === 'enable' ? 'allowed' : 'blocked'} by this profile.`
-              : 'New unmatched categories are imported inactive.'}
-          </Text>
+          {!profileMode && (
+            <Text size="xs" c="dimmed">
+              New unmatched categories are imported inactive.
+            </Text>
+          )}
         </Group>
 
         <Flex gap="sm" align="end" wrap="wrap">
@@ -251,18 +248,6 @@ const VODCategoryFilter = ({
               },
             ]}
           />
-          {profileMode && (
-            <SegmentedControl
-              value={defaultAction}
-              onChange={onDefaultActionChange}
-              size="xs"
-              aria-label={`Default for unmatched ${type} categories`}
-              data={[
-                { label: 'Allow new unmatched', value: 'enable' },
-                { label: 'Block new unmatched', value: 'disable' },
-              ]}
-            />
-          )}
           <Button
             variant="default"
             size="xs"
@@ -279,21 +264,7 @@ const VODCategoryFilter = ({
           >
             {profileMode ? 'Block selected' : 'Disable selected'}
           </Button>
-          {profileMode ? (
-            <Tooltip label="Remove manual Allow/Block overrides so the selected categories follow the ordered import rules and unmatched default again.">
-              <Button
-                variant="default"
-                size="xs"
-                disabled={!selected.size}
-                onClick={() => {
-                  onClearOverrides?.([...selected]);
-                  setSelected(new Set());
-                }}
-              >
-                Reset selected to rules
-              </Button>
-            </Tooltip>
-          ) : (
+          {!profileMode ? (
             <Button
               variant="default"
               size="xs"
@@ -302,7 +273,7 @@ const VODCategoryFilter = ({
             >
               Edit metadata ({selected.size})
             </Button>
-          )}
+          ) : null}
         </Flex>
 
         <Table striped highlightOnHover withTableBorder stickyHeader>

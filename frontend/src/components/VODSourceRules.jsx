@@ -43,7 +43,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { Eye, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Eye, GripVertical, Info, Pencil, Plus, Trash2 } from 'lucide-react';
 import LanguagePicker from './LanguagePicker.jsx';
 import VideoFeaturePicker from './VideoFeaturePicker.jsx';
 import API from '../api.js';
@@ -62,13 +62,10 @@ const RULE_DEFAULTS = {
   required_keywords: [],
   required_countries: [],
   required_age_ratings: [],
-  min_year: 0,
-  max_year: 0,
-  min_rating: 0,
-  max_rating: 0,
   anime_mode: 'any',
   adult_mode: 'any',
   metadata_mode: 'any',
+  tmdb_mode: 'any',
   result: 'include',
 };
 
@@ -77,14 +74,21 @@ const createRule = () => ({
   id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const normalizeRule = (rule, index) => ({
-  ...RULE_DEFAULTS,
-  ...rule,
-  id: rule.id || `rule-${index}`,
-  match_field: rule.match_field || 'stream',
-  regex_pattern: rule.regex_pattern ?? rule.category_regex ?? '',
-  result: rule.result || 'include',
-});
+const normalizeRule = (rule, index) => {
+  const supportedRule = { ...(rule || {}) };
+  for (const field of ['min_year', 'max_year', 'min_rating', 'max_rating']) {
+    delete supportedRule[field];
+  }
+  return {
+    ...RULE_DEFAULTS,
+    ...supportedRule,
+    id: supportedRule.id || `rule-${index}`,
+    match_field: supportedRule.match_field || 'stream',
+    regex_pattern:
+      supportedRule.regex_pattern ?? supportedRule.category_regex ?? '',
+    result: supportedRule.result || 'include',
+  };
+};
 
 const joinValues = (values) => (values || []).join(', ');
 
@@ -100,13 +104,10 @@ const hasFilterCondition = (rule) =>
     rule.required_keywords?.length ||
     rule.required_countries?.length ||
     rule.required_age_ratings?.length ||
-    rule.min_year ||
-    rule.max_year ||
-    rule.min_rating ||
-    rule.max_rating ||
     rule.anime_mode !== 'any' ||
     rule.adult_mode !== 'any' ||
-    rule.metadata_mode !== 'any'
+    rule.metadata_mode !== 'any' ||
+    rule.tmdb_mode !== 'any'
   );
 
 const ruleSummary = (rule) => {
@@ -142,21 +143,25 @@ const ruleSummary = (rule) => {
       conditions.push(`${label} contains ${joinValues(rule[field])}`);
     }
   }
-  if (rule.min_year || rule.max_year) {
-    conditions.push(`Year ${rule.min_year || 'any'}–${rule.max_year || 'any'}`);
-  }
-  if (rule.min_rating || rule.max_rating) {
-    conditions.push(
-      `Rating ${rule.min_rating || 'any'}–${rule.max_rating || 'any'}`
-    );
-  }
   if (rule.anime_mode !== 'any') conditions.push(`Anime is ${rule.anime_mode}`);
   if (rule.adult_mode !== 'any') conditions.push(`Adult is ${rule.adult_mode}`);
   if (rule.metadata_mode !== 'any') {
-    conditions.push(`Canonical metadata is ${rule.metadata_mode}`);
+    conditions.push(`Canonical details are ${rule.metadata_mode}`);
+  }
+  if (rule.tmdb_mode !== 'any') {
+    conditions.push(`TMDB ID is ${rule.tmdb_mode}`);
   }
   return conditions.length ? conditions : ['All content'];
 };
+
+const FilterLabel = ({ children, tooltip }) => (
+  <Group gap={5} wrap="nowrap">
+    <span>{children}</span>
+    <Tooltip label={tooltip} multiline maw={330} withArrow>
+      <Info size={14} aria-label={`About ${children}`} />
+    </Tooltip>
+  </Group>
+);
 
 const SortableRuleCard = ({ ruleId, children }) => {
   const {
@@ -245,17 +250,12 @@ const VODSourceRules = ({
     }
     setEditorOpened(false);
   };
-  const editorInvalid =
+  const editorInvalid = Boolean(
     !hasFilterCondition(editorRule) ||
     (editorRule.min_resolution &&
       editorRule.max_resolution &&
-      Number(editorRule.min_resolution) > Number(editorRule.max_resolution)) ||
-    (editorRule.min_year &&
-      editorRule.max_year &&
-      Number(editorRule.min_year) > Number(editorRule.max_year)) ||
-    (editorRule.min_rating &&
-      editorRule.max_rating &&
-      Number(editorRule.min_rating) > Number(editorRule.max_rating));
+      Number(editorRule.min_resolution) > Number(editorRule.max_resolution))
+  );
 
   const previewRule = async (ruleId, sourceRules = normalized) => {
     setPreviewOpened(true);
@@ -292,15 +292,18 @@ const VODSourceRules = ({
         <Stack gap={2}>
           <Text fw={700}>Content filters</Text>
           <Text size="xs" c="dimmed">
-            All filled conditions inside a filter must match. Manual source
-            metadata overrides imported and detected values. Preview evaluates
-            the current draft and selected source categories without saving or
-            rebuilding the profile.
+            Filled fields use AND. Multiple values inside one field use OR. The
+            first matching filter decides the result. Preview evaluates the
+            current draft without saving or rebuilding the profile.
           </Text>
         </Stack>
         <Group align="end">
           <Select
-            label="Unmatched content"
+            label={
+              <FilterLabel tooltip="Fallback used only when none of the enabled filters matches. Filters are evaluated from top to bottom.">
+                Unmatched content
+              </FilterLabel>
+            }
             size="xs"
             w={170}
             data={[
@@ -346,10 +349,10 @@ const VODSourceRules = ({
                     wrap="nowrap"
                   >
                     <Stack gap={4}>
-                      <Group gap="xs">
-                        <Text fw={600} size="sm">
-                          Filter {index + 1}
-                        </Text>
+                      <Group gap="xs" align="flex-start">
+                        <Badge color="gray" variant="light">
+                          #{index + 1}
+                        </Badge>
                         <Badge
                           color={rule.result === 'exclude' ? 'red' : 'green'}
                           variant="light"
@@ -362,7 +365,7 @@ const VODSourceRules = ({
                           </Badge>
                         )}
                       </Group>
-                      <Text size="xs" c="dimmed">
+                      <Text size="sm" fw={600}>
                         {ruleSummary(rule).join(' · ')}
                       </Text>
                     </Stack>
@@ -412,7 +415,11 @@ const VODSourceRules = ({
         <Stack>
           <Group justify="space-between" align="end">
             <Select
-              label="Result"
+              label={
+                <FilterLabel tooltip="This action is applied only when every filled field in this filter matches.">
+                  Result
+                </FilterLabel>
+              }
               data={[
                 { value: 'include', label: 'Include' },
                 { value: 'exclude', label: 'Exclude' },
@@ -440,7 +447,11 @@ const VODSourceRules = ({
           <Text fw={600}>Source metadata</Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <VideoFeaturePicker
-              label="Features contain"
+              label={
+                <FilterLabel tooltip="Matches when the source has at least one selected feature. Selected values are alternatives (OR).">
+                  Features contain
+                </FilterLabel>
+              }
               value={editorRule.required_video_features || []}
               onChange={(required_video_features) =>
                 setEditorRule((current) => ({
@@ -450,7 +461,11 @@ const VODSourceRules = ({
               }
             />
             <LanguagePicker
-              label="DUB contains"
+              label={
+                <FilterLabel tooltip="Matches when the source has at least one selected audio language. Selected languages are alternatives (OR).">
+                  DUB contains
+                </FilterLabel>
+              }
               value={editorRule.required_audio_languages || []}
               onChange={(required_audio_languages) =>
                 setEditorRule((current) => ({
@@ -460,7 +475,11 @@ const VODSourceRules = ({
               }
             />
             <LanguagePicker
-              label="SUB contains"
+              label={
+                <FilterLabel tooltip="Matches when the source has at least one selected subtitle language. Selected languages are alternatives (OR).">
+                  SUB contains
+                </FilterLabel>
+              }
               value={editorRule.required_subtitle_languages || []}
               onChange={(required_subtitle_languages) =>
                 setEditorRule((current) => ({
@@ -470,7 +489,11 @@ const VODSourceRules = ({
               }
             />
             <NumberInput
-              label="Minimum resolution"
+              label={
+                <FilterLabel tooltip="Matches sources whose known vertical resolution is at least this value. Sources without a resolution do not match.">
+                  Minimum resolution
+                </FilterLabel>
+              }
               min={0}
               step={240}
               suffix="p"
@@ -481,7 +504,11 @@ const VODSourceRules = ({
               }
             />
             <NumberInput
-              label="Maximum resolution"
+              label={
+                <FilterLabel tooltip="Matches sources whose known vertical resolution is at most this value. Sources without a resolution do not match.">
+                  Maximum resolution
+                </FilterLabel>
+              }
               min={0}
               step={240}
               suffix="p"
@@ -509,10 +536,15 @@ const VODSourceRules = ({
             </Alert>
           )}
 
-          <Text fw={600}>Canonical metadata</Text>
+          <Text fw={600}>Canonical details</Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <TagsInput
-              label="Genre contains"
+              label={
+                <FilterLabel tooltip="Enter genre names such as Horror or Animation. A title matches at least one entered genre (OR).">
+                  Genre contains
+                </FilterLabel>
+              }
+              placeholder="e.g. Horror, Animation"
               value={editorRule.required_genres || []}
               onChange={(required_genres) =>
                 setEditorRule((current) => ({ ...current, required_genres }))
@@ -521,7 +553,12 @@ const VODSourceRules = ({
               clearable
             />
             <TagsInput
-              label="Keywords contain"
+              label={
+                <FilterLabel tooltip="Enter canonical TMDB keywords. A title matches at least one entered keyword (OR).">
+                  Keywords contain
+                </FilterLabel>
+              }
+              placeholder="e.g. time travel, superhero"
               value={editorRule.required_keywords || []}
               onChange={(required_keywords) =>
                 setEditorRule((current) => ({ ...current, required_keywords }))
@@ -530,7 +567,12 @@ const VODSourceRules = ({
               clearable
             />
             <TagsInput
-              label="Country contains"
+              label={
+                <FilterLabel tooltip="Enter stored production-country names or codes. A title matches at least one entered value (OR).">
+                  Country contains
+                </FilterLabel>
+              }
+              placeholder="e.g. Germany, US"
               value={editorRule.required_countries || []}
               onChange={(required_countries) =>
                 setEditorRule((current) => ({ ...current, required_countries }))
@@ -539,7 +581,12 @@ const VODSourceRules = ({
               clearable
             />
             <TagsInput
-              label="Age rating contains"
+              label={
+                <FilterLabel tooltip="Enter the stored certification exactly as supplied, for example FSK 6, 6, PG-13, or TV-MA. Values are alternatives (OR).">
+                  Age rating contains
+                </FilterLabel>
+              }
+              placeholder="e.g. FSK 6, PG-13"
               value={editorRule.required_age_ratings || []}
               onChange={(required_age_ratings) =>
                 setEditorRule((current) => ({
@@ -550,52 +597,12 @@ const VODSourceRules = ({
               splitChars={[',']}
               clearable
             />
-            <NumberInput
-              label="Minimum year"
-              min={0}
-              max={9999}
-              placeholder="No minimum"
-              value={editorRule.min_year || ''}
-              onChange={(min_year) =>
-                setEditorRule((current) => ({ ...current, min_year }))
-              }
-            />
-            <NumberInput
-              label="Maximum year"
-              min={0}
-              max={9999}
-              placeholder="No maximum"
-              value={editorRule.max_year || ''}
-              onChange={(max_year) =>
-                setEditorRule((current) => ({ ...current, max_year }))
-              }
-            />
-            <NumberInput
-              label="Minimum rating"
-              min={0}
-              max={10}
-              step={0.1}
-              decimalScale={1}
-              placeholder="No minimum"
-              value={editorRule.min_rating || ''}
-              onChange={(min_rating) =>
-                setEditorRule((current) => ({ ...current, min_rating }))
-              }
-            />
-            <NumberInput
-              label="Maximum rating"
-              min={0}
-              max={10}
-              step={0.1}
-              decimalScale={1}
-              placeholder="No maximum"
-              value={editorRule.max_rating || ''}
-              onChange={(max_rating) =>
-                setEditorRule((current) => ({ ...current, max_rating }))
-              }
-            />
             <Select
-              label="Anime"
+              label={
+                <FilterLabel tooltip="Uses the canonical Anime flag, normally derived from TMDB keywords and still manually editable.">
+                  Anime
+                </FilterLabel>
+              }
               data={[
                 { value: 'any', label: 'Any' },
                 { value: 'yes', label: 'Yes' },
@@ -610,7 +617,11 @@ const VODSourceRules = ({
               }
             />
             <Select
-              label="Adult content"
+              label={
+                <FilterLabel tooltip="Uses the canonical adult-content flag from provider data, TMDB, or a manual override.">
+                  Adult content
+                </FilterLabel>
+              }
               data={[
                 { value: 'any', label: 'Any' },
                 { value: 'yes', label: 'Yes' },
@@ -625,7 +636,11 @@ const VODSourceRules = ({
               }
             />
             <Select
-              label="Canonical metadata"
+              label={
+                <FilterLabel tooltip="Canonical details are the shared title-level information such as descriptions, genres, keywords, cast, artwork, and external IDs. Missing means that no canonical TMDB or manual detail record is stored; provider-source fields alone do not count.">
+                  Canonical details
+                </FilterLabel>
+              }
               data={[
                 { value: 'any', label: 'Any' },
                 { value: 'available', label: 'Available' },
@@ -636,6 +651,25 @@ const VODSourceRules = ({
                 setEditorRule((current) => ({
                   ...current,
                   metadata_mode: metadata_mode || 'any',
+                }))
+              }
+            />
+            <Select
+              label={
+                <FilterLabel tooltip="Checks only whether the canonical title has a TMDB ID. It does not target one specific film or series ID.">
+                  TMDB ID
+                </FilterLabel>
+              }
+              data={[
+                { value: 'any', label: 'Any' },
+                { value: 'available', label: 'Available' },
+                { value: 'missing', label: 'Missing' },
+              ]}
+              value={editorRule.tmdb_mode || 'any'}
+              onChange={(tmdb_mode) =>
+                setEditorRule((current) => ({
+                  ...current,
+                  tmdb_mode: tmdb_mode || 'any',
                 }))
               }
             />
@@ -703,7 +737,7 @@ const VODSourceRules = ({
                       <TableTh>Title</TableTh>
                       <TableTh>Provider source</TableTh>
                       <TableTh>Technical metadata</TableTh>
-                      <TableTh>Canonical metadata</TableTh>
+                      <TableTh>Canonical details</TableTh>
                       <TableTh>Result</TableTh>
                     </TableTr>
                   </TableThead>
@@ -742,7 +776,8 @@ const VODSourceRules = ({
                             {row.year || 'No year'}
                           </Text>
                           <Text size="xs" c="dimmed">
-                            {joinValues(row.keywords) || 'No keywords'}
+                            {joinValues(row.keywords) || 'No keywords'} · TMDB
+                            ID {row.tmdb_available ? 'available' : 'missing'}
                           </Text>
                         </TableTd>
                         <TableTd>

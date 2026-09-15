@@ -182,6 +182,10 @@ const getFetchContentParams = (state) => {
     'container_extension',
     'video_feature',
     'metadata_status',
+    'genre',
+    'anime_mode',
+    'adult_mode',
+    'library_added_after',
   ]) {
     if (state.filters[key]) params.append(key, state.filters[key]);
   }
@@ -319,6 +323,10 @@ const useVODStore = create((set, get) => ({
     container_extension: '',
     video_feature: '',
     metadata_status: '',
+    genre: '',
+    anime_mode: '',
+    adult_mode: '',
+    library_added_after: '',
   },
   currentPage: 1,
   totalCount: 0,
@@ -483,8 +491,7 @@ const useVODStore = create((set, get) => ({
                   (current) =>
                     current[LIST_CONFIRMATION_FIELD] &&
                     !results.some(
-                      (incoming) =>
-                        String(incoming.id) === String(current.id)
+                      (incoming) => String(incoming.id) === String(current.id)
                     )
                 ),
               ].sort((left, right) => left.name.localeCompare(right.name))

@@ -217,10 +217,20 @@ vi.mock('@mantine/core', () => {
     TableThead: Wrapper,
     TableTr: Wrapper,
     Text: Wrapper,
-    TextInput: ({ value, onChange, placeholder }) => (
-      <input value={value} onChange={onChange} placeholder={placeholder} />
+    TextInput: ({ value, onChange, placeholder, label, type }) => (
+      <label>
+        {label}
+        <input
+          aria-label={label}
+          type={type}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+        />
+      </label>
     ),
     Title: ({ children }) => <h2>{children}</h2>,
+    Tooltip: Wrapper,
   };
 });
 
@@ -266,6 +276,10 @@ describe('VODsPage list and bulk editing', () => {
       container_extension: '',
       video_feature: '',
       metadata_status: '',
+      genre: '',
+      anime_mode: '',
+      adult_mode: '',
+      library_added_after: '',
       representation: 'canonical',
     },
     currentPage: 1,

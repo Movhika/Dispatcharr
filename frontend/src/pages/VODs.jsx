@@ -29,6 +29,7 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   DatabaseZap,
@@ -95,6 +96,17 @@ const sourceMetadataValue = (item, field) => {
 };
 const sourceCount = (item) =>
   item.source_count ?? item.source_metadata?.source_count ?? 0;
+const ClampedCellText = ({ value }) => {
+  const text =
+    value === null || value === undefined || value === '' ? '—' : String(value);
+  return (
+    <Tooltip label={text} multiline maw={420} withArrow>
+      <Text size="sm" lineClamp={3} style={{ overflowWrap: 'anywhere' }}>
+        {text}
+      </Text>
+    </Tooltip>
+  );
+};
 
 const VODsPage = () => {
   const user = useAuthStore((state) => state.user);
@@ -252,6 +264,10 @@ const VODsPage = () => {
     filters.container_extension,
     filters.video_feature,
     filters.metadata_status,
+    filters.genre,
+    filters.anime_mode,
+    filters.adult_mode,
+    filters.library_added_after,
     filters.representation,
   ]);
 
@@ -386,6 +402,10 @@ const VODsPage = () => {
     filters.container_extension,
     filters.video_feature,
     filters.metadata_status,
+    filters.genre,
+    filters.anime_mode,
+    filters.adult_mode,
+    filters.library_added_after,
   ].filter(Boolean).length;
 
   const clearAdvancedFilters = () => {
@@ -396,6 +416,10 @@ const VODsPage = () => {
       container_extension: '',
       video_feature: '',
       metadata_status: '',
+      genre: '',
+      anime_mode: '',
+      adult_mode: '',
+      library_added_after: '',
     });
     setPage(1);
   };
@@ -629,6 +653,55 @@ const VODsPage = () => {
                     }}
                     clearable
                   />
+                  <TextInput
+                    label="Genre contains"
+                    placeholder="e.g. Horror"
+                    value={filters.genre || ''}
+                    onChange={(event) => {
+                      setFilters({ genre: event.currentTarget.value });
+                      setPage(1);
+                    }}
+                  />
+                  <Select
+                    label="Anime"
+                    placeholder="Any"
+                    clearable
+                    data={[
+                      { value: 'yes', label: 'Yes' },
+                      { value: 'no', label: 'No' },
+                    ]}
+                    value={filters.anime_mode || null}
+                    onChange={(value) => {
+                      setFilters({ anime_mode: value || '' });
+                      setPage(1);
+                    }}
+                  />
+                  <Select
+                    label="Adult content"
+                    placeholder="Any"
+                    clearable
+                    data={[
+                      { value: 'yes', label: 'Yes' },
+                      { value: 'no', label: 'No' },
+                    ]}
+                    value={filters.adult_mode || null}
+                    onChange={(value) => {
+                      setFilters({ adult_mode: value || '' });
+                      setPage(1);
+                    }}
+                  />
+                  <TextInput
+                    type="date"
+                    label="Added since"
+                    description="First import into this VOD library"
+                    value={filters.library_added_after || ''}
+                    onChange={(event) => {
+                      setFilters({
+                        library_added_after: event.currentTarget.value,
+                      });
+                      setPage(1);
+                    }}
+                  />
                 </SimpleGrid>
                 <Group justify="flex-end">
                   <Button
@@ -736,57 +809,60 @@ const VODsPage = () => {
                     </TableTd>
                     <TableTd>
                       <Text fw={500}>{item.name}</Text>
-                      {item.is_variant && item.canonical_name && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          Canonical: {item.canonical_name}
-                        </Text>
-                      )}
-                      {!item.is_variant && (item.tmdb_id || item.imdb_id) && (
-                        <Text size="xs" c="dimmed">
-                          {item.tmdb_id ? `TMDB ${item.tmdb_id}` : ''}
-                          {item.tmdb_id && item.imdb_id ? ' · ' : ''}
-                          {item.imdb_id ? `IMDb ${item.imdb_id}` : ''}
-                          {item.tmdb_status !== 'matched'
-                            ? ' · details not enriched'
-                            : ''}
-                        </Text>
-                      )}
-                      {item.description && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {item.description}
-                        </Text>
-                      )}
+                      <Text size="xs" c="dimmed">
+                        {item.tmdb_id ? `TMDB ${item.tmdb_id}` : 'No TMDB ID'}
+                      </Text>
                     </TableTd>
                     <TableTd>
                       {item.contentType === 'series' ? 'Series' : 'Movie'}
                     </TableTd>
                     <TableTd>{item.year || '—'}</TableTd>
                     <TableTd>
-                      {item.is_variant
-                        ? `${item.m3u_account?.name || 'Unknown'} · ${item.category?.name || 'Uncategorized'}`
-                        : sourceCount(item)}
-                    </TableTd>
-                    <TableTd>{item.genre || '—'}</TableTd>
-                    <TableTd>
-                      {sourceMetadataValue(item, 'audio_languages')}
-                    </TableTd>
-                    <TableTd>
-                      {sourceMetadataValue(item, 'subtitle_languages')}
+                      <ClampedCellText
+                        value={
+                          item.is_variant
+                            ? `${item.m3u_account?.name || 'Unknown'} · ${item.category?.name || 'Uncategorized'}`
+                            : sourceCount(item)
+                        }
+                      />
                     </TableTd>
                     <TableTd>
-                      {sourceMetadataValue(item, 'resolutions')}
+                      <ClampedCellText value={item.genre} />
                     </TableTd>
                     <TableTd>
-                      {item.contentType === 'series'
-                        ? ''
-                        : sourceMetadataValue(item, 'container_extensions')}
+                      <ClampedCellText
+                        value={sourceMetadataValue(item, 'audio_languages')}
+                      />
                     </TableTd>
                     <TableTd>
-                      {(item.source_metadata?.video_features || []).length
-                        ? item.source_metadata.video_features
-                            .map(videoFeatureLabel)
-                            .join(', ')
-                        : '—'}
+                      <ClampedCellText
+                        value={sourceMetadataValue(item, 'subtitle_languages')}
+                      />
+                    </TableTd>
+                    <TableTd>
+                      <ClampedCellText
+                        value={sourceMetadataValue(item, 'resolutions')}
+                      />
+                    </TableTd>
+                    <TableTd>
+                      <ClampedCellText
+                        value={
+                          item.contentType === 'series'
+                            ? '—'
+                            : sourceMetadataValue(item, 'container_extensions')
+                        }
+                      />
+                    </TableTd>
+                    <TableTd>
+                      <ClampedCellText
+                        value={
+                          (item.source_metadata?.video_features || []).length
+                            ? item.source_metadata.video_features
+                                .map(videoFeatureLabel)
+                                .join(', ')
+                            : '—'
+                        }
+                      />
                     </TableTd>
                     <TableTd>
                       <ActionIcon

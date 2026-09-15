@@ -58,7 +58,7 @@ describe('resolveProfileCategoryRows', () => {
     ).toEqual({ 101: true, 102: false });
   });
 
-  it('applies first-match provider rules and the unmatched default', () => {
+  it('applies first-match provider rules and blocks unmatched categories', () => {
     const profile = {
       hard_constraints: {
         category_import_rules: [
@@ -76,7 +76,6 @@ describe('resolveProfileCategoryRows', () => {
             action: 'disable',
           },
         ],
-        category_default_actions: { movie: 'disable' },
       },
       category_rules: [],
     };
@@ -104,7 +103,6 @@ describe('resolveProfileCategoryRows', () => {
               action: 'enable',
             },
           ],
-          category_default_actions: { movie: 'disable' },
         },
         category_rules: [{ category_relation: 101, enabled: false }],
       },

@@ -3,10 +3,7 @@ const hasOwn = (object, key) =>
 
 export const profileCategoryRulesConfigured = (profile) => {
   const constraints = profile?.hard_constraints || {};
-  return (
-    hasOwn(constraints, 'category_import_rules') ||
-    hasOwn(constraints, 'category_default_actions')
-  );
+  return hasOwn(constraints, 'category_import_rules');
 };
 
 export const categoryRuleMatches = (rule, row) => {
@@ -43,8 +40,6 @@ export const resolveProfileCategoryRows = (categories, profile, scope) => {
   );
   const hasLegacyAllowlist = !configured && explicitRules.length > 0;
   const importRules = constraints.category_import_rules || [];
-  const defaultAction =
-    constraints.category_default_actions?.[scope] || 'enable';
 
   return Object.values(categories || {})
     .filter((category) => category.category_type === scope)
@@ -69,22 +64,24 @@ export const resolveProfileCategoryRows = (categories, profile, scope) => {
             : null;
           const enabled = explicit
             ? explicit.enabled !== false
-            : hasLegacyAllowlist
-              ? false
+            : !configured
+              ? !hasLegacyAllowlist
               : matchedRule
                 ? matchedRule.action === 'enable'
-                : defaultAction === 'enable';
+                : false;
           return {
             ...row,
             enabled,
             explicit: Boolean(explicit),
             decision_source: explicit
               ? 'Manual override'
-              : hasLegacyAllowlist
-                ? 'Legacy selection'
+              : !configured
+                ? hasLegacyAllowlist
+                  ? 'Legacy selection'
+                  : 'Legacy all categories'
                 : matchedRule
                   ? 'Import rule'
-                  : 'Default',
+                  : 'No matching rule',
             matched_rule_id: matchedRule?.id || '',
           };
         })

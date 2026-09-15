@@ -130,6 +130,8 @@ const flexibleColumns = [
   },
 ];
 
+const EMPTY_CHANNELS = [];
+
 const defaultColumnSizing = Object.fromEntries(
   flexibleColumns.map(({ id, size }) => [id, size])
 );
@@ -309,7 +311,9 @@ const ChannelsTable = ({ onReady }) => {
    */
 
   // store/channelsTable
-  const rawChannels = useChannelsTableStore((s) => s.channels);
+  const storedChannels = useChannelsTableStore((s) => s.channels);
+  const channelsStoreInvalid = !Array.isArray(storedChannels);
+  const rawChannels = channelsStoreInvalid ? EMPTY_CHANNELS : storedChannels;
   // Drop nullish entries so a bad row can't crash row rendering.
   const data = useMemo(
     () =>
@@ -925,7 +929,7 @@ const ChannelsTable = ({ onReady }) => {
 
   // Store still has a nullish entry beyond just this render; refetch to clear it.
   useEffect(() => {
-    if (!rawChannels.some((c) => !c)) {
+    if (!channelsStoreInvalid && !rawChannels.some((c) => !c)) {
       hasAttemptedChannelRepair.current = false;
       return;
     }
@@ -937,7 +941,7 @@ const ChannelsTable = ({ onReady }) => {
       );
       fetchData();
     }
-  }, [rawChannels, fetchData]);
+  }, [channelsStoreInvalid, rawChannels, fetchData]);
 
   useEffect(() => {
     const profileName = profiles[selectedProfileId]?.name;

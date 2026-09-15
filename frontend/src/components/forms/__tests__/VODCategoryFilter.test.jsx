@@ -341,4 +341,38 @@ describe('VODCategoryFilter', () => {
       screen.queryByLabelText(/enable unmatched new movie categories/i)
     ).not.toBeInTheDocument();
   });
+
+  it('keeps direct profile decisions without a Follow rules action', () => {
+    render(
+      <VODCategoryFilter
+        mode="profile"
+        type="movie"
+        categoryStates={[
+          {
+            id: 1,
+            relation_id: 101,
+            name: 'Action',
+            accountName: 'Provider',
+            enabled: true,
+            explicit: true,
+            metadata_defaults: {},
+          },
+          {
+            id: 2,
+            relation_id: 102,
+            name: 'Comedy',
+            accountName: 'Provider',
+            enabled: false,
+            explicit: false,
+            metadata_defaults: {},
+          },
+        ]}
+        setCategoryStates={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('Follow rules')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Select Action'));
+    expect(screen.queryByText('Follow rules')).not.toBeInTheDocument();
+  });
 });

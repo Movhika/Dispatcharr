@@ -107,14 +107,14 @@ def _profile_category_rule_matches(rule, category):
     return bool(pattern.search(str(category.get("category_name") or "")))
 
 
-def _profile_category_enabled(category, rules, defaults):
+def _profile_category_enabled(category, rules):
     """Resolve a globally available category through ordered profile rules."""
     for rule in rules:
         if not isinstance(rule, dict):
             continue
         if _profile_category_rule_matches(rule, category):
             return rule.get("action") == "enable"
-    return defaults.get(category["category_type"], "enable") == "enable"
+    return False
 
 
 def policy_category_map(policy):
@@ -122,9 +122,10 @@ def policy_category_map(policy):
 
     The M3U-account category selection remains an absolute upper boundary.
     Explicit profile rows override dynamic rules, then the first matching
-    profile rule wins, followed by the per-content-type default. Profiles from
-    before dynamic rules retain their original semantics: no rows means all
-    globally enabled categories, while any saved rows form an exact allowlist.
+    profile rule wins. Categories without either decision are blocked.
+    Profiles from before dynamic rules retain their original semantics: no
+    rows means all globally enabled categories, while any saved rows form an
+    exact allowlist.
     """
     mapping = enabled_category_map()
     if not policy:
@@ -138,10 +139,7 @@ def policy_category_map(policy):
         )
     )
     constraints = policy.hard_constraints or {}
-    dynamic_configured = (
-        "category_import_rules" in constraints
-        or "category_default_actions" in constraints
-    )
+    dynamic_configured = "category_import_rules" in constraints
     if not dynamic_configured:
         if not explicit_rows:
             return mapping
@@ -157,7 +155,6 @@ def policy_category_map(policy):
         for relation_id, _account_id, _category_id, enabled in explicit_rows
     }
     rules = list(constraints.get("category_import_rules") or [])
-    defaults = dict(constraints.get("category_default_actions") or {})
     inventory = M3UVODCategoryRelation.objects.filter(
         enabled=True,
         m3u_account__is_active=True,
@@ -183,7 +180,6 @@ def policy_category_map(policy):
                     "category_type": category["category__category_type"],
                 },
                 rules,
-                defaults,
             )
         if enabled:
             allowed.add(key)
@@ -329,6 +325,7 @@ def _canonical_filter_metadata(relation):
             "is_anime": False,
             "is_adult": False,
             "metadata_available": False,
+            "tmdb_available": False,
         }
     tmdb_metadata = (
         content.tmdb_metadata
@@ -384,6 +381,11 @@ def _canonical_filter_metadata(relation):
             tmdb_metadata
             or getattr(content, "tmdb_status", "") in {"matched", "manual"}
         ),
+        "tmdb_available": bool(
+            getattr(content, "tmdb_match_id", "")
+            or getattr(content, "tmdb_id", "")
+            or tmdb_metadata.get("id")
+        ),
     }
 
 
@@ -414,6 +416,7 @@ def _rule_uses_canonical_metadata(rule):
         or rule.get("anime_mode") in {"yes", "no"}
         or rule.get("adult_mode") in {"yes", "no"}
         or rule.get("metadata_mode") in {"available", "missing"}
+        or rule.get("tmdb_mode") in {"available", "missing"}
     )
 
 
@@ -444,6 +447,11 @@ def _canonical_content_filter_matches(rule, metadata):
     if metadata_mode == "available" and not metadata["metadata_available"]:
         return False
     if metadata_mode == "missing" and metadata["metadata_available"]:
+        return False
+    tmdb_mode = str(rule.get("tmdb_mode") or "any")
+    if tmdb_mode == "available" and not metadata["tmdb_available"]:
+        return False
+    if tmdb_mode == "missing" and metadata["tmdb_available"]:
         return False
 
     year = metadata["year"]

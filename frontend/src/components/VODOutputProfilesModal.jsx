@@ -65,10 +65,6 @@ const EMPTY_PROFILE = {
     source_rules: [],
     content_default_action: 'exclude',
     category_import_rules: [],
-    category_default_actions: {
-      movie: 'enable',
-      series: 'enable',
-    },
   },
   ranking: DEFAULT_VOD_FAILOVER_RANKING,
   provider_order: [],
@@ -148,9 +144,18 @@ const profilePayload = (profile) => ({
       profile.hard_constraints?.content_default_action === 'exclude'
         ? 'exclude'
         : 'include',
-    source_rules: (profile.hard_constraints?.source_rules || []).map(
-      (rule) => ({
-        ...rule,
+    source_rules: (profile.hard_constraints?.source_rules || []).map((rule) => {
+      const normalizedRule = { ...rule };
+      for (const field of [
+        'min_year',
+        'max_year',
+        'min_rating',
+        'max_rating',
+      ]) {
+        delete normalizedRule[field];
+      }
+      return {
+        ...normalizedRule,
         required_audio_languages: normalizeLanguageCodes(
           rule.required_audio_languages || []
         ),
@@ -158,8 +163,8 @@ const profilePayload = (profile) => ({
           rule.required_subtitle_languages || []
         ),
         required_video_features: rule.required_video_features || [],
-      })
-    ),
+      };
+    }),
     ...(hasOwn(profile.hard_constraints, 'category_import_rules')
       ? {
           category_import_rules: (
@@ -177,22 +182,6 @@ const profilePayload = (profile) => ({
             enabled: rule.enabled !== false,
             order: index,
           })),
-        }
-      : {}),
-    ...(hasOwn(profile.hard_constraints, 'category_default_actions')
-      ? {
-          category_default_actions: {
-            movie:
-              profile.hard_constraints.category_default_actions?.movie ===
-              'disable'
-                ? 'disable'
-                : 'enable',
-            series:
-              profile.hard_constraints.category_default_actions?.series ===
-              'disable'
-                ? 'disable'
-                : 'enable',
-          },
         }
       : {}),
   },
@@ -291,6 +280,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     container_extension: '',
     video_feature: '',
     metadata_status: '',
+    genre: '',
+    anime_mode: '',
+    adult_mode: '',
   });
 
   const selectedProfile = profiles.find(
@@ -339,13 +331,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
           ? {
               category_import_rules:
                 sourceConstraints.category_import_rules || [],
-            }
-          : {}),
-        ...(hasOwn(sourceConstraints, 'category_default_actions')
-          ? {
-              category_default_actions: {
-                ...(sourceConstraints.category_default_actions || {}),
-              },
             }
           : {}),
       },
@@ -547,16 +532,6 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
     });
   };
 
-  const clearProfileCategoryOverrides = (relationIdsToClear) => {
-    const cleared = new Set(relationIdsToClear.map(String));
-    setDraft((current) => ({
-      ...current,
-      category_rules: (current.category_rules || []).filter(
-        (rule) => !cleared.has(String(rule.category_relation))
-      ),
-    }));
-  };
-
   const updateProfileCategoryRules = (scope, scopeRules) => {
     setDraft((current) => {
       const constraints = current.hard_constraints || {};
@@ -568,33 +543,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         hard_constraints: {
           ...constraints,
           category_import_rules: [...otherRules, ...scopeRules],
-          category_default_actions: {
-            movie: constraints.category_default_actions?.movie || 'enable',
-            series: constraints.category_default_actions?.series || 'enable',
-          },
         },
       };
     });
-  };
-
-  const updateProfileCategoryDefault = (scope, action) => {
-    setDraft((current) => ({
-      ...current,
-      hard_constraints: {
-        ...current.hard_constraints,
-        category_import_rules:
-          current.hard_constraints?.category_import_rules || [],
-        category_default_actions: {
-          movie:
-            current.hard_constraints?.category_default_actions?.movie ||
-            'enable',
-          series:
-            current.hard_constraints?.category_default_actions?.series ||
-            'enable',
-          [scope]: action,
-        },
-      },
-    }));
   };
 
   const failoverAccountOptions = useMemo(() => {
@@ -645,6 +596,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
               search: filters.search,
               category: filters.category,
               metadata_status: filters.metadata_status,
+              genre: filters.genre,
+              anime_mode: filters.anime_mode,
+              adult_mode: filters.adult_mode,
             }
           : filters;
       const params = Object.fromEntries(
@@ -851,6 +805,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
         ]
       : []),
     filters.metadata_status,
+    filters.genre,
+    filters.anime_mode,
+    filters.adult_mode,
   ].filter(Boolean).length;
   const clearAdvancedPreviewFilters = () => {
     setFilters((current) => ({
@@ -861,6 +818,9 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
       container_extension: '',
       video_feature: '',
       metadata_status: '',
+      genre: '',
+      anime_mode: '',
+      adult_mode: '',
     }));
     setPage(1);
   };
@@ -1342,15 +1302,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                             onRulesChange={(rules) =>
                               updateProfileCategoryRules('movie', rules)
                             }
-                            defaultAction={
-                              draft.hard_constraints.category_default_actions
-                                ?.movie || 'enable'
-                            }
-                            onDefaultActionChange={(action) =>
-                              updateProfileCategoryDefault('movie', action)
-                            }
                             accountOptions={accountOptions}
-                            onClearOverrides={clearProfileCategoryOverrides}
                           />
                         </TabsPanel>
                         <TabsPanel value="series">
@@ -1367,15 +1319,7 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                             onRulesChange={(rules) =>
                               updateProfileCategoryRules('series', rules)
                             }
-                            defaultAction={
-                              draft.hard_constraints.category_default_actions
-                                ?.series || 'enable'
-                            }
-                            onDefaultActionChange={(action) =>
-                              updateProfileCategoryDefault('series', action)
-                            }
                             accountOptions={accountOptions}
-                            onClearOverrides={clearProfileCategoryOverrides}
                           />
                         </TabsPanel>
                       </Tabs>
@@ -1640,6 +1584,52 @@ const VODOutputProfilesModal = ({ opened, onClose }) => {
                               setFilters({
                                 ...filters,
                                 metadata_status: value || '',
+                              });
+                              setPage(1);
+                            }}
+                          />
+                          <TextInput
+                            label="Genre contains"
+                            placeholder="e.g. Horror"
+                            value={filters.genre || ''}
+                            onChange={(event) => {
+                              setFilters({
+                                ...filters,
+                                genre: event.currentTarget.value,
+                              });
+                              setPage(1);
+                            }}
+                          />
+                          <Select
+                            label="Anime"
+                            placeholder="Any"
+                            clearable
+                            data={[
+                              { value: 'yes', label: 'Yes' },
+                              { value: 'no', label: 'No' },
+                            ]}
+                            value={filters.anime_mode || null}
+                            onChange={(value) => {
+                              setFilters({
+                                ...filters,
+                                anime_mode: value || '',
+                              });
+                              setPage(1);
+                            }}
+                          />
+                          <Select
+                            label="Adult content"
+                            placeholder="Any"
+                            clearable
+                            data={[
+                              { value: 'yes', label: 'Yes' },
+                              { value: 'no', label: 'No' },
+                            ]}
+                            value={filters.adult_mode || null}
+                            onChange={(value) => {
+                              setFilters({
+                                ...filters,
+                                adult_mode: value || '',
                               });
                               setPage(1);
                             }}

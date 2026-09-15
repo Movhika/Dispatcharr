@@ -760,9 +760,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         normalized = dict(value)
         source_rules = normalized.pop("source_rules", [])
         category_import_rules = normalized.pop("category_import_rules", None)
-        category_default_actions = normalized.pop(
-            "category_default_actions", None
-        )
+        normalized.pop("category_default_actions", None)
         content_default_action = normalized.pop("content_default_action", None)
         if not isinstance(source_rules, list):
             raise serializers.ValidationError(
@@ -874,35 +872,9 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 )
             category_import_rules = normalized_category_rules
 
-        if category_default_actions is not None:
-            if not isinstance(category_default_actions, dict):
-                raise serializers.ValidationError(
-                    {"category_default_actions": "Must be an object"}
-                )
-            unsupported_scopes = set(category_default_actions) - {
-                "movie", "series"
-            }
-            if unsupported_scopes:
-                raise serializers.ValidationError(
-                    {
-                        "category_default_actions": (
-                            "Use only movie and series defaults"
-                        )
-                    }
-                )
-            normalized_defaults = {}
-            for scope, action in category_default_actions.items():
-                action = str(action)
-                if action not in {"enable", "disable"}:
-                    raise serializers.ValidationError(
-                        {
-                            "category_default_actions": {
-                                scope: "Use enable or disable"
-                            }
-                        }
-                    )
-                normalized_defaults[scope] = action
-            category_default_actions = normalized_defaults
+        # Accepted only so a stale frontend can still save after deployment.
+        # The former unmatched-category fallback is intentionally discarded;
+        # unmatched categories are now always blocked.
         if content_default_action is not None:
             content_default_action = str(content_default_action)
             if content_default_action not in {"include", "exclude"}:
@@ -1108,6 +1080,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                 anime_mode = str(rule.get("anime_mode") or "any")
                 adult_mode = str(rule.get("adult_mode") or "any")
                 metadata_mode = str(rule.get("metadata_mode") or "any")
+                tmdb_mode = str(rule.get("tmdb_mode") or "any")
                 if anime_mode not in {"any", "yes", "no"}:
                     raise serializers.ValidationError(
                         {"source_rules": {index: {"anime_mode": "Use any, yes, or no"}}}
@@ -1122,6 +1095,16 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                             "source_rules": {
                                 index: {
                                     "metadata_mode": "Use any, available, or missing"
+                                }
+                            }
+                        }
+                    )
+                if tmdb_mode not in {"any", "available", "missing"}:
+                    raise serializers.ValidationError(
+                        {
+                            "source_rules": {
+                                index: {
+                                    "tmdb_mode": "Use any, available, or missing"
                                 }
                             }
                         }
@@ -1146,6 +1129,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                     anime_mode,
                     adult_mode,
                     metadata_mode,
+                    tmdb_mode,
                 )
                 if duplicate_key in seen_stream_filters:
                     raise serializers.ValidationError(
@@ -1175,6 +1159,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
                         "anime_mode": anime_mode,
                         "adult_mode": adult_mode,
                         "metadata_mode": metadata_mode,
+                        "tmdb_mode": tmdb_mode,
                         "result": result,
                     }
                 )
@@ -1207,13 +1192,10 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         normalized["source_rules"] = normalized_rules
         if category_import_rules is not None:
             normalized["category_import_rules"] = category_import_rules
-        if category_default_actions is not None:
-            normalized["category_default_actions"] = category_default_actions
         if content_default_action is not None:
             normalized["content_default_action"] = content_default_action
         configuration_fields = {
-            "source_rules", "category_import_rules", "category_default_actions",
-            "content_default_action",
+            "source_rules", "category_import_rules", "content_default_action",
         }
         if requested_fields <= configuration_fields and all(
             rule.get("match_field") for rule in normalized_rules
