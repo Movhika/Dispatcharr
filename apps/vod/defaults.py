@@ -22,22 +22,10 @@ def ensure_default_vod_policy():
         name=DEFAULT_VOD_POLICY_NAME,
         defaults=defaults,
     )
-    if not created:
-        changed = [
-            field
-            for field, value in defaults.items()
-            if getattr(policy, field) != value
-        ]
-        if changed:
-            VODAccessPolicy.objects.filter(pk=policy.pk).update(
-                **{field: defaults[field] for field in changed}
-            )
-            for field in changed:
-                setattr(policy, field, defaults[field])
-
-    VODAccessPolicy.objects.exclude(pk=policy.pk).filter(is_default=True).update(
-        is_default=False
-    )
+    if created:
+        VODAccessPolicy.objects.exclude(pk=policy.pk).filter(
+            is_default=True
+        ).update(is_default=False)
     user_model = get_user_model()
     assigned_user_ids = VODAccessPolicy.users.through.objects.values_list(
         "user_id", flat=True

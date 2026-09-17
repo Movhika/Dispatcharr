@@ -58,6 +58,33 @@ class DefaultVODPolicyTests(TestCase):
             ["All"],
         )
 
+    def test_existing_default_policy_configuration_is_preserved(self):
+        policy = ensure_default_vod_policy()
+        policy.name_template = "{title} ({year}) {edition}"
+        policy.edition_rules = [
+            {
+                "id": "edition-4k",
+                "name": "4K",
+                "title_suffix": "4K",
+                "enabled": True,
+                "min_resolution": 2160,
+                "max_resolution": 0,
+                "required_audio_languages": [],
+                "required_subtitle_languages": [],
+                "required_video_features": [],
+            }
+        ]
+        policy.save(update_fields=["name_template", "edition_rules"])
+
+        ensured = ensure_default_vod_policy()
+        ensured.refresh_from_db()
+
+        self.assertEqual(
+            ensured.name_template,
+            "{title} ({year}) {edition}",
+        )
+        self.assertEqual(ensured.edition_rules, policy.edition_rules)
+
     def test_existing_assignment_is_not_replaced(self):
         user = get_user_model().objects.create_user(
             username="custom-vod-user",
