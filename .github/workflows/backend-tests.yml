@@ -103,13 +103,20 @@ jobs:
           fi
           REPO_OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           REPO_NAME="$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/${REPO_OWNER}/${REPO_NAME}:${TAG}" >> "$GITHUB_OUTPUT"
+          IMAGE_OWNER="${REPO_OWNER}"
+          if [ "${REPO_OWNER}" != "dispatcharr" ]; then
+            # Forks normally do not publish their own base/base-dev images. The
+            # application image uses Dispatcharr's public base image as well,
+            # so keep backend CI on that same reproducible environment.
+            IMAGE_OWNER="dispatcharr"
+          fi
+          echo "image=ghcr.io/${IMAGE_OWNER}/${REPO_NAME}:${TAG}" >> "$GITHUB_OUTPUT"
           if grep -qx 'pyproject.toml' /tmp/changed_paths.txt || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "sync_python_deps=true" >> "$GITHUB_OUTPUT"
           else
             echo "sync_python_deps=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Using base image: ghcr.io/${REPO_OWNER}/${REPO_NAME}:${TAG}"
+          echo "Using base image: ghcr.io/${IMAGE_OWNER}/${REPO_NAME}:${TAG}"
 
       - name: Resolve Django test labels
         id: resolve
