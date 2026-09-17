@@ -128,6 +128,67 @@ class TestDecrementProfileConnectionsAtomic(TestCase):
         self.assertGreaterEqual(final, 0, "Counter must not go negative after concurrent decrements")
 
 
+class TestReserveProfileReconciliation(TestCase):
+    def test_capacity_failure_reconciles_once_and_retries(self):
+        from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+            MultiWorkerVODConnectionManager,
+        )
+
+        manager = MultiWorkerVODConnectionManager.__new__(
+            MultiWorkerVODConnectionManager
+        )
+        manager.redis_client = MagicMock()
+        profile = MagicMock(id=7, name="Default", max_streams=1)
+
+        with (
+            patch(
+                "apps.m3u.connection_pool.reserve_profile_slot",
+                side_effect=[
+                    (False, 1, "profile_full"),
+                    (True, 1, None),
+                ],
+            ) as mock_reserve,
+            patch(
+                "apps.m3u.connection_pool.reconcile_profile_connection_count",
+                return_value=0,
+            ) as mock_reconcile,
+        ):
+            reserved = manager._check_and_reserve_profile_slot(
+                profile, "session-7"
+            )
+
+        self.assertTrue(reserved)
+        self.assertEqual(mock_reserve.call_count, 2)
+        mock_reconcile.assert_called_once_with(7, manager.redis_client)
+
+    def test_non_profile_capacity_failure_does_not_scan(self):
+        from apps.proxy.vod_proxy.multi_worker_connection_manager import (
+            MultiWorkerVODConnectionManager,
+        )
+
+        manager = MultiWorkerVODConnectionManager.__new__(
+            MultiWorkerVODConnectionManager
+        )
+        manager.redis_client = MagicMock()
+        profile = MagicMock(id=8, name="Default", max_streams=1)
+
+        with (
+            patch(
+                "apps.m3u.connection_pool.reserve_profile_slot",
+                return_value=(False, 1, "credential_full"),
+            ),
+            patch(
+                "apps.m3u.connection_pool.reconcile_profile_connection_count"
+            ) as mock_reconcile,
+        ):
+            reserved = manager._check_and_reserve_profile_slot(
+                profile, "session-8"
+            )
+
+        self.assertFalse(reserved)
+        mock_reconcile.assert_not_called()
+
+
 class TestDecrementActiveStreamsAndCheck(TestCase):
     """Atomic DECR+check via Redis Lua (no session lock)."""
 
