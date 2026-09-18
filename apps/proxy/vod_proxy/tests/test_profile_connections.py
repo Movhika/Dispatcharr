@@ -10,6 +10,26 @@ from unittest.mock import MagicMock, patch, call
 from django.test import TestCase
 
 
+def _fake_owned_profile_reserve(redis, profile, session_id):
+    """Mirror one logical VOD slot per session in lightweight Redis fakes."""
+    marker_key = f"vod_profile_reservation:{session_id}"
+    existing = redis.get(marker_key)
+    if isinstance(existing, bytes):
+        existing = existing.decode()
+    if existing is not None:
+        return str(existing) == str(profile.id)
+    redis.incr(f"profile_connections:{profile.id}")
+    redis.set(marker_key, profile.id)
+    return True
+
+
+def _finalize_test_disconnect(manager, redis_connection, client_id, *_args, **_kwargs):
+    """Finish the logical lease synchronously in profile-accounting tests."""
+    state = redis_connection._get_connection_state()
+    if state and state.m3u_profile_id:
+        manager._decrement_profile_connections(state.m3u_profile_id, client_id)
+
+
 class FakeRedis:
     """Minimal in-memory Redis stand-in for counter tests."""
 
@@ -381,6 +401,11 @@ class TestRollbackSetupReservations(TestCase):
         mgr = MultiWorkerVODConnectionManager.__new__(MultiWorkerVODConnectionManager)
         mgr.redis_client = redis
         mgr.worker_id = "test-worker"
+        mgr._schedule_logical_disconnect = (
+            lambda connection, client_id, *args, **kwargs: _finalize_test_disconnect(
+                mgr, connection, client_id, *args, **kwargs
+            )
+        )
         return mgr
 
     def test_rollback_releases_profile_when_last_stream(self):
@@ -1128,9 +1153,9 @@ class TestStreamSetupCreateRaceAndIdleGuard(TestCase):
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle_gone"), \
              patch(
-                 "apps.proxy.vod_proxy.multi_worker_connection_manager.RedisBackedVODConnection.increment_active_streams",
+                 "apps.proxy.vod_proxy.multi_worker_connection_manager.RedisBackedVODConnection.resume_range_request",
                  return_value=1,
-             ) as incr, \
+             ) as resume, \
              patch(
                  "apps.proxy.vod_proxy.multi_worker_connection_manager.RedisBackedVODConnection._get_connection_state",
                  return_value=None,
@@ -1156,7 +1181,7 @@ class TestStreamSetupCreateRaceAndIdleGuard(TestCase):
             )
 
         self.assertEqual(response.status_code, 500)
-        incr.assert_called()
+        resume.assert_called()
         decr.assert_called()
         create.assert_not_called()
 
@@ -1180,6 +1205,11 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         mgr = MultiWorkerVODConnectionManager.__new__(MultiWorkerVODConnectionManager)
         mgr.redis_client = redis
         mgr.worker_id = "test-worker"
+        mgr._schedule_logical_disconnect = (
+            lambda connection, client_id, *args, **kwargs: _finalize_test_disconnect(
+                mgr, connection, client_id, *args, **kwargs
+            )
+        )
         return mgr
 
     def test_reuse_under_different_profile_reserves_and_decrements_same_counter(self):
@@ -1228,9 +1258,7 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         upstream.headers = {}
 
         def fake_reserve(profile, session_id):
-            redis.incr(f"profile_connections:{profile.id}")
-            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
-            return True
+            return _fake_owned_profile_reserve(redis, profile, session_id)
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle"), \
              patch.object(mgr, "_check_and_reserve_profile_slot", side_effect=fake_reserve), \
@@ -1298,7 +1326,14 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         deleted_profile_id = 999999  # Not present in the DB.
 
         redis = LockAwareFakeRedis()
-        _seed_session(redis, "vod_idle_gone", active_streams=0, profile_id=deleted_profile_id)
+        _seed_session(
+            redis,
+            "vod_idle_gone",
+            active_streams=0,
+            profile_id=deleted_profile_id,
+            owns_profile_slot=True,
+        )
+        redis.set(f"profile_connections:{deleted_profile_id}", 1)
         redis.set(f"profile_connections:{profile_b.id}", 0)
 
         mgr = self._make_manager(redis)
@@ -1314,9 +1349,7 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         upstream.headers = {}
 
         def fake_reserve(profile, session_id):
-            redis.incr(f"profile_connections:{profile.id}")
-            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
-            return True
+            return _fake_owned_profile_reserve(redis, profile, session_id)
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle_gone"), \
              patch.object(mgr, "_check_and_reserve_profile_slot", side_effect=fake_reserve), \
@@ -1348,6 +1381,10 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
                 "vod_persistent_connection:vod_idle_gone", "m3u_profile_id"
             )
             self.assertEqual(int(rewritten), profile_b.id)
+            self.assertEqual(
+                int(redis._data.get(f"profile_connections:{deleted_profile_id}", 0)),
+                0,
+            )
             list(response.streaming_content)
 
         self.assertEqual(int(redis._data.get(f"profile_connections:{profile_b.id}", 0)), 0)
@@ -1398,9 +1435,7 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
             return upstream
 
         def fake_reserve(profile, session_id):
-            redis.incr(f"profile_connections:{profile.id}")
-            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
-            return True
+            return _fake_owned_profile_reserve(redis, profile, session_id)
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle"), \
              patch.object(mgr, "_check_and_reserve_profile_slot", side_effect=fake_reserve), \
@@ -1458,10 +1493,8 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         self.assertEqual(int(redis._data.get(f"profile_connections:{profile_b.id}", 0)), 0)
 
 
-class TestCreateRaceBindsStoredProfile(TestCase):
-    """create_connection returning 'exists' must join the winner's stored
-    profile, not keep tearing down against this request's view pick.
-    """
+class TestSecondStateLookupBindsStoredProfile(TestCase):
+    """A session appearing during setup must reuse the winner's profile."""
 
     def _make_manager(self, redis):
         MultiWorkerManagerImportMixin.get_manager_class()
@@ -1472,13 +1505,15 @@ class TestCreateRaceBindsStoredProfile(TestCase):
         mgr = MultiWorkerVODConnectionManager.__new__(MultiWorkerVODConnectionManager)
         mgr.redis_client = redis
         mgr.worker_id = "test-worker"
+        mgr._schedule_logical_disconnect = (
+            lambda connection, client_id, *args, **kwargs: _finalize_test_disconnect(
+                mgr, connection, client_id, *args, **kwargs
+            )
+        )
         return mgr
 
-    def test_create_exists_sibling_teardown_uses_winner_profile(self):
-        """Loser of a create race already reserved its view profile, then
-        drops that reserve when joining as a sibling. Last-out teardown must
-        release the winner's stored profile, not the loser's view pick.
-        """
+    def test_second_lookup_reuses_winner_profile(self):
+        """The second state read claims the winner without a second create."""
         from unittest.mock import MagicMock, patch
 
         from apps.m3u.models import M3UAccount, M3UAccountProfile
@@ -1503,7 +1538,11 @@ class TestCreateRaceBindsStoredProfile(TestCase):
         redis = LockAwareFakeRedis()
         # Winner already created the hash under profile_winner with one stake.
         _seed_session(
-            redis, "vod_race", active_streams=1, profile_id=profile_winner.id
+            redis,
+            "vod_race",
+            active_streams=1,
+            profile_id=profile_winner.id,
+            owns_profile_slot=True,
         )
         redis.set(f"profile_connections:{profile_winner.id}", 1)
         redis.set(f"profile_connections:{profile_loser.id}", 0)
@@ -1523,10 +1562,8 @@ class TestCreateRaceBindsStoredProfile(TestCase):
         reserved = []
 
         def fake_reserve(profile, session_id):
-            redis.incr(f"profile_connections:{profile.id}")
-            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
             reserved.append(profile.id)
-            return True
+            return _fake_owned_profile_reserve(redis, profile, session_id)
 
         real_get = RedisBackedVODConnection._get_connection_state
         call_count = {"n": 0}
@@ -1547,7 +1584,7 @@ class TestCreateRaceBindsStoredProfile(TestCase):
              patch(
                  "apps.proxy.vod_proxy.multi_worker_connection_manager.RedisBackedVODConnection.create_connection",
                  return_value="exists",
-             ), \
+             ) as create, \
              patch(
                  "apps.proxy.vod_proxy.multi_worker_connection_manager.RedisBackedVODConnection.get_stream",
                  return_value=upstream,
@@ -1570,12 +1607,14 @@ class TestCreateRaceBindsStoredProfile(TestCase):
                 request=request,
             )
 
-            # Loser reserved then dropped its own view profile (sibling path).
-            self.assertEqual(reserved, [profile_loser.id])
+            # The second state lookup observes the winner before creating a
+            # competing connection, so the existing logical slot is reused.
+            self.assertEqual(reserved, [profile_winner.id])
+            create.assert_not_called()
             self.assertEqual(
                 int(redis._data.get(f"profile_connections:{profile_loser.id}", 0)), 0
             )
-            # Winner's slot still held; loser joined as second stake.
+            # Winner's slot is still held; this request joined as a second stake.
             self.assertEqual(
                 int(redis._data.get(f"profile_connections:{profile_winner.id}", 0)), 1
             )
@@ -1588,7 +1627,7 @@ class TestCreateRaceBindsStoredProfile(TestCase):
                 "vod_race", redis
             ).decrement_active_streams_and_check()
 
-            # Loser drains last: must release winner's profile, not loser's.
+            # The joined request drains last and releases the winner's profile.
             list(response.streaming_content)
 
         self.assertEqual(
@@ -1611,6 +1650,11 @@ class TestMidStreamUpstreamRetry(TestCase):
         mgr = MultiWorkerVODConnectionManager.__new__(MultiWorkerVODConnectionManager)
         mgr.redis_client = redis
         mgr.worker_id = "test-worker"
+        mgr._schedule_logical_disconnect = (
+            lambda connection, client_id, *args, **kwargs: _finalize_test_disconnect(
+                mgr, connection, client_id, *args, **kwargs
+            )
+        )
         return mgr
 
     def _run_stream(self, mgr, redis, profile, content, request, get_stream_side_effect,
@@ -1619,9 +1663,7 @@ class TestMidStreamUpstreamRetry(TestCase):
         from unittest.mock import patch
 
         def fake_reserve(p, session_id):
-            redis.incr(f"profile_connections:{p.id}")
-            redis.set(f"vod_profile_reservation:{session_id}", p.id)
-            return True
+            return _fake_owned_profile_reserve(redis, p, session_id)
 
         with patch.object(mgr, "find_matching_idle_session", return_value=None), \
              patch.object(mgr, "_check_and_reserve_profile_slot", side_effect=fake_reserve), \

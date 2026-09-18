@@ -1321,6 +1321,11 @@ class MultiWorkerVODConnectionManager:
                     f"[{client_id}] Session's stored profile {stored_id} "
                     f"is no longer valid; using {fallback_profile.id} instead"
                 )
+                if redis_connection is not None:
+                    self._decrement_profile_connections(
+                        stored_id,
+                        redis_connection.session_id,
+                    )
                 self._rewrite_session_profile_id(
                     redis_connection, stored_id, fallback_profile.id, client_id
                 )
@@ -1791,6 +1796,7 @@ class MultiWorkerVODConnectionManager:
         # Reservations to undo if setup fails before the generator runs
         profile_connections_incremented = False
         active_streams_reserved = False
+        claimed_active_streams = None
         redis_connection = None
         existing_state = None
         session_is_new = False
@@ -1840,7 +1846,8 @@ class MultiWorkerVODConnectionManager:
                         session_id,
                     )
                     return HttpResponse("Session does not match request", status=409)
-                if requested_connection.resume_range_request() <= 0:
+                claimed_active_streams = requested_connection.resume_range_request()
+                if claimed_active_streams <= 0:
                     # The inactivity sweeper won the race after state lookup.
                     # Continue through the normal new-session path rather than
                     # returning a transient 500 to the player.
@@ -1882,7 +1889,8 @@ class MultiWorkerVODConnectionManager:
                     temp_connection = RedisBackedVODConnection(
                         effective_session_id, self.redis_client
                     )
-                    if temp_connection.resume_range_request():
+                    claimed_active_streams = temp_connection.resume_range_request()
+                    if claimed_active_streams > 0:
                         logger.info(f"[{client_id}] Reserved idle session - incremented active streams")
                         active_streams_reserved = True
                     else:
@@ -1902,6 +1910,15 @@ class MultiWorkerVODConnectionManager:
             # Check if connection exists, create if not
             if existing_state is None:
                 existing_state = redis_connection._get_connection_state()
+            if existing_state is not None and not active_streams_reserved:
+                # The session may have appeared between the first lookup and
+                # the create path. Claim this physical request before treating
+                # it as an existing logical session.
+                claimed_active_streams = redis_connection.resume_range_request()
+                if claimed_active_streams > 0:
+                    active_streams_reserved = True
+                else:
+                    existing_state = None
             if matching_session_id and not existing_state:
                 # Idle INCR succeeded but the hash is unreadable. Do not create
                 # a second active_streams stake on the same session.
@@ -2031,7 +2048,7 @@ class MultiWorkerVODConnectionManager:
                     m3u_profile,
                     client_id=client_id,
                     redis_connection=redis_connection,
-                    rewrite_dead=False,
+                    rewrite_dead=(claimed_active_streams == 1),
                 )
                 # resume_range_request() already claimed this physical request.
                 # Refresh the same logical session's profile reservation without
