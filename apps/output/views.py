@@ -1149,7 +1149,8 @@ def xc_get_epg(request, user, short=False):
 
 XC_MOVIE_VALUE_FIELDS = (
     'id', 'movie_id', 'category_id', 'container_extension', 'tmdb_override_id',
-    'movie__id', 'movie__name', 'movie__display_name', 'movie__rating', 'movie__created_at',
+    'movie__id', 'movie__name', 'movie__clean_title', 'movie__display_name',
+    'movie__rating', 'movie__created_at',
     'movie__tmdb_id', 'movie__imdb_id', 'movie__description', 'movie__genre',
     'movie__year', 'movie__is_adult', 'movie__custom_properties', 'movie__logo_id',
     'movie__tmdb_match_id', 'movie__tmdb_imdb_id',
@@ -1160,7 +1161,8 @@ XC_MOVIE_VALUE_FIELDS = (
 
 XC_SERIES_VALUE_FIELDS = (
     'id', 'series_id', 'category_id', 'updated_at', 'tmdb_override_id',
-    'series__id', 'series__name', 'series__display_name', 'series__description', 'series__genre',
+    'series__id', 'series__name', 'series__clean_title', 'series__display_name',
+    'series__description', 'series__genre',
     'series__year', 'series__rating', 'series__custom_properties', 'series__logo_id',
     'series__tmdb_id', 'series__imdb_id',
     'series__tmdb_match_id', 'series__tmdb_imdb_id',
@@ -1676,7 +1678,9 @@ def xc_get_vod_streams(request, user, category_id=None):
             "name": row.get("profile_output_name") or (
                 canonical_output_name(
                     row['movie__name'],
-                    display_name=row['movie__display_name'],
+                    display_name=(
+                        row['movie__display_name'] or row['movie__clean_title']
+                    ),
                     year=row['movie__year'],
                 )
                 if compact_policy
@@ -1855,7 +1859,9 @@ def xc_get_series(request, user, category_id=None):
             "name": row.get("profile_output_name") or (
                 canonical_output_name(
                     row['series__name'],
-                    display_name=row['series__display_name'],
+                    display_name=(
+                        row['series__display_name'] or row['series__clean_title']
+                    ),
                     year=row['series__year'],
                 )
                 if compact_policy

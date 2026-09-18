@@ -393,7 +393,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_last", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_last",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -421,7 +427,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_rem", active_streams=2, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_rem",
+            active_streams=2,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -451,7 +463,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_http", active_streams=2, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_http",
+            active_streams=2,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         local_response = MagicMock()
         local_session = MagicMock()
         conn.local_response = local_response
@@ -485,7 +503,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_416", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_416",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -517,7 +541,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_416_http", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_416_http",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         local_response = MagicMock()
         local_session = MagicMock()
         conn.local_response = local_response
@@ -554,7 +584,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_piggyback", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_piggyback",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -582,7 +618,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_piggyback_rem", active_streams=2, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_piggyback_rem",
+            active_streams=2,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -608,6 +650,7 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
+        redis.set("vod_profile_reservation:vod_rb_never_created", 7)
         conn = RedisBackedVODConnection("vod_rb_never_created", redis)
         mgr = self._make_manager(redis)
 
@@ -718,7 +761,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_decr_miss", active_streams=0, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_decr_miss",
+            active_streams=0,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -745,7 +794,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_decr_own", active_streams=0, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_decr_own",
+            active_streams=0,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -771,7 +826,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        _seed_session(redis, "vod_rb_no_handle", active_streams=1, profile_id=7)
+        _seed_session(
+            redis,
+            "vod_rb_no_handle",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         released = mgr._rollback_setup_reservations(
@@ -802,7 +863,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_delayed", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_delayed",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         run_targets = []
@@ -844,7 +911,13 @@ class TestRollbackSetupReservations(TestCase):
         RedisBackedVODConnection, _ = _import_vod()
         redis = LockAwareFakeRedis()
         redis.set("profile_connections:7", 1)
-        conn = _seed_session(redis, "vod_rb_reconnect", active_streams=1, profile_id=7)
+        conn = _seed_session(
+            redis,
+            "vod_rb_reconnect",
+            active_streams=1,
+            profile_id=7,
+            owns_profile_slot=True,
+        )
         mgr = self._make_manager(redis)
 
         run_targets = []
@@ -1154,8 +1227,9 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         upstream.iter_content.return_value = [b"x"]
         upstream.headers = {}
 
-        def fake_reserve(profile):
+        def fake_reserve(profile, session_id):
             redis.incr(f"profile_connections:{profile.id}")
+            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
             return True
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle"), \
@@ -1239,8 +1313,9 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
         upstream.iter_content.return_value = [b"x"]
         upstream.headers = {}
 
-        def fake_reserve(profile):
+        def fake_reserve(profile, session_id):
             redis.incr(f"profile_connections:{profile.id}")
+            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
             return True
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle_gone"), \
@@ -1322,8 +1397,9 @@ class TestIdleMatchAcrossDifferentProfile(TestCase):
             upstream.headers = {}
             return upstream
 
-        def fake_reserve(profile):
+        def fake_reserve(profile, session_id):
             redis.incr(f"profile_connections:{profile.id}")
+            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
             return True
 
         with patch.object(mgr, "find_matching_idle_session", return_value="vod_idle"), \
@@ -1446,8 +1522,9 @@ class TestCreateRaceBindsStoredProfile(TestCase):
 
         reserved = []
 
-        def fake_reserve(profile):
+        def fake_reserve(profile, session_id):
             redis.incr(f"profile_connections:{profile.id}")
+            redis.set(f"vod_profile_reservation:{session_id}", profile.id)
             reserved.append(profile.id)
             return True
 
@@ -1541,8 +1618,9 @@ class TestMidStreamUpstreamRetry(TestCase):
         """Drive the full stream while get_stream stays patched (incl. reopens)."""
         from unittest.mock import patch
 
-        def fake_reserve(p):
+        def fake_reserve(p, session_id):
             redis.incr(f"profile_connections:{p.id}")
+            redis.set(f"vod_profile_reservation:{session_id}", p.id)
             return True
 
         with patch.object(mgr, "find_matching_idle_session", return_value=None), \

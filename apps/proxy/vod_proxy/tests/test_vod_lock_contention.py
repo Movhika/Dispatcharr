@@ -165,6 +165,21 @@ class _FakeVodScript:
         keys = keys or []
         args = args or []
         with self._redis._lock:
+            if "-- release_owned_profile" in self._script:
+                counter_key, marker_key, version_key, credential_release_key = keys
+                profile_id = str(args[0])
+                current = int(self._redis._data.get(counter_key, 0))
+                if str(self._redis._data.get(marker_key)) != profile_id:
+                    return [0, current]
+                self._redis._data.pop(marker_key, None)
+                self._redis._data.pop(credential_release_key, None)
+                if current > 0:
+                    current -= 1
+                    self._redis._data[counter_key] = current
+                    self._redis._data[version_key] = (
+                        int(self._redis._data.get(version_key, 0)) + 1
+                    )
+                return [1, current]
             if "vod_incr_as" in self._script:
                 return self._incr(keys[0], args[0])
             if "vod_decr_as" in self._script:
@@ -278,7 +293,13 @@ def _import_vod():
     return RedisBackedVODConnection, SerializableConnectionState
 
 
-def _seed_session(redis, session_id, active_streams=1, profile_id=7):
+def _seed_session(
+    redis,
+    session_id,
+    active_streams=1,
+    profile_id=7,
+    owns_profile_slot=False,
+):
     RedisBackedVODConnection, SerializableConnectionState = _import_vod()
     _clear_script_cache()
     conn = RedisBackedVODConnection(session_id, redis)
@@ -294,6 +315,8 @@ def _seed_session(redis, session_id, active_streams=1, profile_id=7):
     state.content_name = "Test Movie"
     state.worker_id = "worker-a"
     assert conn._save_connection_state(state, include_active_streams=True)
+    if owns_profile_slot:
+        redis.set(f"vod_profile_reservation:{session_id}", profile_id)
     return conn
 
 
