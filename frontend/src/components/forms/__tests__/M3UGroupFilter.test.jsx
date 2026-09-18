@@ -283,12 +283,12 @@ describe('M3UGroupFilter', () => {
       ).toBeInTheDocument();
     });
 
-    it('renders a Close button', () => {
+    it('uses only the modal X for closing', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       expect(
-        screen.getByRole('button', { name: /^close$/i })
-      ).toBeInTheDocument();
+        screen.queryByRole('button', { name: /^close$/i })
+      ).not.toBeInTheDocument();
     });
 
     it('renders a Live TV refresh action in the Live tab', () => {
@@ -353,12 +353,16 @@ describe('M3UGroupFilter', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('calls onClose when Close button is clicked', () => {
-      const onClose = vi.fn();
+    it('places the refresh action before Save', () => {
       setupStores();
-      render(<M3UGroupFilter {...defaultProps({ onClose })} />);
-      fireEvent.click(screen.getByRole('button', { name: /^close$/i }));
-      expect(onClose).toHaveBeenCalled();
+      render(<M3UGroupFilter {...defaultProps()} />);
+      const refresh = screen.getByRole('button', {
+        name: /refresh live tv/i,
+      });
+      const save = screen.getByRole('button', { name: /^save$/i });
+      expect(
+        refresh.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
     });
   });
 

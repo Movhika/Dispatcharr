@@ -262,19 +262,6 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
         </Tabs>
 
         <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
-          <Button variant="default" onClick={onClose} size="xs">
-            Close
-          </Button>
-          <Button
-            type="button"
-            variant="filled"
-            color="blue"
-            disabled={isLoading}
-            loading={activeAction === 'save'}
-            onClick={submit}
-          >
-            Save
-          </Button>
           {showRefreshAction && (
             <Button
               type="button"
@@ -286,6 +273,16 @@ const M3UGroupFilter = ({ playlist = null, isOpen, onClose }) => {
               {refreshLabel}
             </Button>
           )}
+          <Button
+            type="button"
+            variant="filled"
+            color="blue"
+            disabled={isLoading}
+            loading={activeAction === 'save'}
+            onClick={submit}
+          >
+            Save
+          </Button>
         </Flex>
       </Stack>
     </Modal>

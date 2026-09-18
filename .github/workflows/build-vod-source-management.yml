@@ -3,7 +3,7 @@ name: Build Multi-Arch VOD Source Management Image
 on:
   push:
     branches:
-      - codex/vod-source-variants-main
+      - codex/vod-profiles-on-1703
   workflow_dispatch:
 
 permissions:
