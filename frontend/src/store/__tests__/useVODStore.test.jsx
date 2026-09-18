@@ -1120,6 +1120,8 @@ describe('useVODStore', () => {
         1: [
           {
             id: 101,
+            relation_id: 9001,
+            stream_id: 'provider-episode-101',
             title: 'Episode 1',
             episode_number: 1,
             plot: 'First episode',
@@ -1155,6 +1157,9 @@ describe('useVODStore', () => {
     expect(result.current.episodes[101]).toBeDefined();
     expect(result.current.episodes[102]).toBeDefined();
     expect(result.current.episodes[101].name).toBe('Episode 1');
+    expect(result.current.episodes[101].stream_id).toBe('provider-episode-101');
+    expect(result.current.episodes[101].relation_id).toBe(9001);
+    expect(result.current.episodes[102].stream_id).toBe('');
     expect(result.current.loading).toBe(false);
   });
 

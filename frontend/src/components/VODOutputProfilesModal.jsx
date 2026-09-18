@@ -721,6 +721,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     try {
       const payload = profilePayload(draft);
       const previousProfile = selectedProfile;
+      const creatingProfile = !profileId;
       if (profileId && previousProfile?.is_active) {
         upsertAccessPolicy({
           ...previousProfile,
@@ -742,14 +743,22 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       const saved = profileId
         ? await API.updateVODAccessPolicy(profileId, payload)
         : await API.createVODAccessPolicy(payload);
-      if (profileId) upsertAccessPolicy(saved);
-      else upsertAccessPolicy(saved, { preserveIfMissing: true });
+      if (profileId) {
+        upsertAccessPolicy(saved);
+      } else {
+        upsertAccessPolicy(saved, { preserveIfMissing: true });
+        // Confirm the committed server list before leaving creation mode. The
+        // optimistic entry remains visible if this request fails or a stale
+        // response does not contain it yet.
+        await fetchProfiles();
+      }
       resetDraft(saved);
       setCreating(false);
       setProfileId(String(saved.id));
       if (
         ['pending', 'building'].includes(saved.selection_status) &&
-        !saved.selection_progress?.task_id
+        !saved.selection_progress?.task_id &&
+        !creatingProfile
       ) {
         // A caller-owned outer transaction can make the mutation response
         // arrive with the pre-publication placeholder. The follow-up request
@@ -759,8 +768,9 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       }
       showNotification({
         title: 'VOD output profile saved',
-        message:
-          'The catalog update started automatically. No manual rebuild is required; the previous preview remains visible until the update finishes.',
+        message: creatingProfile
+          ? 'The initial catalog preparation started automatically. The profile is available immediately and becomes client-ready when preparation finishes.'
+          : 'The catalog update started automatically. No manual rebuild is required; the previous preview remains visible until the update finishes.',
         color: 'green',
       });
     } catch (error) {
@@ -957,12 +967,17 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     if (['pending', 'building'].includes(selectedProfile.selection_status)) {
       const waiting = selectedProfile.selection_status === 'pending';
       const taskState = selectedProfile.selection_task_state || 'UNKNOWN';
+      const initialPreparation = !selectedProfile.active_selection_generation;
       return {
-        label: 'Updating',
+        label: initialPreparation ? 'Preparing' : 'Updating',
         color: 'blue',
-        description: waiting
-          ? `The update is waiting in the Celery queue (task state: ${taskState}). The current catalog remains active.`
-          : 'The updated source selection is being prepared. The current catalog remains active until this finishes.',
+        description: initialPreparation
+          ? waiting
+            ? `The initial catalog is waiting in the Celery queue (task state: ${taskState}).`
+            : 'The initial source selection is being prepared for clients.'
+          : waiting
+            ? `The update is waiting in the Celery queue (task state: ${taskState}). The current catalog remains active.`
+            : 'The updated source selection is being prepared. The current catalog remains active until this finishes.',
       };
     }
     if (selectedProfile.selection_current) {

@@ -445,6 +445,8 @@ describe('VODOutputProfilesModal', () => {
       { preserveIfMissing: true }
     );
     expect(screen.getByLabelText('Profile')).toHaveValue('8');
+    expect(fetchAccessPolicies).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Preparing')).toBeInTheDocument();
     expect(screen.getByText(/Publishing background task/)).toBeInTheDocument();
     expect(screen.getByText(/elapsed/)).toBeInTheDocument();
   });
@@ -534,6 +536,7 @@ describe('VODOutputProfilesModal', () => {
         ...profile,
         selection_status: 'pending',
         selection_current: false,
+        active_selection_generation: 'previous-generation',
         selection_progress: { phase: 'Waiting in Celery queue', percent: 0 },
       },
     ];
@@ -546,6 +549,7 @@ describe('VODOutputProfilesModal', () => {
         ...profile,
         selection_status: 'building',
         selection_current: false,
+        active_selection_generation: 'previous-generation',
         selection_progress: { phase: 'Preparing movies', percent: 25 },
       },
     ];

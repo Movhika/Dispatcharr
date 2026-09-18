@@ -296,7 +296,12 @@ const getSeriesDetails = (response, seriesId) => {
 const getEpisodeDetails = (episode, seasonNumber, seriesInfo) => {
   return {
     id: episode.id,
-    stream_id: episode.id,
+    // `id` is the canonical Episode primary key. Playback must use the
+    // provider's concrete stream ID returned by provider-info; otherwise a
+    // perfectly valid canonical ID is sent as an XC stream ID and silently
+    // falls through to an unrelated source.
+    stream_id: episode.stream_id || '',
+    relation_id: episode.relation_id || null,
     name: episode.title || '',
     description: episode.plot || '',
     season_number: parseInt(seasonNumber) || 0,
