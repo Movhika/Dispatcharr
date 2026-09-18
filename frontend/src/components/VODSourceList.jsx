@@ -263,7 +263,7 @@ const VODSourceList = ({
               <TableTh w={140}>SUB</TableTh>
               <TableTh w={110}>Resolution</TableTh>
               <TableTh w={contentType === 'movie' ? 320 : 160}>
-                {contentType === 'movie' ? 'Details' : 'Episode video'}
+                {contentType === 'movie' ? 'Details' : 'Codec'}
               </TableTh>
               <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
             </TableTr>

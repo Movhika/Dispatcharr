@@ -60,9 +60,7 @@ describe('VODSourceList', () => {
   it('summarizes episode video facts without showing a series container', () => {
     renderList('series');
 
-    expect(
-      screen.getByRole('columnheader', { name: 'Episode video' })
-    ).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Codec' })).toBeVisible();
     expect(screen.getByText('720p')).toBeVisible();
     expect(screen.getByText('1080p')).toBeVisible();
     expect(screen.getByText('H264')).toBeVisible();
