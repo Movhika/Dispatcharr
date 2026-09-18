@@ -944,6 +944,12 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     : 0;
   const lastUpdatedAt =
     counts.completed_at || selectedProfile?.selection_completed_at || '';
+  const lastBuildSeconds = Number(counts.prepared_seconds);
+  const hasLastBuildDuration =
+    counts.prepared_seconds !== null &&
+    counts.prepared_seconds !== '' &&
+    Number.isFinite(lastBuildSeconds) &&
+    lastBuildSeconds >= 0;
   const profileOptions = profiles.map((profile) => ({
     value: String(profile.id),
     label: `${profile.name}${profile.is_default ? ' (default)' : ''}`,
@@ -1150,6 +1156,11 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
               {lastUpdatedAt && (
                 <Text size="sm" c="dimmed">
                   Last updated: {new Date(lastUpdatedAt).toLocaleString()}
+                </Text>
+              )}
+              {hasLastBuildDuration && (
+                <Text size="sm" c="dimmed">
+                  Last build: {formatDuration(lastBuildSeconds)}
                 </Text>
               )}
             </Group>

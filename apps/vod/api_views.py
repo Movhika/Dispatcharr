@@ -4483,11 +4483,23 @@ class SeriesViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewS
         relations = M3USeriesRelation.objects.filter(
             series=series,
             m3u_account__is_active=True
-        ).select_related('m3u_account', 'category').order_by(
+        ).select_related('m3u_account', 'category').prefetch_related(
+            Prefetch(
+                'episode_relations',
+                queryset=M3UEpisodeRelation.objects.only(
+                    'id', 'series_relation_id', 'custom_properties'
+                ),
+                to_attr='metadata_episode_relations',
+            )
+        ).order_by(
             '-m3u_account__priority', 'id'
         )
 
-        serializer = M3USeriesRelationSerializer(relations, many=True)
+        serializer = M3USeriesRelationSerializer(
+            relations,
+            many=True,
+            context={"include_episode_technical_summary": True},
+        )
         return Response(serializer.data)
 
     @extend_schema(responses=EpisodeWithProvidersSerializer(many=True))

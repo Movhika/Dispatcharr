@@ -292,6 +292,7 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText(/Series: 42 output entries/)).toBeInTheDocument();
     expect(screen.getByText('Compact')).toBeInTheDocument();
     expect(screen.getByText(/Last updated:/)).toBeInTheDocument();
+    expect(screen.getByText('Last build: 1m 18s')).toBeInTheDocument();
     expect(
       screen.queryByText(/Currently active catalog:/)
     ).not.toBeInTheDocument();

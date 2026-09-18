@@ -18,11 +18,13 @@ from apps.vod.metadata import (
     initialize_relation_metadata,
     initialize_relations_metadata,
     detect_video_features,
+    effective_relation_metadata,
     normalize_language_list,
     relation_declared_metadata,
 )
 from apps.vod.playback import episode_history_name, record_playback_selection
 from apps.vod.serializers import (
+    M3USeriesRelationSerializer,
     VODAccessPolicySerializer,
     VODPlaybackSessionSerializer,
 )
@@ -705,6 +707,147 @@ class VODSourceManagementTests(TestCase):
             "resolution",
         ):
             self.assertNotIn(field, metadata)
+
+    def test_episode_uses_valid_provider_video_resolution_and_codec(self):
+        series = Series.objects.create(name="Provider Video Series")
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="provider-video-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="provider-video-episode",
+            custom_properties={
+                "info": {
+                    "info": {
+                        "video": {
+                            "codec_name": "h264",
+                            "width": 1920,
+                            "height": 960,
+                        },
+                        "audio": {
+                            "codec_name": "eac3",
+                            "tags": {"language": "deu"},
+                        },
+                    }
+                }
+            },
+        )
+
+        metadata = effective_relation_metadata(relation)
+
+        self.assertEqual(metadata["values"]["resolution"], "1080p")
+        self.assertEqual(metadata["values"]["video_codec"], "h264")
+        self.assertEqual(metadata["provenance"]["resolution"], "relation")
+        self.assertNotIn("audio_codec", metadata["values"])
+        self.assertEqual(metadata["values"]["audio_languages"], ["ger"])
+        self.assertEqual(
+            metadata["provenance"]["audio_languages"],
+            "series_category",
+        )
+
+    def test_episode_image_video_payload_falls_back_to_category_resolution(self):
+        series = Series.objects.create(name="Provider Cover Series")
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="provider-cover-series",
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        relation = M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="provider-cover-episode",
+            custom_properties={
+                "info": {
+                    "info": {
+                        "video": {
+                            "codec_name": "png",
+                            "width": 1000,
+                            "height": 1500,
+                        }
+                    }
+                }
+            },
+        )
+
+        metadata = effective_relation_metadata(relation)
+
+        self.assertEqual(metadata["values"]["resolution"], "1080p")
+        self.assertEqual(metadata["provenance"]["resolution"], "series_category")
+        self.assertNotIn("video_codec", metadata["values"])
+
+    def test_series_source_summarizes_valid_episode_video_metadata(self):
+        series = Series.objects.create(name="Provider Summary Series")
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=self.german,
+            external_series_id="provider-summary-series",
+        )
+        episode_relations = []
+        for number, codec, width, height in (
+            (1, "h264", 1920, 960),
+            (2, "hevc", 1280, 720),
+            (3, "png", 1000, 1500),
+        ):
+            episode = Episode.objects.create(
+                series=series,
+                name=f"Episode {number}",
+                season_number=1,
+                episode_number=number,
+            )
+            episode_relations.append(
+                M3UEpisodeRelation.objects.create(
+                    m3u_account=self.account_a,
+                    episode=episode,
+                    series_relation=series_relation,
+                    stream_id=f"provider-summary-{number}",
+                    custom_properties={
+                        "info": {
+                            "info": {
+                                "video": {
+                                    "codec_name": codec,
+                                    "width": width,
+                                    "height": height,
+                                }
+                            }
+                        }
+                    },
+                )
+            )
+        series_relation.metadata_episode_relations = episode_relations
+
+        payload = M3USeriesRelationSerializer(
+            series_relation,
+            context={"include_episode_technical_summary": True},
+        ).data["source_metadata"]
+
+        self.assertEqual(
+            payload["values"]["episode_resolutions"],
+            ["720p", "1080p"],
+        )
+        self.assertEqual(
+            payload["values"]["episode_video_codecs"],
+            ["h264", "hevc"],
+        )
 
     def test_video_features_are_detected_and_can_bound_a_profile(self):
         self.assertEqual(

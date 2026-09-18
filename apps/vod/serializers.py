@@ -17,6 +17,7 @@ from .metadata import (
     normalize_language_list,
     normalize_source_metadata,
     relation_declared_metadata,
+    summarize_episode_provider_video_metadata,
     summarize_relation_metadata,
     validate_source_metadata,
     normalize_video_features,
@@ -231,6 +232,21 @@ class M3USeriesRelationSerializer(
     class Meta:
         model = M3USeriesRelation
         fields = '__all__'
+
+    def get_source_metadata(self, obj) -> dict:
+        metadata = super().get_source_metadata(obj)
+        if not self.context.get("include_episode_technical_summary"):
+            return metadata
+        summary = summarize_episode_provider_video_metadata(
+            getattr(obj, "metadata_episode_relations", [])
+        )
+        values = dict(metadata.get("values") or {})
+        provenance = dict(metadata.get("provenance") or {})
+        for field, items in summary.items():
+            if items:
+                values[field] = items
+                provenance[field] = "episode_provider"
+        return {"values": values, "provenance": provenance}
 
 
 class M3UMovieRelationSerializer(

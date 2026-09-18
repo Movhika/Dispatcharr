@@ -82,6 +82,44 @@ const LanguageBadges = ({ values, field, color }) => {
   );
 };
 
+const valueList = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  return value ? [String(value)] : [];
+};
+
+const ResolutionBadges = ({ values, contentType }) => {
+  const resolutions =
+    contentType === 'series' && values.episode_resolutions?.length
+      ? valueList(values.episode_resolutions)
+      : valueList(
+          values.resolution || (values.height ? `${values.height}p` : '')
+        );
+  if (!resolutions.length) return <Text c="dimmed">—</Text>;
+  return (
+    <Group gap={4} wrap="wrap">
+      {resolutions.map((resolution) => (
+        <Badge key={resolution} color="teal" variant="light">
+          {resolution}
+        </Badge>
+      ))}
+    </Group>
+  );
+};
+
+const SeriesEpisodeDetails = ({ values }) => {
+  const codecs = valueList(values.episode_video_codecs);
+  if (!codecs.length) return <Text c="dimmed">—</Text>;
+  return (
+    <Group gap={4} wrap="wrap">
+      {codecs.map((codec) => (
+        <Badge key={codec} color="gray" variant="light">
+          {codec.toUpperCase()}
+        </Badge>
+      ))}
+    </Group>
+  );
+};
+
 const MovieDetails = ({ values, provider }) => {
   const details = [
     {
@@ -194,7 +232,7 @@ const VODSourceList = ({
           highlightOnHover
           withTableBorder
           layout="fixed"
-          miw={contentType === 'movie' ? 1120 : 820}
+          miw={contentType === 'movie' ? 1120 : 980}
           aria-label="Exact VOD sources"
         >
           <TableThead>
@@ -224,7 +262,9 @@ const VODSourceList = ({
               <TableTh w={140}>DUB</TableTh>
               <TableTh w={140}>SUB</TableTh>
               <TableTh w={110}>Resolution</TableTh>
-              {contentType === 'movie' && <TableTh w={320}>Details</TableTh>}
+              <TableTh w={contentType === 'movie' ? 320 : 160}>
+                {contentType === 'movie' ? 'Details' : 'Episode video'}
+              </TableTh>
               <TableTh w={contentType === 'movie' ? 132 : 88}>Actions</TableTh>
             </TableTr>
           </TableThead>
@@ -311,16 +351,18 @@ const VODSourceList = ({
                     />
                   </TableTd>
                   <TableTd>
-                    <Badge color="teal" variant="light">
-                      {values.resolution ||
-                        (values.height ? `${values.height}p` : '—')}
-                    </Badge>
+                    <ResolutionBadges
+                      values={values}
+                      contentType={contentType}
+                    />
                   </TableTd>
-                  {contentType === 'movie' && (
-                    <TableTd>
+                  <TableTd>
+                    {contentType === 'movie' ? (
                       <MovieDetails values={values} provider={provider} />
-                    </TableTd>
-                  )}
+                    ) : (
+                      <SeriesEpisodeDetails values={values} />
+                    )}
+                  </TableTd>
                   <TableTd>
                     <Group gap={5} wrap="nowrap">
                       {contentType === 'movie' && (

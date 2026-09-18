@@ -120,6 +120,10 @@ VIDEO_FEATURE_ALIASES = {
 
 VIDEO_FEATURES = frozenset({"3d", "hdr", "dv"})
 
+IMAGE_VIDEO_CODECS = frozenset(
+    {"apng", "bmp", "gif", "jpeg", "jpg", "mjpeg", "png", "tiff", "webp"}
+)
+
 
 def normalize_language_code(value):
     """Return Dispatcharr's English ISO-639-2/B language code."""
@@ -255,6 +259,97 @@ def normalize_source_metadata(metadata):
     if file_size:
         normalized["file_size_bytes"] = file_size
     return normalized
+
+
+def _positive_int(value):
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _resolution_tier(width, height):
+    """Return the conventional vertical resolution class for video dimensions."""
+    for min_width, min_height, label in (
+        (7680, 4320, "4320p"),
+        (3840, 2160, "2160p"),
+        (2560, 1440, "1440p"),
+        (1920, 1080, "1080p"),
+        (1280, 720, "720p"),
+        (1024, 576, "576p"),
+        (854, 480, "480p"),
+        (640, 360, "360p"),
+    ):
+        # Width keeps cropped cinematic video such as 1920x960 in its
+        # conventional 1080p class instead of inventing a 960p tier.
+        if width >= min_width or height >= min_height:
+            return label
+    return ""
+
+
+def _episode_provider_video_metadata(relation):
+    """Extract trustworthy video facts from one provider episode payload.
+
+    Some XC panels put the episode poster into the ``video`` slot.  Require a
+    real, non-image codec and sane dimensions so those rows fall back to the
+    operator's category resolution instead of becoming source metadata.
+    """
+    if not isinstance(relation, M3UEpisodeRelation):
+        return {}
+    properties = relation.custom_properties or {}
+    episode_payload = properties.get("info") or {}
+    if not isinstance(episode_payload, dict):
+        return {}
+    episode_info = episode_payload.get("info") or {}
+    if not isinstance(episode_info, dict):
+        episode_info = {}
+    video = episode_info.get("video") or episode_payload.get("video") or {}
+    if not isinstance(video, dict):
+        return {}
+
+    codec = str(video.get("codec_name") or video.get("codec") or "").strip().lower()
+    disposition = video.get("disposition") or {}
+    attached_picture = (
+        disposition.get("attached_pic") if isinstance(disposition, dict) else False
+    )
+    if (
+        not codec
+        or codec in IMAGE_VIDEO_CODECS
+        or str(attached_picture).strip().lower() in {"1", "true", "yes"}
+    ):
+        return {}
+
+    width = _positive_int(video.get("width"))
+    height = _positive_int(video.get("height"))
+    if not (160 <= width <= 16384 and 120 <= height <= 8640):
+        return {}
+    resolution = _resolution_tier(width, height)
+    if not resolution:
+        return {}
+    return {
+        "resolution": resolution,
+        "video_codec": codec,
+    }
+
+
+def summarize_episode_provider_video_metadata(relations):
+    """Summarize valid provider video facts without flattening mixed episodes."""
+    resolutions = set()
+    video_codecs = set()
+    for relation in relations:
+        metadata = _episode_provider_video_metadata(relation)
+        if metadata.get("resolution"):
+            resolutions.add(metadata["resolution"])
+        if metadata.get("video_codec"):
+            video_codecs.add(metadata["video_codec"])
+    return {
+        "episode_resolutions": sorted(
+            resolutions,
+            key=lambda value: _positive_int(str(value).rstrip("p")),
+        ),
+        "episode_video_codecs": sorted(video_codecs),
+    }
 
 
 def _positive_number(value):
@@ -458,15 +553,18 @@ def relation_declared_metadata(relation):
     """Return only safe provider-owned scalar metadata.
 
     XC providers commonly expose one arbitrary audio stream, omit subtitles,
-    and can report an attached cover as the video stream. DUB, SUB,
-    resolution and features therefore come from category defaults, manual
-    edits, or future observed playback metadata instead of this payload.
+    and can report an attached cover as the video stream. DUB, SUB and
+    features therefore come from category defaults, manual edits, or observed
+    playback metadata. Episode resolution and video codec are accepted only
+    when the provider payload identifies a real video stream; image streams
+    are ignored so category resolution remains the fallback.
     """
     props = relation.custom_properties or {}
     detailed = props.get("detailed_info") or {}
     if not isinstance(detailed, dict):
         detailed = {}
     result = {}
+    result.update(_episode_provider_video_metadata(relation))
     for key in ("bitrate", "container_extension"):
         value = detailed.get(key)
         if value not in (None, "", [], {}):

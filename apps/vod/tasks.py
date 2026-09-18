@@ -48,6 +48,15 @@ def _import_source_metadata(category_relation, container_extension=None):
     return normalize_source_metadata(metadata)
 
 
+def _episode_import_metadata(relation, category_metadata):
+    """Add trustworthy episode video facts to the category metadata snapshot."""
+    from .metadata import normalize_source_metadata, relation_declared_metadata
+
+    return normalize_source_metadata(
+        {**category_metadata, **relation_declared_metadata(relation)}
+    )
+
+
 VOD_PROFILE_FINGERPRINT_FIELDS = (
     "stream_id",
     "series_id",
@@ -3634,7 +3643,9 @@ def batch_process_episodes(account, series, episodes_data, scan_start_time=None,
                     'info': episode_data,
                     'season_number': season_number,
                 }
-                relation.declared_metadata = declared_metadata
+                relation.declared_metadata = _episode_import_metadata(
+                    relation, declared_metadata
+                )
                 relation.last_seen = scan_start_time or timezone.now()  # Mark as seen during this scan
                 relations_to_update.append(relation)
             else:
@@ -3651,6 +3662,9 @@ def batch_process_episodes(account, series, episodes_data, scan_start_time=None,
                     },
                     declared_metadata=declared_metadata,
                     last_seen=scan_start_time or timezone.now()  # Mark as seen during this scan
+                )
+                relation.declared_metadata = _episode_import_metadata(
+                    relation, declared_metadata
                 )
                 relations_to_create.append(relation)
 

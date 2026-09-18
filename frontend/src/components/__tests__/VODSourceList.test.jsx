@@ -25,6 +25,8 @@ const provider = {
       video_codec: 'hevc',
       audio_codec: 'eac3',
       frame_rate: '24000/1001',
+      episode_resolutions: ['720p', '1080p'],
+      episode_video_codecs: ['h264', 'hevc'],
     },
   },
 };
@@ -55,12 +57,16 @@ describe('VODSourceList', () => {
     expect(screen.getByText('23.98 FPS')).toBeVisible();
   });
 
-  it('does not show a misleading series-level format column', () => {
+  it('summarizes episode video facts without showing a series container', () => {
     renderList('series');
 
     expect(
-      screen.queryByRole('columnheader', { name: 'Details' })
-    ).not.toBeInTheDocument();
+      screen.getByRole('columnheader', { name: 'Episode video' })
+    ).toBeVisible();
+    expect(screen.getByText('720p')).toBeVisible();
+    expect(screen.getByText('1080p')).toBeVisible();
+    expect(screen.getByText('H264')).toBeVisible();
+    expect(screen.getByText('HEVC')).toBeVisible();
     expect(screen.queryByText('MKV')).not.toBeInTheDocument();
   });
 
