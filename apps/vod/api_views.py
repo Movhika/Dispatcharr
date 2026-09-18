@@ -73,8 +73,10 @@ from .utils import (
 from .metadata import (
     compatible_video_features,
     effective_relation_metadata,
+    merge_episode_provider_video_metadata,
     normalize_language_code,
     normalize_video_features,
+    summarize_series_relation_metadata,
 )
 from django.utils import timezone
 from rest_framework.utils.urls import replace_query_param, remove_query_param
@@ -4666,6 +4668,26 @@ class SeriesViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewS
                 cover = None
             tmdb = _tmdb_content_payload(series)
             canonical = _canonical_provider_payload(series)
+            include_episodes = (
+                request.query_params.get('include_episodes', 'true').lower()
+                == 'true'
+            )
+            episode_relations = []
+            if custom_props.get('episodes_fetched', False):
+                episode_relations = list(
+                    M3UEpisodeRelation.objects.filter(
+                        series_relation=relation,
+                        m3u_account__is_active=True,
+                    ).select_related('episode').order_by(
+                        'episode__season_number',
+                        'episode__episode_number',
+                        'id',
+                    )
+                )
+            source_metadata = merge_episode_provider_video_metadata(
+                effective_relation_metadata(relation),
+                episode_relations,
+            )
 
             response_data = {
                 'id': series.id,
@@ -4698,21 +4720,14 @@ class SeriesViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewS
                 },
                 'episodes_fetched': custom_props.get('episodes_fetched', False),
                 'detailed_fetched': custom_props.get('detailed_fetched', False),
-                'source_metadata': effective_relation_metadata(relation),
+                'source_metadata': source_metadata,
             }
 
             # Always include episodes for series info if they've been fetched
-            include_episodes = request.query_params.get('include_episodes', 'true').lower() == 'true'
             if include_episodes and custom_props.get('episodes_fetched', False):
                 logger.debug(f"Including episodes for series {series.id}")
                 episodes_by_season = {}
                 episode_image_parts = vod_image_url_parts(request, 'episode')
-                episode_relations = M3UEpisodeRelation.objects.filter(
-                    series_relation=relation,
-                    m3u_account__is_active=True,
-                ).select_related('episode').order_by(
-                    'episode__season_number', 'episode__episode_number', 'id'
-                )
 
                 for episode_relation in episode_relations:
                     episode = episode_relation.episode
@@ -5536,6 +5551,7 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                 if item["content_type"] == "series"
             ]
             relations_by_content = defaultdict(list)
+            episode_relations_by_content = defaultdict(list)
             edition_counts = defaultdict(int)
             if movie_ids:
                 for relation in M3UMovieRelation.objects.filter(
@@ -5559,14 +5575,16 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
                         relation
                     )
                     edition_counts[("series", relation.series_id)] += 1
-                # Series container formats and learned technical metadata live
-                # on concrete episode sources. One page-bounded query folds
-                # those values into the series row without an N+1 lookup.
+                # Episode video facts belong to the selected series edition,
+                # not to an additional library source. Keep them separate so
+                # a provider-derived resolution replaces that edition's
+                # category default instead of displaying both as if they were
+                # two independent source qualities.
                 for relation in M3UEpisodeRelation.objects.filter(
                     _filtered_vod_relation_query(list_filters, "episode"),
                     episode__series_id__in=series_ids,
                 ).select_related("episode", "series_relation"):
-                    relations_by_content[
+                    episode_relations_by_content[
                         ("series", relation.episode.series_id)
                     ].append(relation)
             category_mapping = enabled_category_map()
@@ -5577,10 +5595,18 @@ class UnifiedContentViewSet(viewsets.ReadOnlyModelViewSet):
             }
             for item in results:
                 key = (item["content_type"], item["id"])
-                item["source_metadata"] = summarize_relation_metadata(
-                    relations_by_content[key],
-                    category_mapping,
-                )
+                if item["content_type"] == "series":
+                    source_metadata = summarize_series_relation_metadata(
+                        relations_by_content[key],
+                        episode_relations_by_content[key],
+                        category_mapping,
+                    )
+                else:
+                    source_metadata = summarize_relation_metadata(
+                        relations_by_content[key],
+                        category_mapping,
+                    )
+                item["source_metadata"] = source_metadata
                 # A series edition is one provider/category series relation,
                 # not every episode source used to summarize its formats.
                 item["source_count"] = edition_counts[key]

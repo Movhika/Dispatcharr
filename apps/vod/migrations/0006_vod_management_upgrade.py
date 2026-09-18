@@ -145,6 +145,20 @@ class Migration(migrations.Migration):
                 ('is_active', models.BooleanField(default=True)),
                 ('hard_constraints', models.JSONField(blank=True, default=dict)),
                 ('ranking', models.JSONField(blank=True, default=list)),
+                ('provider_order', models.JSONField(blank=True, default=list, help_text='Profile-specific M3U account preference from highest to lowest. Unlisted accounts remain eligible behind listed accounts.')),
+                ('edition_rules', models.JSONField(blank=True, default=list, help_text='Ordered first-match rules that classify eligible sources into editions without changing their source categories.')),
+                ('naming_mode', models.CharField(choices=[('mode_default', 'Default for output mode'), ('provider', 'Provider title'), ('canonical', 'Canonical title and edition'), ('template', 'Custom template')], default='template', max_length=20)),
+                ('name_template', models.CharField(blank=True, default='{title} ({year}) {edition}', help_text='Output title template used when naming_mode is template.', max_length=500)),
+                ('metadata_source', models.CharField(choices=[('provider', 'Provider metadata'), ('canonical', 'Canonical / TMDB metadata')], default='provider', help_text='Descriptive metadata projected to clients independently of the selected output title.', max_length=16)),
+                ('canonical_title_source', models.CharField(choices=[('primary', 'Primary canonical title'), ('secondary', 'Secondary canonical title'), ('provider', 'Provider title')], default='primary', help_text='Title represented by the {title} output placeholder. Provider titles are available only for variants output.', max_length=10)),
+                ('selection_status', models.CharField(choices=[('pending', 'Pending'), ('building', 'Building'), ('ready', 'Ready'), ('outdated', 'Outdated'), ('failed', 'Failed')], default='pending', max_length=10)),
+                ('active_selection_generation', models.CharField(blank=True, db_index=True, max_length=32)),
+                ('selection_catalog_generation', models.CharField(blank=True, max_length=64)),
+                ('selection_counts', models.JSONField(blank=True, default=dict)),
+                ('selection_progress', models.JSONField(blank=True, default=dict)),
+                ('selection_started_at', models.DateTimeField(blank=True, null=True)),
+                ('selection_completed_at', models.DateTimeField(blank=True, null=True)),
+                ('selection_error', models.TextField(blank=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('users', models.ManyToManyField(blank=True, related_name='vod_access_policies', to=settings.AUTH_USER_MODEL)),
@@ -192,6 +206,7 @@ class Migration(migrations.Migration):
                 ('watched_seconds', models.PositiveIntegerField(default=0)),
                 ('observed_metadata', models.JSONField(blank=True, default=dict)),
                 ('failover_chain', models.JSONField(blank=True, default=list)),
+                ('failover_count', models.PositiveIntegerField(default=0)),
                 ('error', models.TextField(blank=True)),
                 ('custom_properties', models.JSONField(blank=True, default=dict)),
                 ('category', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='vod.vodcategory')),
@@ -200,7 +215,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'ordering': ('-started_at',),
-                'indexes': [models.Index(fields=['user', '-started_at'], name='vod_playback_user_idx'), models.Index(fields=['content_type', 'relation_id', '-started_at'], name='vod_playback_relation_idx')],
+                'indexes': [models.Index(fields=['user', '-started_at'], name='vod_playback_user_idx'), models.Index(fields=['content_type', 'relation_id', '-started_at'], name='vod_playback_relation_idx'), models.Index(fields=['-started_at'], name='vod_playback_started_idx')],
             },
         ),
         migrations.AddIndex(model_name='m3umovierelation', index=django.contrib.postgres.indexes.GinIndex(fields=['manual_metadata'], name='vod_mov_rel_manual_gin')),
@@ -216,41 +231,6 @@ class Migration(migrations.Migration):
             model_name='m3uvodcategoryrelation',
             index=django.contrib.postgres.indexes.GinIndex(fields=['metadata_defaults'], name='vod_cat_defaults_gin'),
         ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='active_selection_generation',
-            field=models.CharField(blank=True, db_index=True, max_length=32),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_catalog_generation',
-            field=models.CharField(blank=True, max_length=64),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_completed_at',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_counts',
-            field=models.JSONField(blank=True, default=dict),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_error',
-            field=models.TextField(blank=True),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_started_at',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('building', 'Building'), ('ready', 'Ready'), ('failed', 'Failed')], default='pending', max_length=10),
-        ),
         migrations.CreateModel(
             name='VODMovieProfileSelection',
             fields=[
@@ -261,6 +241,10 @@ class Migration(migrations.Migration):
                 ('subtitle_languages', models.JSONField(blank=True, default=list)),
                 ('resolution_height', models.PositiveIntegerField(default=0)),
                 ('container_extension', models.CharField(blank=True, max_length=10)),
+                ('edition_key', models.CharField(blank=True, db_index=True, max_length=48)),
+                ('edition_name', models.CharField(blank=True, max_length=120)),
+                ('edition_suffix', models.CharField(blank=True, max_length=120)),
+                ('output_name', models.CharField(blank=True, max_length=500)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('category', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='vod.vodcategory')),
                 ('movie', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='vod.movie')),
@@ -282,6 +266,10 @@ class Migration(migrations.Migration):
                 ('subtitle_languages', models.JSONField(blank=True, default=list)),
                 ('resolution_height', models.PositiveIntegerField(default=0)),
                 ('container_extension', models.CharField(blank=True, max_length=10)),
+                ('edition_key', models.CharField(blank=True, db_index=True, max_length=48)),
+                ('edition_name', models.CharField(blank=True, max_length=120)),
+                ('edition_suffix', models.CharField(blank=True, max_length=120)),
+                ('output_name', models.CharField(blank=True, max_length=500)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('category', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='vod.vodcategory')),
                 ('policy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='series_selections', to='vod.vodaccesspolicy')),
@@ -294,15 +282,6 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='selection_progress',
-            field=models.JSONField(blank=True, default=dict),
-        ),
-        migrations.AddIndex(
-            model_name='vodplaybacksession',
-            index=models.Index(fields=['-started_at'], name='vod_playback_started_idx'),
-        ),
-        migrations.AddField(
             model_name='movie',
             name='display_name',
             field=models.CharField(blank=True, help_text='Optional canonical title used for compact client output.', max_length=255),
@@ -311,71 +290,6 @@ class Migration(migrations.Migration):
             model_name='series',
             name='display_name',
             field=models.CharField(blank=True, help_text='Optional canonical title used for compact client output.', max_length=255),
-        ),
-        migrations.AddField(
-            model_name='vodplaybacksession',
-            name='failover_count',
-            field=models.PositiveIntegerField(default=0),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='provider_order',
-            field=models.JSONField(blank=True, default=list, help_text='Profile-specific M3U account preference from highest to lowest. Unlisted accounts remain eligible behind listed accounts.'),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='edition_rules',
-            field=models.JSONField(blank=True, default=list, help_text='Ordered first-match rules that classify eligible sources into editions without changing their source categories.'),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='naming_mode',
-            field=models.CharField(choices=[('mode_default', 'Default for output mode'), ('provider', 'Provider title'), ('canonical', 'Canonical title and edition'), ('template', 'Custom template')], default='mode_default', max_length=20),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='name_template',
-            field=models.CharField(blank=True, default='{canonical} {edition}', help_text='Output title template used when naming_mode is template.', max_length=500),
-        ),
-        migrations.AddField(
-            model_name='vodmovieprofileselection',
-            name='edition_key',
-            field=models.CharField(blank=True, db_index=True, max_length=48),
-        ),
-        migrations.AddField(
-            model_name='vodmovieprofileselection',
-            name='edition_name',
-            field=models.CharField(blank=True, max_length=120),
-        ),
-        migrations.AddField(
-            model_name='vodmovieprofileselection',
-            name='edition_suffix',
-            field=models.CharField(blank=True, max_length=120),
-        ),
-        migrations.AddField(
-            model_name='vodmovieprofileselection',
-            name='output_name',
-            field=models.CharField(blank=True, max_length=500),
-        ),
-        migrations.AddField(
-            model_name='vodseriesprofileselection',
-            name='edition_key',
-            field=models.CharField(blank=True, db_index=True, max_length=48),
-        ),
-        migrations.AddField(
-            model_name='vodseriesprofileselection',
-            name='edition_name',
-            field=models.CharField(blank=True, max_length=120),
-        ),
-        migrations.AddField(
-            model_name='vodseriesprofileselection',
-            name='edition_suffix',
-            field=models.CharField(blank=True, max_length=120),
-        ),
-        migrations.AddField(
-            model_name='vodseriesprofileselection',
-            name='output_name',
-            field=models.CharField(blank=True, max_length=500),
         ),
         migrations.CreateModel(
             name='VODCatalogState',
@@ -521,16 +435,6 @@ class Migration(migrations.Migration):
             name='tmdb_override_id',
             field=models.CharField(blank=True, db_index=True, help_text='Administrator-selected TMDB ID for this provider source.', max_length=50),
         ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='metadata_source',
-            field=models.CharField(choices=[('provider', 'Provider metadata'), ('canonical', 'Canonical / TMDB metadata')], default='provider', help_text='Metadata projected to clients for variants output. Compact always uses canonical metadata.', max_length=16),
-        ),
-        migrations.AlterField(
-            model_name='vodaccesspolicy',
-            name='selection_status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('building', 'Building'), ('ready', 'Ready'), ('outdated', 'Outdated'), ('failed', 'Failed')], default='pending', max_length=10),
-        ),
         django.contrib.postgres.operations.TrigramExtension(
         ),
         migrations.RunSQL(
@@ -540,26 +444,6 @@ class Migration(migrations.Migration):
         migrations.RunSQL(
             sql="CREATE INDEX IF NOT EXISTS vod_series_title_trgm ON vod_series USING gin ((lower(COALESCE(NULLIF(display_name, ''), name))) gin_trgm_ops)",
             reverse_sql='DROP INDEX IF EXISTS vod_series_title_trgm',
-        ),
-        migrations.AlterField(
-            model_name='vodaccesspolicy',
-            name='naming_mode',
-            field=models.CharField(choices=[('mode_default', 'Default for output mode'), ('provider', 'Provider title'), ('canonical', 'Canonical title and edition'), ('template', 'Custom template')], default='template', max_length=20),
-        ),
-        migrations.AlterField(
-            model_name='vodaccesspolicy',
-            name='name_template',
-            field=models.CharField(blank=True, default='{title} ({year}) {edition}', help_text='Output title template used when naming_mode is template.', max_length=500),
-        ),
-        migrations.AlterField(
-            model_name='vodaccesspolicy',
-            name='metadata_source',
-            field=models.CharField(choices=[('provider', 'Provider metadata'), ('canonical', 'Canonical / TMDB metadata')], default='provider', help_text='Descriptive metadata projected to clients independently of the selected output title.', max_length=16),
-        ),
-        migrations.AddField(
-            model_name='vodaccesspolicy',
-            name='canonical_title_source',
-            field=models.CharField(choices=[('primary', 'Primary canonical title'), ('secondary', 'Secondary canonical title'), ('provider', 'Provider title')], default='primary', help_text='Title represented by the {title} output placeholder. Provider titles are available only for variants output.', max_length=10),
         ),
         migrations.AddField(
             model_name='movie',

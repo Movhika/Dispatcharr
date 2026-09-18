@@ -418,7 +418,7 @@ class XcVodSeriesDistinctTests(TestCase):
         streams = xc_get_vod_streams(self.request, self.user)
 
         self.assertEqual(len(streams), 1)
-        self.assertEqual(streams[0]["name"], "Shared Movie")
+        self.assertEqual(streams[0]["name"], "Shared Movie (2020)")
         self.assertEqual(streams[0]["container_extension"], "mp4")
 
     def test_compact_vod_uses_clean_canonical_title_with_year(self):
@@ -429,7 +429,11 @@ class XcVodSeriesDistinctTests(TestCase):
         )
         policy.users.add(self.user)
         account = self._account(f"acct-{uuid4().hex[:6]}")
-        movie = Movie.objects.create(name="┃DE┃ Bliss", year=2021)
+        movie = Movie.objects.create(
+            name="┃DE┃ Bliss",
+            clean_title="Bliss",
+            year=2021,
+        )
         M3UMovieRelation.objects.create(
             m3u_account=account,
             movie=movie,
@@ -645,7 +649,7 @@ class XcVodSeriesDistinctTests(TestCase):
         results = xc_get_series(self.request, self.user)
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["name"], "Shared Series")
+        self.assertEqual(results[0]["name"], "Shared Series (2019)")
         self.assertEqual(results[0]["series_id"], high_rel.id)
 
     def test_series_excludes_inactive_accounts(self):
@@ -684,20 +688,20 @@ class XcVodSeriesDistinctTests(TestCase):
         self.assertEqual([r["name"] for r in results], ["Alpha Show", "Zulu Show"])
 
     @skipUnless(connection.vendor == "postgresql", "PostgreSQL-specific query shape")
-    def test_vod_streams_dedupe_query_avoids_movie_join(self):
+    def test_vod_streams_prepared_profile_avoids_distinct_query(self):
         account = self._account(f"acct-{uuid4().hex[:6]}")
         movie = Movie.objects.create(name="Query Shape Movie")
         M3UMovieRelation.objects.create(
             m3u_account=account, movie=movie, stream_id="qs-1"
         )
+        policy = self.user.vod_access_policies.get()
+        build_vod_profile_selection(policy.id)
 
         with CaptureQueriesContext(connection) as ctx:
             xc_get_vod_streams(self.request, self.user)
 
         distinct_queries = [q for q in ctx.captured_queries if "DISTINCT" in q["sql"]]
-        self.assertEqual(len(distinct_queries), 1)
-        self.assertNotIn('"vod_movie"', distinct_queries[0]["sql"])
-        self.assertNotIn('"vod_vodlogo"', distinct_queries[0]["sql"])
+        self.assertEqual(distinct_queries, [])
 
         fetch_queries = [
             q
@@ -710,19 +714,20 @@ class XcVodSeriesDistinctTests(TestCase):
         self.assertNotIn('"vod_vodcategory"', fetch_sql)
 
     @skipUnless(connection.vendor == "postgresql", "PostgreSQL-specific query shape")
-    def test_series_dedupe_query_avoids_series_join(self):
+    def test_series_prepared_profile_avoids_distinct_query(self):
         account = self._account(f"acct-{uuid4().hex[:6]}")
         series = Series.objects.create(name="Query Shape Series")
         M3USeriesRelation.objects.create(
             m3u_account=account, series=series, external_series_id="qs-s"
         )
+        policy = self.user.vod_access_policies.get()
+        build_vod_profile_selection(policy.id)
 
         with CaptureQueriesContext(connection) as ctx:
             xc_get_series(self.request, self.user)
 
         distinct_queries = [q for q in ctx.captured_queries if "DISTINCT" in q["sql"]]
-        self.assertEqual(len(distinct_queries), 1)
-        self.assertNotIn('"vod_series"', distinct_queries[0]["sql"])
+        self.assertEqual(distinct_queries, [])
 
         fetch_queries = [
             q

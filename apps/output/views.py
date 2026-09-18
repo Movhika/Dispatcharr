@@ -1522,10 +1522,6 @@ def _xc_fetch_priority_distinct_relations(
             .values('pk')
         )
         with transaction.atomic():
-            # Optional: disable parallel gather for this DISTINCT ON query if Docker
-            # /dev/shm pressure causes worker OOM on very large VOD libraries.
-            #with connection.cursor() as cursor:
-            #    cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
             winning_ids = list(winning_ids_qs.values_list('pk', flat=True))
             if not winning_ids:
                 return []
@@ -1668,21 +1664,11 @@ def xc_get_vod_streams(request, user, category_id=None):
             else None
         )
         rating = curated["rating"] if curated else row['movie__rating']
-        artwork = (
-            prefer_relation_artwork(
-                {},
-                custom_props,
-                tmdb_poster_url=row.get('movie__tmdb_poster_url') or '',
-                tmdb_backdrop_url=row.get('movie__tmdb_backdrop_url') or '',
-                prefer_tmdb=_prefer_tmdb_artwork,
-            )
-            if use_curated_metadata
-            else _xc_relation_artwork_from_row(
-                row,
-                custom_props,
-                prefix='movie',
-                prefer_tmdb=_prefer_tmdb_artwork,
-            )
+        artwork = _xc_relation_artwork_from_row(
+            row,
+            custom_props,
+            prefix='movie',
+            prefer_tmdb=_prefer_tmdb_artwork,
         )
 
         append({
@@ -1857,21 +1843,11 @@ def xc_get_series(request, user, category_id=None):
             if curated and curated["release_date"]
             else custom_props.get('release_date', year_str)
         )
-        artwork = (
-            prefer_relation_artwork(
-                {},
-                custom_props,
-                tmdb_poster_url=row.get('series__tmdb_poster_url') or '',
-                tmdb_backdrop_url=row.get('series__tmdb_backdrop_url') or '',
-                prefer_tmdb=_prefer_tmdb_artwork,
-            )
-            if use_curated_metadata
-            else _xc_relation_artwork_from_row(
-                row,
-                custom_props,
-                prefix='series',
-                prefer_tmdb=_prefer_tmdb_artwork,
-            )
+        artwork = _xc_relation_artwork_from_row(
+            row,
+            custom_props,
+            prefix='series',
+            prefer_tmdb=_prefer_tmdb_artwork,
         )
 
         append({
@@ -2218,7 +2194,7 @@ def xc_get_series_info(request, user, series_id):
     ]
 
     series_artwork = prefer_relation_artwork(
-        {} if use_curated_metadata else series_relation.custom_properties,
+        series_relation.custom_properties,
         series.custom_properties,
         tmdb_poster_url=series.tmdb_poster_url,
         tmdb_backdrop_url=series.tmdb_backdrop_url,
@@ -2459,7 +2435,7 @@ def xc_get_vod_info(request, user, vod_id):
     # are set from a single resolved cover: winning-provider still first, synced
     # VODLogo only when the relation/object has no proxyable image.
     movie_artwork = prefer_relation_artwork(
-        {} if use_curated_metadata else movie_relation.custom_properties,
+        movie_relation.custom_properties,
         movie.custom_properties,
         tmdb_poster_url=movie.tmdb_poster_url,
         tmdb_backdrop_url=movie.tmdb_backdrop_url,

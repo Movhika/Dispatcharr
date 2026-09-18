@@ -352,6 +352,18 @@ def summarize_episode_provider_video_metadata(relations):
     }
 
 
+def merge_episode_provider_video_metadata(metadata, relations):
+    """Add trustworthy episode video facts to one series-source payload."""
+    summary = summarize_episode_provider_video_metadata(relations)
+    values = dict(metadata.get("values") or {})
+    provenance = dict(metadata.get("provenance") or {})
+    for field, items in summary.items():
+        if items:
+            values[field] = items
+            provenance[field] = "episode_provider"
+    return {"values": values, "provenance": provenance}
+
+
 def _positive_number(value):
     if value is None or isinstance(value, bool):
         return None
@@ -690,3 +702,58 @@ def summarize_relation_metadata(relations, category_mapping=None):
         "video_features": sorted(video_features),
         "source_count": source_count,
     }
+
+
+def summarize_series_relation_metadata(
+    series_relations,
+    episode_relations,
+    category_mapping=None,
+):
+    """Summarize series editions without double-counting their episodes.
+
+    A category resolution is the default for one series source. Once that
+    source exposes trustworthy episode video dimensions, the episode values
+    replace its default. Other series sources without episode details retain
+    their own defaults.
+    """
+    series_relations = list(series_relations)
+    episode_relations = list(episode_relations)
+    summary = summarize_relation_metadata(series_relations, category_mapping)
+    episodes_by_source = defaultdict(list)
+    for relation in episode_relations:
+        episodes_by_source[relation.series_relation_id].append(relation)
+
+    resolutions = set()
+    for relation in series_relations:
+        provider_video = summarize_episode_provider_video_metadata(
+            episodes_by_source.get(relation.id, [])
+        )
+        if provider_video["episode_resolutions"]:
+            resolutions.update(provider_video["episode_resolutions"])
+            continue
+        relation_summary = summarize_relation_metadata(
+            [relation],
+            category_mapping,
+        )
+        resolutions.update(relation_summary["resolutions"])
+
+    # Legacy rows without a parent relation cannot replace one exact source,
+    # but their valid video dimensions are still useful library information.
+    orphan_video = summarize_episode_provider_video_metadata(
+        episodes_by_source.get(None, [])
+    )
+    resolutions.update(orphan_video["episode_resolutions"])
+    summary["resolutions"] = sorted(
+        resolutions,
+        key=lambda value: _positive_int(str(value).rstrip("p")),
+    )
+
+    episode_summary = summarize_relation_metadata(
+        episode_relations,
+        category_mapping,
+    )
+    if episode_summary["container_extensions"]:
+        summary["container_extensions"] = episode_summary[
+            "container_extensions"
+        ]
+    return summary

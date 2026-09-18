@@ -144,6 +144,34 @@ class SeriesProviderInfoQueryTests(TestCase):
         self.assertEqual(response.data['canonical']['id'], self.series.id)
         self.assertIn('source_metadata', response.data)
 
+    def test_provider_info_returns_episode_resolution_and_codec_summary(self):
+        episode_relation = M3UEpisodeRelation.objects.filter(
+            series_relation=self.series_relation
+        ).first()
+        episode_relation.custom_properties = {
+            'info': {
+                'info': {
+                    'video': {
+                        'codec_name': 'h264',
+                        'width': 640,
+                        'height': 480,
+                    }
+                }
+            }
+        }
+        episode_relation.save(update_fields=['custom_properties'])
+        url = (
+            f'/api/vod/series/{self.series.id}/provider-info/'
+            f'?include_episodes=false&relation_id={self.series_relation.id}'
+        )
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        values = response.data['source_metadata']['values']
+        self.assertEqual(values['episode_resolutions'], ['480p'])
+        self.assertEqual(values['episode_video_codecs'], ['h264'])
+
     def test_provider_info_backdrop_prefers_selected_relation_basic_data(self):
         """Shared Series.custom_properties can be stale; the selected account's
         own list-sync backdrop should be preferred when it has one."""

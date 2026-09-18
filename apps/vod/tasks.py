@@ -4464,12 +4464,12 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                         relation,
                         notify_profile_change=False,
                     )
-                    from .provider_metadata import reconcile_movie_provider_metadata
+                    from .catalog_cache import bump_catalog_generation
 
-                    if reconcile_movie_provider_metadata([relation.movie_id]):
-                        from .catalog_cache import bump_catalog_generation
-
-                        bump_catalog_generation(invalidate_selections=False)
+                    # The provider payload belongs to this concrete source.
+                    # A manual TMDB assignment must keep the selected canonical
+                    # record entirely under canonical/TMDB control.
+                    bump_catalog_generation(invalidate_selections=False)
                     return "Advanced source data refreshed; canonical override preserved."
 
                 # Update Movie fields if changed

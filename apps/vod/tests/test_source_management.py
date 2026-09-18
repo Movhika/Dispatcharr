@@ -4212,6 +4212,66 @@ class VODSourceManagementTests(TestCase):
         self.assertEqual(row["source_metadata"]["resolutions"], ["1080p"])
         self.assertEqual(row["source_metadata"]["container_extensions"], ["mkv"])
 
+    def test_series_overview_replaces_category_resolution_with_episode_video(self):
+        series = Series.objects.create(name="Provider resolution series")
+        category = VODCategory.objects.create(
+            name="PROVIDER RESOLUTION SERIES",
+            category_type="series",
+        )
+        M3UVODCategoryRelation.objects.create(
+            m3u_account=self.account_a,
+            category=category,
+            enabled=True,
+            metadata_defaults={"resolution": "1080p"},
+        )
+        series_relation = M3USeriesRelation.objects.create(
+            m3u_account=self.account_a,
+            series=series,
+            category=category,
+            external_series_id="provider-resolution-series",
+            declared_metadata={"resolution": "1080p"},
+        )
+        episode = Episode.objects.create(
+            series=series,
+            name="Episode 1",
+            season_number=1,
+            episode_number=1,
+        )
+        M3UEpisodeRelation.objects.create(
+            m3u_account=self.account_a,
+            episode=episode,
+            series_relation=series_relation,
+            stream_id="provider-resolution-episode",
+            container_extension="mkv",
+            custom_properties={
+                "info": {
+                    "info": {
+                        "video": {
+                            "codec_name": "h264",
+                            "width": 640,
+                            "height": 480,
+                        }
+                    }
+                }
+            },
+        )
+        admin = get_user_model().objects.create_user(
+            username="vod-provider-resolution-admin",
+            password="test-password",
+            user_level=10,
+        )
+        request = APIRequestFactory().get(
+            "/api/vod/", {"type": "series", "search": series.name}
+        )
+        force_authenticate(request, user=admin)
+
+        response = UnifiedContentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data["results"][0]
+        self.assertEqual(row["source_count"], 1)
+        self.assertEqual(row["source_metadata"]["resolutions"], ["480p"])
+
     def test_bulk_metadata_can_target_all_filtered_titles(self):
         other_movie = Movie.objects.create(name="Unrelated title", year=2026)
         other_relation = M3UMovieRelation.objects.create(

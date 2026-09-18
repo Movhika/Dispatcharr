@@ -14,10 +14,10 @@ from .models import (
 )
 from apps.m3u.serializers import M3UAccountSerializer
 from .metadata import (
+    merge_episode_provider_video_metadata,
     normalize_language_list,
     normalize_source_metadata,
     relation_declared_metadata,
-    summarize_episode_provider_video_metadata,
     summarize_relation_metadata,
     validate_source_metadata,
     normalize_video_features,
@@ -237,16 +237,10 @@ class M3USeriesRelationSerializer(
         metadata = super().get_source_metadata(obj)
         if not self.context.get("include_episode_technical_summary"):
             return metadata
-        summary = summarize_episode_provider_video_metadata(
+        return merge_episode_provider_video_metadata(
+            metadata,
             getattr(obj, "metadata_episode_relations", [])
         )
-        values = dict(metadata.get("values") or {})
-        provenance = dict(metadata.get("provenance") or {})
-        for field, items in summary.items():
-            if items:
-                values[field] = items
-                provenance[field] = "episode_provider"
-        return {"values": values, "provenance": provenance}
 
 
 class M3UMovieRelationSerializer(
@@ -1516,6 +1510,8 @@ class SeriesProviderInfoEpisodeSeriesSerializer(serializers.Serializer):
 
 class SeriesProviderInfoEpisodeSerializer(serializers.Serializer):
     id = serializers.IntegerField()
+    relation_id = serializers.IntegerField()
+    stream_id = serializers.CharField()
     uuid = serializers.UUIDField()
     name = serializers.CharField()
     title = serializers.CharField()
