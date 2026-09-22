@@ -3,6 +3,7 @@ import string
 
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import Q
 from core.utils import truncate_with_warning
 from .image_proxy import vodlogo_cache_url
 from drf_spectacular.types import OpenApiTypes
@@ -11,6 +12,7 @@ from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
     VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
+    VODList, VODListItem,
 )
 from apps.m3u.serializers import M3UAccountSerializer
 from .metadata import (
@@ -434,6 +436,164 @@ class VODPolicyCategorySerializer(serializers.ModelSerializer):
             "category_relation", "category_name", "account_name",
             "enabled", "priority",
         ]
+
+
+class VODListItemSerializer(serializers.ModelSerializer):
+    canonical_id = serializers.SerializerMethodField()
+    display_title = serializers.SerializerMethodField()
+    display_year = serializers.SerializerMethodField()
+    display_poster = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
+    source_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VODListItem
+        fields = [
+            "id", "generation", "content_type", "canonical_id",
+            "display_title", "display_year", "display_poster",
+            "is_available", "include_all_sources", "source_count",
+            "external_provider", "external_id", "position", "metadata",
+        ]
+
+    def _canonical(self, obj):
+        return obj.movie if obj.content_type == "movie" else obj.series
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_canonical_id(self, obj):
+        canonical = self._canonical(obj)
+        return canonical.pk if canonical is not None else None
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_display_title(self, obj):
+        canonical = self._canonical(obj)
+        if canonical is not None:
+            return canonical.display_name or canonical.name
+        return obj.title
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_display_year(self, obj):
+        canonical = self._canonical(obj)
+        return canonical.year if canonical is not None else obj.year
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_display_poster(self, obj):
+        canonical = self._canonical(obj)
+        if canonical is None:
+            return obj.poster_url
+        return canonical.tmdb_poster_url or (
+            canonical.logo.url if canonical.logo_id else ""
+        )
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_available(self, obj):
+        return self._canonical(obj) is not None
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_source_count(self, obj):
+        if obj.include_all_sources:
+            canonical = self._canonical(obj)
+            return canonical.m3u_relations.count() if canonical is not None else 0
+        prefetched = getattr(obj, "_prefetched_objects_cache", {})
+        if "source_memberships" in prefetched:
+            return len(prefetched["source_memberships"])
+        return obj.source_memberships.count()
+
+
+class VODListSerializer(serializers.ModelSerializer):
+    item_count = serializers.SerializerMethodField()
+    available_item_count = serializers.SerializerMethodField()
+    preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VODList
+        fields = [
+            "id", "name", "description", "list_type", "content_type",
+            "provider", "external_key", "rules", "settings",
+            "active_generation", "is_enabled", "is_visible", "is_system",
+            "sort_order", "sync_status", "sync_progress", "last_synced_at",
+            "sync_error", "item_count", "available_item_count", "preview",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "active_generation", "is_system", "sync_status",
+            "sync_progress", "last_synced_at", "sync_error", "item_count",
+            "available_item_count", "preview", "created_at", "updated_at",
+        ]
+
+    def validate(self, attrs):
+        list_type = attrs.get(
+            "list_type",
+            getattr(self.instance, "list_type", VODList.ListType.MANUAL),
+        )
+        provider = str(
+            attrs.get("provider", getattr(self.instance, "provider", "")) or ""
+        ).strip().lower()
+        external_key = str(
+            attrs.get(
+                "external_key", getattr(self.instance, "external_key", "")
+            ) or ""
+        ).strip()
+        if (
+            list_type == VODList.ListType.SYSTEM
+            and not getattr(self.instance, "is_system", False)
+        ):
+            raise serializers.ValidationError({
+                "list_type": "System lists are managed by Dispatcharr."
+            })
+        if list_type == VODList.ListType.EXTERNAL:
+            if not provider:
+                raise serializers.ValidationError({
+                    "provider": "External lists require a provider identifier."
+                })
+            if not external_key:
+                raise serializers.ValidationError({
+                    "external_key": "External lists require a list identifier."
+                })
+        elif provider or external_key:
+            raise serializers.ValidationError({
+                "provider": (
+                    "Provider and external key are only valid for external lists."
+                )
+            })
+        attrs["provider"] = provider
+        attrs["external_key"] = external_key
+        return attrs
+
+    def _active_preview(self, obj):
+        cache = getattr(obj, "_active_preview_cache", None)
+        if cache is None:
+            cache = list(
+                obj.items.filter(generation=obj.active_generation)
+                .select_related("movie__logo", "series__logo")
+                .prefetch_related("source_memberships")
+                .order_by("position", "id")[:20]
+            )
+            obj._active_preview_cache = cache
+        return cache
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_item_count(self, obj):
+        annotated = getattr(obj, "active_item_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.items.filter(generation=obj.active_generation).count()
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_available_item_count(self, obj):
+        annotated = getattr(obj, "active_available_item_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.items.filter(generation=obj.active_generation).filter(
+            Q(movie__isnull=False) | Q(series__isnull=False)
+        ).count()
+
+    @extend_schema_field(VODListItemSerializer(many=True))
+    def get_preview(self, obj):
+        return VODListItemSerializer(
+            self._active_preview(obj),
+            many=True,
+            context=self.context,
+        ).data
 
 
 class VODAccessPolicySerializer(serializers.ModelSerializer):

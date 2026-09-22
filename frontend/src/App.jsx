@@ -23,6 +23,7 @@ import Users from './pages/Users';
 import LogosPage from './pages/Logos';
 import VODsPage from './pages/VODs';
 import VODProfilesPage from './pages/VODProfiles';
+import VODListsPage from './pages/VODLists';
 import VODPlaybackHistoryPage from './pages/VODPlaybackHistory';
 import useAuthStore from './store/auth';
 import useBrowserStorage from './hooks/useBrowserStorage';
@@ -105,6 +106,7 @@ const RoutedContent = React.memo(function RoutedContent({
               <Route path="/settings" element={<Settings />} />
               <Route path="/logos" element={<LogosPage />} />
               <Route path="/vods" element={<VODsPage />} />
+              <Route path="/vods/lists" element={<VODListsPage />} />
               <Route path="/vods/profiles" element={<VODProfilesPage />} />
               <Route
                 path="/vods/playback-history"

@@ -233,6 +233,7 @@ describe('Sidebar', () => {
       expect(screen.getByText('Channels')).toBeInTheDocument();
       expect(screen.getByText('Video on Demand')).toBeInTheDocument();
       expect(screen.getByText('Library')).toBeInTheDocument();
+      expect(screen.getByText('Lists')).toBeInTheDocument();
       expect(screen.getByText('VOD Profiles')).toBeInTheDocument();
       expect(screen.getByText('Playback History')).toBeInTheDocument();
       expect(screen.getByText('Sources')).toBeInTheDocument();
