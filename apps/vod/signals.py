@@ -21,6 +21,7 @@ from .models import (
     M3UVODCategoryRelation,
     VODAccessPolicy,
     VODPolicyCategory,
+    VODPolicyList,
 )
 
 
@@ -203,6 +204,7 @@ def remember_m3u_selection_changes(sender, instance, **kwargs):
 @receiver([post_save, post_delete], sender=M3UAccount)
 @receiver([post_save, post_delete], sender=VODAccessPolicy)
 @receiver([post_save, post_delete], sender=VODPolicyCategory)
+@receiver([post_save, post_delete], sender=VODPolicyList)
 def invalidate_vod_catalog(
     sender,
     instance=None,
@@ -278,7 +280,7 @@ def invalidate_vod_catalog(
             )
         bump_catalog_generation(invalidate_selections=False)
         return
-    if sender is VODPolicyCategory:
+    if sender in (VODPolicyCategory, VODPolicyList):
         policy_id = getattr(instance, "policy_id", None)
         if policy_id:
             VODAccessPolicy.objects.filter(pk=policy_id).exclude(

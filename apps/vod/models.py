@@ -701,6 +701,10 @@ class VODAccessPolicy(models.Model):
         PROVIDER = "provider", "Provider metadata"
         CANONICAL = "canonical", "Canonical / TMDB metadata"
 
+    class CategoryMode(models.TextChoices):
+        PROVIDER = "provider", "Provider categories"
+        LISTS = "lists", "VOD lists"
+
     class CanonicalTitleSource(models.TextChoices):
         PRIMARY = "primary", "Primary canonical title"
         SECONDARY = "secondary", "Secondary canonical title"
@@ -752,6 +756,19 @@ class VODAccessPolicy(models.Model):
             "selected output title."
         ),
     )
+    category_mode = models.CharField(
+        max_length=12,
+        choices=CategoryMode.choices,
+        default=CategoryMode.PROVIDER,
+        help_text="Choose provider categories or curated VOD lists for XC output.",
+    )
+    include_unsorted = models.BooleanField(
+        default=True,
+        help_text=(
+            "When list output is enabled, retain eligible sources which do not "
+            "belong to any selected list in a virtual Unsorted category."
+        ),
+    )
     canonical_title_source = models.CharField(
         max_length=10,
         choices=CanonicalTitleSource.choices,
@@ -769,6 +786,11 @@ class VODAccessPolicy(models.Model):
     category_relations = models.ManyToManyField(
         "M3UVODCategoryRelation",
         through="VODPolicyCategory",
+        related_name="access_policies",
+    )
+    vod_lists = models.ManyToManyField(
+        VODList,
+        through="VODPolicyList",
         related_name="access_policies",
     )
     selection_status = models.CharField(
@@ -1061,6 +1083,22 @@ class VODPolicyCategory(models.Model):
         ]
 
 
+class VODPolicyList(models.Model):
+    policy = models.ForeignKey(VODAccessPolicy, on_delete=models.CASCADE)
+    vod_list = models.ForeignKey(VODList, on_delete=models.CASCADE)
+    enabled = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ("-priority", "vod_list__sort_order", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy", "vod_list"),
+                name="unique_vod_policy_list",
+            )
+        ]
+
+
 class VODMovieProfileSelection(models.Model):
     """Prepared movie output rows for one policy generation."""
 
@@ -1087,6 +1125,7 @@ class VODMovieProfileSelection(models.Model):
     edition_name = models.CharField(max_length=120, blank=True)
     edition_suffix = models.CharField(max_length=120, blank=True)
     output_name = models.CharField(max_length=500, blank=True)
+    list_ids = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1111,6 +1150,7 @@ class VODMovieProfileSelection(models.Model):
             ),
             GinIndex(fields=("audio_languages",), name="vod_mov_prof_audio_gin"),
             GinIndex(fields=("subtitle_languages",), name="vod_mov_prof_sub_gin"),
+            GinIndex(fields=("list_ids",), name="vod_mov_prof_lists_gin"),
         ]
 
 
@@ -1140,6 +1180,7 @@ class VODSeriesProfileSelection(models.Model):
     edition_name = models.CharField(max_length=120, blank=True)
     edition_suffix = models.CharField(max_length=120, blank=True)
     output_name = models.CharField(max_length=500, blank=True)
+    list_ids = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1164,6 +1205,7 @@ class VODSeriesProfileSelection(models.Model):
             ),
             GinIndex(fields=("audio_languages",), name="vod_ser_prof_audio_gin"),
             GinIndex(fields=("subtitle_languages",), name="vod_ser_prof_sub_gin"),
+            GinIndex(fields=("list_ids",), name="vod_ser_prof_lists_gin"),
         ]
 
 

@@ -11,7 +11,7 @@ from drf_spectacular.utils import extend_schema_field
 from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
-    VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
+    VODAccessPolicy, VODPolicyCategory, VODPolicyList, VODPlaybackSession,
     VODList, VODListItem,
 )
 from apps.m3u.serializers import M3UAccountSerializer
@@ -596,9 +596,27 @@ class VODListSerializer(serializers.ModelSerializer):
         ).data
 
 
+class VODPolicyListSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="vod_list.name", read_only=True)
+    list_type = serializers.CharField(source="vod_list.list_type", read_only=True)
+    content_type = serializers.CharField(
+        source="vod_list.content_type", read_only=True
+    )
+
+    class Meta:
+        model = VODPolicyList
+        fields = [
+            "vod_list", "name", "list_type", "content_type",
+            "enabled", "priority",
+        ]
+
+
 class VODAccessPolicySerializer(serializers.ModelSerializer):
     category_rules = VODPolicyCategorySerializer(
         source="vodpolicycategory_set", many=True, required=False
+    )
+    list_rules = VODPolicyListSerializer(
+        source="vodpolicylist_set", many=True, required=False
     )
     selection_current = serializers.SerializerMethodField()
     selection_available = serializers.SerializerMethodField()
@@ -612,7 +630,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "hard_constraints", "ranking", "provider_order", "edition_rules",
             "naming_mode", "name_template", "metadata_source",
             "canonical_title_source", "users",
-            "category_rules",
+            "category_mode", "include_unsorted", "category_rules", "list_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",
             "selection_counts", "selection_progress",
@@ -705,6 +723,27 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         # replacement even though the database already contains the new set.
         getattr(policy, "_prefetched_objects_cache", {}).pop(
             "vodpolicycategory_set", None
+        )
+
+    def _replace_list_rules(self, policy, rules):
+        if rules is None:
+            return
+        policy.vodpolicylist_set.all().delete()
+        list_ids = [rule["vod_list"].pk for rule in rules]
+        valid_ids = set(
+            VODList.objects.filter(pk__in=list_ids, is_enabled=True).values_list(
+                "pk", flat=True
+            )
+        )
+        if len(valid_ids) != len(set(list_ids)):
+            raise serializers.ValidationError(
+                {"list_rules": "Choose only enabled VOD lists."}
+            )
+        VODPolicyList.objects.bulk_create([
+            VODPolicyList(policy=policy, **rule) for rule in rules
+        ])
+        getattr(policy, "_prefetched_objects_cache", {}).pop(
+            "vodpolicylist_set", None
         )
 
     def validate_ranking(self, value):
@@ -1464,12 +1503,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", [])
+        list_rules = validated_data.pop("vodpolicylist_set", [])
         users = validated_data.pop("users", [])
         with transaction.atomic():
             policy = VODAccessPolicy.objects.create(**validated_data)
             self._assign_users(policy, users)
             self._normalize_default(policy)
             self._replace_category_rules(policy, rules)
+            self._replace_list_rules(policy, list_rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(
@@ -1484,12 +1525,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", None)
+        list_rules = validated_data.pop("vodpolicylist_set", None)
         users = validated_data.pop("users", None)
         with transaction.atomic():
             instance = super().update(instance, validated_data)
             self._assign_users(instance, users)
             self._normalize_default(instance)
             self._replace_category_rules(instance, rules)
+            self._replace_list_rules(instance, list_rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(

@@ -4,6 +4,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.m3u.models import M3UAccount
 from apps.vod.api_views import VODListViewSet
+from apps.vod.lists import rebuild_dynamic_list
 from apps.vod.models import (
     M3UMovieRelation,
     Movie,
@@ -129,6 +130,83 @@ class VODListAPITests(TestCase):
         self.assertEqual(membership.movie_relation, self.movie_relation)
         self.assertEqual(response.data["item_count"], 1)
         self.assertEqual(response.data["preview"][0]["display_title"], "Curated Movie")
+
+    def test_dynamic_list_keeps_only_matching_source_variants(self):
+        self.movie_relation.manual_metadata = {"video_features": ["3d"]}
+        self.movie_relation.save(update_fields=["manual_metadata"])
+        other_account = M3UAccount.objects.create(
+            name="second-provider",
+            account_type=M3UAccount.Types.XC,
+            server_url="https://second.example",
+            username="user",
+            password="pass",
+        )
+        other_relation = M3UMovieRelation.objects.create(
+            m3u_account=other_account,
+            movie=self.movie,
+            stream_id="movie-2d",
+            manual_metadata={"resolution": "1080p"},
+        )
+        vod_list = VODList.objects.create(
+            name="3D only",
+            list_type=VODList.ListType.DYNAMIC,
+            content_type=VODList.ContentType.MOVIE,
+            rules=[{"required_video_features": ["3d"]}],
+        )
+
+        rebuild_dynamic_list(vod_list)
+
+        vod_list.refresh_from_db()
+        item = VODListItem.objects.get(
+            list=vod_list,
+            generation=vod_list.active_generation,
+        )
+        self.assertFalse(item.include_all_sources)
+        self.assertEqual(
+            list(
+                item.source_memberships.values_list(
+                    "movie_relation_id", flat=True
+                )
+            ),
+            [self.movie_relation.pk],
+        )
+        self.assertNotIn(
+            other_relation.pk,
+            item.source_memberships.values_list("movie_relation_id", flat=True),
+        )
+
+    def test_manual_add_and_remove_uses_atomic_generations(self):
+        vod_list = VODList.objects.create(name="Watch next")
+        add_response = self._request(
+            "post",
+            f"/api/vod/lists/{vod_list.pk}/add-items/",
+            "add_items",
+            data={
+                "selections": [
+                    {
+                        "content_type": "movie",
+                        "canonical_id": self.movie.pk,
+                        "relation_id": self.movie_relation.pk,
+                    }
+                ]
+            },
+            pk=vod_list.pk,
+        )
+        self.assertEqual(add_response.status_code, 200)
+        item_id = add_response.data["preview"][0]["id"]
+
+        remove_response = self._request(
+            "post",
+            f"/api/vod/lists/{vod_list.pk}/remove-items/",
+            "remove_items",
+            data={"item_ids": [item_id]},
+            pk=vod_list.pk,
+        )
+
+        self.assertEqual(remove_response.status_code, 200)
+        self.assertEqual(remove_response.data["item_count"], 0)
+        vod_list.refresh_from_db()
+        self.assertEqual(vod_list.active_generation, 3)
 
     def test_external_list_requires_provider_and_key(self):
         response = self._request(
