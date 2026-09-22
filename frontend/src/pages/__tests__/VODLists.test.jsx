@@ -169,4 +169,19 @@ describe('VODListsPage', () => {
       expect(API.getVODListFilterOptions).toHaveBeenCalledWith(list.id);
     });
   });
+
+  it('updates list text without rebuilding its entries', async () => {
+    API.updateVODList.mockResolvedValue({ ...list, name: 'TMDB Picks' });
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit TMDB Trending' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: /Name/ }), {
+      target: { value: 'TMDB Picks' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save list' }));
+
+    await waitFor(() => expect(API.updateVODList).toHaveBeenCalled());
+    expect(API.rebuildVODList).not.toHaveBeenCalled();
+  });
 });

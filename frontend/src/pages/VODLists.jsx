@@ -65,8 +65,12 @@ const EMPTY_RULE = {
   max_year: '',
   release_date_after: '',
   release_date_before: '',
+  release_yearly_from: '',
+  release_yearly_until: '',
+  release_last_days: '',
   library_added_after: '',
   library_added_before: '',
+  library_added_last_days: '',
   anime_mode: 'any',
   max_age_rating: '',
   required_audio_languages: [],
@@ -91,6 +95,8 @@ const EMPTY_FORM = {
     watch_monetization_types: 'flatrate',
   },
   is_enabled: true,
+  release_mode: 'fixed',
+  added_mode: 'fixed',
   rule: EMPTY_RULE,
 };
 
@@ -141,6 +147,7 @@ const TYPE_LABELS = {
 
 const normalizeList = (value) => {
   const externalKey = value?.external_key || '';
+  const rule = { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) };
   return {
     ...EMPTY_FORM,
     ...value,
@@ -152,7 +159,13 @@ const normalizeList = (value) => {
         ? 'custom'
         : '',
     settings: { ...EMPTY_FORM.settings, ...(value?.settings || {}) },
-    rule: { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) },
+    release_mode: rule.release_last_days
+      ? 'recent'
+      : rule.release_yearly_from || rule.release_yearly_until
+        ? 'yearly'
+        : 'fixed',
+    added_mode: rule.library_added_last_days ? 'recent' : 'fixed',
+    rule,
   };
 };
 
@@ -465,6 +478,21 @@ const VODListsPage = () => {
         min_resolution: Number(form.rule.min_resolution) || 0,
         max_resolution: Number(form.rule.max_resolution) || 0,
       };
+      if (form.release_mode !== 'fixed') {
+        normalizedRule.release_date_after = '';
+        normalizedRule.release_date_before = '';
+      }
+      if (form.release_mode !== 'yearly') {
+        normalizedRule.release_yearly_from = '';
+        normalizedRule.release_yearly_until = '';
+      }
+      if (form.release_mode !== 'recent') normalizedRule.release_last_days = '';
+      if (form.added_mode !== 'fixed') {
+        normalizedRule.library_added_after = '';
+        normalizedRule.library_added_before = '';
+      }
+      if (form.added_mode !== 'recent')
+        normalizedRule.library_added_last_days = '';
       const externalKey =
         form.external_source === 'custom'
           ? form.external_key.trim()
@@ -818,7 +846,6 @@ const VODListsPage = () => {
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <Select
                   label="Provider"
-                  description="Additional providers can be added later without changing the list model"
                   data={[{ value: 'tmdb', label: 'TMDB' }]}
                   value={form.provider}
                   onChange={(value) =>
@@ -903,7 +930,6 @@ const VODListsPage = () => {
                     />
                     <TextInput
                       label="Region"
-                      description="Derived from the primary TMDB language"
                       readOnly
                       value={
                         form.settings.watch_region ||
@@ -938,11 +964,6 @@ const VODListsPage = () => {
           )}
           {form.list_type === 'dynamic' && (
             <Stack gap="sm">
-              <Text fw={600}>Metadata rules</Text>
-              <Text size="sm" c="dimmed">
-                All filled fields must match. If a canonical title has several
-                sources, only matching sources are added to the list.
-              </Text>
               <TagsInput
                 label="Genres"
                 placeholder="Select genres present in the library"
@@ -956,66 +977,164 @@ const VODListsPage = () => {
                 }
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <TextInput
-                  type="date"
-                  label="Released from"
-                  description="TMDB release date, or first air date for series"
-                  value={form.rule.release_date_after}
-                  onChange={(event) =>
+                <Select
+                  label="Release period"
+                  data={[
+                    { value: 'fixed', label: 'Fixed dates' },
+                    { value: 'yearly', label: 'Repeats each year' },
+                    { value: 'recent', label: 'Last X days' },
+                  ]}
+                  value={form.release_mode}
+                  onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      rule: {
-                        ...current.rule,
-                        release_date_after: event.currentTarget.value,
-                      },
+                      release_mode: value || 'fixed',
                     }))
                   }
                 />
-                <TextInput
-                  type="date"
-                  label="Released until"
-                  description="TMDB release date, or first air date for series"
-                  value={form.rule.release_date_before}
-                  onChange={(event) =>
+                <Select
+                  label="Added to library"
+                  data={[
+                    { value: 'fixed', label: 'Fixed dates' },
+                    { value: 'recent', label: 'Last X days' },
+                  ]}
+                  value={form.added_mode}
+                  onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      rule: {
-                        ...current.rule,
-                        release_date_before: event.currentTarget.value,
-                      },
+                      added_mode: value || 'fixed',
                     }))
                   }
                 />
-                <TextInput
-                  type="date"
-                  label="Added to library from"
-                  description="First import into this Dispatcharr library"
-                  value={form.rule.library_added_after}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: {
-                        ...current.rule,
-                        library_added_after: event.currentTarget.value,
-                      },
-                    }))
-                  }
-                />
-                <TextInput
-                  type="date"
-                  label="Added to library until"
-                  description="First import into this Dispatcharr library"
-                  value={form.rule.library_added_before}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: {
-                        ...current.rule,
-                        library_added_before: event.currentTarget.value,
-                      },
-                    }))
-                  }
-                />
+              </SimpleGrid>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {form.release_mode === 'fixed' && (
+                  <>
+                    <TextInput
+                      type="date"
+                      label="Released from"
+                      value={form.rule.release_date_after}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            release_date_after: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                    <TextInput
+                      type="date"
+                      label="Released until"
+                      value={form.rule.release_date_before}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            release_date_before: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                  </>
+                )}
+                {form.release_mode === 'yearly' && (
+                  <>
+                    <TextInput
+                      label="Every year from (MM-DD)"
+                      placeholder="01-01"
+                      value={form.rule.release_yearly_from}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            release_yearly_from: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                    <TextInput
+                      label="Every year until (MM-DD)"
+                      placeholder="04-30"
+                      value={form.rule.release_yearly_until}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            release_yearly_until: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                  </>
+                )}
+                {form.release_mode === 'recent' && (
+                  <NumberInput
+                    label="Released in the last X days"
+                    min={1}
+                    max={3650}
+                    value={form.rule.release_last_days}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        rule: { ...current.rule, release_last_days: value },
+                      }))
+                    }
+                  />
+                )}
+                {form.added_mode === 'fixed' && (
+                  <>
+                    <TextInput
+                      type="date"
+                      label="Added to library from"
+                      value={form.rule.library_added_after}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            library_added_after: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                    <TextInput
+                      type="date"
+                      label="Added to library until"
+                      value={form.rule.library_added_before}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            library_added_before: event.currentTarget.value,
+                          },
+                        }))
+                      }
+                    />
+                  </>
+                )}
+                {form.added_mode === 'recent' && (
+                  <NumberInput
+                    label="Added in the last X days"
+                    min={1}
+                    max={3650}
+                    value={form.rule.library_added_last_days}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        rule: {
+                          ...current.rule,
+                          library_added_last_days: value,
+                        },
+                      }))
+                    }
+                  />
+                )}
                 <Select
                   label="Anime"
                   data={[
@@ -1033,7 +1152,6 @@ const VODListsPage = () => {
                 />
                 <NumberInput
                   label="Maximum age rating"
-                  description="TMDB certification, for example 10 for a children’s list"
                   value={form.rule.max_age_rating}
                   onChange={(value) =>
                     setForm((current) => ({
@@ -1164,6 +1282,14 @@ const VODListsPage = () => {
               loading={saving}
               disabled={
                 !form.name.trim() ||
+                (form.list_type === 'dynamic' &&
+                  ((form.release_mode === 'yearly' &&
+                    (!/^\d{2}-\d{2}$/.test(form.rule.release_yearly_from) ||
+                      !/^\d{2}-\d{2}$/.test(form.rule.release_yearly_until))) ||
+                    (form.release_mode === 'recent' &&
+                      !(Number(form.rule.release_last_days) >= 1)) ||
+                    (form.added_mode === 'recent' &&
+                      !(Number(form.rule.library_added_last_days) >= 1)))) ||
                 (form.list_type === 'external' &&
                   (!form.provider ||
                     !form.external_source ||
