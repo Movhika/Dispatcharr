@@ -11,6 +11,7 @@ vi.mock('../../api', () => ({
   default: {
     getVODLists: vi.fn(),
     getVODListRuleOptions: vi.fn(),
+    getVODListExternalOptions: vi.fn(),
     getVODFilterOptions: vi.fn(),
     getVODListItems: vi.fn(),
     createVODList: vi.fn(),
@@ -77,6 +78,9 @@ describe('VODListsPage', () => {
     API.getVODLists.mockResolvedValue([list]);
     API.getVODListRuleOptions.mockResolvedValue({
       genres: [],
+    });
+    API.getVODListExternalOptions.mockResolvedValue({
+      region: 'DE',
       watch_providers: [],
     });
     API.getVODFilterOptions.mockResolvedValue({

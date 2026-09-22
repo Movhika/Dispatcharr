@@ -62,7 +62,6 @@ const EMPTY_RULE = {
   library_added_before: '',
   anime_mode: 'any',
   max_age_rating: '',
-  required_watch_providers: [],
   required_audio_languages: [],
   required_subtitle_languages: [],
   min_resolution: '',
@@ -77,9 +76,29 @@ const EMPTY_FORM = {
   content_type: 'all',
   provider: '',
   external_key: '',
+  external_source: '',
+  settings: {
+    watch_provider_id: '',
+    watch_provider_name: '',
+    watch_region: '',
+    watch_monetization_types: 'flatrate',
+  },
   is_enabled: true,
   rule: EMPTY_RULE,
 };
+
+const TMDB_PRESETS = [
+  { value: 'trending-movies', label: 'Trending movies' },
+  { value: 'trending-series', label: 'Trending series' },
+  { value: 'now-playing', label: 'Now playing in cinemas' },
+  { value: 'popular-movies', label: 'Popular movies' },
+  { value: 'popular-series', label: 'Popular series' },
+];
+
+const TMDB_SOURCE_VALUES = new Set([
+  ...TMDB_PRESETS.map((option) => option.value),
+  'watch-provider',
+]);
 
 const TYPE_LABELS = {
   manual: 'Manual',
@@ -88,13 +107,22 @@ const TYPE_LABELS = {
   system: 'System',
 };
 
-const normalizeList = (value) => ({
-  ...EMPTY_FORM,
-  ...value,
-  provider: value?.provider || '',
-  external_key: value?.external_key || '',
-  rule: { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) },
-});
+const normalizeList = (value) => {
+  const externalKey = value?.external_key || '';
+  return {
+    ...EMPTY_FORM,
+    ...value,
+    provider: value?.provider || '',
+    external_key: externalKey,
+    external_source: TMDB_SOURCE_VALUES.has(externalKey)
+      ? externalKey
+      : externalKey
+        ? 'custom'
+        : '',
+    settings: { ...EMPTY_FORM.settings, ...(value?.settings || {}) },
+    rule: { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) },
+  };
+};
 
 const languageLabel = (code) =>
   LANGUAGE_OPTIONS.find((option) => option.value === code)?.label ||
@@ -128,6 +156,7 @@ const builderSignature = (value) => {
     provider: value.list_type === 'external' ? value.provider || '' : '',
     external_key:
       value.list_type === 'external' ? value.external_key || '' : '',
+    settings: value.list_type === 'external' ? value.settings || {} : {},
     rules: value.list_type === 'dynamic' ? [rule] : [],
   });
 };
@@ -192,8 +221,12 @@ const VODListsPage = () => {
   const [detailItem, setDetailItem] = useState(null);
   const [ruleOptions, setRuleOptions] = useState({
     genres: [],
+  });
+  const [externalOptions, setExternalOptions] = useState({
+    region: '',
     watch_providers: [],
   });
+  const [externalOptionsLoading, setExternalOptionsLoading] = useState(false);
   const { options: technicalOptions, loading: technicalOptionsLoading } =
     useVODFilterOptions({
       enabled: editorOpen && form.list_type === 'dynamic',
@@ -202,22 +235,39 @@ const VODListsPage = () => {
 
   const isAdmin = user && user.user_level >= USER_LEVELS.ADMIN;
 
-  const loadLists = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadLists = useCallback(async ({ background = false } = {}) => {
+    if (!background) {
+      setLoading(true);
+      setError('');
+    }
     try {
       const response = await API.getVODLists();
       setLists(response?.results || response || []);
     } catch (requestError) {
-      setError(requestError?.message || 'Failed to load VOD lists.');
+      if (!background) {
+        setError(requestError?.message || 'Failed to load VOD lists.');
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (isAdmin) loadLists();
   }, [isAdmin, loadLists]);
+
+  useEffect(() => {
+    if (
+      !lists.some((list) => ['queued', 'running'].includes(list.sync_status))
+    ) {
+      return undefined;
+    }
+    const timer = window.setInterval(
+      () => loadLists({ background: true }),
+      2000
+    );
+    return () => window.clearInterval(timer);
+  }, [lists, loadLists]);
 
   useEffect(() => {
     if (!viewer) return;
@@ -252,17 +302,73 @@ const VODListsPage = () => {
         if (active) {
           setRuleOptions({
             genres: response?.genres || [],
-            watch_providers: response?.watch_providers || [],
           });
         }
       })
       .catch(() => {
-        if (active) setRuleOptions({ genres: [], watch_providers: [] });
+        if (active) setRuleOptions({ genres: [] });
       });
     return () => {
       active = false;
     };
   }, [editorOpen, form.content_type, form.list_type]);
+
+  useEffect(() => {
+    if (
+      !editorOpen ||
+      form.list_type !== 'external' ||
+      form.provider !== 'tmdb' ||
+      form.external_source !== 'watch-provider' ||
+      !['movie', 'series'].includes(form.content_type)
+    ) {
+      return undefined;
+    }
+    let active = true;
+    setExternalOptionsLoading(true);
+    API.getVODListExternalOptions(
+      form.content_type,
+      form.settings.watch_region || undefined
+    )
+      .then((response) => {
+        if (!active) return;
+        setExternalOptions({
+          region: response?.region || '',
+          watch_providers: response?.watch_providers || [],
+        });
+        if (!form.settings.watch_region && response?.region) {
+          setForm((current) => ({
+            ...current,
+            settings: {
+              ...current.settings,
+              watch_region: response.region,
+            },
+          }));
+        }
+      })
+      .catch((requestError) => {
+        if (active) {
+          setExternalOptions({ region: '', watch_providers: [] });
+          notifications.show({
+            color: 'red',
+            title: 'Could not load TMDB providers',
+            message: requestError?.message || 'The request failed.',
+          });
+        }
+      })
+      .finally(() => {
+        if (active) setExternalOptionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    editorOpen,
+    form.content_type,
+    form.external_source,
+    form.list_type,
+    form.provider,
+    form.settings.watch_region,
+  ]);
 
   const openCreate = () => {
     setEditing(null);
@@ -274,6 +380,15 @@ const VODListsPage = () => {
     setEditing(list);
     setForm(normalizeList(list));
     setEditorOpen(true);
+  };
+
+  const upsertList = (saved) => {
+    setLists((current) => {
+      const exists = current.some((list) => list.id === saved.id);
+      return exists
+        ? current.map((list) => (list.id === saved.id ? saved : list))
+        : [...current, saved];
+    });
   };
 
   const save = async () => {
@@ -288,31 +403,47 @@ const VODListsPage = () => {
         min_resolution: Number(form.rule.min_resolution) || 0,
         max_resolution: Number(form.rule.max_resolution) || 0,
       };
+      const externalKey =
+        form.external_source === 'custom'
+          ? form.external_key.trim()
+          : form.external_source;
+      const externalSettings =
+        form.external_source === 'watch-provider' ? form.settings : {};
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
         list_type: form.list_type,
         content_type: form.content_type,
         provider: form.list_type === 'external' ? form.provider.trim() : '',
-        external_key:
-          form.list_type === 'external' ? form.external_key.trim() : '',
+        external_key: form.list_type === 'external' ? externalKey : '',
+        settings: form.list_type === 'external' ? externalSettings : {},
         is_enabled: form.is_enabled,
         rules: form.list_type === 'dynamic' ? [normalizedRule] : [],
       };
       const requiresRebuild =
         ['dynamic', 'external'].includes(form.list_type) &&
-        (!editing || builderSignature(form) !== builderSignature(editing));
+        (!editing ||
+          builderSignature({
+            ...form,
+            external_key: externalKey,
+            settings: externalSettings,
+          }) !== builderSignature(editing));
       const saved = editing
         ? await API.updateVODList(editing.id, payload)
         : await API.createVODList(payload);
-      if (requiresRebuild) {
-        await API.rebuildVODList(saved.id);
-      }
+      upsertList(saved);
       setEditorOpen(false);
-      await loadLists();
+      if (requiresRebuild) {
+        const queued = await API.rebuildVODList(saved.id);
+        upsertList(queued);
+      }
       notifications.show({
         color: 'green',
-        message: editing ? 'List updated.' : 'List created.',
+        message: requiresRebuild
+          ? `${saved.name || form.name} saved. The list is building in the background.`
+          : editing
+            ? 'List updated.'
+            : 'List created.',
       });
     } catch (requestError) {
       notifications.show({
@@ -328,9 +459,9 @@ const VODListsPage = () => {
   const rebuild = async (list) => {
     setRebuildingId(list.id);
     try {
-      await API.rebuildVODList(list.id);
-      await loadLists();
-      notifications.show({ color: 'green', message: `${list.name} rebuilt.` });
+      const queued = await API.rebuildVODList(list.id);
+      upsertList(queued);
+      notifications.show({ color: 'blue', message: `${list.name} queued.` });
     } catch (requestError) {
       notifications.show({
         color: 'red',
@@ -420,18 +551,51 @@ const VODListsPage = () => {
                           {!list.is_enabled && (
                             <Badge color="gray">Disabled</Badge>
                           )}
+                          {list.sync_status === 'queued' && (
+                            <Badge color="blue" variant="light">
+                              Queued
+                            </Badge>
+                          )}
+                          {list.sync_status === 'running' && (
+                            <Badge
+                              color="blue"
+                              variant="light"
+                              leftSection={<Loader size={10} />}
+                            >
+                              Building
+                            </Badge>
+                          )}
+                          {list.sync_status === 'failed' && (
+                            <Badge color="red" variant="light">
+                              Failed
+                            </Badge>
+                          )}
                         </Group>
                         <Text size="sm" c="dimmed">
                           {list.item_count} titles · {list.available_item_count}{' '}
                           available
                         </Text>
+                        {['queued', 'running'].includes(list.sync_status) && (
+                          <Text size="xs" c="blue.3">
+                            {list.sync_progress?.phase ||
+                              'The previous complete version remains available.'}
+                          </Text>
+                        )}
+                        {list.sync_status === 'failed' && list.sync_error && (
+                          <Text size="xs" c="red.4">
+                            {list.sync_error}
+                          </Text>
+                        )}
                       </Box>
                       <Group gap={6}>
                         {list.list_type !== 'manual' && (
                           <ActionIcon
                             variant="subtle"
                             aria-label={`Rebuild ${list.name}`}
-                            loading={rebuildingId === list.id}
+                            loading={
+                              rebuildingId === list.id ||
+                              ['queued', 'running'].includes(list.sync_status)
+                            }
                             onClick={() => rebuild(list)}
                           >
                             <RefreshCw size={17} />
@@ -557,37 +721,141 @@ const VODListsPage = () => {
                 setForm((current) => ({
                   ...current,
                   content_type: value || 'all',
+                  settings:
+                    current.external_source === 'watch-provider' &&
+                    current.content_type !== value
+                      ? {
+                          ...current.settings,
+                          watch_provider_id: '',
+                          watch_provider_name: '',
+                        }
+                      : current.settings,
                 }))
               }
             />
           </SimpleGrid>
           {form.list_type === 'external' && (
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              <Select
-                label="Provider"
-                searchable
-                description="Additional providers can be added later without changing the list model"
-                data={[{ value: 'tmdb', label: 'TMDB' }]}
-                value={form.provider}
-                onChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    provider: value || '',
-                  }))
-                }
-              />
-              <TextInput
-                label="TMDB list ID or preset"
-                description="Presets: trending-movies, trending-series, now-playing, popular-movies, popular-series"
-                value={form.external_key}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    external_key: event.target.value,
-                  }))
-                }
-              />
-            </SimpleGrid>
+            <Stack gap="sm">
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                <Select
+                  label="Provider"
+                  description="Additional providers can be added later without changing the list model"
+                  data={[{ value: 'tmdb', label: 'TMDB' }]}
+                  value={form.provider}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      provider: value || '',
+                    }))
+                  }
+                />
+                <Select
+                  label="TMDB source"
+                  placeholder="Choose a list source"
+                  data={[
+                    ...TMDB_PRESETS,
+                    {
+                      value: 'watch-provider',
+                      label: 'Streaming service (Watch Provider)',
+                    },
+                    { value: 'custom', label: 'TMDB list ID' },
+                  ]}
+                  value={form.external_source || null}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      external_source: value || '',
+                      content_type:
+                        value === 'trending-movies' ||
+                        value === 'now-playing' ||
+                        value === 'popular-movies'
+                          ? 'movie'
+                          : value === 'trending-series' ||
+                              value === 'popular-series'
+                            ? 'series'
+                            : current.content_type,
+                    }))
+                  }
+                />
+              </SimpleGrid>
+              {form.external_source === 'custom' && (
+                <TextInput
+                  label="TMDB list ID"
+                  value={form.external_key}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      external_key: event.target.value,
+                    }))
+                  }
+                />
+              )}
+              {form.external_source === 'watch-provider' && (
+                <Stack gap="sm">
+                  {!['movie', 'series'].includes(form.content_type) && (
+                    <Alert color="yellow">
+                      Choose either Movies or Series above. TMDB exposes these
+                      streaming catalogs separately.
+                    </Alert>
+                  )}
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <Select
+                      label="Streaming service"
+                      searchable
+                      disabled={
+                        externalOptionsLoading ||
+                        !['movie', 'series'].includes(form.content_type)
+                      }
+                      data={externalOptions.watch_providers}
+                      value={form.settings.watch_provider_id || null}
+                      onChange={(value) => {
+                        const selected = externalOptions.watch_providers.find(
+                          (option) => option.value === value
+                        );
+                        setForm((current) => ({
+                          ...current,
+                          settings: {
+                            ...current.settings,
+                            watch_provider_id: value || '',
+                            watch_provider_name: selected?.label || '',
+                          },
+                        }));
+                      }}
+                    />
+                    <TextInput
+                      label="Region"
+                      description="Derived from the primary TMDB language"
+                      readOnly
+                      value={
+                        form.settings.watch_region ||
+                        externalOptions.region ||
+                        ''
+                      }
+                    />
+                    <Select
+                      label="Availability"
+                      data={[
+                        { value: 'flatrate', label: 'Subscription streaming' },
+                        { value: 'free', label: 'Free' },
+                        { value: 'ads', label: 'Free with ads' },
+                        { value: 'rent', label: 'Rent' },
+                        { value: 'buy', label: 'Buy' },
+                      ]}
+                      value={form.settings.watch_monetization_types}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          settings: {
+                            ...current.settings,
+                            watch_monetization_types: value || 'flatrate',
+                          },
+                        }))
+                      }
+                    />
+                  </SimpleGrid>
+                </Stack>
+              )}
+            </Stack>
           )}
           {form.list_type === 'dynamic' && (
             <Stack gap="sm">
@@ -696,23 +964,6 @@ const VODListsPage = () => {
                   }
                 />
               </SimpleGrid>
-              <MultiSelect
-                label="Streaming providers"
-                description="TMDB watch-provider availability for the configured TMDB region"
-                placeholder="Select providers present in enriched metadata"
-                searchable
-                data={ruleOptions.watch_providers}
-                value={form.rule.required_watch_providers}
-                onChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    rule: {
-                      ...current.rule,
-                      required_watch_providers: value,
-                    },
-                  }))
-                }
-              />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <MultiSelect
                   label="DUB"
@@ -835,7 +1086,14 @@ const VODListsPage = () => {
               disabled={
                 !form.name.trim() ||
                 (form.list_type === 'external' &&
-                  (!form.provider || !form.external_key.trim()))
+                  (!form.provider ||
+                    !form.external_source ||
+                    (form.external_source === 'custom' &&
+                      !form.external_key.trim()) ||
+                    (form.external_source === 'watch-provider' &&
+                      (!['movie', 'series'].includes(form.content_type) ||
+                        !form.settings.watch_provider_id ||
+                        !form.settings.watch_region))))
               }
               onClick={save}
             >

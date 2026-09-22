@@ -1651,6 +1651,15 @@ export default class API {
     );
   }
 
+  static async getVODListExternalOptions(type = 'movie', region) {
+    const query = new URLSearchParams({ type });
+    if (region) query.set('region', region);
+    return await request(
+      `${host}/api/vod/lists/external-options/?${query.toString()}`,
+      { cache: 'no-store' }
+    );
+  }
+
   static async createVODList(values) {
     return await request(`${host}/api/vod/lists/`, {
       method: 'POST',

@@ -1,10 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
+from unittest.mock import Mock, patch
 
 from apps.m3u.models import M3UAccount
 from apps.vod.api_views import VODListViewSet
-from apps.vod.lists import rebuild_dynamic_list
+from apps.vod.lists import rebuild_dynamic_list, rebuild_tmdb_list
 from apps.vod.models import (
     M3UMovieRelation,
     Movie,
@@ -175,21 +176,14 @@ class VODListAPITests(TestCase):
             item.source_memberships.values_list("movie_relation_id", flat=True),
         )
 
-    def test_dynamic_list_matches_tmdb_release_window_and_watch_provider(self):
+    def test_dynamic_list_matches_tmdb_release_window(self):
         self.movie.tmdb_metadata = {
             "release_date": "2026-02-12",
             "is_anime": True,
-            "watch_providers": {
-                "DE": {
-                    "flatrate": [
-                        {"id": 350, "name": "Apple TV Plus"},
-                    ]
-                }
-            },
         }
         self.movie.save(update_fields=["tmdb_metadata"])
         vod_list = VODList.objects.create(
-            name="Winter Apple anime",
+            name="Winter anime",
             list_type=VODList.ListType.DYNAMIC,
             content_type=VODList.ContentType.MOVIE,
             rules=[
@@ -197,7 +191,6 @@ class VODListAPITests(TestCase):
                     "anime_mode": "yes",
                     "release_date_after": "2026-01-01",
                     "release_date_before": "2026-04-30",
-                    "required_watch_providers": ["Apple TV Plus"],
                 }
             ],
         )
@@ -211,6 +204,87 @@ class VODListAPITests(TestCase):
         )
         self.assertEqual(item.movie, self.movie)
         self.assertEqual(item.source_memberships.count(), 1)
+
+    @patch("apps.vod.lists.CoreSettings.get_tmdb_languages", return_value=["de-DE"])
+    @patch("apps.vod.lists.CoreSettings.get_tmdb_api_token", return_value="token")
+    @patch("apps.vod.tmdb.Client.get")
+    def test_tmdb_watch_provider_is_an_external_list(
+        self,
+        get,
+        _token,
+        _languages,
+    ):
+        self.movie.tmdb_id = "777"
+        self.movie.save(update_fields=["tmdb_id"])
+        get.return_value = {
+            "page": 1,
+            "total_pages": 1,
+            "results": [
+                {
+                    "id": 777,
+                    "title": "Curated Movie",
+                    "release_date": "2026-02-12",
+                },
+                {
+                    "id": 888,
+                    "title": "Remote Only",
+                    "release_date": "2025-10-01",
+                },
+            ],
+        }
+        vod_list = VODList.objects.create(
+            name="Apple TV movies",
+            list_type=VODList.ListType.EXTERNAL,
+            content_type=VODList.ContentType.MOVIE,
+            provider="tmdb",
+            external_key="watch-provider",
+            settings={
+                "watch_provider_id": "350",
+                "watch_region": "DE",
+                "watch_monetization_types": "flatrate",
+            },
+        )
+
+        rebuild_tmdb_list(vod_list)
+
+        get.assert_called_once_with(
+            "discover/movie",
+            page=1,
+            language="de-DE",
+            watch_region="DE",
+            with_watch_providers="350",
+            with_watch_monetization_types="flatrate",
+            sort_by="popularity.desc",
+        )
+        items = list(
+            vod_list.items.order_by("position").values_list(
+                "movie_id", "external_id", "title"
+            )
+        )
+        self.assertEqual(items[0], (self.movie.pk, "777", "Curated Movie"))
+        self.assertEqual(items[1], (None, "888", "Remote Only"))
+
+    @patch("apps.vod.tasks.rebuild_vod_list.delay")
+    def test_rebuild_endpoint_queues_and_returns_immediately(self, delay):
+        delay.return_value = Mock(id="list-task-1")
+        vod_list = VODList.objects.create(
+            name="Metadata list",
+            list_type=VODList.ListType.DYNAMIC,
+            content_type=VODList.ContentType.MOVIE,
+            rules=[{"required_genres": ["Drama"]}],
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self._request(
+                "post",
+                f"/api/vod/lists/{vod_list.pk}/rebuild/",
+                "rebuild",
+                pk=vod_list.pk,
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data["sync_status"], "queued")
+        delay.assert_called_once_with(vod_list.pk, True)
 
     def test_manual_add_and_remove_uses_atomic_generations(self):
         vod_list = VODList.objects.create(name="Watch next")
