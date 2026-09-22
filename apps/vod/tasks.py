@@ -218,6 +218,56 @@ def enqueue_enabled_vod_list_rebuilds(*, rebuild_profiles=True, trigger_reason="
     return True
 
 
+@shared_task(bind=True)
+def rebuild_due_time_based_vod_lists(self):
+    """Advance rolling and yearly lists even when providers did not refresh."""
+    from .catalog_cache import bump_catalog_generation
+    from .lists import _annual_release_window
+    from .models import VODList
+
+    if not acquire_task_lock(VOD_LIST_REBUILD_LOCK_NAME, "global"):
+        return {"status": "already_running"}
+    lock_renewer = TaskLockRenewer(VOD_LIST_REBUILD_LOCK_NAME, "global")
+    lock_renewer.start()
+    try:
+        today = timezone.localdate()
+        due_ids = []
+        for vod_list in VODList.objects.filter(
+            is_enabled=True, list_type=VODList.ListType.DYNAMIC
+        ).only("id", "rules", "last_synced_at"):
+            last_day = (
+                timezone.localtime(vod_list.last_synced_at).date()
+                if vod_list.last_synced_at else None
+            )
+            if last_day == today:
+                continue
+            for rule in vod_list.rules or []:
+                if not isinstance(rule, dict) or rule.get("enabled", True) is False:
+                    continue
+                if rule.get("release_last_days") or rule.get("library_added_last_days"):
+                    due_ids.append(vod_list.pk)
+                    break
+                annual = _annual_release_window(rule, today)
+                if annual and last_day is not None and last_day < annual[0]:
+                    due_ids.append(vod_list.pk)
+                    break
+        results = [
+            _run_vod_list_builder(vod_list_id, task_id=self.request.id)
+            for vod_list_id in due_ids
+        ]
+        if any(result["status"] == "complete" for result in results):
+            bump_catalog_generation(invalidate_selections=False)
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason="Time-based VOD lists changed"
+            )
+        return {"status": "complete", "results": results}
+    finally:
+        lock_renewer.stop()
+        release_task_lock(VOD_LIST_REBUILD_LOCK_NAME, "global")
+
+
 def _import_source_metadata(category_relation, container_extension=None):
     """Snapshot operator-owned category defaults onto one source relation."""
     from .metadata import normalize_source_metadata

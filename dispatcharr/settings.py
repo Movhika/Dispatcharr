@@ -469,6 +469,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.vod.tasks.reconcile_vod_metadata_queue",
         "schedule": 60.0,
     },
+    "rebuild-due-time-based-vod-lists": {
+        "task": "apps.vod.tasks.rebuild_due_time_based_vod_lists",
+        "schedule": 86400.0,
+    },
 }
 
 MEDIA_ROOT = BASE_DIR / "media"

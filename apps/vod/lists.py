@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from calendar import monthrange
 from collections import defaultdict
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from django.db import models, transaction
 from django.utils import timezone
@@ -50,6 +51,46 @@ def _age_number(value):
     return int(match.group(0)) if match else None
 
 
+def _recent_days(value):
+    try:
+        days = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return days if 1 <= days <= 3650 else 0
+
+
+def _annual_release_window(rule, today):
+    start = str(rule.get("release_yearly_from") or "").strip()
+    end = str(rule.get("release_yearly_until") or "").strip()
+    if not start and not end:
+        return None
+    if not start or not end:
+        return False
+    try:
+        start_month, start_day = map(int, start.split("-"))
+        end_month, end_day = map(int, end.split("-"))
+        # Leap day is valid for a recurring rule even in a non-leap year.
+        datetime(2000, start_month, start_day)
+        datetime(2000, end_month, end_day)
+        start_year = (
+            today.year
+            if (today.month, today.day) >= (start_month, start_day)
+            else today.year - 1
+        )
+        start_date = datetime(
+            start_year, start_month, min(start_day, monthrange(start_year, start_month)[1])
+        ).date()
+        end_year = start_year + (
+            1 if (end_month, end_day) < (start_month, start_day) else 0
+        )
+        end_date = datetime(
+            end_year, end_month, min(end_day, monthrange(end_year, end_month)[1])
+        ).date()
+        return start_date, end_date
+    except (TypeError, ValueError):
+        return False
+
+
 def _index_tmdb_canonicals(queryset):
     """Index every known TMDB identifier without duplicating canonicals."""
     indexed = {}
@@ -61,7 +102,7 @@ def _index_tmdb_canonicals(queryset):
     return indexed
 
 
-def dynamic_rule_matches(relation, rule, category_mapping):
+def dynamic_rule_matches(relation, rule, category_mapping, *, now=None):
     """Match one relation against a combined canonical/source list rule."""
     if not isinstance(rule, dict) or rule.get("enabled", True) is False:
         return False
@@ -76,12 +117,18 @@ def dynamic_rule_matches(relation, rule, category_mapping):
         return False
 
     content = relation.movie if hasattr(relation, "movie_id") else relation.series
+    now = now or timezone.now()
     added_after = _aware_datetime(rule.get("library_added_after"))
     added_before = _aware_datetime(rule.get("library_added_before"), end=True)
     added_at = getattr(content, "library_added_at", None)
     if added_after and (not added_at or added_at < added_after):
         return False
     if added_before and (not added_at or added_at > added_before):
+        return False
+    added_days = _recent_days(rule.get("library_added_last_days"))
+    if added_days and (
+        not added_at or not now - timedelta(days=added_days) <= added_at <= now
+    ):
         return False
 
     release_after = parse_date(str(rule.get("release_date_after") or ""))
@@ -90,6 +137,19 @@ def dynamic_rule_matches(relation, rule, category_mapping):
     if release_after and (not release_date or release_date < release_after):
         return False
     if release_before and (not release_date or release_date > release_before):
+        return False
+    release_days = _recent_days(rule.get("release_last_days"))
+    today = timezone.localtime(now).date()
+    if release_days and (
+        not release_date
+        or not today - timedelta(days=release_days - 1) <= release_date <= today
+    ):
+        return False
+    yearly_window = _annual_release_window(rule, today)
+    if yearly_window is False or (
+        yearly_window is not None
+        and (not release_date or not yearly_window[0] <= release_date <= yearly_window[1])
+    ):
         return False
 
     maximum_age = rule.get("max_age_rating")
@@ -187,6 +247,7 @@ def rebuild_dynamic_list(vod_list):
         raise ValueError("Only metadata-rule lists can be rebuilt this way")
     rules = [rule for rule in (vod_list.rules or []) if isinstance(rule, dict)]
     category_mapping = enabled_category_map()
+    evaluated_at = timezone.now()
     matches = {"movie": defaultdict(set), "series": defaultdict(set)}
     types = (
         ("movie", M3UMovieRelation, "movie_id"),
@@ -200,7 +261,7 @@ def rebuild_dynamic_list(vod_list):
         ).select_related("m3u_account", "category", content_type)
         for relation in queryset.iterator(chunk_size=2000):
             if any(
-                dynamic_rule_matches(relation, rule, category_mapping)
+                dynamic_rule_matches(relation, rule, category_mapping, now=evaluated_at)
                 for rule in rules
             ):
                 matches[content_type][getattr(relation, canonical_field)].add(

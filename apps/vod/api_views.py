@@ -3997,6 +3997,10 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             )
 
         is_movie = content_type == "movie"
+        active_category_mode = (
+            (policy.selection_counts or {}).get("category_mode")
+            or policy.category_mode
+        )
         selection_model = (
             VODMovieProfileSelection if is_movie else VODSeriesProfileSelection
         )
@@ -4019,8 +4023,20 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(
                 relation__m3u_account_id=request.query_params["m3u_account"]
             )
-        if request.query_params.get("category"):
-            queryset = queryset.filter(category_id=request.query_params["category"])
+        requested_category = str(request.query_params.get("category") or "")
+        if requested_category:
+            if active_category_mode == VODAccessPolicy.CategoryMode.LISTS:
+                if not requested_category.startswith("list:"):
+                    raise DRFValidationError({"category": "Choose a VOD list."})
+                try:
+                    list_id = int(requested_category.removeprefix("list:"))
+                except ValueError as exc:
+                    raise DRFValidationError({
+                        "category": "Invalid VOD list."
+                    }) from exc
+                queryset = queryset.filter(list_ids__contains=[list_id])
+            else:
+                queryset = queryset.filter(category_id=requested_category)
         metadata_status = str(
             request.query_params.get("metadata_status") or ""
         ).strip()
@@ -4166,6 +4182,19 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                 compact_source_counts[key] = compact_source_counts.get(key, 0) + 1
 
         results = []
+        list_names = {}
+        if active_category_mode == VODAccessPolicy.CategoryMode.LISTS:
+            selected_list_ids = {
+                list_id
+                for row in rows
+                for list_id in (row.list_ids or [])
+                if list_id
+            }
+            list_names = dict(
+                VODList.objects.filter(pk__in=selected_list_ids).values_list(
+                    "id", "name"
+                )
+            )
         for row in rows:
             content = getattr(row, canonical)
             relation = row.relation
@@ -4191,7 +4220,15 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "m3u_account_id": relation.m3u_account_id,
                     "m3u_account_name": relation.m3u_account.name,
                     "category_id": row.category_id,
-                    "category_name": row.category.name if row.category else "",
+                    "category_name": (
+                        ", ".join(
+                            "Unsorted" if list_id == 0 else list_names.get(list_id, "")
+                            for list_id in (row.list_ids or [])
+                        )
+                        if active_category_mode == VODAccessPolicy.CategoryMode.LISTS
+                        else row.category.name if row.category else ""
+                    ),
+                    "list_ids": row.list_ids or [],
                     "metadata": row.effective_metadata,
                     "resolution": row.resolution_height,
                     "container_extension": row.container_extension,
