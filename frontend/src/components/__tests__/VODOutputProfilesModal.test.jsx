@@ -12,6 +12,7 @@ vi.mock('../../api', () => ({
     getVODAccessPolicySelections: vi.fn(),
     getVODAccessPolicyCandidates: vi.fn(),
     getVODFilterOptions: vi.fn(),
+    getVODLists: vi.fn(),
   },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
@@ -280,6 +281,7 @@ describe('VODOutputProfilesModal', () => {
       container_extensions: ['mkv'],
       video_features: ['hdr'],
     });
+    API.getVODLists.mockResolvedValue([]);
     useVODStore.mockImplementation((selector) =>
       selector({
         categories: {},

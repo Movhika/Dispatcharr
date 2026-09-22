@@ -11,6 +11,7 @@ import {
   Image,
   Loader,
   Modal,
+  MultiSelect,
   NumberInput,
   Paper,
   ScrollArea,
@@ -18,17 +19,41 @@ import {
   SimpleGrid,
   Stack,
   Switch,
+  TagsInput,
   Text,
   Textarea,
   TextInput,
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Film, ListPlus, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  Eye,
+  Film,
+  ListPlus,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import { notifications } from '@mantine/notifications';
 import API from '../api';
 import useAuthStore from '../store/auth';
 import { USER_LEVELS } from '../constants';
+
+const EMPTY_RULE = {
+  required_genres: [],
+  min_year: '',
+  max_year: '',
+  library_added_after: '',
+  library_added_before: '',
+  anime_mode: 'any',
+  max_age_rating: '',
+  required_audio_languages: [],
+  required_subtitle_languages: [],
+  min_resolution: '',
+  max_resolution: '',
+  required_video_features: [],
+};
 
 const EMPTY_FORM = {
   name: '',
@@ -40,6 +65,7 @@ const EMPTY_FORM = {
   is_enabled: true,
   is_visible: true,
   sort_order: 0,
+  rule: EMPTY_RULE,
 };
 
 const TYPE_LABELS = {
@@ -54,6 +80,7 @@ const normalizeList = (value) => ({
   ...value,
   provider: value?.provider || '',
   external_key: value?.external_key || '',
+  rule: { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) },
 });
 
 const Poster = ({ item }) => {
@@ -107,10 +134,12 @@ const VODListsPage = () => {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [rebuildingId, setRebuildingId] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [viewerPage, setViewerPage] = useState(1);
   const [viewerData, setViewerData] = useState(null);
   const [viewerLoading, setViewerLoading] = useState(false);
+  const [removingItemId, setRemovingItemId] = useState(null);
 
   const isAdmin = user && user.user_level >= USER_LEVELS.ADMIN;
 
@@ -172,6 +201,14 @@ const VODListsPage = () => {
     if (!form.name.trim()) return;
     setSaving(true);
     try {
+      const normalizedRule = {
+        ...form.rule,
+        min_year: Number(form.rule.min_year) || 0,
+        max_year: Number(form.rule.max_year) || 0,
+        max_age_rating: Number(form.rule.max_age_rating) || 0,
+        min_resolution: Number(form.rule.min_resolution) || 0,
+        max_resolution: Number(form.rule.max_resolution) || 0,
+      };
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
@@ -183,9 +220,14 @@ const VODListsPage = () => {
         is_enabled: form.is_enabled,
         is_visible: form.is_visible,
         sort_order: Number(form.sort_order) || 0,
+        rules: form.list_type === 'dynamic' ? [normalizedRule] : [],
       };
-      if (editing) await API.updateVODList(editing.id, payload);
-      else await API.createVODList(payload);
+      const saved = editing
+        ? await API.updateVODList(editing.id, payload)
+        : await API.createVODList(payload);
+      if (['dynamic', 'external'].includes(form.list_type)) {
+        await API.rebuildVODList(saved.id);
+      }
       setEditorOpen(false);
       await loadLists();
       notifications.show({
@@ -203,6 +245,23 @@ const VODListsPage = () => {
     }
   };
 
+  const rebuild = async (list) => {
+    setRebuildingId(list.id);
+    try {
+      await API.rebuildVODList(list.id);
+      await loadLists();
+      notifications.show({ color: 'green', message: `${list.name} rebuilt.` });
+    } catch (requestError) {
+      notifications.show({
+        color: 'red',
+        title: 'Could not rebuild list',
+        message: requestError?.message || 'The request failed.',
+      });
+    } finally {
+      setRebuildingId(null);
+    }
+  };
+
   const remove = async (list) => {
     if (!window.confirm(`Delete the list “${list.name}”?`)) return;
     try {
@@ -215,6 +274,29 @@ const VODListsPage = () => {
         title: 'Could not delete list',
         message: requestError?.message || 'The request failed.',
       });
+    }
+  };
+
+  const removeItem = async (item) => {
+    if (!viewer || viewer.list_type !== 'manual') return;
+    setRemovingItemId(item.id);
+    try {
+      await API.removeVODListItems(viewer.id, [item.id]);
+      setViewerData((current) => ({
+        ...current,
+        count: Math.max(0, Number(current?.count || 0) - 1),
+        results: (current?.results || []).filter((row) => row.id !== item.id),
+      }));
+      await loadLists();
+      notifications.show({ color: 'green', message: 'Removed from list.' });
+    } catch (requestError) {
+      notifications.show({
+        color: 'red',
+        title: 'Could not remove title',
+        message: requestError?.message || 'The request failed.',
+      });
+    } finally {
+      setRemovingItemId(null);
     }
   };
 
@@ -270,6 +352,16 @@ const VODListsPage = () => {
                         </Text>
                       </Box>
                       <Group gap={6}>
+                        {list.list_type !== 'manual' && (
+                          <ActionIcon
+                            variant="subtle"
+                            aria-label={`Rebuild ${list.name}`}
+                            loading={rebuildingId === list.id}
+                            onClick={() => rebuild(list)}
+                          >
+                            <RefreshCw size={17} />
+                          </ActionIcon>
+                        )}
                         <Button
                           variant="subtle"
                           leftSection={<Eye size={16} />}
@@ -425,6 +517,165 @@ const VODListsPage = () => {
               />
             </SimpleGrid>
           )}
+          {form.list_type === 'dynamic' && (
+            <Stack gap="sm">
+              <Text fw={600}>Metadata rules</Text>
+              <Text size="sm" c="dimmed">
+                All filled fields must match. If a canonical title has several
+                sources, only matching sources are added to the list.
+              </Text>
+              <TagsInput
+                label="Genres"
+                placeholder="Type a genre and press Enter"
+                value={form.rule.required_genres}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    rule: { ...current.rule, required_genres: value },
+                  }))
+                }
+              />
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                <NumberInput
+                  label="Release year from"
+                  value={form.rule.min_year}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, min_year: value },
+                    }))
+                  }
+                />
+                <NumberInput
+                  label="Release year to"
+                  value={form.rule.max_year}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, max_year: value },
+                    }))
+                  }
+                />
+                <TextInput
+                  type="date"
+                  label="Added from"
+                  value={form.rule.library_added_after}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: {
+                        ...current.rule,
+                        library_added_after: event.currentTarget.value,
+                      },
+                    }))
+                  }
+                />
+                <TextInput
+                  type="date"
+                  label="Added until"
+                  value={form.rule.library_added_before}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: {
+                        ...current.rule,
+                        library_added_before: event.currentTarget.value,
+                      },
+                    }))
+                  }
+                />
+                <Select
+                  label="Anime"
+                  data={[
+                    { value: 'any', label: 'Any' },
+                    { value: 'yes', label: 'Anime only' },
+                    { value: 'no', label: 'Exclude anime' },
+                  ]}
+                  value={form.rule.anime_mode}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, anime_mode: value || 'any' },
+                    }))
+                  }
+                />
+                <NumberInput
+                  label="Maximum age rating"
+                  description="For example 10 for a children’s list"
+                  value={form.rule.max_age_rating}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, max_age_rating: value },
+                    }))
+                  }
+                />
+              </SimpleGrid>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                <MultiSelect
+                  label="DUB"
+                  data={['eng', 'ger', 'spa', 'fra', 'ita', 'jpn']}
+                  value={form.rule.required_audio_languages}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: {
+                        ...current.rule,
+                        required_audio_languages: value,
+                      },
+                    }))
+                  }
+                />
+                <MultiSelect
+                  label="SUB"
+                  data={['eng', 'ger', 'spa', 'fra', 'ita', 'jpn']}
+                  value={form.rule.required_subtitle_languages}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: {
+                        ...current.rule,
+                        required_subtitle_languages: value,
+                      },
+                    }))
+                  }
+                />
+                <NumberInput
+                  label="Minimum resolution"
+                  placeholder="e.g. 2160"
+                  value={form.rule.min_resolution}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, min_resolution: value },
+                    }))
+                  }
+                />
+                <NumberInput
+                  label="Maximum resolution"
+                  placeholder="e.g. 1080"
+                  value={form.rule.max_resolution}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: { ...current.rule, max_resolution: value },
+                    }))
+                  }
+                />
+              </SimpleGrid>
+              <MultiSelect
+                label="Features"
+                data={['3d', 'dv', 'hdr', 'hdr10', 'hdr10_plus', 'atmos']}
+                value={form.rule.required_video_features}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    rule: { ...current.rule, required_video_features: value },
+                  }))
+                }
+              />
+            </Stack>
+          )}
           <NumberInput
             label="Order"
             value={form.sort_order}
@@ -493,6 +744,18 @@ const VODListsPage = () => {
                   <Text size="xs" lineClamp={2} ta="center">
                     {item.display_title}
                   </Text>
+                  {viewer?.list_type === 'manual' && (
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="red"
+                      loading={removingItemId === item.id}
+                      aria-label={`Remove ${item.display_title}`}
+                      onClick={() => removeItem(item)}
+                    >
+                      <Trash2 size={14} />
+                    </ActionIcon>
+                  )}
                 </Stack>
               ))}
             </SimpleGrid>
