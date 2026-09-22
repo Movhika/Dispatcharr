@@ -1643,6 +1643,14 @@ export default class API {
     });
   }
 
+  static async getVODListRuleOptions(type = 'all') {
+    const query = new URLSearchParams({ type });
+    return await request(
+      `${host}/api/vod/lists/rule-options/?${query.toString()}`,
+      { cache: 'no-store' }
+    );
+  }
+
   static async createVODList(values) {
     return await request(`${host}/api/vod/lists/`, {
       method: 'POST',

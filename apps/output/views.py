@@ -69,11 +69,10 @@ def _xc_policy_list_categories(policy, content_type):
             policy=policy,
             enabled=True,
             vod_list__is_enabled=True,
-            vod_list__is_visible=True,
             vod_list__content_type__in=("all", content_type),
         )
         .select_related("vod_list")
-        .order_by("-priority", "vod_list__sort_order", "vod_list__name", "id")
+        .order_by("-priority", "id")
     )
     response = [
         {

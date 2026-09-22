@@ -18,6 +18,37 @@ vi.mock('../../api', () => ({
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('@dnd-kit/core', () => ({
+  closestCenter: vi.fn(),
+  DndContext: ({ children }) => <>{children}</>,
+  KeyboardSensor: vi.fn(),
+  PointerSensor: vi.fn(),
+  useSensor: vi.fn(() => ({})),
+  useSensors: vi.fn(() => []),
+}));
+vi.mock('@dnd-kit/sortable', () => ({
+  arrayMove: (rows, from, to) => {
+    const next = [...rows];
+    const [row] = next.splice(from, 1);
+    next.splice(to, 0, row);
+    return next;
+  },
+  SortableContext: ({ children }) => <>{children}</>,
+  sortableKeyboardCoordinates: vi.fn(),
+  useSortable: () => ({
+    attributes: {},
+    listeners: {},
+    setNodeRef: vi.fn(),
+    transform: null,
+    transition: undefined,
+    isDragging: false,
+  }),
+  verticalListSortingStrategy: vi.fn(),
+}));
+vi.mock('@dnd-kit/utilities', () => ({
+  CSS: { Transform: { toString: () => undefined } },
+}));
+vi.mock('@dnd-kit/modifiers', () => ({ restrictToVerticalAxis: vi.fn() }));
 vi.mock('../forms/VODCategoryFilter.jsx', () => ({
   default: ({ mode, type }) => (
     <div>{`${mode} ${type} category selection`}</div>

@@ -73,6 +73,28 @@ def dynamic_rule_matches(relation, rule, category_mapping):
     if added_before and (not added_at or added_at > added_before):
         return False
 
+    release_after = parse_date(str(rule.get("release_date_after") or ""))
+    release_before = parse_date(str(rule.get("release_date_before") or ""))
+    release_date = parse_date(str(canonical.get("release_date") or ""))
+    if release_after and (not release_date or release_date < release_after):
+        return False
+    if release_before and (not release_date or release_date > release_before):
+        return False
+
+    required_watch_providers = {
+        str(value).strip().casefold()
+        for value in rule.get("required_watch_providers") or []
+        if str(value).strip()
+    }
+    if required_watch_providers:
+        available_watch_providers = {
+            str(value).strip().casefold()
+            for value in canonical.get("watch_providers") or []
+            if str(value).strip()
+        }
+        if required_watch_providers.isdisjoint(available_watch_providers):
+            return False
+
     maximum_age = rule.get("max_age_rating")
     if maximum_age not in (None, "", 0, "0"):
         try:
@@ -295,10 +317,9 @@ def policy_list_membership_maps(policy, relation_model):
             policy=policy,
             enabled=True,
             vod_list__is_enabled=True,
-            vod_list__is_visible=True,
         )
         .select_related("vod_list")
-        .order_by("-priority", "vod_list__sort_order", "vod_list__name", "id")
+        .order_by("-priority", "id")
     )
     list_ids = [rule.vod_list_id for rule in rules]
     exact = defaultdict(list)

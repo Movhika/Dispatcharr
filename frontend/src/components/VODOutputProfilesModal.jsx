@@ -35,7 +35,32 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Filter, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import {
+  Eye,
+  Filter,
+  GripVertical,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -325,6 +350,51 @@ const canonicalizeObject = (value) => {
 const profileDraftSignature = (profile) =>
   JSON.stringify(canonicalizeObject(profilePayload(profile)));
 
+const SortableOutputList = ({ list, onRemove }) => {
+  const id = String(list.id);
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  return (
+    <Paper
+      ref={setNodeRef}
+      withBorder
+      p="sm"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+        zIndex: isDragging ? 2 : undefined,
+      }}
+    >
+      <Group wrap="nowrap">
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          aria-label={`Reorder ${list.name}`}
+          {...attributes}
+          {...listeners}
+          style={{ cursor: 'grab', touchAction: 'none' }}
+        >
+          <GripVertical size={17} />
+        </ActionIcon>
+        <Checkbox
+          checked
+          label={list.name}
+          description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
+          onChange={onRemove}
+          style={{ flex: 1 }}
+        />
+      </Group>
+    </Paper>
+  );
+};
+
 const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const categories = useVODStore((state) => state.categories);
   const profiles = useVODStore((state) => state.accessPolicies);
@@ -366,6 +436,12 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     anime_mode: '',
     adult_mode: '',
   });
+  const listSensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const selectedProfile = profiles.find(
     (profile) => String(profile.id) === String(profileId)
@@ -594,6 +670,53 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const selectedCategoryIds = allowedCategoryStates.map((category) =>
     String(category.relation_id)
   );
+  const enabledVodLists = useMemo(
+    () => vodLists.filter((list) => list.is_enabled),
+    [vodLists]
+  );
+  const enabledVodListsById = useMemo(
+    () => new Map(enabledVodLists.map((list) => [Number(list.id), list])),
+    [enabledVodLists]
+  );
+  const selectedOutputLists = useMemo(
+    () =>
+      (draft.list_rules || [])
+        .filter((rule) => rule.enabled !== false)
+        .map((rule) => enabledVodListsById.get(Number(rule.vod_list)))
+        .filter(Boolean),
+    [draft.list_rules, enabledVodListsById]
+  );
+  const selectedOutputListIds = useMemo(
+    () => new Set(selectedOutputLists.map((list) => Number(list.id))),
+    [selectedOutputLists]
+  );
+  const unselectedOutputLists = enabledVodLists.filter(
+    (list) => !selectedOutputListIds.has(Number(list.id))
+  );
+
+  const setOrderedListRules = (lists) => {
+    setDraft((current) => ({
+      ...current,
+      list_rules: lists.map((list, index) => ({
+        vod_list: list.id,
+        enabled: true,
+        priority: -index,
+      })),
+    }));
+  };
+
+  const handleListDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const oldIndex = selectedOutputLists.findIndex(
+      (list) => String(list.id) === String(active.id)
+    );
+    const newIndex = selectedOutputLists.findIndex(
+      (list) => String(list.id) === String(over.id)
+    );
+    if (oldIndex >= 0 && newIndex >= 0) {
+      setOrderedListRules(arrayMove(selectedOutputLists, oldIndex, newIndex));
+    }
+  };
 
   const updateProfileCategoryStates = (currentRows) => (updater) => {
     const nextRows =
@@ -1287,8 +1410,8 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                 withArrow
               >
                 <TabsTab value="sources">Sources</TabsTab>
-                <TabsTab value="output-groups">Output groups</TabsTab>
               </Tooltip>
+              <TabsTab value="output-groups">Output groups</TabsTab>
               <Tooltip
                 label={CONTENT_RULES_TAB_HELP}
                 multiline
@@ -1540,54 +1663,71 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                       />
                       {draft.category_mode === 'lists' && (
                         <Stack gap="xs">
-                          {vodLists
-                            .filter(
-                              (list) => list.is_enabled && list.is_visible
-                            )
-                            .map((list) => {
-                              const selected = (draft.list_rules || []).some(
-                                (rule) =>
-                                  Number(rule.vod_list) === Number(list.id) &&
-                                  rule.enabled !== false
-                              );
-                              return (
+                          {selectedOutputLists.length > 0 && (
+                            <>
+                              <Text size="sm" fw={600}>
+                                Output order
+                              </Text>
+                              <Text size="xs" c="dimmed">
+                                Drag selected lists into the category order
+                                clients should receive.
+                              </Text>
+                              <DndContext
+                                sensors={listSensors}
+                                collisionDetection={closestCenter}
+                                modifiers={[restrictToVerticalAxis]}
+                                onDragEnd={handleListDragEnd}
+                              >
+                                <SortableContext
+                                  items={selectedOutputLists.map((list) =>
+                                    String(list.id)
+                                  )}
+                                  strategy={verticalListSortingStrategy}
+                                >
+                                  <Stack gap="xs">
+                                    {selectedOutputLists.map((list) => (
+                                      <SortableOutputList
+                                        key={list.id}
+                                        list={list}
+                                        onRemove={() =>
+                                          setOrderedListRules(
+                                            selectedOutputLists.filter(
+                                              (row) => row.id !== list.id
+                                            )
+                                          )
+                                        }
+                                      />
+                                    ))}
+                                  </Stack>
+                                </SortableContext>
+                              </DndContext>
+                            </>
+                          )}
+                          {unselectedOutputLists.length > 0 && (
+                            <>
+                              <Text size="sm" fw={600} mt="xs">
+                                Available lists
+                              </Text>
+                              {unselectedOutputLists.map((list) => (
                                 <Paper key={list.id} withBorder p="sm">
                                   <Checkbox
-                                    checked={selected}
+                                    checked={false}
                                     label={list.name}
                                     description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
-                                    onChange={(event) =>
-                                      setDraft((current) => {
-                                        const remaining = (
-                                          current.list_rules || []
-                                        ).filter(
-                                          (rule) =>
-                                            Number(rule.vod_list) !==
-                                            Number(list.id)
-                                        );
-                                        return {
-                                          ...current,
-                                          list_rules: event.currentTarget
-                                            .checked
-                                            ? [
-                                                ...remaining,
-                                                {
-                                                  vod_list: list.id,
-                                                  enabled: true,
-                                                  priority: -remaining.length,
-                                                },
-                                              ]
-                                            : remaining,
-                                        };
-                                      })
-                                    }
+                                    onChange={(event) => {
+                                      if (event.currentTarget.checked) {
+                                        setOrderedListRules([
+                                          ...selectedOutputLists,
+                                          list,
+                                        ]);
+                                      }
+                                    }}
                                   />
                                 </Paper>
-                              );
-                            })}
-                          {!vodLists.some(
-                            (list) => list.is_enabled && list.is_visible
-                          ) && (
+                              ))}
+                            </>
+                          )}
+                          {!enabledVodLists.length && (
                             <Alert color="blue">
                               Create and enable a VOD list before selecting list
                               output.
