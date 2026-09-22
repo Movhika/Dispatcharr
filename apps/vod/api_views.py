@@ -2880,12 +2880,18 @@ class VODMetadataViewSet(viewsets.ViewSet):
                         group_rule=content.get("_group_rule"),
                     )
                 rows.append(preview_row(content, content_type, before, after))
+            locked_count = sum(
+                1
+                for content in content_by_key.values()
+                if content.get("tmdb_enrichment_signature")
+            )
             return Response(
                 {
                     "results": rows,
                     "total": len(rows),
                     "page": 1,
                     "page_size": len(rows) or page_size,
+                    "locked_count": locked_count,
                 }
             )
 
@@ -2912,6 +2918,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
             )
 
         querysets = []
+        locked_count = 0
         for model, content_type, relation_name in (
             (Movie, "movie", "m3u_relations"),
             (Series, "series", "m3u_relations"),
@@ -2936,6 +2943,9 @@ class VODMetadataViewSet(viewsets.ViewSet):
                     Q(name__icontains=search) | Q(display_name__icontains=search)
                 )
             queryset = queryset.order_by("id")
+            locked_count += queryset.exclude(
+                tmdb_enrichment_signature=""
+            ).count()
             querysets.append((content_type, queryset, queryset.count()))
 
         total = sum(queryset_count for _, _, queryset_count in querysets)
@@ -2986,6 +2996,7 @@ class VODMetadataViewSet(viewsets.ViewSet):
                 "total": total,
                 "page": page,
                 "page_size": page_size,
+                "locked_count": locked_count,
             }
         )
 

@@ -58,6 +58,12 @@ vi.mock('@mantine/core', () => {
         {children}
       </button>
     ),
+    Checkbox: ({ label, checked, onChange }) => (
+      <label>
+        <input type="checkbox" checked={checked} onChange={onChange} />
+        {label}
+      </label>
+    ),
     Flex: Wrapper,
     Group: Wrapper,
     Loader: () => <span>Loading</span>,
@@ -123,6 +129,8 @@ vi.mock('@mantine/core', () => {
 });
 
 import API from '../../api';
+import useWarningsStore from '../../store/warnings';
+import { showNotification } from '../../utils/notificationUtils';
 import VODMetadataModal from '../VODMetadataModal';
 
 const savedRule = {
@@ -143,6 +151,10 @@ const statusResponse = {
 describe('VODMetadataModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useWarningsStore.setState({
+      suppressedWarnings: {},
+      actionPreferences: {},
+    });
     API.getVODMetadataStatus.mockResolvedValue(statusResponse);
     API.previewVODMetadataTitles.mockResolvedValue({
       results: [
@@ -158,6 +170,7 @@ describe('VODMetadataModal', () => {
           metadata_auto_locked: true,
         },
       ],
+      locked_count: 1,
     });
     API.updateVODMetadataSettings.mockResolvedValue(statusResponse);
   });
@@ -415,6 +428,18 @@ describe('VODMetadataModal', () => {
 
   it('confirms a forced TMDB refresh for selected canonical titles', async () => {
     API.refreshVODMetadata.mockResolvedValue({ queued: true });
+    API.previewVODMetadataTitles.mockResolvedValueOnce({
+      results: [
+        {
+          id: 7,
+          content_type: 'movie',
+          before: 'Bliss',
+          after: 'Bliss',
+          metadata_auto_locked: false,
+        },
+      ],
+      locked_count: 0,
+    });
     const selectionContext = {
       count: 1,
       selections: [{ id: 7, content_type: 'movie' }],
@@ -431,10 +456,16 @@ describe('VODMetadataModal', () => {
       />
     );
 
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Get TMDB data' })
+      ).not.toBeDisabled()
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Get TMDB data' }));
     expect(
       screen.getByText('Request TMDB data for the selected titles?')
     ).toBeVisible();
+    expect(screen.getByLabelText("Don't ask me again")).toBeVisible();
     fireEvent.click(
       screen.getAllByRole('button', { name: 'Get TMDB data' }).at(-1)
     );
@@ -445,6 +476,106 @@ describe('VODMetadataModal', () => {
         force: true,
       })
     );
+  });
+
+  it('shows an immediate notification instead of opening actions for locked titles', async () => {
+    const selectionContext = {
+      count: 1,
+      selections: [{ id: 7, content_type: 'movie' }],
+      select_all: false,
+      exclude_selections: [],
+      filters: {},
+    };
+    render(
+      <VODMetadataModal
+        opened
+        onClose={vi.fn()}
+        initialStatus={statusResponse}
+        selectionContext={selectionContext}
+      />
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Get TMDB data' })
+      ).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Apply cleanup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Get TMDB data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to provider' }));
+
+    expect(showNotification).toHaveBeenCalledTimes(3);
+    expect(showNotification).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        title: 'Selected title is locked',
+        color: 'red',
+      })
+    );
+    expect(
+      screen.queryByText('Request TMDB data for the selected titles?')
+    ).not.toBeInTheDocument();
+    expect(API.applyVODTitleCleanup).not.toHaveBeenCalled();
+    expect(API.refreshVODMetadata).not.toHaveBeenCalled();
+    expect(API.resetVODMetadata).not.toHaveBeenCalled();
+  });
+
+  it('remembers TMDB confirmation while keeping reset confirmation separate', async () => {
+    API.previewVODMetadataTitles.mockResolvedValue({
+      results: [
+        {
+          id: 7,
+          content_type: 'movie',
+          before: 'Bliss',
+          after: 'Bliss',
+          metadata_auto_locked: false,
+        },
+      ],
+      locked_count: 0,
+    });
+    API.refreshVODMetadata.mockResolvedValue({ queued: true });
+    const selectionContext = {
+      count: 1,
+      selections: [{ id: 7, content_type: 'movie' }],
+      select_all: false,
+      exclude_selections: [],
+      filters: {},
+    };
+    render(
+      <VODMetadataModal
+        opened
+        onClose={vi.fn()}
+        initialStatus={statusResponse}
+        selectionContext={selectionContext}
+      />
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Get TMDB data' })
+      ).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Get TMDB data' }));
+    fireEvent.click(screen.getByLabelText("Don't ask me again"));
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Get TMDB data' }).at(-1)
+    );
+    await waitFor(() =>
+      expect(API.refreshVODMetadata).toHaveBeenCalledTimes(1)
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Get TMDB data' }));
+    await waitFor(() =>
+      expect(API.refreshVODMetadata).toHaveBeenCalledTimes(2)
+    );
+    expect(
+      screen.queryByText('Request TMDB data for the selected titles?')
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to provider' }));
+    expect(
+      screen.getByText('Reset canonical metadata to provider data?')
+    ).toBeVisible();
+    expect(screen.getByLabelText("Don't ask me again")).toBeVisible();
   });
 
   it('uses one button to toggle the selection metadata lock', async () => {
@@ -468,6 +599,11 @@ describe('VODMetadataModal', () => {
       />
     );
 
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Lock / Unlock' })
+      ).not.toBeDisabled()
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Lock / Unlock' }));
 
     await waitFor(() =>

@@ -1414,6 +1414,7 @@ class VODMetadataAPITests(TestCase):
         self.assertFalse(
             response.data["results"][1]["metadata_auto_locked"]
         )
+        self.assertEqual(response.data["locked_count"], 1)
 
     def test_title_preview_paginates_all_titles_without_tmdb_id(self):
         account = M3UAccount.objects.create(
@@ -1431,6 +1432,9 @@ class VODMetadataAPITests(TestCase):
                 movie=movie,
                 stream_id=f"movie-{index}",
             )
+        Movie.objects.filter(pk=movies[0].pk).update(
+            tmdb_enrichment_signature="reviewed"
+        )
         matched = Movie.objects.create(name="Matched", tmdb_match_id="123")
         M3UMovieRelation.objects.create(
             m3u_account=account,
@@ -1456,6 +1460,7 @@ class VODMetadataAPITests(TestCase):
         self.assertEqual(response.data["page"], 2)
         self.assertEqual(len(response.data["results"]), 1)
         self.assertNotEqual(response.data["results"][0]["before"], "Matched")
+        self.assertEqual(response.data["locked_count"], 1)
 
     def test_title_preview_search_requires_text(self):
         request = self.factory.post(
