@@ -15,6 +15,9 @@ import {
   NumberInput,
   Pagination,
   Paper,
+  Popover,
+  PopoverDropdown,
+  PopoverTarget,
   ScrollArea,
   Select,
   SimpleGrid,
@@ -36,16 +39,20 @@ import {
 import {
   Eye,
   Film,
+  Filter,
   ListPlus,
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
 } from 'lucide-react';
+import { useDebouncedValue } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import API from '../api';
 import SeriesModal from '../components/SeriesModal.jsx';
 import VODModal from '../components/VODModal.jsx';
+import VODTechnicalFilterFields from '../components/VODTechnicalFilterFields.jsx';
 import useVODFilterOptions from '../hooks/useVODFilterOptions.js';
 import useAuthStore from '../store/auth';
 import { USER_LEVELS } from '../constants';
@@ -85,6 +92,31 @@ const EMPTY_FORM = {
   },
   is_enabled: true,
   rule: EMPTY_RULE,
+};
+
+const EMPTY_PREVIEW_FILTERS = {
+  type: 'all',
+  availability: 'any',
+  year_from: '',
+  year_to: '',
+  genre: '',
+  anime_mode: '',
+  adult_mode: '',
+  library_added_after: '',
+  library_added_before: '',
+  audio_language: '',
+  subtitle_language: '',
+  resolution: '',
+  container_extension: '',
+  video_feature: '',
+};
+
+const EMPTY_FILTER_OPTIONS = {
+  audio_languages: [],
+  subtitle_languages: [],
+  resolutions: [],
+  container_extensions: [],
+  video_features: [],
 };
 
 const TMDB_PRESETS = [
@@ -215,6 +247,11 @@ const VODListsPage = () => {
   const [rebuildingId, setRebuildingId] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [viewerPage, setViewerPage] = useState(1);
+  const [viewerSearch, setViewerSearch] = useState('');
+  const [debouncedViewerSearch] = useDebouncedValue(viewerSearch, 250);
+  const [viewerFilters, setViewerFilters] = useState(EMPTY_PREVIEW_FILTERS);
+  const [viewerFilterOptions, setViewerFilterOptions] =
+    useState(EMPTY_FILTER_OPTIONS);
   const [viewerData, setViewerData] = useState(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [removingItemId, setRemovingItemId] = useState(null);
@@ -273,7 +310,12 @@ const VODListsPage = () => {
     if (!viewer) return;
     let active = true;
     setViewerLoading(true);
-    API.getVODListItems(viewer.id, { page: viewerPage, page_size: 50 })
+    API.getVODListItems(viewer.id, {
+      page: viewerPage,
+      page_size: 50,
+      search: debouncedViewerSearch,
+      ...viewerFilters,
+    })
       .then((response) => {
         if (active) setViewerData(response);
       })
@@ -292,7 +334,27 @@ const VODListsPage = () => {
     return () => {
       active = false;
     };
-  }, [viewer, viewerPage]);
+  }, [debouncedViewerSearch, viewer, viewerFilters, viewerPage]);
+
+  useEffect(() => {
+    if (!viewer) return undefined;
+    let active = true;
+    API.getVODListFilterOptions(viewer.id)
+      .then((response) => {
+        if (active) {
+          setViewerFilterOptions({
+            ...EMPTY_FILTER_OPTIONS,
+            ...(response || {}),
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setViewerFilterOptions(EMPTY_FILTER_OPTIONS);
+      });
+    return () => {
+      active = false;
+    };
+  }, [viewer]);
 
   useEffect(() => {
     if (!editorOpen || form.list_type !== 'dynamic') return;
@@ -512,6 +574,27 @@ const VODListsPage = () => {
   };
 
   const viewerItems = useMemo(() => viewerData?.results || [], [viewerData]);
+  const viewerAdvancedFilterCount = useMemo(
+    () =>
+      Object.entries(viewerFilters).filter(
+        ([key, value]) =>
+          !['type', 'availability'].includes(key) && Boolean(value)
+      ).length,
+    [viewerFilters]
+  );
+  const updateViewerFilter = (field, value) => {
+    setViewerFilters((current) => ({ ...current, [field]: value }));
+    setViewerPage(1);
+  };
+
+  const openViewer = (list) => {
+    setViewer(list);
+    setViewerPage(1);
+    setViewerSearch('');
+    setViewerFilters(EMPTY_PREVIEW_FILTERS);
+    setViewerFilterOptions(EMPTY_FILTER_OPTIONS);
+    setViewerData(null);
+  };
 
   if (!isAdmin) return <Navigate to="/vods" replace />;
 
@@ -604,11 +687,7 @@ const VODListsPage = () => {
                         <Button
                           variant="subtle"
                           leftSection={<Eye size={16} />}
-                          onClick={() => {
-                            setViewer(list);
-                            setViewerPage(1);
-                            setViewerData(null);
-                          }}
+                          onClick={() => openViewer(list)}
                         >
                           Preview
                         </Button>
@@ -1109,92 +1188,264 @@ const VODListsPage = () => {
         title={viewer ? `${viewer.name} preview` : 'List preview'}
         size="xl"
       >
-        {viewerLoading ? (
-          <Center mih={260}>
-            <Loader />
-          </Center>
-        ) : viewerItems.length ? (
-          <Stack>
-            <ScrollArea h={520}>
-              <Table striped highlightOnHover withTableBorder stickyHeader>
-                <TableThead>
-                  <TableTr>
-                    <TableTh>Title</TableTh>
-                    <TableTh>Type</TableTh>
-                    <TableTh>Year</TableTh>
-                    <TableTh>Sources</TableTh>
-                    <TableTh>Status</TableTh>
-                    <TableTh>Details</TableTh>
-                    {viewer?.list_type === 'manual' && (
-                      <TableTh>Actions</TableTh>
-                    )}
-                  </TableTr>
-                </TableThead>
-                <TableTbody>
-                  {viewerItems.map((item) => (
-                    <TableTr
-                      key={item.id}
-                      c={item.is_available ? undefined : 'dimmed'}
+        <Stack>
+          <Group align="end" wrap="wrap">
+            <TextInput
+              label="Search"
+              placeholder="Search titles…"
+              leftSection={<Search size={16} />}
+              value={viewerSearch}
+              onChange={(event) => {
+                setViewerSearch(event.currentTarget.value);
+                setViewerPage(1);
+              }}
+              style={{ flex: '1 1 260px' }}
+            />
+            <Select
+              label="Type"
+              data={[
+                { value: 'all', label: 'Movies and series' },
+                { value: 'movie', label: 'Movies' },
+                { value: 'series', label: 'Series' },
+              ]}
+              value={viewerFilters.type}
+              onChange={(value) => updateViewerFilter('type', value || 'all')}
+              w={175}
+            />
+            <Select
+              label="Availability"
+              data={[
+                { value: 'any', label: 'Any' },
+                { value: 'available', label: 'In library' },
+                { value: 'unavailable', label: 'Not in library' },
+              ]}
+              value={viewerFilters.availability}
+              onChange={(value) =>
+                updateViewerFilter('availability', value || 'any')
+              }
+              w={165}
+            />
+            <Popover
+              width={500}
+              position="bottom-end"
+              shadow="md"
+              withArrow
+              withinPortal
+            >
+              <PopoverTarget>
+                <Button
+                  variant={viewerAdvancedFilterCount ? 'light' : 'default'}
+                  leftSection={<Filter size={16} />}
+                >
+                  Filters
+                  {viewerAdvancedFilterCount
+                    ? ` (${viewerAdvancedFilterCount})`
+                    : ''}
+                </Button>
+              </PopoverTarget>
+              <PopoverDropdown>
+                <Stack gap="sm">
+                  <SimpleGrid cols={2}>
+                    <VODTechnicalFilterFields
+                      filters={viewerFilters}
+                      onChange={updateViewerFilter}
+                      optionsOverride={viewerFilterOptions}
+                    />
+                    <NumberInput
+                      label="Release year from"
+                      min={1800}
+                      max={2200}
+                      value={viewerFilters.year_from}
+                      onChange={(value) =>
+                        updateViewerFilter('year_from', value || '')
+                      }
+                    />
+                    <NumberInput
+                      label="Release year until"
+                      min={1800}
+                      max={2200}
+                      value={viewerFilters.year_to}
+                      onChange={(value) =>
+                        updateViewerFilter('year_to', value || '')
+                      }
+                    />
+                    <TextInput
+                      label="Genre contains"
+                      value={viewerFilters.genre}
+                      onChange={(event) =>
+                        updateViewerFilter('genre', event.currentTarget.value)
+                      }
+                    />
+                    <Select
+                      label="Anime"
+                      placeholder="Any"
+                      clearable
+                      data={[
+                        { value: 'yes', label: 'Yes' },
+                        { value: 'no', label: 'No' },
+                      ]}
+                      value={viewerFilters.anime_mode || null}
+                      onChange={(value) =>
+                        updateViewerFilter('anime_mode', value || '')
+                      }
+                    />
+                    <Select
+                      label="Adult content"
+                      placeholder="Any"
+                      clearable
+                      data={[
+                        { value: 'yes', label: 'Yes' },
+                        { value: 'no', label: 'No' },
+                      ]}
+                      value={viewerFilters.adult_mode || null}
+                      onChange={(value) =>
+                        updateViewerFilter('adult_mode', value || '')
+                      }
+                    />
+                    <TextInput
+                      type="date"
+                      label="Added since"
+                      value={viewerFilters.library_added_after}
+                      onChange={(event) =>
+                        updateViewerFilter(
+                          'library_added_after',
+                          event.currentTarget.value
+                        )
+                      }
+                    />
+                    <TextInput
+                      type="date"
+                      label="Added until"
+                      value={viewerFilters.library_added_before}
+                      onChange={(event) =>
+                        updateViewerFilter(
+                          'library_added_before',
+                          event.currentTarget.value
+                        )
+                      }
+                    />
+                  </SimpleGrid>
+                  <Group justify="flex-end">
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      disabled={!viewerAdvancedFilterCount}
+                      onClick={() => {
+                        setViewerFilters((current) => ({
+                          ...EMPTY_PREVIEW_FILTERS,
+                          type: current.type,
+                          availability: current.availability,
+                        }));
+                        setViewerPage(1);
+                      }}
                     >
-                      <TableTd>{item.display_title}</TableTd>
-                      <TableTd>
-                        {item.content_type === 'series' ? 'Series' : 'Movie'}
-                      </TableTd>
-                      <TableTd>{item.display_year || '—'}</TableTd>
-                      <TableTd>{item.source_count || '—'}</TableTd>
-                      <TableTd>
-                        {item.is_available ? 'In library' : 'Not in library'}
-                      </TableTd>
-                      <TableTd>
-                        <ActionIcon
-                          variant="subtle"
-                          aria-label={`Open details for ${item.display_title}`}
-                          disabled={!item.is_available}
-                          onClick={() => setDetailItem(item)}
-                        >
-                          <Eye size={17} />
-                        </ActionIcon>
-                      </TableTd>
+                      Clear filters
+                    </Button>
+                  </Group>
+                </Stack>
+              </PopoverDropdown>
+            </Popover>
+          </Group>
+          {viewerLoading ? (
+            <Center mih={260}>
+              <Loader />
+            </Center>
+          ) : viewerItems.length ? (
+            <>
+              <ScrollArea h={520}>
+                <Table striped highlightOnHover withTableBorder stickyHeader>
+                  <TableThead>
+                    <TableTr>
+                      <TableTh>Title</TableTh>
+                      <TableTh>Type</TableTh>
+                      <TableTh>Year</TableTh>
+                      <TableTh>Sources</TableTh>
+                      <TableTh>Status</TableTh>
+                      <TableTh>Details</TableTh>
                       {viewer?.list_type === 'manual' && (
+                        <TableTh>Actions</TableTh>
+                      )}
+                    </TableTr>
+                  </TableThead>
+                  <TableTbody>
+                    {viewerItems.map((item) => (
+                      <TableTr
+                        key={item.id}
+                        c={item.is_available ? undefined : 'dimmed'}
+                      >
+                        <TableTd>{item.display_title}</TableTd>
+                        <TableTd>
+                          {item.content_type === 'series' ? 'Series' : 'Movie'}
+                        </TableTd>
+                        <TableTd>{item.display_year || '—'}</TableTd>
+                        <TableTd>{item.source_count || '—'}</TableTd>
+                        <TableTd>
+                          {item.is_available ? 'In library' : 'Not in library'}
+                        </TableTd>
                         <TableTd>
                           <ActionIcon
                             variant="subtle"
-                            color="red"
-                            loading={removingItemId === item.id}
-                            aria-label={`Remove ${item.display_title}`}
-                            onClick={() => removeItem(item)}
+                            aria-label={`Open details for ${item.display_title}`}
+                            disabled={!item.is_available}
+                            onClick={() => setDetailItem(item)}
                           >
-                            <Trash2 size={16} />
+                            <Eye size={17} />
                           </ActionIcon>
                         </TableTd>
-                      )}
-                    </TableTr>
-                  ))}
-                </TableTbody>
-              </Table>
-            </ScrollArea>
-            <Group justify="center" gap="sm">
-              <Pagination
-                value={viewerPage}
-                onChange={setViewerPage}
-                total={Math.max(1, Math.ceil((viewerData?.count || 0) / 50))}
-                withEdges
-              />
-              <Text size="sm" c="dimmed">
-                {viewerData?.count || 0} titles
+                        {viewer?.list_type === 'manual' && (
+                          <TableTd>
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              loading={removingItemId === item.id}
+                              aria-label={`Remove ${item.display_title}`}
+                              onClick={() => removeItem(item)}
+                            >
+                              <Trash2 size={16} />
+                            </ActionIcon>
+                          </TableTd>
+                        )}
+                      </TableTr>
+                    ))}
+                  </TableTbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="center" gap="sm">
+                <Pagination
+                  value={viewerPage}
+                  onChange={setViewerPage}
+                  total={Math.max(1, Math.ceil((viewerData?.count || 0) / 50))}
+                  withEdges
+                />
+                <Text size="sm" c="dimmed">
+                  {viewerData?.count || 0} titles
+                </Text>
+              </Group>
+            </>
+          ) : (
+            <Center mih={220}>
+              <Text c="dimmed">
+                {viewerData?.count === 0 &&
+                (viewerSearch ||
+                  viewerAdvancedFilterCount ||
+                  viewerFilters.type !== 'all' ||
+                  viewerFilters.availability !== 'any')
+                  ? 'No list entries match the current filters.'
+                  : 'No titles in this list yet.'}
               </Text>
-            </Group>
-          </Stack>
-        ) : (
-          <Center mih={220}>
-            <Text c="dimmed">No titles in this list yet.</Text>
-          </Center>
-        )}
+            </Center>
+          )}
+        </Stack>
       </Modal>
 
       {detailItem?.content_type === 'series' ? (
         <SeriesModal
           opened
+          initialRelationId={detailItem.relation_ids?.[0] || null}
+          listSourceScope={{
+            includeAllSources: detailItem.include_all_sources,
+            relationIds: detailItem.relation_ids || [],
+          }}
           series={{
             id: detailItem.canonical_id,
             name: detailItem.display_title,
@@ -1206,6 +1457,11 @@ const VODListsPage = () => {
       ) : detailItem ? (
         <VODModal
           opened
+          initialRelationId={detailItem.relation_ids?.[0] || null}
+          listSourceScope={{
+            includeAllSources: detailItem.include_all_sources,
+            relationIds: detailItem.relation_ids || [],
+          }}
           vod={{
             id: detailItem.canonical_id,
             name: detailItem.display_title,

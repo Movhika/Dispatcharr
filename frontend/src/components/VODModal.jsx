@@ -150,6 +150,7 @@ const VODModal = ({
   profileCandidates = null,
   profileCandidatesLoading = false,
   profileCandidatesError = '',
+  listSourceScope = null,
 }) => {
   const [detailedVOD, setDetailedVOD] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -741,6 +742,7 @@ const VODModal = ({
                   profileCandidates={profileCandidates}
                   profileCandidatesLoading={profileCandidatesLoading}
                   profileCandidatesError={profileCandidatesError}
+                  listSourceScope={listSourceScope}
                 />
               ) : !loadingProviders ? (
                 <Text c="dimmed" ta="center" py="md">
