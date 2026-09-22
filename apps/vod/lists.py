@@ -81,20 +81,6 @@ def dynamic_rule_matches(relation, rule, category_mapping):
     if release_before and (not release_date or release_date > release_before):
         return False
 
-    required_watch_providers = {
-        str(value).strip().casefold()
-        for value in rule.get("required_watch_providers") or []
-        if str(value).strip()
-    }
-    if required_watch_providers:
-        available_watch_providers = {
-            str(value).strip().casefold()
-            for value in canonical.get("watch_providers") or []
-            if str(value).strip()
-        }
-        if required_watch_providers.isdisjoint(available_watch_providers):
-            return False
-
     maximum_age = rule.get("max_age_rating")
     if maximum_age not in (None, "", 0, "0"):
         try:
@@ -222,6 +208,7 @@ def rebuild_tmdb_list(vod_list):
     from .tmdb import Client, TMDB_IMAGE_ROOT
 
     key = str(vod_list.external_key or "").strip()
+    settings = vod_list.settings if isinstance(vod_list.settings, dict) else {}
     paths = {
         "trending-movies": ("trending/movie/week", "movie"),
         "trending-series": ("trending/tv/week", "series"),
@@ -234,12 +221,42 @@ def rebuild_tmdb_list(vod_list):
         if vod_list.content_type in {"movie", "series"}
         else ""
     )
-    path, forced_type = paths.get(key, (f"list/{key}", configured_type))
+    if key == "watch-provider":
+        if not configured_type:
+            raise ValueError(
+                "TMDB watch-provider lists must target movies or series."
+            )
+        provider_id = str(settings.get("watch_provider_id") or "").strip()
+        region = str(settings.get("watch_region") or "").strip().upper()
+        if not provider_id.isdigit():
+            raise ValueError("Choose a TMDB watch provider first.")
+        if not re.fullmatch(r"[A-Z]{2}", region):
+            raise ValueError("Choose a two-letter TMDB watch region.")
+        path = "discover/movie" if configured_type == "movie" else "discover/tv"
+        forced_type = configured_type
+        request_options = {
+            "watch_region": region,
+            "with_watch_providers": provider_id,
+            "with_watch_monetization_types": str(
+                settings.get("watch_monetization_types") or "flatrate"
+            ),
+            "sort_by": "popularity.desc",
+        }
+    else:
+        path, forced_type = paths.get(key, (f"list/{key}", configured_type))
+        request_options = {}
     client = Client(token)
     rows = []
     page = 1
-    while page <= 20:
-        payload = client.get(path, page=page, language=CoreSettings.get_tmdb_languages()[0])
+    # TMDB caps paginated discovery at 500 pages. Keep every row it exposes so
+    # the preview can also show remote titles which are absent locally.
+    while page <= 500:
+        payload = client.get(
+            path,
+            page=page,
+            language=CoreSettings.get_tmdb_languages()[0],
+            **request_options,
+        )
         page_rows = payload.get("results") or payload.get("items") or []
         rows.extend(row for row in page_rows if isinstance(row, dict))
         if page >= int(payload.get("total_pages") or 1):
