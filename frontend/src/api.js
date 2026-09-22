@@ -1637,6 +1637,47 @@ export default class API {
     });
   }
 
+  static async getVODLists() {
+    return await request(`${host}/api/vod/lists/`, {
+      cache: 'no-store',
+    });
+  }
+
+  static async createVODList(values) {
+    return await request(`${host}/api/vod/lists/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async updateVODList(id, values) {
+    return await request(`${host}/api/vod/lists/${id}/`, {
+      method: 'PATCH',
+      body: values,
+    });
+  }
+
+  static async deleteVODList(id) {
+    return await request(`${host}/api/vod/lists/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async getVODListItems(id, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/lists/${id}/items/${query ? `?${query}` : ''}`,
+      { cache: 'no-store' }
+    );
+  }
+
+  static async replaceManualVODListItems(id, items) {
+    return await request(`${host}/api/vod/lists/${id}/manual-items/`, {
+      method: 'PUT',
+      body: { items },
+    });
+  }
+
   static async getVODMetadataStatus(settingsOnly = false) {
     return await request(
       `${host}/api/vod/metadata/${settingsOnly ? '?settings_only=1' : ''}`,

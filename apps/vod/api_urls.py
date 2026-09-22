@@ -11,6 +11,7 @@ from .api_views import (
     VODAccessPolicyViewSet,
     VODMetadataViewSet,
     VODPlaybackSessionViewSet,
+    VODListViewSet,
     M3UVODCategoryRelationViewSet,
 )
 
@@ -27,6 +28,7 @@ router.register(r'source-relations', VODSourceRelationViewSet, basename='vod-sou
 router.register(r'access-policies', VODAccessPolicyViewSet, basename='vod-access-policy')
 router.register(r'metadata', VODMetadataViewSet, basename='vod-metadata')
 router.register(r'playback-sessions', VODPlaybackSessionViewSet, basename='vod-playback-session')
+router.register(r'lists', VODListViewSet, basename='vod-list')
 router.register(r'category-relations', M3UVODCategoryRelationViewSet, basename='vod-category-relation')
 
 urlpatterns = [

@@ -30,6 +30,7 @@ from .models import (
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
     VODAccessPolicy, VODPlaybackSession,
     VODMovieProfileSelection, VODSeriesProfileSelection, VODMetadataState,
+    VODList, VODListItem, VODListSourceMembership,
 )
 from .serializers import (
     MovieSerializer,
@@ -41,6 +42,8 @@ from .serializers import (
     M3USeriesRelationSerializer,
     M3UEpisodeRelationSerializer,
     VODAccessPolicySerializer,
+    VODListSerializer,
+    VODListItemSerializer,
     VODPlaybackSessionSerializer,
     M3UVODCategoryRelationSerializer,
     EpisodeWithProvidersSerializer,
@@ -3154,6 +3157,243 @@ class VODMetadataViewSet(viewsets.ViewSet):
             "profile_update": "outdated" if affected_profiles else "not_required",
             "profiles_affected": affected_profiles,
         })
+
+
+class VODListViewSet(viewsets.ModelViewSet):
+    """Manage VOD lists and their atomically published item generations."""
+
+    serializer_class = VODListSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        return [Authenticated()]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return VODList.objects.none()
+        if not _is_admin(self.request.user):
+            return VODList.objects.none()
+        return VODList.objects.annotate(
+            active_item_count=Count(
+                "items",
+                filter=Q(items__generation=F("active_generation")),
+                distinct=True,
+            ),
+            active_available_item_count=Count(
+                "items",
+                filter=(
+                    Q(items__generation=F("active_generation"))
+                    & (
+                        Q(items__movie__isnull=False)
+                        | Q(items__series__isnull=False)
+                    )
+                ),
+                distinct=True,
+            ),
+        ).order_by("sort_order", "name", "id")
+
+    def _admin_only(self, request):
+        return (
+            None
+            if _is_admin(request.user)
+            else Response(status=status.HTTP_403_FORBIDDEN)
+        )
+
+    def list(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().retrieve(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        instance = self.get_object()
+        if instance.is_system:
+            return Response(
+                {"detail": "System lists cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["get"], url_path="items")
+    def items(self, request, pk=None):
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        vod_list = self.get_object()
+        queryset = (
+            vod_list.items.filter(generation=vod_list.active_generation)
+            .select_related("movie__logo", "series__logo")
+            .prefetch_related("source_memberships")
+            .order_by("position", "id")
+        )
+        paginator = PageNumberPagination()
+        paginator.page_size = 50
+        paginator.page_size_query_param = "page_size"
+        paginator.max_page_size = 200
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(
+            VODListItemSerializer(page, many=True, context={"request": request}).data
+        )
+
+    @action(detail=True, methods=["put"], url_path="manual-items")
+    def manual_items(self, request, pk=None):
+        """Replace a manual list by publishing one complete new generation."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        raw_items = request.data.get("items")
+        if not isinstance(raw_items, list):
+            raise DRFValidationError({"items": "Expected a list of items."})
+
+        with transaction.atomic():
+            vod_list = VODList.objects.select_for_update().get(pk=self.get_object().pk)
+            if vod_list.list_type != VODList.ListType.MANUAL:
+                raise DRFValidationError({
+                    "detail": "Only manual lists can be edited directly."
+                })
+            next_generation = vod_list.active_generation + 1
+            new_items = []
+            relation_specs = []
+            seen = set()
+            for position, raw in enumerate(raw_items):
+                if not isinstance(raw, dict):
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} must be an object."
+                    })
+                content_type = str(raw.get("content_type") or "").lower()
+                if content_type not in {"movie", "series"}:
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} has an invalid content type."
+                    })
+                if vod_list.content_type not in {
+                    VODList.ContentType.ALL,
+                    content_type,
+                }:
+                    raise DRFValidationError({
+                        "items": (
+                            f"Item {position + 1} is not allowed by this list's "
+                            "content type."
+                        )
+                    })
+                try:
+                    canonical_id = int(raw.get("canonical_id"))
+                except (TypeError, ValueError):
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} needs a canonical_id."
+                    })
+                key = (content_type, canonical_id)
+                if key in seen:
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} is duplicated."
+                    })
+                seen.add(key)
+                canonical_model = Movie if content_type == "movie" else Series
+                try:
+                    canonical = canonical_model.objects.get(pk=canonical_id)
+                except canonical_model.DoesNotExist:
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} does not exist."
+                    })
+                relation_ids = raw.get("relation_ids", None)
+                if relation_ids is not None and not isinstance(relation_ids, list):
+                    raise DRFValidationError({
+                        "items": f"Item {position + 1} relation_ids must be a list."
+                    })
+                if relation_ids == []:
+                    raise DRFValidationError({
+                        "items": (
+                            f"Item {position + 1} must include at least one "
+                            "source, or omit relation_ids to include every source."
+                        )
+                    })
+                item = VODListItem(
+                    list=vod_list,
+                    generation=next_generation,
+                    content_type=content_type,
+                    movie=canonical if content_type == "movie" else None,
+                    series=canonical if content_type == "series" else None,
+                    include_all_sources=relation_ids is None,
+                    title=canonical.display_name or canonical.name,
+                    year=canonical.year,
+                    position=int(raw.get("position", position) or 0),
+                )
+                new_items.append(item)
+                relation_specs.append((content_type, canonical, relation_ids))
+
+            VODListItem.objects.bulk_create(new_items)
+            memberships = []
+            for item, (content_type, canonical, relation_ids) in zip(
+                new_items, relation_specs
+            ):
+                if relation_ids is None:
+                    continue
+                relation_model = (
+                    M3UMovieRelation
+                    if content_type == "movie"
+                    else M3USeriesRelation
+                )
+                canonical_field = "movie" if content_type == "movie" else "series"
+                relations = list(
+                    relation_model.objects.filter(
+                        pk__in=relation_ids,
+                        **{canonical_field: canonical},
+                    )
+                )
+                if len(relations) != len(set(relation_ids)):
+                    raise DRFValidationError({
+                        "items": (
+                            f"One or more sources for {canonical} do not belong "
+                            "to that canonical title."
+                        )
+                    })
+                memberships.extend(
+                    VODListSourceMembership(
+                        item=item,
+                        movie_relation=(relation if content_type == "movie" else None),
+                        series_relation=(relation if content_type == "series" else None),
+                    )
+                    for relation in relations
+                )
+            VODListSourceMembership.objects.bulk_create(memberships)
+            vod_list.active_generation = next_generation
+            vod_list.sync_status = VODList.SyncStatus.COMPLETE
+            vod_list.last_synced_at = timezone.now()
+            vod_list.sync_error = ""
+            vod_list.save(update_fields=[
+                "active_generation", "sync_status", "last_synced_at",
+                "sync_error", "updated_at",
+            ])
+            vod_list.items.exclude(generation=next_generation).delete()
+
+        vod_list = self.get_queryset().get(pk=vod_list.pk)
+        return Response(self.get_serializer(vod_list).data)
 
 
 class VODAccessPolicyViewSet(viewsets.ModelViewSet):

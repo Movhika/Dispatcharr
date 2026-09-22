@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Series, VODCategory, Movie, Episode,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation,
-    VODAccessPolicy, VODPlaybackSession,
+    VODAccessPolicy, VODPlaybackSession, VODList, VODListItem,
 )
 
 
@@ -72,6 +72,27 @@ class VODAccessPolicyAdmin(admin.ModelAdmin):
     list_display = ['name', 'export_mode', 'is_default', 'is_active', 'updated_at']
     list_filter = ['export_mode', 'is_default', 'is_active']
     filter_horizontal = ['users']
+
+
+@admin.register(VODList)
+class VODListAdmin(admin.ModelAdmin):
+    list_display = [
+        'name', 'list_type', 'content_type', 'provider', 'is_enabled',
+        'is_visible', 'active_generation', 'updated_at',
+    ]
+    list_filter = ['list_type', 'content_type', 'provider', 'is_enabled', 'is_visible']
+    search_fields = ['name', 'description', 'external_key']
+    readonly_fields = ['active_generation', 'sync_status', 'last_synced_at']
+
+
+@admin.register(VODListItem)
+class VODListItemAdmin(admin.ModelAdmin):
+    list_display = [
+        'list', 'content_type', 'title', 'generation', 'position',
+        'include_all_sources',
+    ]
+    list_filter = ['list', 'content_type', 'include_all_sources']
+    search_fields = ['title', 'external_id', 'movie__name', 'series__name']
 
 
 @admin.register(VODPlaybackSession)
