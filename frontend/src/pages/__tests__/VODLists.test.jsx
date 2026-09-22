@@ -10,10 +10,14 @@ import VODListsPage from '../VODLists';
 vi.mock('../../api', () => ({
   default: {
     getVODLists: vi.fn(),
+    getVODListRuleOptions: vi.fn(),
+    getVODFilterOptions: vi.fn(),
     getVODListItems: vi.fn(),
     createVODList: vi.fn(),
     updateVODList: vi.fn(),
     deleteVODList: vi.fn(),
+    rebuildVODList: vi.fn(),
+    removeVODListItems: vi.fn(),
   },
 }));
 
@@ -71,6 +75,17 @@ describe('VODListsPage', () => {
       selector({ user: { user_level: 10 } })
     );
     API.getVODLists.mockResolvedValue([list]);
+    API.getVODListRuleOptions.mockResolvedValue({
+      genres: [],
+      watch_providers: [],
+    });
+    API.getVODFilterOptions.mockResolvedValue({
+      audio_languages: [],
+      subtitle_languages: [],
+      resolutions: [],
+      container_extensions: [],
+      video_features: [],
+    });
     API.createVODList.mockResolvedValue({ id: 13 });
   });
 

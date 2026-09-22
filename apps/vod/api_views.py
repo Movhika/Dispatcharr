@@ -3184,7 +3184,7 @@ class VODListViewSet(viewsets.ModelViewSet):
                 ),
                 distinct=True,
             ),
-        ).order_by("sort_order", "name", "id")
+        ).order_by("name", "id")
 
     def _admin_only(self, request):
         return (
@@ -3234,6 +3234,83 @@ class VODListViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get"], url_path="rule-options")
+    def rule_options(self, request):
+        """Return canonical rule values which actually exist in the library."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        content_type = str(request.query_params.get("type") or "all").lower()
+        if content_type not in {"all", "movie", "series"}:
+            raise DRFValidationError({
+                "type": "Choose all, movie, or series."
+            })
+        cache_key = f"vod_list_rule_options:{catalog_generation()}:{content_type}"
+        cached = safe_cache_get(cache_key)
+        if isinstance(cached, dict):
+            return Response(cached)
+
+        tables = []
+        if content_type in {"all", "movie"}:
+            tables.append("vod_movie")
+        if content_type in {"all", "series"}:
+            tables.append("vod_series")
+        selects = " UNION ALL ".join(
+            f"SELECT tmdb_metadata FROM {table}" for table in tables
+        )
+        sql = f"""
+            WITH content AS ({selects}), values AS (
+                SELECT 'genre' AS kind, genre ->> 'name' AS value
+                FROM content
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE
+                        WHEN jsonb_typeof(tmdb_metadata -> 'genres') = 'array'
+                        THEN tmdb_metadata -> 'genres'
+                        ELSE '[]'::jsonb
+                    END
+                ) genre
+                UNION ALL
+                SELECT 'watch_provider' AS kind, provider ->> 'name' AS value
+                FROM content
+                CROSS JOIN LATERAL jsonb_each(
+                    CASE
+                        WHEN jsonb_typeof(tmdb_metadata -> 'watch_providers') = 'object'
+                        THEN tmdb_metadata -> 'watch_providers'
+                        ELSE '{{}}'::jsonb
+                    END
+                ) region
+                CROSS JOIN LATERAL jsonb_each(
+                    CASE
+                        WHEN jsonb_typeof(region.value) = 'object'
+                        THEN region.value
+                        ELSE '{{}}'::jsonb
+                    END
+                ) access
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE
+                        WHEN access.key IN ('flatrate', 'free', 'ads', 'rent', 'buy')
+                         AND jsonb_typeof(access.value) = 'array'
+                        THEN access.value
+                        ELSE '[]'::jsonb
+                    END
+                ) provider
+            )
+            SELECT kind, BTRIM(value)
+            FROM values
+            WHERE NULLIF(BTRIM(value), '') IS NOT NULL
+            GROUP BY kind, BTRIM(value)
+            ORDER BY kind, LOWER(BTRIM(value))
+        """
+        result = {"genres": [], "watch_providers": []}
+        with connection.cursor() as cursor:
+            cursor.execute(sql)
+            for kind, value in cursor.fetchall():
+                result[
+                    "genres" if kind == "genre" else "watch_providers"
+                ].append(value)
+        safe_cache_set(cache_key, result, timeout=3600)
+        return Response(result)
 
     @action(detail=True, methods=["get"], url_path="items")
     def items(self, request, pk=None):
