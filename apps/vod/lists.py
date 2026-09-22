@@ -50,6 +50,17 @@ def _age_number(value):
     return int(match.group(0)) if match else None
 
 
+def _index_tmdb_canonicals(queryset):
+    """Index every known TMDB identifier without duplicating canonicals."""
+    indexed = {}
+    for canonical in queryset:
+        for value in (canonical.tmdb_match_id, canonical.tmdb_id):
+            key = str(value or "").strip()
+            if key:
+                indexed.setdefault(key, canonical)
+    return indexed
+
+
 def dynamic_rule_matches(relation, rule, category_mapping):
     """Match one relation against a combined canonical/source list rule."""
     if not isinstance(rule, dict) or rule.get("enabled", True) is False:
@@ -273,28 +284,39 @@ def rebuild_tmdb_list(vod_list):
         if (forced_type or row.get("media_type") or "movie") in {"series", "tv"}
         and row.get("id")
     }
-    movies = {
-        str(row.tmdb_match_id or row.tmdb_id): row
-        for row in Movie.objects.filter(
+    movies = _index_tmdb_canonicals(
+        Movie.objects.filter(
             models.Q(tmdb_match_id__in=movie_ids) | models.Q(tmdb_id__in=movie_ids)
         )
-    } if movie_ids else {}
-    series = {
-        str(row.tmdb_match_id or row.tmdb_id): row
-        for row in Series.objects.filter(
+    ) if movie_ids else {}
+    series = _index_tmdb_canonicals(
+        Series.objects.filter(
             models.Q(tmdb_match_id__in=series_ids) | models.Q(tmdb_id__in=series_ids)
         )
-    } if series_ids else {}
+    ) if series_ids else {}
 
     with transaction.atomic():
         vod_list = VODList.objects.select_for_update().get(pk=vod_list.pk)
         generation = vod_list.active_generation + 1
         items = []
-        for position, row in enumerate(rows):
+        seen_external = set()
+        seen_canonicals = set()
+        for row in rows:
             media = forced_type or row.get("media_type") or "movie"
             content_type = "series" if media in {"series", "tv"} else "movie"
             tmdb_id = str(row.get("id") or "")
+            external_key = (content_type, tmdb_id)
+            if not tmdb_id or external_key in seen_external:
+                continue
             canonical = (series if content_type == "series" else movies).get(tmdb_id)
+            canonical_key = (
+                (content_type, canonical.pk) if canonical is not None else None
+            )
+            if canonical_key is not None and canonical_key in seen_canonicals:
+                continue
+            seen_external.add(external_key)
+            if canonical_key is not None:
+                seen_canonicals.add(canonical_key)
             date_value = row.get("release_date") or row.get("first_air_date") or ""
             year = int(date_value[:4]) if len(date_value) >= 4 and date_value[:4].isdigit() else None
             poster_path = row.get("poster_path") or ""
@@ -310,7 +332,7 @@ def rebuild_tmdb_list(vod_list):
                 title=row.get("title") or row.get("name") or "",
                 year=year,
                 poster_url=(f"{TMDB_IMAGE_ROOT}/w342{poster_path}" if poster_path else ""),
-                position=position,
+                position=len(items),
                 metadata={"popularity": row.get("popularity")},
             ))
         VODListItem.objects.bulk_create(items, batch_size=1000)
