@@ -50,6 +50,21 @@ import ListPagination from '../ListPagination.jsx';
 
 const PREVIEW_PAGE_SIZE = 50;
 
+const formatRefreshTime = (value) =>
+  value ? new Date(value).toLocaleString() : 'Never';
+
+const refreshSnapshotText = (preview) => {
+  if (!preview?.last_completed_refresh) {
+    return preview?.refresh_in_progress
+      ? 'Refresh in progress. No previous completed Live TV refresh is available yet.'
+      : 'No completed Live TV refresh has been recorded yet.';
+  }
+  const completedAt = formatRefreshTime(preview.last_completed_refresh);
+  return preview.refresh_in_progress
+    ? `Refresh in progress. This preview still shows the last completed Live TV refresh from ${completedAt}.`
+    : `Data from the last completed Live TV refresh: ${completedAt}.`;
+};
+
 const SortableFilterRow = ({ filterId, error, children }) => {
   const {
     attributes,
@@ -531,7 +546,7 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
           setPreviewFilter(null);
           setPreview(null);
         }}
-        title="Stream filter preview"
+        title={`Stream filter preview · ${preview?.account_name || playlist.name}`}
         size="xl"
       >
         <Stack>
@@ -548,31 +563,43 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
               currently imported streams can be checked.
             </Alert>
           )}
+          {!previewLoading && preview && (
+            <Text size="sm" c="dimmed">
+              {refreshSnapshotText(preview)}
+            </Text>
+          )}
           <Text fw={600}>
             {previewLoading
               ? 'Evaluating…'
-              : `${preview?.count || 0} matching streams from ${preview?.inventory_count || 0} candidates`}
+              : `${preview?.count || 0} matching stream${preview?.count === 1 ? '' : 's'} from ${preview?.inventory_count || 0} candidates in enabled groups`}
           </Text>
-          <ScrollArea h="45vh">
-            <Table striped withTableBorder stickyHeader>
-              <TableThead>
-                <TableTr>
-                  <TableTh>Name</TableTh>
-                  <TableTh>Group</TableTh>
-                  <TableTh w={100}>Result</TableTh>
-                </TableTr>
-              </TableThead>
-              <TableTbody>
-                {(preview?.results || []).map((row) => (
-                  <TableTr key={row.id}>
-                    <TableTd>{row.name}</TableTd>
-                    <TableTd>{row.group || '—'}</TableTd>
-                    <TableTd>{row.result}</TableTd>
+          {!previewLoading && preview?.count === 0 ? (
+            <Alert color="gray">
+              No streams matched this rule in the last completed Live TV
+              refresh.
+            </Alert>
+          ) : (
+            <ScrollArea h="45vh">
+              <Table striped withTableBorder stickyHeader>
+                <TableThead>
+                  <TableTr>
+                    <TableTh>Name</TableTh>
+                    <TableTh>Group</TableTh>
+                    <TableTh w={100}>Result</TableTh>
                   </TableTr>
-                ))}
-              </TableTbody>
-            </Table>
-          </ScrollArea>
+                </TableThead>
+                <TableTbody>
+                  {(preview?.results || []).map((row) => (
+                    <TableTr key={row.id}>
+                      <TableTd>{row.name}</TableTd>
+                      <TableTd>{row.group || '—'}</TableTd>
+                      <TableTd>{row.result}</TableTd>
+                    </TableTr>
+                  ))}
+                </TableTbody>
+              </Table>
+            </ScrollArea>
+          )}
           <ListPagination
             page={previewPage}
             pageSize={previewPageSize}

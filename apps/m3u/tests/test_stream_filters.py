@@ -3,6 +3,7 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.accounts.models import User
@@ -116,6 +117,10 @@ class M3UStreamFilterAPITests(TestCase):
         self.assertTrue(response.data["first_match_wins"])
 
     def test_preview_uses_pre_filter_catalog_for_excluded_streams(self):
+        completed_at = timezone.now()
+        self.account.updated_at = completed_at
+        self.account.status = M3UAccount.Status.FETCHING
+        self.account.save(update_fields=["updated_at", "status"])
         write_live_filter_catalog(
             self.account.id,
             [
@@ -154,6 +159,11 @@ class M3UStreamFilterAPITests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "### Hidden channel")
         self.assertTrue(response.data["catalog_complete"])
+        self.assertEqual(response.data["account_name"], self.account.name)
+        self.assertEqual(
+            response.data["last_completed_refresh"], completed_at.isoformat()
+        )
+        self.assertTrue(response.data["refresh_in_progress"])
 
     def test_preview_paginates_all_matching_streams(self):
         group = ChannelGroup.objects.create(name="Preview Group")

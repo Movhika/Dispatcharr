@@ -907,6 +907,10 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
         matches = []
         inventory_count = 0
         account_id = self.kwargs["account_id"]
+        account = get_object_or_404(
+            M3UAccount.objects.only("id", "name", "status", "updated_at"),
+            pk=account_id,
+        )
         catalog_complete = has_live_filter_catalog(account_id)
 
         if catalog_complete:
@@ -979,6 +983,15 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
                     else "currently imported streams"
                 ),
                 "catalog_complete": catalog_complete,
+                "account_name": account.name,
+                "last_completed_refresh": (
+                    account.updated_at.isoformat() if account.updated_at else None
+                ),
+                "refresh_in_progress": account.status
+                in {
+                    M3UAccount.Status.FETCHING,
+                    M3UAccount.Status.PARSING,
+                },
             }
         )
 
