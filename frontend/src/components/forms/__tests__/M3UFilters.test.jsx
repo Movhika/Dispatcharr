@@ -85,6 +85,14 @@ vi.mock('@mantine/core', () => {
     ),
     Group: Wrapper,
     Modal,
+    Pagination: ({ value, total, onChange }) => (
+      <button
+        aria-label="Next preview page"
+        onClick={() => onChange(value + 1)}
+      >
+        {value}/{total}
+      </button>
+    ),
     ScrollArea: Wrapper,
     Select: ({ value, onChange, data = [], 'aria-label': ariaLabel }) => (
       <select
@@ -250,7 +258,8 @@ describe('M3UFilters', () => {
       expect(API.previewM3UFilter).toHaveBeenCalledWith(
         10,
         1,
-        expect.objectContaining({ regex_pattern: 'HBO.*' })
+        expect.objectContaining({ regex_pattern: 'HBO.*' }),
+        { page: 1, page_size: 50 }
       )
     );
     expect(await screen.findByText('HBO HD')).toBeInTheDocument();

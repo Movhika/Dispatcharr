@@ -46,6 +46,9 @@ import {
   updateM3UFilter,
 } from '../../utils/forms/M3uFilterUtils.js';
 import { showNotification } from '../../utils/notificationUtils.js';
+import ListPagination from '../ListPagination.jsx';
+
+const PREVIEW_PAGE_SIZE = 50;
 
 const SortableFilterRow = ({ filterId, error, children }) => {
   const {
@@ -99,6 +102,8 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
   const [preview, setPreview] = useState(null);
   const [previewFilter, setPreviewFilter] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPageSize, setPreviewPageSize] = useState(PREVIEW_PAGE_SIZE);
   const [filterErrors, setFilterErrors] = useState({});
   const isWarningSuppressed = useWarningsStore(
     (state) => state.isWarningSuppressed
@@ -302,19 +307,40 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
     }
   };
 
-  const openPreview = async (filter) => {
-    setPreviewFilter(filter);
+  const loadPreview = async (filter, page, pageSize) => {
     setPreviewLoading(true);
     try {
       setPreview(
         await API.previewM3UFilter(
           playlist.id,
           filter.isNew ? null : filter.id,
-          payloadFor(filter)
+          payloadFor(filter),
+          { page, page_size: pageSize }
         )
       );
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  const openPreview = async (filter) => {
+    setPreviewFilter(filter);
+    setPreviewPage(1);
+    await loadPreview(filter, 1, previewPageSize);
+  };
+
+  const changePreviewPage = async (page) => {
+    setPreviewPage(page);
+    if (previewFilter) {
+      await loadPreview(previewFilter, page, previewPageSize);
+    }
+  };
+
+  const changePreviewPageSize = async (pageSize) => {
+    setPreviewPageSize(pageSize);
+    setPreviewPage(1);
+    if (previewFilter) {
+      await loadPreview(previewFilter, 1, pageSize);
     }
   };
 
@@ -547,11 +573,14 @@ const M3UFilters = ({ playlist, isOpen, onClose }) => {
               </TableTbody>
             </Table>
           </ScrollArea>
-          {preview?.truncated && (
-            <Text size="xs" c="dimmed">
-              Showing the first 200 matches.
-            </Text>
-          )}
+          <ListPagination
+            page={previewPage}
+            pageSize={previewPageSize}
+            total={preview?.count || 0}
+            onPageChange={changePreviewPage}
+            onPageSizeChange={changePreviewPageSize}
+            pageSizes={[25, 50, 100, 200]}
+          />
           <Group justify="flex-end">
             <Button
               variant="default"

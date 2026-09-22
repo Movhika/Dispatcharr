@@ -155,6 +155,40 @@ class M3UStreamFilterAPITests(TestCase):
         self.assertEqual(response.data["results"][0]["name"], "### Hidden channel")
         self.assertTrue(response.data["catalog_complete"])
 
+    def test_preview_paginates_all_matching_streams(self):
+        group = ChannelGroup.objects.create(name="Preview Group")
+        for index in range(3):
+            Stream.objects.create(
+                name=f"Matching channel {index}",
+                url=f"https://provider.example/{index}",
+                stream_hash=f"preview-page-{index}",
+                m3u_account=self.account,
+                channel_group=group,
+            )
+        request = self.factory.post(
+            "/filters/preview-draft/?page=2&page_size=1",
+            {
+                "filter_type": "name",
+                "regex_pattern": "Matching channel",
+                "exclude": True,
+                "order": 0,
+                "custom_properties": {"case_sensitive": True},
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = M3UFilterViewSet.as_view({"post": "preview_draft"})(
+            request,
+            account_id=self.account.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 3)
+        self.assertEqual(response.data["page"], 2)
+        self.assertEqual(response.data["page_size"], 1)
+        self.assertEqual(len(response.data["results"]), 1)
+
 
 class CompileM3UStreamFiltersTests(SimpleTestCase):
     def test_compiles_case_insensitive_when_configured(self):
