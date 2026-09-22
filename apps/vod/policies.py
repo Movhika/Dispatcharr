@@ -371,13 +371,24 @@ def _canonical_filter_metadata(relation):
         rating = float(raw_rating) if raw_rating not in (None, "") else None
     except (TypeError, ValueError):
         rating = None
+    watch_providers = []
+    for region_data in (tmdb_metadata.get("watch_providers") or {}).values():
+        if not isinstance(region_data, dict):
+            continue
+        for access_type in ("flatrate", "free", "ads", "rent", "buy"):
+            for provider in region_data.get(access_type) or []:
+                name = str((provider or {}).get("name") or "").strip()
+                if name and name not in watch_providers:
+                    watch_providers.append(name)
     return {
         "genres": genres,
         "keywords": _metadata_text_values(tmdb_metadata.get("keywords")),
         "countries": countries,
         "age_ratings": age_ratings,
         "year": year,
+        "release_date": release_date,
         "rating": rating,
+        "watch_providers": watch_providers,
         "is_anime": bool(tmdb_metadata.get("is_anime", False)),
         "is_adult": bool(
             tmdb_metadata.get("adult", False)

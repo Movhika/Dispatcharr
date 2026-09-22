@@ -13,12 +13,19 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
+  Pagination,
   Paper,
   ScrollArea,
   Select,
   SimpleGrid,
   Stack,
   Switch,
+  Table,
+  TableTbody,
+  TableTd,
+  TableTh,
+  TableThead,
+  TableTr,
   TagsInput,
   Text,
   Textarea,
@@ -37,17 +44,25 @@ import {
 } from 'lucide-react';
 import { notifications } from '@mantine/notifications';
 import API from '../api';
+import SeriesModal from '../components/SeriesModal.jsx';
+import VODModal from '../components/VODModal.jsx';
+import useVODFilterOptions from '../hooks/useVODFilterOptions.js';
 import useAuthStore from '../store/auth';
 import { USER_LEVELS } from '../constants';
+import { LANGUAGE_OPTIONS } from '../utils/languageCodes.js';
+import { videoFeatureLabel } from '../utils/vodMetadataOptions.js';
 
 const EMPTY_RULE = {
   required_genres: [],
   min_year: '',
   max_year: '',
+  release_date_after: '',
+  release_date_before: '',
   library_added_after: '',
   library_added_before: '',
   anime_mode: 'any',
   max_age_rating: '',
+  required_watch_providers: [],
   required_audio_languages: [],
   required_subtitle_languages: [],
   min_resolution: '',
@@ -63,8 +78,6 @@ const EMPTY_FORM = {
   provider: '',
   external_key: '',
   is_enabled: true,
-  is_visible: true,
-  sort_order: 0,
   rule: EMPTY_RULE,
 };
 
@@ -82,6 +95,42 @@ const normalizeList = (value) => ({
   external_key: value?.external_key || '',
   rule: { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) },
 });
+
+const languageLabel = (code) =>
+  LANGUAGE_OPTIONS.find((option) => option.value === code)?.label ||
+  String(code || '').toUpperCase();
+
+const optionRows = (values, label = (value) => value) =>
+  (values || []).map((value) => ({ value, label: label(value) }));
+
+const resolutionNumber = (value) => {
+  const match = String(value || '').match(/\d+/);
+  return match ? match[0] : '';
+};
+
+const builderSignature = (value) => {
+  const rule = {
+    ...EMPTY_RULE,
+    ...(value.rule || value.rules?.[0] || {}),
+  };
+  for (const field of [
+    'min_year',
+    'max_year',
+    'max_age_rating',
+    'min_resolution',
+    'max_resolution',
+  ]) {
+    rule[field] = Number(rule[field]) || 0;
+  }
+  return JSON.stringify({
+    list_type: value.list_type,
+    content_type: value.content_type,
+    provider: value.list_type === 'external' ? value.provider || '' : '',
+    external_key:
+      value.list_type === 'external' ? value.external_key || '' : '',
+    rules: value.list_type === 'dynamic' ? [rule] : [],
+  });
+};
 
 const Poster = ({ item }) => {
   const title = item.display_title || 'Untitled';
@@ -140,6 +189,16 @@ const VODListsPage = () => {
   const [viewerData, setViewerData] = useState(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [removingItemId, setRemovingItemId] = useState(null);
+  const [detailItem, setDetailItem] = useState(null);
+  const [ruleOptions, setRuleOptions] = useState({
+    genres: [],
+    watch_providers: [],
+  });
+  const { options: technicalOptions, loading: technicalOptionsLoading } =
+    useVODFilterOptions({
+      enabled: editorOpen && form.list_type === 'dynamic',
+      type: form.content_type,
+    });
 
   const isAdmin = user && user.user_level >= USER_LEVELS.ADMIN;
 
@@ -185,6 +244,26 @@ const VODListsPage = () => {
     };
   }, [viewer, viewerPage]);
 
+  useEffect(() => {
+    if (!editorOpen || form.list_type !== 'dynamic') return;
+    let active = true;
+    API.getVODListRuleOptions(form.content_type)
+      .then((response) => {
+        if (active) {
+          setRuleOptions({
+            genres: response?.genres || [],
+            watch_providers: response?.watch_providers || [],
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setRuleOptions({ genres: [], watch_providers: [] });
+      });
+    return () => {
+      active = false;
+    };
+  }, [editorOpen, form.content_type, form.list_type]);
+
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
@@ -218,14 +297,15 @@ const VODListsPage = () => {
         external_key:
           form.list_type === 'external' ? form.external_key.trim() : '',
         is_enabled: form.is_enabled,
-        is_visible: form.is_visible,
-        sort_order: Number(form.sort_order) || 0,
         rules: form.list_type === 'dynamic' ? [normalizedRule] : [],
       };
+      const requiresRebuild =
+        ['dynamic', 'external'].includes(form.list_type) &&
+        (!editing || builderSignature(form) !== builderSignature(editing));
       const saved = editing
         ? await API.updateVODList(editing.id, payload)
         : await API.createVODList(payload);
-      if (['dynamic', 'external'].includes(form.list_type)) {
+      if (requiresRebuild) {
         await API.rebuildVODList(saved.id);
       }
       setEditorOpen(false);
@@ -340,11 +420,6 @@ const VODListsPage = () => {
                           {!list.is_enabled && (
                             <Badge color="gray">Disabled</Badge>
                           )}
-                          {!list.is_visible && (
-                            <Badge color="gray" variant="outline">
-                              Hidden
-                            </Badge>
-                          )}
                         </Group>
                         <Text size="sm" c="dimmed">
                           {list.item_count} titles · {list.available_item_count}{' '}
@@ -371,7 +446,7 @@ const VODListsPage = () => {
                             setViewerData(null);
                           }}
                         >
-                          Show all
+                          Preview
                         </Button>
                         <ActionIcon
                           variant="subtle"
@@ -491,12 +566,8 @@ const VODListsPage = () => {
               <Select
                 label="Provider"
                 searchable
-                data={[
-                  { value: 'tmdb', label: 'TMDB' },
-                  { value: 'mdblist', label: 'MDBList' },
-                  { value: 'trakt', label: 'Trakt' },
-                  { value: 'simkl', label: 'Simkl' },
-                ]}
+                description="Additional providers can be added later without changing the list model"
+                data={[{ value: 'tmdb', label: 'TMDB' }]}
                 value={form.provider}
                 onChange={(value) =>
                   setForm((current) => ({
@@ -506,7 +577,8 @@ const VODListsPage = () => {
                 }
               />
               <TextInput
-                label="List ID"
+                label="TMDB list ID or preset"
+                description="Presets: trending-movies, trending-series, now-playing, popular-movies, popular-series"
                 value={form.external_key}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -526,7 +598,8 @@ const VODListsPage = () => {
               </Text>
               <TagsInput
                 label="Genres"
-                placeholder="Type a genre and press Enter"
+                placeholder="Select genres present in the library"
+                data={ruleOptions.genres}
                 value={form.rule.required_genres}
                 onChange={(value) =>
                   setForm((current) => ({
@@ -536,29 +609,40 @@ const VODListsPage = () => {
                 }
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <NumberInput
-                  label="Release year from"
-                  value={form.rule.min_year}
-                  onChange={(value) =>
+                <TextInput
+                  type="date"
+                  label="Released from"
+                  description="TMDB release date, or first air date for series"
+                  value={form.rule.release_date_after}
+                  onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      rule: { ...current.rule, min_year: value },
-                    }))
-                  }
-                />
-                <NumberInput
-                  label="Release year to"
-                  value={form.rule.max_year}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: { ...current.rule, max_year: value },
+                      rule: {
+                        ...current.rule,
+                        release_date_after: event.currentTarget.value,
+                      },
                     }))
                   }
                 />
                 <TextInput
                   type="date"
-                  label="Added from"
+                  label="Released until"
+                  description="TMDB release date, or first air date for series"
+                  value={form.rule.release_date_before}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      rule: {
+                        ...current.rule,
+                        release_date_before: event.currentTarget.value,
+                      },
+                    }))
+                  }
+                />
+                <TextInput
+                  type="date"
+                  label="Added to library from"
+                  description="First import into this Dispatcharr library"
                   value={form.rule.library_added_after}
                   onChange={(event) =>
                     setForm((current) => ({
@@ -572,7 +656,8 @@ const VODListsPage = () => {
                 />
                 <TextInput
                   type="date"
-                  label="Added until"
+                  label="Added to library until"
+                  description="First import into this Dispatcharr library"
                   value={form.rule.library_added_before}
                   onChange={(event) =>
                     setForm((current) => ({
@@ -601,7 +686,7 @@ const VODListsPage = () => {
                 />
                 <NumberInput
                   label="Maximum age rating"
-                  description="For example 10 for a children’s list"
+                  description="TMDB certification, for example 10 for a children’s list"
                   value={form.rule.max_age_rating}
                   onChange={(value) =>
                     setForm((current) => ({
@@ -611,10 +696,32 @@ const VODListsPage = () => {
                   }
                 />
               </SimpleGrid>
+              <MultiSelect
+                label="Streaming providers"
+                description="TMDB watch-provider availability for the configured TMDB region"
+                placeholder="Select providers present in enriched metadata"
+                searchable
+                data={ruleOptions.watch_providers}
+                value={form.rule.required_watch_providers}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    rule: {
+                      ...current.rule,
+                      required_watch_providers: value,
+                    },
+                  }))
+                }
+              />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <MultiSelect
                   label="DUB"
-                  data={['eng', 'ger', 'spa', 'fra', 'ita', 'jpn']}
+                  searchable
+                  disabled={technicalOptionsLoading}
+                  data={optionRows(
+                    technicalOptions.audio_languages,
+                    languageLabel
+                  )}
                   value={form.rule.required_audio_languages}
                   onChange={(value) =>
                     setForm((current) => ({
@@ -628,7 +735,12 @@ const VODListsPage = () => {
                 />
                 <MultiSelect
                   label="SUB"
-                  data={['eng', 'ger', 'spa', 'fra', 'ita', 'jpn']}
+                  searchable
+                  disabled={technicalOptionsLoading}
+                  data={optionRows(
+                    technicalOptions.subtitle_languages,
+                    languageLabel
+                  )}
                   value={form.rule.required_subtitle_languages}
                   onChange={(value) =>
                     setForm((current) => ({
@@ -640,32 +752,57 @@ const VODListsPage = () => {
                     }))
                   }
                 />
-                <NumberInput
+                <Select
                   label="Minimum resolution"
-                  placeholder="e.g. 2160"
-                  value={form.rule.min_resolution}
+                  placeholder="No minimum"
+                  clearable
+                  disabled={technicalOptionsLoading}
+                  data={(technicalOptions.resolutions || []).map((value) => ({
+                    value: resolutionNumber(value),
+                    label: value,
+                  }))}
+                  value={
+                    form.rule.min_resolution
+                      ? String(form.rule.min_resolution)
+                      : null
+                  }
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      rule: { ...current.rule, min_resolution: value },
+                      rule: { ...current.rule, min_resolution: value || '' },
                     }))
                   }
                 />
-                <NumberInput
+                <Select
                   label="Maximum resolution"
-                  placeholder="e.g. 1080"
-                  value={form.rule.max_resolution}
+                  placeholder="No maximum"
+                  clearable
+                  disabled={technicalOptionsLoading}
+                  data={(technicalOptions.resolutions || []).map((value) => ({
+                    value: resolutionNumber(value),
+                    label: value,
+                  }))}
+                  value={
+                    form.rule.max_resolution
+                      ? String(form.rule.max_resolution)
+                      : null
+                  }
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      rule: { ...current.rule, max_resolution: value },
+                      rule: { ...current.rule, max_resolution: value || '' },
                     }))
                   }
                 />
               </SimpleGrid>
               <MultiSelect
                 label="Features"
-                data={['3d', 'dv', 'hdr', 'hdr10', 'hdr10_plus', 'atmos']}
+                searchable
+                disabled={technicalOptionsLoading}
+                data={optionRows(
+                  technicalOptions.video_features,
+                  videoFeatureLabel
+                )}
                 value={form.rule.required_video_features}
                 onChange={(value) =>
                   setForm((current) => ({
@@ -676,13 +813,6 @@ const VODListsPage = () => {
               />
             </Stack>
           )}
-          <NumberInput
-            label="Order"
-            value={form.sort_order}
-            onChange={(value) =>
-              setForm((current) => ({ ...current, sort_order: value || 0 }))
-            }
-          />
           <Group>
             <Switch
               label="Enabled"
@@ -691,16 +821,6 @@ const VODListsPage = () => {
                 setForm((current) => ({
                   ...current,
                   is_enabled: event.currentTarget.checked,
-                }))
-              }
-            />
-            <Switch
-              label="Visible in output"
-              checked={form.is_visible}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  is_visible: event.currentTarget.checked,
                 }))
               }
             />
@@ -728,7 +848,7 @@ const VODListsPage = () => {
       <Modal
         opened={Boolean(viewer)}
         onClose={() => setViewer(null)}
-        title={viewer?.name || 'List items'}
+        title={viewer ? `${viewer.name} preview` : 'List preview'}
         size="xl"
       >
         {viewerLoading ? (
@@ -737,49 +857,74 @@ const VODListsPage = () => {
           </Center>
         ) : viewerItems.length ? (
           <Stack>
-            <SimpleGrid cols={{ base: 3, sm: 5, md: 8 }} spacing="sm">
-              {viewerItems.map((item) => (
-                <Stack key={item.id} gap={4} align="center">
-                  <Poster item={item} />
-                  <Text size="xs" lineClamp={2} ta="center">
-                    {item.display_title}
-                  </Text>
-                  {viewer?.list_type === 'manual' && (
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color="red"
-                      loading={removingItemId === item.id}
-                      aria-label={`Remove ${item.display_title}`}
-                      onClick={() => removeItem(item)}
+            <ScrollArea h={520}>
+              <Table striped highlightOnHover withTableBorder stickyHeader>
+                <TableThead>
+                  <TableTr>
+                    <TableTh>Title</TableTh>
+                    <TableTh>Type</TableTh>
+                    <TableTh>Year</TableTh>
+                    <TableTh>Sources</TableTh>
+                    <TableTh>Status</TableTh>
+                    <TableTh>Details</TableTh>
+                    {viewer?.list_type === 'manual' && (
+                      <TableTh>Actions</TableTh>
+                    )}
+                  </TableTr>
+                </TableThead>
+                <TableTbody>
+                  {viewerItems.map((item) => (
+                    <TableTr
+                      key={item.id}
+                      c={item.is_available ? undefined : 'dimmed'}
                     >
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                  )}
-                </Stack>
-              ))}
-            </SimpleGrid>
-            <Group justify="space-between">
+                      <TableTd>{item.display_title}</TableTd>
+                      <TableTd>
+                        {item.content_type === 'series' ? 'Series' : 'Movie'}
+                      </TableTd>
+                      <TableTd>{item.display_year || '—'}</TableTd>
+                      <TableTd>{item.source_count || '—'}</TableTd>
+                      <TableTd>
+                        {item.is_available ? 'In library' : 'Not in library'}
+                      </TableTd>
+                      <TableTd>
+                        <ActionIcon
+                          variant="subtle"
+                          aria-label={`Open details for ${item.display_title}`}
+                          disabled={!item.is_available}
+                          onClick={() => setDetailItem(item)}
+                        >
+                          <Eye size={17} />
+                        </ActionIcon>
+                      </TableTd>
+                      {viewer?.list_type === 'manual' && (
+                        <TableTd>
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            loading={removingItemId === item.id}
+                            aria-label={`Remove ${item.display_title}`}
+                            onClick={() => removeItem(item)}
+                          >
+                            <Trash2 size={16} />
+                          </ActionIcon>
+                        </TableTd>
+                      )}
+                    </TableTr>
+                  ))}
+                </TableTbody>
+              </Table>
+            </ScrollArea>
+            <Group justify="center" gap="sm">
+              <Pagination
+                value={viewerPage}
+                onChange={setViewerPage}
+                total={Math.max(1, Math.ceil((viewerData?.count || 0) / 50))}
+                withEdges
+              />
               <Text size="sm" c="dimmed">
                 {viewerData?.count || 0} titles
               </Text>
-              <Group gap="xs">
-                <Button
-                  variant="default"
-                  disabled={!viewerData?.previous}
-                  onClick={() => setViewerPage((page) => Math.max(1, page - 1))}
-                >
-                  Previous
-                </Button>
-                <Text size="sm">Page {viewerPage}</Text>
-                <Button
-                  variant="default"
-                  disabled={!viewerData?.next}
-                  onClick={() => setViewerPage((page) => page + 1)}
-                >
-                  Next
-                </Button>
-              </Group>
             </Group>
           </Stack>
         ) : (
@@ -788,6 +933,30 @@ const VODListsPage = () => {
           </Center>
         )}
       </Modal>
+
+      {detailItem?.content_type === 'series' ? (
+        <SeriesModal
+          opened
+          series={{
+            id: detailItem.canonical_id,
+            name: detailItem.display_title,
+            year: detailItem.display_year,
+            type: 'series',
+          }}
+          onClose={() => setDetailItem(null)}
+        />
+      ) : detailItem ? (
+        <VODModal
+          opened
+          vod={{
+            id: detailItem.canonical_id,
+            name: detailItem.display_title,
+            year: detailItem.display_year,
+            type: 'movie',
+          }}
+          onClose={() => setDetailItem(null)}
+        />
+      ) : null}
     </Box>
   );
 };

@@ -175,6 +175,43 @@ class VODListAPITests(TestCase):
             item.source_memberships.values_list("movie_relation_id", flat=True),
         )
 
+    def test_dynamic_list_matches_tmdb_release_window_and_watch_provider(self):
+        self.movie.tmdb_metadata = {
+            "release_date": "2026-02-12",
+            "is_anime": True,
+            "watch_providers": {
+                "DE": {
+                    "flatrate": [
+                        {"id": 350, "name": "Apple TV Plus"},
+                    ]
+                }
+            },
+        }
+        self.movie.save(update_fields=["tmdb_metadata"])
+        vod_list = VODList.objects.create(
+            name="Winter Apple anime",
+            list_type=VODList.ListType.DYNAMIC,
+            content_type=VODList.ContentType.MOVIE,
+            rules=[
+                {
+                    "anime_mode": "yes",
+                    "release_date_after": "2026-01-01",
+                    "release_date_before": "2026-04-30",
+                    "required_watch_providers": ["Apple TV Plus"],
+                }
+            ],
+        )
+
+        rebuild_dynamic_list(vod_list)
+
+        vod_list.refresh_from_db()
+        item = VODListItem.objects.get(
+            list=vod_list,
+            generation=vod_list.active_generation,
+        )
+        self.assertEqual(item.movie, self.movie)
+        self.assertEqual(item.source_memberships.count(), 1)
+
     def test_manual_add_and_remove_uses_atomic_generations(self):
         vod_list = VODList.objects.create(name="Watch next")
         add_response = self._request(
