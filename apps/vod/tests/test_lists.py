@@ -1,11 +1,13 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 from unittest.mock import Mock, patch
+from datetime import datetime, timedelta
 
 from apps.m3u.models import M3UAccount
-from apps.vod.api_views import VODListViewSet
-from apps.vod.lists import rebuild_dynamic_list, rebuild_tmdb_list
+from apps.vod.api_views import VODAccessPolicyViewSet, VODListViewSet
+from apps.vod.lists import dynamic_rule_matches, rebuild_dynamic_list, rebuild_tmdb_list
 from apps.vod.models import (
     M3UMovieRelation,
     Movie,
@@ -13,6 +15,8 @@ from apps.vod.models import (
     VODList,
     VODListItem,
     VODListSourceMembership,
+    VODAccessPolicy,
+    VODMovieProfileSelection,
 )
 
 
@@ -181,6 +185,36 @@ class VODListAPITests(TestCase):
         self.assertEqual(options.data["audio_languages"], ["deu"])
         self.assertEqual(options.data["video_features"], ["3d"])
 
+    def test_profile_preview_names_the_list_instead_of_provider_category(self):
+        vod_list = VODList.objects.create(name="AppleTV")
+        policy = VODAccessPolicy.objects.create(
+            name="List preview",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="ready-generation",
+            selection_counts={"category_mode": "lists", "export_mode": "compact"},
+        )
+        VODMovieProfileSelection.objects.create(
+            policy=policy,
+            generation="ready-generation",
+            movie=self.movie,
+            relation=self.movie_relation,
+            list_ids=[vod_list.pk],
+        )
+        request = self.factory.get(
+            f"/api/vod/access-policies/{policy.pk}/selections/",
+            {"type": "movie"},
+        )
+        force_authenticate(request, user=self.admin)
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request, pk=policy.pk
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["category_name"], "AppleTV")
+        self.assertEqual(response.data["results"][0]["list_ids"], [vod_list.pk])
+
     def test_dynamic_list_keeps_only_matching_source_variants(self):
         self.movie_relation.manual_metadata = {"video_features": ["3d"]}
         self.movie_relation.save(update_fields=["manual_metadata"])
@@ -253,6 +287,43 @@ class VODListAPITests(TestCase):
         )
         self.assertEqual(item.movie, self.movie)
         self.assertEqual(item.source_memberships.count(), 1)
+
+    def test_dynamic_time_windows_use_current_season_and_recent_days(self):
+        reference = timezone.make_aware(datetime(2026, 9, 22, 12, 0))
+        self.movie.tmdb_metadata = {"release_date": "2026-02-12"}
+        self.movie.library_added_at = reference - timedelta(days=3)
+        self.movie.save(update_fields=["tmdb_metadata", "library_added_at"])
+
+        self.assertTrue(dynamic_rule_matches(
+            self.movie_relation,
+            {"release_yearly_from": "01-01", "release_yearly_until": "04-30"},
+            {},
+            now=reference,
+        ))
+        self.assertFalse(dynamic_rule_matches(
+            self.movie_relation,
+            {"release_yearly_from": "06-01", "release_yearly_until": "08-31"},
+            {},
+            now=reference,
+        ))
+        self.assertTrue(dynamic_rule_matches(
+            self.movie_relation,
+            {"library_added_last_days": 7},
+            {},
+            now=reference,
+        ))
+        self.assertFalse(dynamic_rule_matches(
+            self.movie_relation,
+            {"library_added_last_days": 2},
+            {},
+            now=reference,
+        ))
+        self.assertFalse(dynamic_rule_matches(
+            self.movie_relation,
+            {"release_last_days": 30},
+            {},
+            now=reference,
+        ))
 
     @patch("apps.vod.lists.CoreSettings.get_tmdb_languages", return_value=["de-DE"])
     @patch("apps.vod.lists.CoreSettings.get_tmdb_api_token", return_value="token")

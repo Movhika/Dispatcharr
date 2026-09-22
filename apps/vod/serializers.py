@@ -604,6 +604,49 @@ class VODListSerializer(serializers.ModelSerializer):
                     "Provider and external key are only valid for external lists."
                 )
             })
+        if list_type == VODList.ListType.DYNAMIC:
+            rules = attrs.get("rules", getattr(self.instance, "rules", []))
+            for rule in rules or []:
+                if not isinstance(rule, dict):
+                    raise serializers.ValidationError({
+                        "rules": "Invalid metadata rule."
+                    })
+                for field in ("release_last_days", "library_added_last_days"):
+                    value = rule.get(field)
+                    if value in (None, "", 0, "0"):
+                        continue
+                    try:
+                        days = int(value)
+                    except (TypeError, ValueError) as exc:
+                        raise serializers.ValidationError({
+                            "rules": f"{field} must be a number of days."
+                        }) from exc
+                    if not 1 <= days <= 3650:
+                        raise serializers.ValidationError({
+                            "rules": f"{field} must be between 1 and 3650."
+                        })
+                yearly = [
+                    str(rule.get(field) or "").strip()
+                    for field in ("release_yearly_from", "release_yearly_until")
+                ]
+                if any(yearly):
+                    from datetime import date
+
+                    if not all(yearly):
+                        raise serializers.ValidationError({
+                            "rules": "Enter both yearly release dates."
+                        })
+                    for value in yearly:
+                        if not re.fullmatch(r"\d{2}-\d{2}", value):
+                            raise serializers.ValidationError({
+                                "rules": "Use MM-DD for yearly release dates."
+                            })
+                        try:
+                            date(2000, int(value[:2]), int(value[3:]))
+                        except ValueError as exc:
+                            raise serializers.ValidationError({
+                                "rules": "Invalid yearly release date."
+                            }) from exc
         attrs["provider"] = provider
         attrs["external_key"] = external_key
         return attrs

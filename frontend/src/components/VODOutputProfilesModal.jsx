@@ -776,27 +776,57 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       allowedAccountIds.has(String(option.value))
     );
   }, [accountOptions, allowedCategoryStates]);
+  const activeCategoryMode =
+    selectedProfile?.selection_counts?.category_mode ||
+    selectedProfile?.category_mode ||
+    'provider';
   const categoryOptions = useMemo(
     () =>
-      Object.values(categories || {})
-        .filter(
-          (category) =>
-            category.category_type === filters.type &&
-            (category.m3u_accounts || []).some(
-              (relation) =>
-                relation.enabled !== false &&
-                (!filters.m3u_account ||
-                  String(relation.m3u_account) === filters.m3u_account)
+      activeCategoryMode === 'lists'
+        ? [
+            ...(selectedProfile?.list_rules || [])
+              .filter((rule) => rule.enabled !== false)
+              .map((rule) =>
+                vodLists.find(
+                  (list) => Number(list.id) === Number(rule.vod_list)
+                )
+              )
+              .filter(
+                (list) =>
+                  list && ['all', filters.type].includes(list.content_type)
+              )
+              .map((list) => ({ value: `list:${list.id}`, label: list.name })),
+            ...(selectedProfile?.include_unsorted
+              ? [{ value: 'list:0', label: 'Unsorted' }]
+              : []),
+          ]
+        : Object.values(categories || {})
+            .filter(
+              (category) =>
+                category.category_type === filters.type &&
+                (category.m3u_accounts || []).some(
+                  (relation) =>
+                    relation.enabled !== false &&
+                    (!filters.m3u_account ||
+                      String(relation.m3u_account) === filters.m3u_account)
+                )
             )
-        )
-        .map((category) => ({
-          value: String(category.id),
-          label: category.name,
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [categories, filters.m3u_account, filters.type]
+            .map((category) => ({
+              value: String(category.id),
+              label: category.name,
+            }))
+            .sort((left, right) => left.label.localeCompare(right.label)),
+    [
+      activeCategoryMode,
+      categories,
+      filters.m3u_account,
+      filters.type,
+      selectedProfile,
+      vodLists,
+    ]
   );
-  const previewCategory = categories?.[filters.category];
+  const previewCategory =
+    activeCategoryMode === 'lists' ? null : categories?.[filters.category];
   const previewFacetCategory = previewCategory
     ? `${previewCategory.name}|${previewCategory.category_type}`
     : '';
@@ -1897,7 +1927,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                     />
                   )}
                   <Select
-                    label="Category"
+                    label={activeCategoryMode === 'lists' ? 'List' : 'Category'}
                     clearable
                     searchable
                     data={categoryOptions}
@@ -2062,7 +2092,11 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                           <TableTh>
                             {activeMode === 'compact' ? 'Sources' : 'Source'}
                           </TableTh>
-                          <TableTh>Category</TableTh>
+                          <TableTh>
+                            {activeCategoryMode === 'lists'
+                              ? 'Lists'
+                              : 'Category'}
+                          </TableTh>
                           {activeMode !== 'compact' && (
                             <>
                               <TableTh>DUB</TableTh>
