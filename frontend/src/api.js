@@ -1678,6 +1678,26 @@ export default class API {
     });
   }
 
+  static async rebuildVODList(id) {
+    return await request(`${host}/api/vod/lists/${id}/rebuild/`, {
+      method: 'POST',
+    });
+  }
+
+  static async addVODListItems(id, selections) {
+    return await request(`${host}/api/vod/lists/${id}/add-items/`, {
+      method: 'POST',
+      body: { selections },
+    });
+  }
+
+  static async removeVODListItems(id, itemIds) {
+    return await request(`${host}/api/vod/lists/${id}/remove-items/`, {
+      method: 'POST',
+      body: { item_ids: itemIds },
+    });
+  }
+
   static async getVODMetadataStatus(settingsOnly = false) {
     return await request(
       `${host}/api/vod/metadata/${settingsOnly ? '?settings_only=1' : ''}`,

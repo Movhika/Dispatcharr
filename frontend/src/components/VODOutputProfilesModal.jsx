@@ -5,6 +5,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   Paper,
@@ -73,6 +74,9 @@ const EMPTY_PROFILE = {
   metadata_source: 'canonical',
   canonical_title_source: 'primary',
   category_rules: [],
+  category_mode: 'provider',
+  include_unsorted: true,
+  list_rules: [],
 };
 
 const metadataText = (metadata, field) => {
@@ -296,6 +300,15 @@ const profilePayload = (profile) => ({
     }))
     .filter((rule) => Number.isInteger(rule.category_relation))
     .sort((left, right) => left.category_relation - right.category_relation),
+  category_mode: profile.category_mode === 'lists' ? 'lists' : 'provider',
+  include_unsorted: profile.include_unsorted !== false,
+  list_rules: (profile.list_rules || [])
+    .map((rule) => ({
+      vod_list: Number(rule.vod_list),
+      enabled: rule.enabled !== false,
+      priority: Number(rule.priority || 0),
+    }))
+    .filter((rule) => Number.isInteger(rule.vod_list)),
 });
 
 const canonicalizeObject = (value) => {
@@ -330,6 +343,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [vodLists, setVodLists] = useState([]);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -420,6 +434,9 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       metadata_source: source.metadata_source || 'provider',
       canonical_title_source: outputSettings.titleSource,
       category_rules: source.category_rules || [],
+      category_mode: source.category_mode === 'lists' ? 'lists' : 'provider',
+      include_unsorted: source.include_unsorted !== false,
+      list_rules: source.list_rules || [],
     };
     setDraft(nextDraft);
     setSavedDraftSignature(profileDraftSignature(nextDraft));
@@ -427,7 +444,13 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
 
   useEffect(() => {
     if (!opened) return;
-    Promise.all([fetchCategories(), fetchProfiles()]);
+    Promise.all([
+      fetchCategories(),
+      fetchProfiles(),
+      API.getVODLists().then((response) =>
+        setVodLists(response?.results || response || [])
+      ),
+    ]);
   }, [fetchCategories, fetchProfiles, opened]);
 
   useEffect(() => {
@@ -1264,6 +1287,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                 withArrow
               >
                 <TabsTab value="sources">Sources</TabsTab>
+                <TabsTab value="output-groups">Output groups</TabsTab>
               </Tooltip>
               <Tooltip
                 label={CONTENT_RULES_TAB_HELP}
@@ -1478,6 +1502,111 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                           />
                         </TabsPanel>
                       </Tabs>
+                    </Stack>
+                  </Paper>
+                </Box>
+              </ScrollArea>
+            </TabsPanel>
+
+            <TabsPanel value="output-groups" pt="md">
+              <ScrollArea h="100%">
+                <Box pb="xs">
+                  <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                    <Stack>
+                      <Box>
+                        <Text fw={600}>Client categories</Text>
+                        <Text size="sm" c="dimmed">
+                          Source categories selected on the previous tab always
+                          remain the eligibility boundary. Choose how the
+                          surviving titles are grouped for clients.
+                        </Text>
+                      </Box>
+                      <SegmentedControl
+                        fullWidth
+                        data={[
+                          {
+                            value: 'provider',
+                            label: 'Provider categories',
+                          },
+                          { value: 'lists', label: 'VOD lists' },
+                        ]}
+                        value={draft.category_mode}
+                        onChange={(value) =>
+                          setDraft((current) => ({
+                            ...current,
+                            category_mode: value,
+                          }))
+                        }
+                      />
+                      {draft.category_mode === 'lists' && (
+                        <Stack gap="xs">
+                          {vodLists
+                            .filter(
+                              (list) => list.is_enabled && list.is_visible
+                            )
+                            .map((list) => {
+                              const selected = (draft.list_rules || []).some(
+                                (rule) =>
+                                  Number(rule.vod_list) === Number(list.id) &&
+                                  rule.enabled !== false
+                              );
+                              return (
+                                <Paper key={list.id} withBorder p="sm">
+                                  <Checkbox
+                                    checked={selected}
+                                    label={list.name}
+                                    description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
+                                    onChange={(event) =>
+                                      setDraft((current) => {
+                                        const remaining = (
+                                          current.list_rules || []
+                                        ).filter(
+                                          (rule) =>
+                                            Number(rule.vod_list) !==
+                                            Number(list.id)
+                                        );
+                                        return {
+                                          ...current,
+                                          list_rules: event.currentTarget
+                                            .checked
+                                            ? [
+                                                ...remaining,
+                                                {
+                                                  vod_list: list.id,
+                                                  enabled: true,
+                                                  priority: -remaining.length,
+                                                },
+                                              ]
+                                            : remaining,
+                                        };
+                                      })
+                                    }
+                                  />
+                                </Paper>
+                              );
+                            })}
+                          {!vodLists.some(
+                            (list) => list.is_enabled && list.is_visible
+                          ) && (
+                            <Alert color="blue">
+                              Create and enable a VOD list before selecting list
+                              output.
+                            </Alert>
+                          )}
+                          <Switch
+                            mt="sm"
+                            label="Include Unsorted"
+                            description="Keep every otherwise eligible source which is not in one of the selected lists."
+                            checked={draft.include_unsorted}
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                include_unsorted: event.currentTarget.checked,
+                              }))
+                            }
+                          />
+                        </Stack>
+                      )}
                     </Stack>
                   </Paper>
                 </Box>

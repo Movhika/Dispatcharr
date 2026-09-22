@@ -37,6 +37,7 @@ import {
   Filter,
   LayoutGrid,
   List,
+  ListPlus,
   LockKeyhole,
   Play,
   Search,
@@ -148,6 +149,10 @@ const VODsPage = () => {
   const [metadataStatus, setMetadataStatus] = useState(null);
   const [metadataStatusLoading, setMetadataStatusLoading] = useState(false);
   const [bulkEditorOpened, bulkEditorHandlers] = useDisclosure(false);
+  const [listPickerOpened, listPickerHandlers] = useDisclosure(false);
+  const [manualLists, setManualLists] = useState([]);
+  const [targetListId, setTargetListId] = useState('');
+  const [addingToList, setAddingToList] = useState(false);
 
   const items = useMemo(
     () =>
@@ -331,6 +336,67 @@ const VODsPage = () => {
     } else {
       setSelectedVOD(item);
       vodModalHandlers.open();
+    }
+  };
+
+  const openListPicker = async () => {
+    try {
+      const response = await API.getVODLists();
+      const available = (response?.results || response || []).filter(
+        (list) => list.list_type === 'manual' && list.is_enabled
+      );
+      setManualLists(available);
+      setTargetListId(available[0] ? String(available[0].id) : '');
+      listPickerHandlers.open();
+    } catch (error) {
+      showNotification({
+        title: 'Lists could not be loaded',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
+    }
+  };
+
+  const addSelectedToList = async () => {
+    const selectedRows = items.filter((item) =>
+      selectAllMatching
+        ? !selected.has(itemKey(item))
+        : selected.has(itemKey(item))
+    );
+    if (selectAllMatching || selectedRows.length !== selectedCount) {
+      showNotification({
+        title: 'Open one page of titles',
+        message:
+          'Adding an entire filtered result to a manual list is not available yet. Select up to 500 visible titles instead.',
+        color: 'yellow',
+      });
+      return;
+    }
+    setAddingToList(true);
+    try {
+      await API.addVODListItems(
+        targetListId,
+        selectedRows.map((item) => ({
+          content_type: item.contentType,
+          canonical_id: item.canonical_id || item.id,
+          ...(item.is_variant ? { relation_id: item.relation_id } : {}),
+        }))
+      );
+      showNotification({
+        title: 'Added to list',
+        message: `${selectedRows.length} selected title${selectedRows.length === 1 ? '' : 's'} added.`,
+        color: 'green',
+      });
+      setSelected(new Set());
+      listPickerHandlers.close();
+    } catch (error) {
+      showNotification({
+        title: 'Titles were not added',
+        message: error?.message || 'Please retry.',
+        color: 'red',
+      });
+    } finally {
+      setAddingToList(false);
     }
   };
 
@@ -525,6 +591,16 @@ const VODsPage = () => {
             />
             {user?.user_level >= 10 && (
               <>
+                {viewMode === 'list' && (
+                  <Button
+                    variant="default"
+                    leftSection={<ListPlus size={16} />}
+                    disabled={selectedCount === 0}
+                    onClick={openListPicker}
+                  >
+                    Add to list
+                  </Button>
+                )}
                 {filters.representation === 'canonical' &&
                   viewMode === 'list' && (
                     <Button
@@ -1055,6 +1131,42 @@ const VODsPage = () => {
           </Text>
         )}
       </Stack>
+
+      <Modal
+        opened={listPickerOpened}
+        onClose={listPickerHandlers.close}
+        title={`Add ${selectedCount} selected VODs to a list`}
+      >
+        <Stack>
+          <Select
+            label="Manual list"
+            placeholder="Choose a list"
+            data={manualLists.map((list) => ({
+              value: String(list.id),
+              label: list.name,
+            }))}
+            value={targetListId}
+            onChange={(value) => setTargetListId(value || '')}
+          />
+          {!manualLists.length && (
+            <Alert color="blue">
+              Create a manual list under VOD Lists first.
+            </Alert>
+          )}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={listPickerHandlers.close}>
+              Cancel
+            </Button>
+            <Button
+              loading={addingToList}
+              disabled={!targetListId || !manualLists.length}
+              onClick={addSelectedToList}
+            >
+              Add to list
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Modal
         opened={bulkEditorOpened}

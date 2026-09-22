@@ -18,6 +18,8 @@ vi.mock('../../api', () => ({
     updateVODRelationTmdbMatch: vi.fn(),
     getVODMetadataStatus: vi.fn(),
     getVODFilterOptions: vi.fn(),
+    getVODLists: vi.fn(),
+    addVODListItems: vi.fn(),
   },
 }));
 vi.mock('../../utils/pages/VODsUtils.js', () => ({
@@ -89,6 +91,7 @@ vi.mock('lucide-react', () => ({
   History: () => null,
   LayoutGrid: (props) => <span {...props}>Poster wall</span>,
   List: (props) => <span {...props}>List view</span>,
+  ListPlus: () => null,
   LockKeyhole: (props) => <span {...props}>Locked</span>,
   Play: () => null,
   RefreshCw: () => null,
