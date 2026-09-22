@@ -14,6 +14,7 @@ vi.mock('../../api', () => ({
     getVODListExternalOptions: vi.fn(),
     getVODFilterOptions: vi.fn(),
     getVODListItems: vi.fn(),
+    getVODListFilterOptions: vi.fn(),
     createVODList: vi.fn(),
     updateVODList: vi.fn(),
     deleteVODList: vi.fn(),
@@ -90,6 +91,29 @@ describe('VODListsPage', () => {
       container_extensions: [],
       video_features: [],
     });
+    API.getVODListFilterOptions.mockResolvedValue({
+      audio_languages: [],
+      subtitle_languages: [],
+      resolutions: [],
+      container_extensions: [],
+      video_features: [],
+    });
+    API.getVODListItems.mockResolvedValue({
+      count: 1,
+      results: [
+        {
+          id: 1,
+          content_type: 'movie',
+          canonical_id: 7,
+          display_title: 'Available title',
+          display_year: 2026,
+          is_available: true,
+          include_all_sources: false,
+          relation_ids: [17],
+          source_count: 1,
+        },
+      ],
+    });
     API.createVODList.mockResolvedValue({ id: 13 });
   });
 
@@ -119,6 +143,30 @@ describe('VODListsPage', () => {
           content_type: 'all',
         })
       );
+    });
+  });
+
+  it('offers server-side search and filters in the full preview', async () => {
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(
+      await screen.findByRole('textbox', { name: 'Search' })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(API.getVODListItems).toHaveBeenCalledWith(
+        list.id,
+        expect.objectContaining({
+          page: 1,
+          page_size: 50,
+          type: 'all',
+          availability: 'any',
+        })
+      );
+      expect(API.getVODListFilterOptions).toHaveBeenCalledWith(list.id);
     });
   });
 });

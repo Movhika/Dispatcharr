@@ -445,6 +445,7 @@ class VODListItemSerializer(serializers.ModelSerializer):
     display_poster = serializers.SerializerMethodField()
     is_available = serializers.SerializerMethodField()
     source_count = serializers.SerializerMethodField()
+    relation_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = VODListItem
@@ -452,6 +453,7 @@ class VODListItemSerializer(serializers.ModelSerializer):
             "id", "generation", "content_type", "canonical_id",
             "display_title", "display_year", "display_poster",
             "is_available", "include_all_sources", "source_count",
+            "relation_ids",
             "external_provider", "external_id", "position", "metadata",
         ]
 
@@ -497,6 +499,25 @@ class VODListItemSerializer(serializers.ModelSerializer):
         if "source_memberships" in prefetched:
             return len(prefetched["source_memberships"])
         return obj.source_memberships.count()
+
+    @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
+    def get_relation_ids(self, obj):
+        if obj.include_all_sources:
+            return []
+        prefetched = getattr(obj, "_prefetched_objects_cache", {})
+        memberships = (
+            prefetched["source_memberships"]
+            if "source_memberships" in prefetched
+            else obj.source_memberships.all()
+        )
+        return sorted(
+            relation_id
+            for relation_id in (
+                membership.movie_relation_id or membership.series_relation_id
+                for membership in memberships
+            )
+            if relation_id is not None
+        )
 
 
 class VODListSerializer(serializers.ModelSerializer):

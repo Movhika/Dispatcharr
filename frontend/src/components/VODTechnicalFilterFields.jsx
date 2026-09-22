@@ -19,13 +19,15 @@ const VODTechnicalFilterFields = ({
   category = '',
   enabled = true,
   featureLabel = 'Feature',
+  optionsOverride = null,
 }) => {
-  const { options, loading } = useVODFilterOptions({
-    enabled,
+  const { options: loadedOptions, loading } = useVODFilterOptions({
+    enabled: enabled && !optionsOverride,
     type,
     m3uAccount,
     category,
   });
+  const options = optionsOverride || loadedOptions;
   const data = useMemo(
     () => ({
       audio: textOptions(options.audio_languages, languageLabel),
@@ -45,7 +47,7 @@ const VODTechnicalFilterFields = ({
     placeholder: 'Any',
     clearable: true,
     searchable: true,
-    disabled: loading,
+    disabled: !optionsOverride && loading,
     nothingFoundMessage: 'No values in this selection',
   };
 
