@@ -132,6 +132,55 @@ class VODListAPITests(TestCase):
         self.assertEqual(response.data["item_count"], 1)
         self.assertEqual(response.data["preview"][0]["display_title"], "Curated Movie")
 
+    def test_list_preview_filters_exact_sources_and_returns_membership_ids(self):
+        self.movie_relation.manual_metadata = {
+            "audio_languages": ["deu"],
+            "video_features": ["3d"],
+        }
+        self.movie_relation.save(update_fields=["manual_metadata"])
+        vod_list = VODList.objects.create(name="German 3D")
+        item = VODListItem.objects.create(
+            list=vod_list,
+            generation=vod_list.active_generation,
+            content_type="movie",
+            movie=self.movie,
+            include_all_sources=False,
+        )
+        VODListSourceMembership.objects.create(
+            item=item,
+            movie_relation=self.movie_relation,
+        )
+
+        response = self._request(
+            "get",
+            f"/api/vod/lists/{vod_list.pk}/items/",
+            "items",
+            data={
+                "search": "Curated",
+                "availability": "available",
+                "audio_language": "deu",
+                "video_feature": "3d",
+            },
+            pk=vod_list.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["relation_ids"],
+            [self.movie_relation.pk],
+        )
+
+        options = self._request(
+            "get",
+            f"/api/vod/lists/{vod_list.pk}/filter-options/",
+            "filter_options",
+            pk=vod_list.pk,
+        )
+        self.assertEqual(options.status_code, 200)
+        self.assertEqual(options.data["audio_languages"], ["deu"])
+        self.assertEqual(options.data["video_features"], ["3d"])
+
     def test_dynamic_list_keeps_only_matching_source_variants(self):
         self.movie_relation.manual_metadata = {"video_features": ["3d"]}
         self.movie_relation.save(update_fields=["manual_metadata"])

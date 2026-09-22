@@ -3368,6 +3368,124 @@ class VODListViewSet(viewsets.ModelViewSet):
             .prefetch_related("source_memberships")
             .order_by("position", "id")
         )
+        search = str(request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(movie__display_name__icontains=search)
+                | Q(movie__name__icontains=search)
+                | Q(series__display_name__icontains=search)
+                | Q(series__name__icontains=search)
+                | Q(title__icontains=search)
+            )
+        content_type = str(request.query_params.get("type") or "all").lower()
+        if content_type in {"movie", "series"}:
+            queryset = queryset.filter(content_type=content_type)
+        availability = str(
+            request.query_params.get("availability") or "any"
+        ).lower()
+        available_query = Q(movie__isnull=False) | Q(series__isnull=False)
+        if availability == "available":
+            queryset = queryset.filter(available_query)
+        elif availability == "unavailable":
+            queryset = queryset.exclude(available_query)
+
+        for parameter, lookup in (
+            ("year_from", "gte"),
+            ("year_to", "lte"),
+        ):
+            raw_year = str(request.query_params.get(parameter) or "").strip()
+            if raw_year:
+                if not raw_year.isdigit():
+                    raise DRFValidationError({parameter: "Enter a valid year."})
+                year = int(raw_year)
+                queryset = queryset.filter(
+                    Q(**{f"movie__year__{lookup}": year})
+                    | Q(**{f"series__year__{lookup}": year})
+                    | Q(
+                        movie__isnull=True,
+                        series__isnull=True,
+                        **{f"year__{lookup}": year},
+                    )
+                )
+
+        filters = {
+            key: request.query_params.get(key, "")
+            for key in (
+                "genre",
+                "anime_mode",
+                "adult_mode",
+                "library_added_after",
+                "library_added_before",
+                "audio_language",
+                "subtitle_language",
+                "resolution",
+                "container_extension",
+                "video_feature",
+            )
+        }
+        if any(
+            filters[key]
+            for key in (
+                "genre",
+                "anime_mode",
+                "adult_mode",
+                "library_added_after",
+                "library_added_before",
+            )
+        ):
+            movie_ids = _apply_vod_canonical_filters(
+                Movie.objects.all(), filters, "movie"
+            ).values("id")
+            series_ids = _apply_vod_canonical_filters(
+                Series.objects.all(), filters, "series"
+            ).values("id")
+            queryset = queryset.filter(
+                Q(content_type="movie", movie_id__in=movie_ids)
+                | Q(content_type="series", series_id__in=series_ids)
+            )
+
+        if any(
+            filters[key]
+            for key in (
+                "audio_language",
+                "subtitle_language",
+                "resolution",
+                "container_extension",
+                "video_feature",
+            )
+        ):
+            movie_relations = M3UMovieRelation.objects.filter(
+                _filtered_vod_relation_query(filters, "movie")
+            )
+            series_relations = M3USeriesRelation.objects.filter(
+                _filtered_vod_relation_query(filters, "series")
+            )
+            queryset = queryset.filter(
+                Q(
+                    content_type="movie",
+                    include_all_sources=True,
+                    movie_id__in=movie_relations.values("movie_id"),
+                )
+                | Q(
+                    content_type="movie",
+                    include_all_sources=False,
+                    source_memberships__movie_relation_id__in=movie_relations.values(
+                        "id"
+                    ),
+                )
+                | Q(
+                    content_type="series",
+                    include_all_sources=True,
+                    series_id__in=series_relations.values("series_id"),
+                )
+                | Q(
+                    content_type="series",
+                    include_all_sources=False,
+                    source_memberships__series_relation_id__in=series_relations.values(
+                        "id"
+                    ),
+                )
+            ).distinct()
         paginator = PageNumberPagination()
         paginator.page_size = 50
         paginator.page_size_query_param = "page_size"
@@ -3376,6 +3494,90 @@ class VODListViewSet(viewsets.ModelViewSet):
         return paginator.get_paginated_response(
             VODListItemSerializer(page, many=True, context={"request": request}).data
         )
+
+    @action(detail=True, methods=["get"], url_path="filter-options")
+    def filter_options(self, request, pk=None):
+        """Return technical values present in this list's active sources."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        vod_list = self.get_object()
+        cache_key = (
+            f"vod_list_filter_options:{catalog_generation()}:"
+            f"{vod_list.pk}:{vod_list.active_generation}"
+        )
+        cached = safe_cache_get(cache_key)
+        if isinstance(cached, dict):
+            return Response(cached)
+
+        items = vod_list.items.filter(generation=vod_list.active_generation)
+        all_movie_ids = items.filter(
+            content_type="movie",
+            include_all_sources=True,
+            movie__isnull=False,
+        ).values("movie_id")
+        all_series_ids = items.filter(
+            content_type="series",
+            include_all_sources=True,
+            series__isnull=False,
+        ).values("series_id")
+        exact_movie_ids = VODListSourceMembership.objects.filter(
+            item__list=vod_list,
+            item__generation=vod_list.active_generation,
+            movie_relation__isnull=False,
+        ).values("movie_relation_id")
+        exact_series_ids = VODListSourceMembership.objects.filter(
+            item__list=vod_list,
+            item__generation=vod_list.active_generation,
+            series_relation__isnull=False,
+        ).values("series_relation_id")
+        movie_relations = M3UMovieRelation.objects.filter(
+            Q(pk__in=exact_movie_ids) | Q(movie_id__in=all_movie_ids),
+            m3u_account__is_active=True,
+        ).select_related("m3u_account", "category")
+        series_relations = M3USeriesRelation.objects.filter(
+            Q(pk__in=exact_series_ids) | Q(series_id__in=all_series_ids),
+            m3u_account__is_active=True,
+        ).select_related("m3u_account", "category")
+
+        from .policies import enabled_category_map, relation_metadata
+
+        category_mapping = enabled_category_map()
+        result = {
+            "audio_languages": set(),
+            "subtitle_languages": set(),
+            "resolutions": set(),
+            "container_extensions": set(),
+            "video_features": set(),
+        }
+        for relations in (movie_relations, series_relations):
+            for relation in relations.iterator(chunk_size=2000):
+                metadata = relation_metadata(
+                    relation,
+                    category_mapping.get(
+                        (relation.m3u_account_id, relation.category_id)
+                    ),
+                )
+                for field, target in (
+                    ("audio_languages", "audio_languages"),
+                    ("subtitle_languages", "subtitle_languages"),
+                    ("video_features", "video_features"),
+                ):
+                    values = metadata.get(field) or []
+                    if not isinstance(values, list):
+                        values = [values]
+                    result[target].update(
+                        str(value).lower() for value in values if value
+                    )
+                resolution = metadata.get("resolution")
+                if resolution:
+                    result["resolutions"].add(str(resolution).lower())
+                container = metadata.get("container_extension")
+                if container and str(container).lower() not in IMAGE_VIDEO_CODECS:
+                    result["container_extensions"].add(str(container).lower())
+        payload = {key: sorted(values) for key, values in result.items()}
+        safe_cache_set(cache_key, payload, timeout=3600)
+        return Response(payload)
 
     @action(detail=True, methods=["put"], url_path="manual-items")
     def manual_items(self, request, pk=None):

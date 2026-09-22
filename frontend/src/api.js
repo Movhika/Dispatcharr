@@ -1688,6 +1688,12 @@ export default class API {
     );
   }
 
+  static async getVODListFilterOptions(id) {
+    return await request(`${host}/api/vod/lists/${id}/filter-options/`, {
+      cache: 'no-store',
+    });
+  }
+
   static async replaceManualVODListItems(id, items) {
     return await request(`${host}/api/vod/lists/${id}/manual-items/`, {
       method: 'PUT',

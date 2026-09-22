@@ -190,6 +190,7 @@ const VODSourceList = ({
   profileCandidates,
   profileCandidatesLoading = false,
   profileCandidatesError = '',
+  listSourceScope = null,
 }) => {
   const candidateRows = profileCandidates?.results || [];
   const candidateByRelation = new Map(
@@ -205,6 +206,10 @@ const VODSourceList = ({
           (candidateOrder.get(String(right.id)) ?? Number.MAX_SAFE_INTEGER)
       )
     : providers;
+  const listRelationIds = new Set(
+    (listSourceScope?.relationIds || []).map(String)
+  );
+  const hasListSourceScope = Boolean(listSourceScope);
 
   return (
     <Stack gap="xs">
@@ -232,12 +237,16 @@ const VODSourceList = ({
           highlightOnHover
           withTableBorder
           layout="fixed"
-          miw={contentType === 'movie' ? 1120 : 980}
+          miw={
+            (contentType === 'movie' ? 1120 : 980) +
+            (hasListSourceScope ? 100 : 0)
+          }
           aria-label="Exact VOD sources"
         >
           <TableThead>
             <TableTr>
               {profileCandidates && <TableTh w={125}>Order</TableTh>}
+              {hasListSourceScope && <TableTh w={100}>List</TableTh>}
               <TableTh>
                 <Stack gap={0}>
                   <Text inherit fw={700}>
@@ -277,6 +286,10 @@ const VODSourceList = ({
               );
               const selected = selectedProvider?.id === provider.id;
               const profileRow = candidateByRelation.get(String(provider.id));
+              const includedInList =
+                hasListSourceScope &&
+                (listSourceScope.includeAllSources ||
+                  listRelationIds.has(String(provider.id)));
               return (
                 <TableTr
                   key={provider.id}
@@ -287,10 +300,14 @@ const VODSourceList = ({
                     opacity: profileRow && !profileRow.allowed ? 0.48 : 1,
                     backgroundColor: selected
                       ? 'var(--mantine-color-blue-light)'
-                      : undefined,
+                      : includedInList
+                        ? 'var(--mantine-color-green-light)'
+                        : undefined,
                     boxShadow: selected
                       ? 'inset 3px 0 var(--mantine-color-blue-6)'
-                      : undefined,
+                      : includedInList
+                        ? 'inset 3px 0 var(--mantine-color-green-6)'
+                        : undefined,
                   }}
                 >
                   {profileCandidates && (
@@ -310,6 +327,15 @@ const VODSourceList = ({
                             </Text>
                           )}
                       </Stack>
+                    </TableTd>
+                  )}
+                  {hasListSourceScope && (
+                    <TableTd>
+                      {includedInList && (
+                        <Badge color="green" variant="light">
+                          Included
+                        </Badge>
+                      )}
                     </TableTd>
                   )}
                   <TableTd>
