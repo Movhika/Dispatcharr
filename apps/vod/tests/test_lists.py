@@ -275,6 +275,16 @@ class VODListAPITests(TestCase):
                     "release_date": "2026-02-12",
                 },
                 {
+                    "id": 777,
+                    "title": "Curated Movie",
+                    "release_date": "2026-02-12",
+                },
+                {
+                    "id": 888,
+                    "title": "Remote Only",
+                    "release_date": "2025-10-01",
+                },
+                {
                     "id": 888,
                     "title": "Remote Only",
                     "release_date": "2025-10-01",
