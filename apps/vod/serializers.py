@@ -549,6 +549,34 @@ class VODListSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "external_key": "External lists require a list identifier."
                 })
+            if provider == "tmdb" and external_key == "watch-provider":
+                content_type = attrs.get(
+                    "content_type",
+                    getattr(self.instance, "content_type", VODList.ContentType.ALL),
+                )
+                settings = attrs.get(
+                    "settings", getattr(self.instance, "settings", {})
+                )
+                settings = settings if isinstance(settings, dict) else {}
+                provider_id = str(settings.get("watch_provider_id") or "")
+                region = str(settings.get("watch_region") or "").upper()
+                if content_type not in {
+                    VODList.ContentType.MOVIE,
+                    VODList.ContentType.SERIES,
+                }:
+                    raise serializers.ValidationError({
+                        "content_type": (
+                            "TMDB watch-provider lists must target movies or series."
+                        )
+                    })
+                if not provider_id.isdigit():
+                    raise serializers.ValidationError({
+                        "settings": "Choose a TMDB watch provider."
+                    })
+                if not re.fullmatch(r"[A-Z]{2}", region):
+                    raise serializers.ValidationError({
+                        "settings": "Choose a two-letter TMDB watch region."
+                    })
         elif provider or external_key:
             raise serializers.ValidationError({
                 "provider": (

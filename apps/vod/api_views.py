@@ -3267,7 +3267,7 @@ class VODListViewSet(viewsets.ModelViewSet):
         )
         sql = f"""
             WITH content AS ({selects}), values AS (
-                SELECT 'genre' AS kind, genre ->> 'name' AS value
+                SELECT genre ->> 'name' AS value
                 FROM content
                 CROSS JOIN LATERAL jsonb_array_elements(
                     CASE
@@ -3276,46 +3276,84 @@ class VODListViewSet(viewsets.ModelViewSet):
                         ELSE '[]'::jsonb
                     END
                 ) genre
-                UNION ALL
-                SELECT 'watch_provider' AS kind, provider ->> 'name' AS value
-                FROM content
-                CROSS JOIN LATERAL jsonb_each(
-                    CASE
-                        WHEN jsonb_typeof(tmdb_metadata -> 'watch_providers') = 'object'
-                        THEN tmdb_metadata -> 'watch_providers'
-                        ELSE '{{}}'::jsonb
-                    END
-                ) region
-                CROSS JOIN LATERAL jsonb_each(
-                    CASE
-                        WHEN jsonb_typeof(region.value) = 'object'
-                        THEN region.value
-                        ELSE '{{}}'::jsonb
-                    END
-                ) access
-                CROSS JOIN LATERAL jsonb_array_elements(
-                    CASE
-                        WHEN access.key IN ('flatrate', 'free', 'ads', 'rent', 'buy')
-                         AND jsonb_typeof(access.value) = 'array'
-                        THEN access.value
-                        ELSE '[]'::jsonb
-                    END
-                ) provider
             )
-            SELECT kind, BTRIM(value)
+            SELECT BTRIM(value)
             FROM values
             WHERE NULLIF(BTRIM(value), '') IS NOT NULL
-            GROUP BY kind, BTRIM(value)
-            ORDER BY kind, LOWER(BTRIM(value))
+            GROUP BY BTRIM(value)
+            ORDER BY LOWER(BTRIM(value))
         """
-        result = {"genres": [], "watch_providers": []}
+        result = {"genres": []}
         with connection.cursor() as cursor:
             cursor.execute(sql)
-            for kind, value in cursor.fetchall():
-                result[
-                    "genres" if kind == "genre" else "watch_providers"
-                ].append(value)
+            result["genres"] = [value for (value,) in cursor.fetchall()]
         safe_cache_set(cache_key, result, timeout=3600)
+        return Response(result)
+
+    @action(detail=False, methods=["get"], url_path="external-options")
+    def external_options(self, request):
+        """Return authoritative TMDB watch providers for external lists."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        content_type = str(request.query_params.get("type") or "movie").lower()
+        if content_type not in {"movie", "series"}:
+            raise DRFValidationError({
+                "type": "TMDB watch-provider lists must target movies or series."
+            })
+        languages = CoreSettings.get_tmdb_languages()
+        language = languages[0] if languages else "en-US"
+        default_region = (
+            language.split("-", 1)[1]
+            if "-" in language
+            else "US"
+        ).upper()
+        region = str(
+            request.query_params.get("region") or default_region
+        ).strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", region):
+            raise DRFValidationError({"region": "Use a two-letter region code."})
+        cache_key = f"vod_list_external_options:tmdb:{content_type}:{region}:{language}"
+        cached = safe_cache_get(cache_key)
+        if isinstance(cached, dict):
+            return Response(cached)
+
+        token = CoreSettings.get_tmdb_api_token()
+        if not token:
+            raise DRFValidationError({
+                "detail": "Configure a TMDB API token first."
+            })
+        from .tmdb import Client
+
+        path = (
+            "watch/providers/movie"
+            if content_type == "movie"
+            else "watch/providers/tv"
+        )
+        payload = Client(token).get(
+            path,
+            language=language,
+            watch_region=region,
+        )
+        providers = []
+        for row in payload.get("results") or []:
+            provider_id = row.get("provider_id")
+            name = str(row.get("provider_name") or "").strip()
+            if provider_id is None or not name:
+                continue
+            providers.append({
+                "value": str(provider_id),
+                "label": name,
+                "logo_path": row.get("logo_path") or "",
+            })
+        providers.sort(key=lambda row: row["label"].casefold())
+        result = {
+            "provider": "tmdb",
+            "content_type": content_type,
+            "region": region,
+            "watch_providers": providers,
+        }
+        safe_cache_set(cache_key, result, timeout=24 * 60 * 60)
         return Response(result)
 
     @action(detail=True, methods=["get"], url_path="items")
@@ -3481,39 +3519,30 @@ class VODListViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="rebuild")
     def rebuild(self, request, pk=None):
-        """Refresh a dynamic or supported external list and publish atomically."""
+        """Queue a dynamic or supported external list for an atomic rebuild."""
         denied = self._admin_only(request)
         if denied is not None:
             return denied
         vod_list = self.get_object()
-        try:
-            if vod_list.list_type == VODList.ListType.DYNAMIC:
-                from .lists import rebuild_dynamic_list
-
-                rebuild_dynamic_list(vod_list)
-            elif (
+        supported = (
+            vod_list.list_type == VODList.ListType.DYNAMIC
+            or (
                 vod_list.list_type == VODList.ListType.EXTERNAL
                 and vod_list.provider == "tmdb"
-            ):
-                from .lists import rebuild_tmdb_list
-
-                rebuild_tmdb_list(vod_list)
-            else:
-                raise DRFValidationError({
-                    "detail": "This list type has no automatic builder yet."
-                })
-        except ValueError as exc:
-            raise DRFValidationError({"detail": str(exc)}) from exc
-
-        from .catalog_cache import bump_catalog_generation
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-        bump_catalog_generation(invalidate_selections=False)
-        enqueue_all_profile_selection_rebuilds(
-            trigger_reason=f'VOD list "{vod_list.name}" was rebuilt'
+            )
         )
+        if not supported:
+            raise DRFValidationError({
+                "detail": "This list type has no automatic builder yet."
+            })
+        from .tasks import enqueue_vod_list_rebuild
+
+        enqueue_vod_list_rebuild(vod_list.pk, rebuild_profiles=True)
         vod_list = self.get_queryset().get(pk=vod_list.pk)
-        return Response(self.get_serializer(vod_list).data)
+        return Response(
+            self.get_serializer(vod_list).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=["post"], url_path="add-items")
     def add_items(self, request, pk=None):

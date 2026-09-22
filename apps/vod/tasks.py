@@ -35,6 +35,187 @@ TMDB_ENRICHMENT_LOCK_NAME = "vod_tmdb_enrichment"
 TMDB_ENRICHMENT_LOCK_ID = "global"
 TMDB_PROGRESS_INTERVAL = 25
 TMDB_ENRICHMENT_LOCK_VALUE = "locked"
+VOD_LIST_REBUILD_LOCK_NAME = "vod_list_rebuild"
+
+
+def _set_vod_list_sync_state(vod_list_id, status, *, progress=None, error=None):
+    """Persist list-build state without requiring the caller to hold a model."""
+    from .models import VODList
+
+    updates = {"sync_status": status, "sync_error": str(error or "")[:2000]}
+    if progress is not None:
+        updates["sync_progress"] = progress
+    VODList.objects.filter(pk=vod_list_id).update(**updates)
+
+
+def _run_vod_list_builder(vod_list_id, *, task_id=""):
+    """Build one list while keeping its previous generation readable."""
+    from .lists import rebuild_dynamic_list, rebuild_tmdb_list
+    from .models import VODList
+
+    vod_list = VODList.objects.get(pk=vod_list_id)
+    _set_vod_list_sync_state(
+        vod_list_id,
+        VODList.SyncStatus.RUNNING,
+        progress={
+            "phase": "Building list",
+            "percent": 0,
+            "task_id": str(task_id or ""),
+        },
+    )
+    try:
+        if vod_list.list_type == VODList.ListType.DYNAMIC:
+            rebuilt = rebuild_dynamic_list(vod_list)
+        elif (
+            vod_list.list_type == VODList.ListType.EXTERNAL
+            and vod_list.provider == "tmdb"
+        ):
+            rebuilt = rebuild_tmdb_list(vod_list)
+        else:
+            raise ValueError("This list type has no automatic builder yet.")
+        return {"id": rebuilt.pk, "name": rebuilt.name, "status": "complete"}
+    except Exception as exc:
+        _set_vod_list_sync_state(
+            vod_list_id,
+            VODList.SyncStatus.FAILED,
+            progress={
+                "phase": "List build failed",
+                "percent": 100,
+                "task_id": str(task_id or ""),
+            },
+            error=exc,
+        )
+        logger.exception("VOD list %s rebuild failed", vod_list_id)
+        return {"id": vod_list_id, "status": "failed", "error": str(exc)}
+
+
+@shared_task(bind=True)
+def rebuild_vod_list(self, vod_list_id, rebuild_profiles=True):
+    """Build one list asynchronously and refresh dependent profiles once."""
+    result = _run_vod_list_builder(vod_list_id, task_id=self.request.id)
+    if result["status"] == "complete":
+        from .catalog_cache import bump_catalog_generation
+
+        bump_catalog_generation(invalidate_selections=False)
+        if rebuild_profiles:
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason=f'VOD list "{result["name"]}" was rebuilt'
+            )
+    return result
+
+
+def enqueue_vod_list_rebuild(vod_list_id, *, rebuild_profiles=True):
+    """Publish one durable list build and return its immediately visible state."""
+    from .models import VODList
+
+    with transaction.atomic():
+        vod_list = VODList.objects.select_for_update().get(pk=vod_list_id)
+        if vod_list.sync_status in {
+            VODList.SyncStatus.QUEUED,
+            VODList.SyncStatus.RUNNING,
+        }:
+            return vod_list, False
+        vod_list.sync_status = VODList.SyncStatus.QUEUED
+        vod_list.sync_progress = {"phase": "Waiting for worker", "percent": 0}
+        vod_list.sync_error = ""
+        vod_list.save(
+            update_fields=["sync_status", "sync_progress", "sync_error", "updated_at"]
+        )
+
+        def publish():
+            try:
+                result = rebuild_vod_list.delay(vod_list.pk, rebuild_profiles)
+                VODList.objects.filter(
+                    pk=vod_list.pk,
+                    sync_status=VODList.SyncStatus.QUEUED,
+                ).update(
+                    sync_progress={
+                        "phase": "Waiting for worker",
+                        "percent": 0,
+                        "task_id": result.id,
+                    }
+                )
+            except Exception as exc:
+                logger.exception("Could not enqueue VOD list %s", vod_list.pk)
+                _set_vod_list_sync_state(
+                    vod_list.pk,
+                    VODList.SyncStatus.FAILED,
+                    progress={"phase": "Could not publish background task", "percent": 100},
+                    error=exc,
+                )
+
+        transaction.on_commit(publish)
+    return vod_list, True
+
+
+@shared_task(bind=True)
+def rebuild_enabled_vod_lists(self, rebuild_profiles=True, trigger_reason=""):
+    """Rebuild enabled automatic lists, then publish one profile batch."""
+    from .catalog_cache import bump_catalog_generation
+    from .models import VODList
+
+    if not acquire_task_lock(VOD_LIST_REBUILD_LOCK_NAME, "global"):
+        logger.info("An enabled VOD-list batch is already running")
+        return {"status": "already_running"}
+    lock_renewer = TaskLockRenewer(VOD_LIST_REBUILD_LOCK_NAME, "global")
+    lock_renewer.start()
+    try:
+        list_ids = list(
+            VODList.objects.filter(is_enabled=True)
+            .filter(
+                Q(list_type=VODList.ListType.DYNAMIC)
+                | Q(
+                    list_type=VODList.ListType.EXTERNAL,
+                    provider="tmdb",
+                )
+            )
+            .values_list("id", flat=True)
+        )
+        results = [
+            _run_vod_list_builder(vod_list_id, task_id=self.request.id)
+            for vod_list_id in list_ids
+        ]
+        if any(result["status"] == "complete" for result in results):
+            bump_catalog_generation(invalidate_selections=False)
+        if rebuild_profiles:
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            enqueue_all_profile_selection_rebuilds(
+                trigger_reason=trigger_reason
+                or "VOD lists were rebuilt after a provider catalog change"
+            )
+        return {"status": "complete", "results": results}
+    finally:
+        lock_renewer.stop()
+        release_task_lock(VOD_LIST_REBUILD_LOCK_NAME, "global")
+
+
+def enqueue_enabled_vod_list_rebuilds(*, rebuild_profiles=True, trigger_reason=""):
+    """Queue all automatic lists and expose their queued state immediately."""
+    from .models import VODList
+
+    queryset = VODList.objects.filter(is_enabled=True).filter(
+        Q(list_type=VODList.ListType.DYNAMIC)
+        | Q(list_type=VODList.ListType.EXTERNAL, provider="tmdb")
+    )
+    list_ids = list(queryset.values_list("id", flat=True))
+    if not list_ids:
+        if rebuild_profiles:
+            from .profile_selection import enqueue_all_profile_selection_rebuilds
+
+            return enqueue_all_profile_selection_rebuilds(
+                trigger_reason=trigger_reason or "The VOD provider catalog changed"
+            )
+        return False
+    queryset.exclude(sync_status=VODList.SyncStatus.RUNNING).update(
+        sync_status=VODList.SyncStatus.QUEUED,
+        sync_progress={"phase": "Waiting for worker", "percent": 0},
+        sync_error="",
+    )
+    rebuild_enabled_vod_lists.delay(rebuild_profiles, trigger_reason)
+    return True
 
 
 def _import_source_metadata(category_relation, container_extension=None):
@@ -728,10 +909,12 @@ def enrich_vod_metadata(
         # incremental TMDB scan. Keep the rebuild request pending so clients
         # switch only after that final scan has enriched the newest catalog.
         if must_rebuild_profiles and not rerun_after:
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-            enqueue_all_profile_selection_rebuilds(
-                trigger_reason="A changed provider catalog was enriched with TMDB metadata"
+            enqueue_enabled_vod_list_rebuilds(
+                rebuild_profiles=True,
+                trigger_reason=(
+                    "A changed provider catalog was enriched, then its VOD "
+                    "lists were rebuilt"
+                ),
             )
             VODMetadataState.objects.filter(pk=1).update(
                 rebuild_profiles_after_completion=False
@@ -791,10 +974,12 @@ def enrich_vod_metadata(
             ).exists()
         )
         if must_rebuild_profiles:
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
-
-            enqueue_all_profile_selection_rebuilds(
-                trigger_reason="Provider catalog changed; TMDB enrichment failed"
+            enqueue_enabled_vod_list_rebuilds(
+                rebuild_profiles=True,
+                trigger_reason=(
+                    "Provider catalog changed; lists were rebuilt after TMDB "
+                    "enrichment failed"
+                ),
             )
             VODMetadataState.objects.filter(pk=1).update(
                 rebuild_profiles_after_completion=False
@@ -889,13 +1074,11 @@ def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
 
     from core.models import CoreSettings
 
-    from .profile_selection import enqueue_all_profile_selection_rebuilds
-
     # Enrichment processes only new or explicitly unlocked canonical titles.
-    # When enabled, let that pass finish before rebuilding profiles so clients
-    # switch once to the final catalog. Without a configured enrichment pass,
-    # the cleanup stage locks new titles and the changed source catalog is
-    # rebuilt immediately.
+    # When enabled, let that pass finish before rebuilding lists and profiles
+    # so clients switch once to the final catalog. Without a configured
+    # enrichment pass, cleanup has already completed and list rebuilding can
+    # begin immediately.
     if (
         CoreSettings.get_tmdb_auto_enrich()
         and CoreSettings.get_tmdb_api_token()
@@ -906,11 +1089,12 @@ def _enqueue_deferred_profile_rebuild_after_vod_refreshes():
         )
         return result["queued"] or result["status"] in {"queued", "running"}
 
-    return enqueue_all_profile_selection_rebuilds(
+    return enqueue_enabled_vod_list_rebuilds(
+        rebuild_profiles=True,
         trigger_reason=(
-            "One or more completed VOD provider refreshes changed the source "
-            "catalog"
-        )
+            "One or more provider VOD refreshes completed, then VOD lists "
+            "were rebuilt"
+        ),
     )
 
 
