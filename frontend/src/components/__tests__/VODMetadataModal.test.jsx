@@ -34,6 +34,7 @@ vi.mock('../SeriesModal.jsx', () => ({
 vi.mock('lucide-react', () => ({
   Eye: () => null,
   LockKeyhole: () => null,
+  LockKeyholeOpen: () => null,
 }));
 vi.mock('@mantine/core', () => {
   const Wrapper = ({ children }) => <div>{children}</div>;
@@ -154,6 +155,7 @@ describe('VODMetadataModal', () => {
           year: 2021,
           tmdb_status: 'ambiguous',
           candidate_count: 2,
+          metadata_auto_locked: true,
         },
       ],
     });
@@ -254,7 +256,7 @@ describe('VODMetadataModal', () => {
     expect(await screen.findByText('4K-D+ - Bliss')).toBeInTheDocument();
   });
 
-  it('opens the canonical detail view instead of showing type and year columns', async () => {
+  it('shows the extracted year and opens the canonical detail view', async () => {
     render(<VODMetadataModal opened onClose={vi.fn()} />);
     await screen.findByDisplayValue('4K-D+ -');
     fireEvent.change(screen.getByLabelText('Preview titles containing'), {
@@ -269,8 +271,10 @@ describe('VODMetadataModal', () => {
       screen.queryByRole('columnheader', { name: 'Type' })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('columnheader', { name: 'Year' })
-    ).not.toBeInTheDocument();
+      screen.getByRole('columnheader', { name: 'Year' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('2021')).toBeInTheDocument();
+    expect(screen.getByLabelText('Metadata locked')).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole('button', {

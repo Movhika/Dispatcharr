@@ -23,7 +23,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Eye, LockKeyhole } from 'lucide-react';
+import { Eye, LockKeyhole, LockKeyholeOpen } from 'lucide-react';
 import API from '../api';
 import { showNotification } from '../utils/notificationUtils';
 import { showVODProfileRebuildNotice } from '../utils/vodProfileUpdates.js';
@@ -480,6 +480,7 @@ const VODMetadataModal = ({
               <Table.Tr>
                 <Table.Th>Provider title</Table.Th>
                 <Table.Th>Clean title</Table.Th>
+                <Table.Th w={90}>Year</Table.Th>
                 {selectionContext && <Table.Th>TMDB result</Table.Th>}
                 <Table.Th w={72} ta="center">
                   Details
@@ -495,6 +496,7 @@ const VODMetadataModal = ({
                       {row.after || '—'}
                     </Text>
                   </Table.Td>
+                  <Table.Td>{row.year || '—'}</Table.Td>
                   {selectionContext && (
                     <Table.Td>
                       <Text size="xs" c={tmdbResult(row).color} fw={600}>
@@ -503,21 +505,49 @@ const VODMetadataModal = ({
                     </Table.Td>
                   )}
                   <Table.Td ta="center">
-                    <ActionIcon
-                      variant="subtle"
-                      aria-label={`Open details for ${row.after || row.before || 'title'}`}
-                      onClick={() =>
-                        setDetailContent({
-                          id: row.id,
-                          name: row.after || row.before || '',
-                          year: row.year || null,
-                          contentType: row.content_type,
-                          content_type: row.content_type,
-                        })
-                      }
-                    >
-                      <Eye size={16} />
-                    </ActionIcon>
+                    <Group gap={2} justify="center" wrap="nowrap">
+                      <Tooltip
+                        label={
+                          row.metadata_auto_locked
+                            ? 'Automatic metadata matching is locked'
+                            : 'Automatic metadata matching is unlocked'
+                        }
+                        withArrow
+                      >
+                        <span
+                          aria-label={
+                            row.metadata_auto_locked
+                              ? 'Metadata locked'
+                              : 'Metadata unlocked'
+                          }
+                          style={{ display: 'inline-flex' }}
+                        >
+                          {row.metadata_auto_locked ? (
+                            <LockKeyhole size={15} />
+                          ) : (
+                            <LockKeyholeOpen size={15} />
+                          )}
+                        </span>
+                      </Tooltip>
+                      <ActionIcon
+                        variant="subtle"
+                        aria-label={`Open details for ${row.after || row.before || 'title'}`}
+                        onClick={() =>
+                          setDetailContent({
+                            id: row.id,
+                            name: row.after || row.before || '',
+                            year: row.year || null,
+                            contentType: row.content_type,
+                            content_type: row.content_type,
+                            metadata_auto_locked: Boolean(
+                              row.metadata_auto_locked
+                            ),
+                          })
+                        }
+                      >
+                        <Eye size={16} />
+                      </ActionIcon>
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
