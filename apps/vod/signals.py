@@ -5,6 +5,7 @@ from django.db.models.signals import (
     post_delete,
     post_migrate,
     post_save,
+    pre_delete,
     pre_save,
 )
 from django.dispatch import receiver
@@ -20,6 +21,7 @@ from .models import (
     M3USeriesRelation,
     M3UVODCategoryRelation,
     VODAccessPolicy,
+    VODList,
     VODPolicyCategory,
     VODPolicyList,
 )
@@ -41,6 +43,35 @@ def assign_vod_policy_to_new_user(sender, instance, created, **kwargs):
     from .defaults import assign_default_vod_policy
 
     assign_default_vod_policy(instance)
+
+
+@receiver(pre_delete, sender=VODList)
+def remember_profiles_using_deleted_vod_list(sender, instance, **kwargs):
+    """Capture affected profiles before list-rule rows cascade away."""
+    if not instance.is_enabled:
+        instance._selected_policy_ids = ()
+        return
+    instance._selected_policy_ids = tuple(
+        VODPolicyList.objects.filter(
+            vod_list=instance,
+            enabled=True,
+            policy__is_active=True,
+            policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        ).values_list("policy_id", flat=True).distinct()
+    )
+
+
+@receiver(post_delete, sender=VODList)
+def rebuild_profiles_using_deleted_vod_list(sender, instance, **kwargs):
+    """Publish rebuilds only for profiles whose output used this list."""
+    from .profile_selection import enqueue_profile_selection_rebuild
+
+    bump_catalog_generation(invalidate_selections=False)
+    for policy_id in getattr(instance, "_selected_policy_ids", ()):
+        enqueue_profile_selection_rebuild(
+            policy_id,
+            trigger_reason=f'VOD list "{instance.name}" was deleted',
+        )
 
 
 CANONICAL_METADATA_MODELS = (
@@ -217,6 +248,13 @@ def invalidate_vod_catalog(
     account_delete = isinstance(delete_origin, M3UAccount) or (
         getattr(delete_origin, "model", None) is M3UAccount
     )
+    list_delete = isinstance(delete_origin, VODList) or (
+        getattr(delete_origin, "model", None) is VODList
+    )
+    if signal is post_delete and list_delete and sender is VODPolicyList:
+        # The list-level handler above queues only profiles which used this
+        # list; cascaded rules must not leave unrelated profiles Pending.
+        return
     if signal is post_delete and account_delete and sender in (
         M3UMovieRelation,
         M3USeriesRelation,

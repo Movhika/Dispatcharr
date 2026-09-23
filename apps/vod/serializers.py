@@ -25,6 +25,7 @@ from .metadata import (
     normalize_video_features,
 )
 from .policies import enabled_category_map
+from .list_order import SORT_MODES, ordered_list_items
 
 
 class QualityInfoSerializer(serializers.Serializer):
@@ -542,6 +543,13 @@ class VODListSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        settings = attrs.get("settings", getattr(self.instance, "settings", {}))
+        if not isinstance(settings, dict):
+            raise serializers.ValidationError({"settings": "Expected an object."})
+        if str(settings.get("sort_mode") or "") not in SORT_MODES:
+            raise serializers.ValidationError({
+                "settings": "Choose a supported list sorting option."
+            })
         list_type = attrs.get(
             "list_type",
             getattr(self.instance, "list_type", VODList.ListType.MANUAL),
@@ -677,10 +685,12 @@ class VODListSerializer(serializers.ModelSerializer):
         cache = getattr(obj, "_active_preview_cache", None)
         if cache is None:
             cache = list(
-                obj.items.filter(generation=obj.active_generation)
-                .select_related("movie__logo", "series__logo")
-                .prefetch_related("source_memberships")
-                .order_by("position", "id")[:20]
+                ordered_list_items(
+                    obj,
+                    obj.items.filter(generation=obj.active_generation)
+                    .select_related("movie__logo", "series__logo")
+                    .prefetch_related("source_memberships"),
+                )[:48]
             )
             obj._active_preview_cache = cache
         return cache

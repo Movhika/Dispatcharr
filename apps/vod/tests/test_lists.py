@@ -9,11 +9,17 @@ from apps.m3u.models import M3UAccount
 from apps.output.views import (
     VOD_MOVIES_CATEGORY_ID,
     VOD_SERIES_CATEGORY_ID,
+    _xc_order_relations_by_list,
     xc_get_series_categories,
     xc_get_vod_categories,
 )
 from apps.vod.api_views import VODAccessPolicyViewSet, VODListViewSet
 from apps.vod.lists import dynamic_rule_matches, rebuild_dynamic_list, rebuild_tmdb_list
+from apps.vod.profile_selection import (
+    enqueue_selected_list_profile_rebuilds,
+    profile_selection_signature,
+)
+from apps.vod.tasks import rebuild_vod_list
 from apps.vod.models import (
     M3UMovieRelation,
     Movie,
@@ -145,7 +151,7 @@ class VODListAPITests(TestCase):
 
     def test_list_preview_filters_exact_sources_and_returns_membership_ids(self):
         self.movie_relation.manual_metadata = {
-            "audio_languages": ["deu"],
+            "audio_languages": ["ger"],
             "video_features": ["3d"],
         }
         self.movie_relation.save(update_fields=["manual_metadata"])
@@ -161,6 +167,31 @@ class VODListAPITests(TestCase):
             item=item,
             movie_relation=self.movie_relation,
         )
+
+        basic_preview = self._request(
+            "get",
+            f"/api/vod/lists/{vod_list.pk}/items/",
+            "items",
+            data={"search": "Curated", "availability": "available"},
+            pk=vod_list.pk,
+        )
+        self.assertEqual(basic_preview.data["count"], 1)
+        for field, value in (
+            ("audio_language", "deu"),
+            ("video_feature", "3d"),
+        ):
+            single_filter = self._request(
+                "get",
+                f"/api/vod/lists/{vod_list.pk}/items/",
+                "items",
+                data={
+                    "search": "Curated",
+                    "availability": "available",
+                    field: value,
+                },
+                pk=vod_list.pk,
+            )
+            self.assertEqual(single_filter.data["count"], 1, field)
 
         response = self._request(
             "get",
@@ -189,8 +220,97 @@ class VODListAPITests(TestCase):
             pk=vod_list.pk,
         )
         self.assertEqual(options.status_code, 200)
-        self.assertEqual(options.data["audio_languages"], ["deu"])
+        self.assertEqual(options.data["audio_languages"], ["ger"])
         self.assertEqual(options.data["video_features"], ["3d"])
+
+    def test_list_order_uses_original_release_or_library_added_dates(self):
+        older_release = Movie.objects.create(
+            name="Older release",
+            year=2024,
+            tmdb_metadata={"release_date": "2024-03-01"},
+        )
+        newer_release = Movie.objects.create(
+            name="Newer release",
+            year=2026,
+            tmdb_metadata={"release_date": "2026-04-15"},
+        )
+        now = timezone.now()
+        older_release.library_added_at = now
+        older_release.save(update_fields=["library_added_at"])
+        newer_release.library_added_at = now - timedelta(days=3)
+        newer_release.save(update_fields=["library_added_at"])
+        vod_list = VODList.objects.create(name="Ordered movies")
+        VODListItem.objects.create(
+            list=vod_list, content_type="movie", movie=older_release, position=0,
+        )
+        VODListItem.objects.create(
+            list=vod_list, content_type="movie", movie=newer_release, position=1,
+        )
+
+        def item_ids():
+            response = self._request(
+                "get", f"/api/vod/lists/{vod_list.pk}/items/", "items",
+                pk=vod_list.pk,
+            )
+            self.assertEqual(response.status_code, 200)
+            return [row["canonical_id"] for row in response.data["results"]]
+
+        self.assertEqual(item_ids(), [older_release.pk, newer_release.pk])
+        vod_list.settings = {"sort_mode": "release_date_desc"}
+        vod_list.save(update_fields=["settings"])
+        self.assertEqual(item_ids(), [newer_release.pk, older_release.pk])
+        vod_list.settings = {"sort_mode": "library_added_desc"}
+        vod_list.save(update_fields=["settings"])
+        self.assertEqual(item_ids(), [older_release.pk, newer_release.pk])
+
+        rows = [{"movie_id": newer_release.pk}, {"movie_id": older_release.pk}]
+        _xc_order_relations_by_list(rows, vod_list.pk, "movie")
+        self.assertEqual(
+            [row["movie_id"] for row in rows],
+            [older_release.pk, newer_release.pk],
+        )
+
+    def test_external_release_sort_includes_unavailable_titles(self):
+        vod_list = VODList.objects.create(
+            name="External dates",
+            list_type=VODList.ListType.EXTERNAL,
+            provider="tmdb",
+            external_key="trending-movies",
+            settings={"sort_mode": "release_date_desc"},
+        )
+        VODListItem.objects.create(
+            list=vod_list,
+            content_type="movie",
+            movie=self.movie,
+            position=0,
+            year=2026,
+            metadata={"release_date": "2026-01-01"},
+        )
+        VODListItem.objects.create(
+            list=vod_list,
+            content_type="movie",
+            title="Not yet available",
+            position=1,
+            year=2026,
+            metadata={"release_date": "2026-08-01"},
+        )
+
+        response = self._request(
+            "get", f"/api/vod/lists/{vod_list.pk}/items/", "items",
+            pk=vod_list.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["results"][0]["display_title"], "Not yet available")
+
+    def test_list_rejects_unsupported_sort_mode(self):
+        response = self._request(
+            "post", "/api/vod/lists/", "create",
+            data={"name": "Invalid order", "settings": {"sort_mode": "random"}},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("settings", response.data)
 
     def test_profile_preview_names_the_list_instead_of_provider_category(self):
         vod_list = VODList.objects.create(name="AppleTV")
@@ -433,6 +553,116 @@ class VODListAPITests(TestCase):
             trigger_reason="A selected VOD list was enabled or disabled",
         )
 
+    @patch("apps.vod.profile_selection.enqueue_profile_selection_rebuild")
+    def test_list_rebuild_targets_only_profiles_selecting_that_list(self, enqueue):
+        selected_list = VODList.objects.create(name="Selected list")
+        other_list = VODList.objects.create(name="Other list")
+        inactive_list = VODList.objects.create(
+            name="Disabled list", is_enabled=False
+        )
+        selected = VODAccessPolicy.objects.create(
+            name="Selected profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        also_selected = VODAccessPolicy.objects.create(
+            name="Also selected",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        disabled_rule = VODAccessPolicy.objects.create(
+            name="Disabled rule",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        other = VODAccessPolicy.objects.create(
+            name="Other list profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        non_list = VODAccessPolicy.objects.create(
+            name="Provider profile",
+            category_mode=VODAccessPolicy.CategoryMode.PROVIDER,
+        )
+        inactive = VODAccessPolicy.objects.create(
+            name="Inactive list profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+            is_active=False,
+        )
+        list_disabled = VODAccessPolicy.objects.create(
+            name="Disabled list profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        for policy in (selected, also_selected, non_list, inactive):
+            VODPolicyList.objects.create(policy=policy, vod_list=selected_list)
+        VODPolicyList.objects.create(
+            policy=disabled_rule, vod_list=selected_list, enabled=False
+        )
+        VODPolicyList.objects.create(policy=also_selected, vod_list=other_list)
+        VODPolicyList.objects.create(policy=other, vod_list=other_list)
+        VODPolicyList.objects.create(
+            policy=list_disabled, vod_list=inactive_list
+        )
+        enqueue.return_value = True
+
+        queued = enqueue_selected_list_profile_rebuilds(
+            [selected_list.pk, other_list.pk, inactive_list.pk],
+            trigger_reason="Lists changed",
+        )
+
+        self.assertEqual(queued, 3)
+        self.assertEqual(
+            {call.args[0] for call in enqueue.call_args_list},
+            {selected.pk, also_selected.pk, other.pk},
+        )
+        self.assertTrue(all(
+            call.kwargs["trigger_reason"] == "Lists changed"
+            for call in enqueue.call_args_list
+        ))
+
+    def test_list_generation_changes_list_profile_build_signature(self):
+        vod_list = VODList.objects.create(name="Changing list")
+        policy = VODAccessPolicy.objects.create(
+            name="List profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        VODPolicyList.objects.create(policy=policy, vod_list=vod_list)
+        before = profile_selection_signature(policy)
+
+        VODList.objects.filter(pk=vod_list.pk).update(active_generation=2)
+
+        self.assertNotEqual(before, profile_selection_signature(policy))
+
+    def test_disabled_list_generation_does_not_restart_list_profile_build(self):
+        vod_list = VODList.objects.create(
+            name="Disabled list generation", is_enabled=False
+        )
+        policy = VODAccessPolicy.objects.create(
+            name="List profile with disabled list",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        VODPolicyList.objects.create(policy=policy, vod_list=vod_list)
+        before = profile_selection_signature(policy)
+
+        VODList.objects.filter(pk=vod_list.pk).update(active_generation=2)
+        self.assertEqual(before, profile_selection_signature(policy))
+
+        VODList.objects.filter(pk=vod_list.pk).update(is_enabled=True)
+        self.assertNotEqual(before, profile_selection_signature(policy))
+
+    @patch("apps.vod.profile_selection.enqueue_selected_list_profile_rebuilds")
+    @patch("apps.vod.tasks._run_vod_list_builder")
+    def test_rebuild_task_only_enqueues_selected_list_profiles(
+        self, build_list, enqueue
+    ):
+        vod_list = VODList.objects.create(name="Changing list")
+        build_list.return_value = {
+            "id": vod_list.pk, "name": vod_list.name, "status": "complete",
+        }
+
+        rebuild_vod_list.run(vod_list.pk)
+
+        enqueue.assert_called_once_with(
+            [vod_list.pk],
+            trigger_reason='VOD list "Changing list" was rebuilt',
+        )
+
     @patch("apps.vod.lists.CoreSettings.get_tmdb_languages", return_value=["de-DE"])
     @patch("apps.vod.lists.CoreSettings.get_tmdb_api_token", return_value="token")
     @patch("apps.vod.tmdb.Client.get")
@@ -614,3 +844,56 @@ class VODListAPITests(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertTrue(VODList.objects.filter(pk=vod_list.pk).exists())
+
+    @patch("apps.vod.profile_selection.enqueue_profile_selection_rebuild")
+    def test_deleting_list_rebuilds_only_profiles_using_it(self, enqueue):
+        deleted_list = VODList.objects.create(name="Delete this list")
+        other_list = VODList.objects.create(name="Keep this list")
+        selected = VODAccessPolicy.objects.create(
+            name="Uses deleted list",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        other = VODAccessPolicy.objects.create(
+            name="Uses another list",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        disabled_rule = VODAccessPolicy.objects.create(
+            name="Disabled list rule",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        provider_mode = VODAccessPolicy.objects.create(
+            name="Provider group mode",
+            category_mode=VODAccessPolicy.CategoryMode.PROVIDER,
+        )
+        VODPolicyList.objects.create(policy=selected, vod_list=deleted_list)
+        VODPolicyList.objects.create(policy=other, vod_list=other_list)
+        VODPolicyList.objects.create(
+            policy=disabled_rule, vod_list=deleted_list, enabled=False
+        )
+        VODPolicyList.objects.create(
+            policy=provider_mode, vod_list=deleted_list
+        )
+        VODAccessPolicy.objects.filter(
+            pk__in=[selected.pk, other.pk, disabled_rule.pk, provider_mode.pk]
+        ).update(selection_status=VODAccessPolicy.SelectionStatus.READY)
+
+        response = self._request(
+            "delete",
+            f"/api/vod/lists/{deleted_list.pk}/",
+            "destroy",
+            pk=deleted_list.pk,
+        )
+
+        self.assertEqual(response.status_code, 204)
+        enqueue.assert_called_once_with(
+            selected.pk,
+            trigger_reason='VOD list "Delete this list" was deleted',
+        )
+        self.assertFalse(VODList.objects.filter(pk=deleted_list.pk).exists())
+        self.assertEqual(
+            set(VODAccessPolicy.objects.filter(
+                pk__in=[other.pk, disabled_rule.pk, provider_mode.pk],
+                selection_status=VODAccessPolicy.SelectionStatus.READY,
+            ).values_list("pk", flat=True)),
+            {other.pk, disabled_rule.pk, provider_mode.pk},
+        )

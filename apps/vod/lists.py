@@ -394,7 +394,10 @@ def rebuild_tmdb_list(vod_list):
                 year=year,
                 poster_url=(f"{TMDB_IMAGE_ROOT}/w342{poster_path}" if poster_path else ""),
                 position=len(items),
-                metadata={"popularity": row.get("popularity")},
+                metadata={
+                    "popularity": row.get("popularity"),
+                    "release_date": date_value,
+                },
             ))
         VODListItem.objects.bulk_create(items, batch_size=1000)
         vod_list.active_generation = generation
