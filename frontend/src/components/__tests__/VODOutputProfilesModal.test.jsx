@@ -209,7 +209,7 @@ vi.mock('@mantine/core', () => {
     Tabs: Wrapper,
     TabsList: Wrapper,
     TabsPanel: Wrapper,
-    TabsTab: Wrapper,
+    TabsTab: ({ children }) => <div role="tab">{children}</div>,
     TagsInput: ({ label, value = [], onChange }) => (
       <label>
         {label}
@@ -340,6 +340,53 @@ describe('VODOutputProfilesModal', () => {
     expect(
       screen.queryByRole('button', { name: 'Retry catalog update' })
     ).not.toBeInTheDocument();
+  });
+
+  it('chooses output groups in settings and only shows Lists for list output', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
+    expect(screen.getByLabelText('Output groups')).toHaveValue('provider');
+    expect(
+      screen.queryByRole('tab', { name: 'Lists' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Output groups'), {
+      target: { value: 'lists' },
+    });
+    expect(screen.getByRole('tab', { name: 'Lists' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Output groups'), {
+      target: { value: 'movie_series' },
+    });
+    expect(
+      screen.queryByRole('tab', { name: 'Lists' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() =>
+      expect(API.updateVODAccessPolicy).toHaveBeenCalledWith(
+        String(profile.id),
+        expect.objectContaining({ category_mode: 'movie_series' })
+      )
+    );
+  });
+
+  it('offers the matching content-type group in a grouped profile preview', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        category_mode: 'movie_series',
+        selection_counts: {
+          ...profile.selection_counts,
+          category_mode: 'movie_series',
+        },
+      },
+    ];
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
+    expect(screen.getByLabelText('Output group')).toHaveValue('');
+    expect(screen.getByRole('option', { name: 'Movies' })).toBeInTheDocument();
   });
 
   it('reuses the VOD category selection for both profile source scopes', async () => {

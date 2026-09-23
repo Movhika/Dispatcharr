@@ -4003,6 +4003,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             )
 
         is_movie = content_type == "movie"
+        content_group_name = "Movies" if is_movie else "Series"
         active_category_mode = (
             (policy.selection_counts or {}).get("category_mode")
             or policy.category_mode
@@ -4041,6 +4042,9 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                         "category": "Invalid VOD list."
                     }) from exc
                 queryset = queryset.filter(list_ids__contains=[list_id])
+            elif active_category_mode == VODAccessPolicy.CategoryMode.MOVIE_SERIES:
+                if requested_category != f"group:{content_type}":
+                    raise DRFValidationError({"category": "Choose the output group."})
             else:
                 queryset = queryset.filter(category_id=requested_category)
         metadata_status = str(
@@ -4205,6 +4209,15 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
             content = getattr(row, canonical)
             relation = row.relation
             source_name = get_vod_source_name(relation, content.name)
+            if active_category_mode == VODAccessPolicy.CategoryMode.LISTS:
+                output_group_name = ", ".join(
+                    "Unsorted" if list_id == 0 else list_names.get(list_id, "")
+                    for list_id in (row.list_ids or [])
+                )
+            elif active_category_mode == VODAccessPolicy.CategoryMode.MOVIE_SERIES:
+                output_group_name = content_group_name
+            else:
+                output_group_name = row.category.name if row.category else ""
             results.append(
                 {
                     "id": row.id,
@@ -4226,14 +4239,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
                     "m3u_account_id": relation.m3u_account_id,
                     "m3u_account_name": relation.m3u_account.name,
                     "category_id": row.category_id,
-                    "category_name": (
-                        ", ".join(
-                            "Unsorted" if list_id == 0 else list_names.get(list_id, "")
-                            for list_id in (row.list_ids or [])
-                        )
-                        if active_category_mode == VODAccessPolicy.CategoryMode.LISTS
-                        else row.category.name if row.category else ""
-                    ),
+                    "category_name": output_group_name,
                     "list_ids": row.list_ids or [],
                     "metadata": row.effective_metadata,
                     "resolution": row.resolution_height,

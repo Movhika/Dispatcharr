@@ -6,6 +6,12 @@ from unittest.mock import Mock, patch
 from datetime import datetime, timedelta
 
 from apps.m3u.models import M3UAccount
+from apps.output.views import (
+    VOD_MOVIES_CATEGORY_ID,
+    VOD_SERIES_CATEGORY_ID,
+    xc_get_series_categories,
+    xc_get_vod_categories,
+)
 from apps.vod.api_views import VODAccessPolicyViewSet, VODListViewSet
 from apps.vod.lists import dynamic_rule_matches, rebuild_dynamic_list, rebuild_tmdb_list
 from apps.vod.models import (
@@ -214,6 +220,64 @@ class VODListAPITests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["category_name"], "AppleTV")
         self.assertEqual(response.data["results"][0]["list_ids"], [vod_list.pk])
+
+    def test_movie_series_mode_uses_one_group_per_content_type(self):
+        policy = VODAccessPolicy.objects.create(
+            name="Single content-type groups",
+            category_mode=VODAccessPolicy.CategoryMode.MOVIE_SERIES,
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+            active_selection_generation="group-generation",
+            selection_counts={
+                "category_mode": "movie_series",
+                "export_mode": "compact",
+            },
+        )
+        policy.users.add(self.user)
+        VODMovieProfileSelection.objects.create(
+            policy=policy,
+            generation="group-generation",
+            movie=self.movie,
+            relation=self.movie_relation,
+        )
+        request = self.factory.get(
+            f"/api/vod/access-policies/{policy.pk}/selections/",
+            {"type": "movie", "category": "group:movie"},
+        )
+        force_authenticate(request, user=self.admin)
+        response = VODAccessPolicyViewSet.as_view({"get": "selections"})(
+            request, pk=policy.pk
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["category_name"], "Movies")
+        wrong_group = self.factory.get(
+            f"/api/vod/access-policies/{policy.pk}/selections/",
+            {"type": "movie", "category": "group:series"},
+        )
+        force_authenticate(wrong_group, user=self.admin)
+        self.assertEqual(
+            VODAccessPolicyViewSet.as_view({"get": "selections"})(
+                wrong_group, pk=policy.pk
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            xc_get_vod_categories(self.user),
+            [{
+                "category_id": str(VOD_MOVIES_CATEGORY_ID),
+                "category_name": "Movies",
+                "parent_id": 0,
+            }],
+        )
+        self.assertEqual(
+            xc_get_series_categories(self.user),
+            [{
+                "category_id": str(VOD_SERIES_CATEGORY_ID),
+                "category_name": "Series",
+                "parent_id": 0,
+            }],
+        )
 
     def test_dynamic_list_keeps_only_matching_source_variants(self):
         self.movie_relation.manual_metadata = {"video_features": ["3d"]}
