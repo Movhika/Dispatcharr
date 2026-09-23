@@ -98,9 +98,10 @@ def rebuild_vod_list(self, vod_list_id, rebuild_profiles=True):
 
         bump_catalog_generation(invalidate_selections=False)
         if rebuild_profiles:
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
+            from .profile_selection import enqueue_selected_list_profile_rebuilds
 
-            enqueue_all_profile_selection_rebuilds(
+            enqueue_selected_list_profile_rebuilds(
+                [vod_list_id],
                 trigger_reason=f'VOD list "{result["name"]}" was rebuilt'
             )
     return result
@@ -255,11 +256,16 @@ def rebuild_due_time_based_vod_lists(self):
             _run_vod_list_builder(vod_list_id, task_id=self.request.id)
             for vod_list_id in due_ids
         ]
-        if any(result["status"] == "complete" for result in results):
+        completed_ids = [
+            result["id"] for result in results
+            if result["status"] == "complete"
+        ]
+        if completed_ids:
             bump_catalog_generation(invalidate_selections=False)
-            from .profile_selection import enqueue_all_profile_selection_rebuilds
+            from .profile_selection import enqueue_selected_list_profile_rebuilds
 
-            enqueue_all_profile_selection_rebuilds(
+            enqueue_selected_list_profile_rebuilds(
+                completed_ids,
                 trigger_reason="Time-based VOD lists changed"
             )
         return {"status": "complete", "results": results}

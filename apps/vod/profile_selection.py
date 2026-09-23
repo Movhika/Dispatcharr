@@ -459,27 +459,40 @@ def profile_selection_signature(policy):
                 key=lambda rule: (rule.category_relation_id, rule.id),
             )
         ]
-    prefetched_lists = getattr(policy, "_prefetched_objects_cache", {}).get(
-        "vodpolicylist_set"
-    )
-    if prefetched_lists is None:
+    if policy.category_mode == VODAccessPolicy.CategoryMode.LISTS:
+        # A list can publish a new generation while this profile is building.
+        # Include its generation so that build retries against the new items.
         list_rules = list(
             policy.vodpolicylist_set.order_by("vod_list_id", "id").values(
-                "vod_list_id", "enabled", "priority"
+                "vod_list_id", "enabled", "priority",
+                "vod_list__active_generation", "vod_list__is_enabled",
             )
         )
+        for rule in list_rules:
+            if not rule["enabled"] or not rule["vod_list__is_enabled"]:
+                rule["vod_list__active_generation"] = None
     else:
-        list_rules = [
-            {
-                "vod_list_id": rule.vod_list_id,
-                "enabled": rule.enabled,
-                "priority": rule.priority,
-            }
-            for rule in sorted(
-                prefetched_lists,
-                key=lambda rule: (rule.vod_list_id, rule.id),
+        prefetched_lists = getattr(policy, "_prefetched_objects_cache", {}).get(
+            "vodpolicylist_set"
+        )
+        if prefetched_lists is None:
+            list_rules = list(
+                policy.vodpolicylist_set.order_by("vod_list_id", "id").values(
+                    "vod_list_id", "enabled", "priority"
+                )
             )
-        ]
+        else:
+            list_rules = [
+                {
+                    "vod_list_id": rule.vod_list_id,
+                    "enabled": rule.enabled,
+                    "priority": rule.priority,
+                }
+                for rule in sorted(
+                    prefetched_lists,
+                    key=lambda rule: (rule.vod_list_id, rule.id),
+                )
+            ]
     payload = {
         "export_mode": policy.export_mode,
         "hard_constraints": policy.hard_constraints or {},
@@ -656,6 +669,30 @@ def enqueue_profile_selection_rebuild(
 
     transaction.on_commit(enqueue)
     return True
+
+
+def enqueue_selected_list_profile_rebuilds(
+    list_ids, *, trigger_reason, include_disabled_lists=False
+):
+    """Rebuild only active list-mode profiles using an affected VOD list."""
+    list_ids = set(list_ids)
+    if not list_ids:
+        return 0
+    rules = VODPolicyList.objects.filter(
+        vod_list_id__in=list_ids,
+        enabled=True,
+        policy__is_active=True,
+        policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
+    )
+    if not include_disabled_lists:
+        rules = rules.filter(vod_list__is_enabled=True)
+    policy_ids = rules.order_by().values_list("policy_id", flat=True).distinct()
+    return sum(
+        enqueue_profile_selection_rebuild(
+            policy_id, trigger_reason=trigger_reason
+        )
+        for policy_id in policy_ids
+    )
 
 
 def enqueue_all_profile_selection_rebuilds(

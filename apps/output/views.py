@@ -1610,6 +1610,36 @@ def _xc_policy_for_user(user):
     return user._vod_access_policy
 
 
+def _xc_order_relations_by_list(relations, list_id, content_type):
+    """Keep XC list categories in the same order as their list preview."""
+    if list_id is None or not relations:
+        return
+    from apps.vod.list_order import ordered_list_items
+    from apps.vod.models import VODList
+
+    vod_list = VODList.objects.filter(pk=list_id).first()
+    if vod_list is None:
+        return
+    canonical_field = "movie_id" if content_type == "movie" else "series_id"
+    canonical_ids = {row[canonical_field] for row in relations}
+    item_ids = ordered_list_items(
+        vod_list,
+        vod_list.items.filter(
+            generation=vod_list.active_generation,
+            content_type=content_type,
+            **{f"{canonical_field}__in": canonical_ids},
+        ),
+    ).values_list(canonical_field, flat=True)
+    positions = {}
+    for position, canonical_id in enumerate(item_ids):
+        if canonical_id is not None:
+            positions.setdefault(canonical_id, position)
+    fallback_position = len(positions)
+    relations.sort(
+        key=lambda row: positions.get(row[canonical_field], fallback_position)
+    )
+
+
 def xc_get_vod_categories(user, request=None):
     """Get VOD categories for XtreamCodes API"""
     if not is_vod_movies_enabled(user=user):
@@ -1730,6 +1760,9 @@ def xc_get_vod_streams(request, user, category_id=None):
             for row in relations
             if str(row["category_id"] or "0") == str(category_id)
         ]
+
+    if requested_list_id is not None:
+        _xc_order_relations_by_list(relations, requested_list_id, "movie")
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for the fallback-icon proxy rewrites below.
@@ -1951,6 +1984,9 @@ def xc_get_series(request, user, category_id=None):
             for row in relations
             if str(row["category_id"] or "0") == str(category_id)
         ]
+
+    if requested_list_id is not None:
+        _xc_order_relations_by_list(relations, requested_list_id, "series")
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for all series backdrop rewrites.

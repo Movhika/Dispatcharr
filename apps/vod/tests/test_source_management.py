@@ -1589,6 +1589,7 @@ class VODSourceManagementTests(TestCase):
         build_vod_profile_selection(self.policy.id)
         cache.delete(SELECTION_GENERATION_KEY)
         cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+        cache.delete(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY)
 
         with patch(
             "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
@@ -1779,8 +1780,8 @@ class VODSourceManagementTests(TestCase):
 
         enqueue.assert_called_once_with(
             trigger_reason=(
-                "One or more completed VOD provider refreshes changed the "
-                "source catalog"
+                "One or more provider VOD refreshes completed, then VOD lists "
+                "were rebuilt"
             )
         )
         self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))

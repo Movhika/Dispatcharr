@@ -3217,21 +3217,24 @@ class VODListViewSet(viewsets.ModelViewSet):
             return denied
         vod_list = self.get_object()
         was_enabled = vod_list.is_enabled
-        response = super().update(request, *args, **kwargs)
-        if response.status_code < 400 and was_enabled != response.data.get("is_enabled"):
-            from .profile_selection import enqueue_profile_selection_rebuild
+        from .list_order import list_sort_mode
 
-            policy_ids = VODPolicyList.objects.filter(
-                vod_list_id=vod_list.pk,
-                enabled=True,
-                policy__is_active=True,
-                policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
-            ).values_list("policy_id", flat=True)
-            for policy_id in policy_ids:
-                enqueue_profile_selection_rebuild(
-                    policy_id,
-                    trigger_reason="A selected VOD list was enabled or disabled",
-                )
+        previous_sort_mode = list_sort_mode(vod_list)
+        response = super().update(request, *args, **kwargs)
+        if response.status_code >= 400:
+            return response
+        if previous_sort_mode != list_sort_mode(self.get_object()):
+            from .catalog_cache import bump_catalog_generation
+
+            bump_catalog_generation(invalidate_selections=False)
+        if was_enabled != response.data.get("is_enabled"):
+            from .profile_selection import enqueue_selected_list_profile_rebuilds
+
+            enqueue_selected_list_profile_rebuilds(
+                [vod_list.pk],
+                trigger_reason="A selected VOD list was enabled or disabled",
+                include_disabled_lists=True,
+            )
         return response
 
     def partial_update(self, request, *args, **kwargs):
@@ -3373,11 +3376,13 @@ class VODListViewSet(viewsets.ModelViewSet):
         if denied is not None:
             return denied
         vod_list = self.get_object()
-        queryset = (
+        from .list_order import ordered_list_items
+
+        queryset = ordered_list_items(
+            vod_list,
             vod_list.items.filter(generation=vod_list.active_generation)
             .select_related("movie__logo", "series__logo")
-            .prefetch_related("source_memberships")
-            .order_by("position", "id")
+            .prefetch_related("source_memberships"),
         )
         search = str(request.query_params.get("search") or "").strip()
         if search:
@@ -3722,10 +3727,11 @@ class VODListViewSet(viewsets.ModelViewSet):
 
         vod_list = self.get_queryset().get(pk=vod_list.pk)
         from .catalog_cache import bump_catalog_generation
-        from .profile_selection import enqueue_all_profile_selection_rebuilds
+        from .profile_selection import enqueue_selected_list_profile_rebuilds
 
         bump_catalog_generation(invalidate_selections=False)
-        enqueue_all_profile_selection_rebuilds(
+        enqueue_selected_list_profile_rebuilds(
+            [vod_list.pk],
             trigger_reason=f'Manual VOD list "{vod_list.name}" changed'
         )
         return Response(self.get_serializer(vod_list).data)
