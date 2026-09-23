@@ -1841,6 +1841,8 @@ class MovieProviderInfoSerializer(serializers.Serializer):
     tmdb = serializers.JSONField(required=False)
     canonical = serializers.JSONField(required=False)
     source_metadata = serializers.JSONField(required=False, allow_null=True)
+    detail_fetched = serializers.BooleanField()
+    detail_refresh_status = serializers.CharField()
     m3u_account = VODProviderAccountSerializer()
 
 
