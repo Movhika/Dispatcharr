@@ -146,6 +146,94 @@ describe('VODListsPage', () => {
     });
   });
 
+  it('also opens the list editor from the top-right button', async () => {
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add list' }));
+
+    expect(
+      await screen.findByRole('textbox', { name: /Name/ })
+    ).toBeInTheDocument();
+  });
+
+  it('toggles a list outside the editor without rebuilding its entries', async () => {
+    API.updateVODList.mockResolvedValue({ ...list, is_enabled: false });
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+
+    await waitFor(() =>
+      expect(API.updateVODList).toHaveBeenCalledWith(list.id, {
+        is_enabled: false,
+      })
+    );
+    expect(API.rebuildVODList).not.toHaveBeenCalled();
+  });
+
+  it('shows only the selected date source for dynamic lists', async () => {
+    API.getVODLists.mockResolvedValue([
+      {
+        ...list,
+        list_type: 'dynamic',
+        provider: '',
+        external_key: '',
+        rules: [{ release_date_after: '2026-01-01' }],
+      },
+    ]);
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit TMDB Trending' }));
+
+    expect(await screen.findByLabelText('Released from')).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Added to library from')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText('How age ratings are matched')
+    ).toBeInTheDocument();
+  });
+
+  it('clears inactive dates when saving a legacy dynamic list', async () => {
+    const dynamicList = {
+      ...list,
+      list_type: 'dynamic',
+      provider: '',
+      external_key: '',
+      rules: [
+        {
+          release_date_after: '2026-01-01',
+          library_added_after: '2026-09-01',
+        },
+      ],
+    };
+    API.getVODLists.mockResolvedValue([dynamicList]);
+    API.updateVODList.mockResolvedValue(dynamicList);
+    API.rebuildVODList.mockResolvedValue(dynamicList);
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit TMDB Trending' }));
+    await screen.findByLabelText('Released from');
+    fireEvent.click(screen.getByRole('button', { name: 'Save list' }));
+
+    await waitFor(() =>
+      expect(API.updateVODList).toHaveBeenCalledWith(
+        list.id,
+        expect.objectContaining({
+          rules: [
+            expect.objectContaining({
+              release_date_after: '2026-01-01',
+              library_added_after: '',
+            }),
+          ],
+        })
+      )
+    );
+  });
+
   it('offers server-side search and filters in the full preview', async () => {
     renderPage();
     await screen.findByText('TMDB Trending');

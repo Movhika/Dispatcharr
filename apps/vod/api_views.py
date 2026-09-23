@@ -29,7 +29,7 @@ from .models import (
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
     VODAccessPolicy, VODPlaybackSession,
     VODMovieProfileSelection, VODSeriesProfileSelection, VODMetadataState,
-    VODList, VODListItem, VODListSourceMembership,
+    VODList, VODListItem, VODListSourceMembership, VODPolicyList,
 )
 from .serializers import (
     MovieSerializer,
@@ -3215,7 +3215,24 @@ class VODListViewSet(viewsets.ModelViewSet):
         denied = self._admin_only(request)
         if denied is not None:
             return denied
-        return super().update(request, *args, **kwargs)
+        vod_list = self.get_object()
+        was_enabled = vod_list.is_enabled
+        response = super().update(request, *args, **kwargs)
+        if response.status_code < 400 and was_enabled != response.data.get("is_enabled"):
+            from .profile_selection import enqueue_profile_selection_rebuild
+
+            policy_ids = VODPolicyList.objects.filter(
+                vod_list_id=vod_list.pk,
+                enabled=True,
+                policy__is_active=True,
+                policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
+            ).values_list("policy_id", flat=True)
+            for policy_id in policy_ids:
+                enqueue_profile_selection_rebuild(
+                    policy_id,
+                    trigger_reason="A selected VOD list was enabled or disabled",
+                )
+        return response
 
     def partial_update(self, request, *args, **kwargs):
         denied = self._admin_only(request)

@@ -611,6 +611,28 @@ class VODListSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({
                         "rules": "Invalid metadata rule."
                     })
+                if "rules" in attrs:
+                    release_fields = (
+                        "release_date_after", "release_date_before",
+                        "release_yearly_from", "release_yearly_until",
+                        "release_last_days",
+                    )
+                    added_fields = (
+                        "library_added_after", "library_added_before",
+                        "library_added_last_days",
+                    )
+                    has_release = any(
+                        rule.get(field) not in (None, "", 0, "0")
+                        for field in release_fields
+                    )
+                    has_added = any(
+                        rule.get(field) not in (None, "", 0, "0")
+                        for field in added_fields
+                    )
+                    if has_release and has_added:
+                        raise serializers.ValidationError({
+                            "rules": "Choose either release dates or library-added dates."
+                        })
                 for field in ("release_last_days", "library_added_last_days"):
                     value = rule.get(field)
                     if value in (None, "", 0, "0"):

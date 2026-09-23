@@ -40,6 +40,7 @@ import {
   Eye,
   Film,
   Filter,
+  Info,
   ListPlus,
   Pencil,
   Plus,
@@ -95,8 +96,8 @@ const EMPTY_FORM = {
     watch_monetization_types: 'flatrate',
   },
   is_enabled: true,
-  release_mode: 'fixed',
-  added_mode: 'fixed',
+  date_source: 'none',
+  date_mode: 'fixed',
   rule: EMPTY_RULE,
 };
 
@@ -148,6 +149,23 @@ const TYPE_LABELS = {
 const normalizeList = (value) => {
   const externalKey = value?.external_key || '';
   const rule = { ...EMPTY_RULE, ...(value?.rules?.[0] || {}) };
+  const hasReleaseDate = [
+    rule.release_date_after,
+    rule.release_date_before,
+    rule.release_yearly_from,
+    rule.release_yearly_until,
+    rule.release_last_days,
+  ].some(Boolean);
+  const hasAddedDate = [
+    rule.library_added_after,
+    rule.library_added_before,
+    rule.library_added_last_days,
+  ].some(Boolean);
+  const dateSource = hasReleaseDate
+    ? 'release'
+    : hasAddedDate
+      ? 'added'
+      : 'none';
   return {
     ...EMPTY_FORM,
     ...value,
@@ -159,12 +177,17 @@ const normalizeList = (value) => {
         ? 'custom'
         : '',
     settings: { ...EMPTY_FORM.settings, ...(value?.settings || {}) },
-    release_mode: rule.release_last_days
-      ? 'recent'
-      : rule.release_yearly_from || rule.release_yearly_until
-        ? 'yearly'
-        : 'fixed',
-    added_mode: rule.library_added_last_days ? 'recent' : 'fixed',
+    date_source: dateSource,
+    date_mode:
+      dateSource === 'release'
+        ? rule.release_yearly_from || rule.release_yearly_until
+          ? 'yearly'
+          : rule.release_last_days
+            ? 'recent'
+            : 'fixed'
+        : rule.library_added_last_days
+          ? 'recent'
+          : 'fixed',
     rule,
   };
 };
@@ -217,8 +240,8 @@ const Poster = ({ item }) => {
       withArrow
     >
       <Box
-        w={74}
-        h={111}
+        w={88}
+        h={132}
         pos="relative"
         style={{ flex: '0 0 auto', borderRadius: 6, overflow: 'hidden' }}
       >
@@ -258,6 +281,7 @@ const VODListsPage = () => {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [rebuildingId, setRebuildingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [viewerPage, setViewerPage] = useState(1);
   const [viewerSearch, setViewerSearch] = useState('');
@@ -478,21 +502,24 @@ const VODListsPage = () => {
         min_resolution: Number(form.rule.min_resolution) || 0,
         max_resolution: Number(form.rule.max_resolution) || 0,
       };
-      if (form.release_mode !== 'fixed') {
+      if (form.date_source !== 'release' || form.date_mode !== 'fixed') {
         normalizedRule.release_date_after = '';
         normalizedRule.release_date_before = '';
       }
-      if (form.release_mode !== 'yearly') {
+      if (form.date_source !== 'release' || form.date_mode !== 'yearly') {
         normalizedRule.release_yearly_from = '';
         normalizedRule.release_yearly_until = '';
       }
-      if (form.release_mode !== 'recent') normalizedRule.release_last_days = '';
-      if (form.added_mode !== 'fixed') {
+      if (form.date_source !== 'release' || form.date_mode !== 'recent') {
+        normalizedRule.release_last_days = '';
+      }
+      if (form.date_source !== 'added' || form.date_mode !== 'fixed') {
         normalizedRule.library_added_after = '';
         normalizedRule.library_added_before = '';
       }
-      if (form.added_mode !== 'recent')
+      if (form.date_source !== 'added' || form.date_mode !== 'recent') {
         normalizedRule.library_added_last_days = '';
+      }
       const externalKey =
         form.external_source === 'custom'
           ? form.external_key.trim()
@@ -512,12 +539,7 @@ const VODListsPage = () => {
       };
       const requiresRebuild =
         ['dynamic', 'external'].includes(form.list_type) &&
-        (!editing ||
-          builderSignature({
-            ...form,
-            external_key: externalKey,
-            settings: externalSettings,
-          }) !== builderSignature(editing));
+        (!editing || builderSignature(payload) !== builderSignature(editing));
       const saved = editing
         ? await API.updateVODList(editing.id, payload)
         : await API.createVODList(payload);
@@ -560,6 +582,26 @@ const VODListsPage = () => {
       });
     } finally {
       setRebuildingId(null);
+    }
+  };
+
+  const toggleEnabled = async (list, isEnabled) => {
+    setTogglingId(list.id);
+    try {
+      const saved = await API.updateVODList(list.id, { is_enabled: isEnabled });
+      upsertList(saved);
+      notifications.show({
+        color: 'green',
+        message: `${list.name} ${isEnabled ? 'enabled' : 'disabled'}.`,
+      });
+    } catch (requestError) {
+      notifications.show({
+        color: 'red',
+        title: 'Could not update list',
+        message: requestError?.message || 'The request failed.',
+      });
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -629,7 +671,7 @@ const VODListsPage = () => {
   return (
     <Box h="100%" style={{ minHeight: 0, overflow: 'hidden' }}>
       <ScrollArea h="100%" p="md">
-        <Stack gap="md" maw={1500} mx="auto">
+        <Stack gap="md">
           <Group justify="space-between" align="end">
             <Box>
               <Title order={2}>VOD Lists</Title>
@@ -638,6 +680,9 @@ const VODListsPage = () => {
                 exact library sources.
               </Text>
             </Box>
+            <Button leftSection={<Plus size={16} />} onClick={openCreate}>
+              Add list
+            </Button>
           </Group>
 
           {error && <Alert color="red">{error}</Alert>}
@@ -648,7 +693,7 @@ const VODListsPage = () => {
           ) : (
             <>
               {lists.map((list) => (
-                <Paper key={list.id} withBorder p="md" radius="md">
+                <Paper key={list.id} withBorder p="md" radius="md" mih={275}>
                   <Stack gap="sm">
                     <Group justify="space-between" align="flex-start">
                       <Box>
@@ -659,9 +704,6 @@ const VODListsPage = () => {
                           <Badge variant="light">
                             {TYPE_LABELS[list.list_type] || list.list_type}
                           </Badge>
-                          {!list.is_enabled && (
-                            <Badge color="gray">Disabled</Badge>
-                          )}
                           {list.sync_status === 'queued' && (
                             <Badge color="blue" variant="light">
                               Queued
@@ -699,6 +741,15 @@ const VODListsPage = () => {
                         )}
                       </Box>
                       <Group gap={6}>
+                        <Switch
+                          label="Enabled"
+                          checked={list.is_enabled}
+                          disabled={list.is_system || togglingId === list.id}
+                          onChange={(event) =>
+                            toggleEnabled(list, event.currentTarget.checked)
+                          }
+                          mr="sm"
+                        />
                         {list.list_type !== 'manual' && (
                           <ActionIcon
                             variant="subtle"
@@ -749,7 +800,7 @@ const VODListsPage = () => {
                         ))}
                       </Group>
                     ) : (
-                      <Center mih={111} bg="dark.7" style={{ borderRadius: 6 }}>
+                      <Center mih={132} bg="dark.7" style={{ borderRadius: 6 }}>
                         <Text c="dimmed" size="sm">
                           No titles in this list yet.
                         </Text>
@@ -964,129 +1015,126 @@ const VODListsPage = () => {
           )}
           {form.list_type === 'dynamic' && (
             <Stack gap="sm">
-              <TagsInput
-                label="Genres"
-                placeholder="Select genres present in the library"
-                data={ruleOptions.genres}
-                value={form.rule.required_genres}
-                onChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    rule: { ...current.rule, required_genres: value },
-                  }))
-                }
-              />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <Select
-                  label="Release period"
+                  label="Date source"
                   data={[
-                    { value: 'fixed', label: 'Fixed dates' },
-                    { value: 'yearly', label: 'Repeats each year' },
-                    { value: 'recent', label: 'Last X days' },
+                    { value: 'none', label: 'No date filter' },
+                    { value: 'release', label: 'Release date (TMDB)' },
+                    { value: 'added', label: 'Added to this library' },
                   ]}
-                  value={form.release_mode}
+                  value={form.date_source}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      release_mode: value || 'fixed',
+                      date_source: value || 'none',
+                      date_mode: 'fixed',
                     }))
                   }
                 />
-                <Select
-                  label="Added to library"
-                  data={[
-                    { value: 'fixed', label: 'Fixed dates' },
-                    { value: 'recent', label: 'Last X days' },
-                  ]}
-                  value={form.added_mode}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      added_mode: value || 'fixed',
-                    }))
-                  }
-                />
-              </SimpleGrid>
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                {form.release_mode === 'fixed' && (
-                  <>
-                    <TextInput
-                      type="date"
-                      label="Released from"
-                      value={form.rule.release_date_after}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            release_date_after: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                    <TextInput
-                      type="date"
-                      label="Released until"
-                      value={form.rule.release_date_before}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            release_date_before: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                  </>
-                )}
-                {form.release_mode === 'yearly' && (
-                  <>
-                    <TextInput
-                      label="Every year from (MM-DD)"
-                      placeholder="01-01"
-                      value={form.rule.release_yearly_from}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            release_yearly_from: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                    <TextInput
-                      label="Every year until (MM-DD)"
-                      placeholder="04-30"
-                      value={form.rule.release_yearly_until}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            release_yearly_until: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                  </>
-                )}
-                {form.release_mode === 'recent' && (
-                  <NumberInput
-                    label="Released in the last X days"
-                    min={1}
-                    max={3650}
-                    value={form.rule.release_last_days}
+                {form.date_source !== 'none' && (
+                  <Select
+                    label="Date range"
+                    data={[
+                      { value: 'fixed', label: 'Fixed dates' },
+                      ...(form.date_source === 'release'
+                        ? [{ value: 'yearly', label: 'Repeats each year' }]
+                        : []),
+                      { value: 'recent', label: 'Last X days' },
+                    ]}
+                    value={form.date_mode}
                     onChange={(value) =>
                       setForm((current) => ({
                         ...current,
-                        rule: { ...current.rule, release_last_days: value },
+                        date_mode: value || 'fixed',
                       }))
                     }
                   />
                 )}
-                {form.added_mode === 'fixed' && (
+              </SimpleGrid>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {form.date_source === 'release' &&
+                  form.date_mode === 'fixed' && (
+                    <>
+                      <TextInput
+                        type="date"
+                        label="Released from"
+                        value={form.rule.release_date_after}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            rule: {
+                              ...current.rule,
+                              release_date_after: event.currentTarget.value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextInput
+                        type="date"
+                        label="Released until"
+                        value={form.rule.release_date_before}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            rule: {
+                              ...current.rule,
+                              release_date_before: event.currentTarget.value,
+                            },
+                          }))
+                        }
+                      />
+                    </>
+                  )}
+                {form.date_source === 'release' &&
+                  form.date_mode === 'yearly' && (
+                    <>
+                      <TextInput
+                        label="Every year from (MM-DD)"
+                        placeholder="01-01"
+                        value={form.rule.release_yearly_from}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            rule: {
+                              ...current.rule,
+                              release_yearly_from: event.currentTarget.value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextInput
+                        label="Every year until (MM-DD)"
+                        placeholder="04-30"
+                        value={form.rule.release_yearly_until}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            rule: {
+                              ...current.rule,
+                              release_yearly_until: event.currentTarget.value,
+                            },
+                          }))
+                        }
+                      />
+                    </>
+                  )}
+                {form.date_source === 'release' &&
+                  form.date_mode === 'recent' && (
+                    <NumberInput
+                      label="Released in the last X days"
+                      min={1}
+                      max={3650}
+                      value={form.rule.release_last_days}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: { ...current.rule, release_last_days: value },
+                        }))
+                      }
+                    />
+                  )}
+                {form.date_source === 'added' && form.date_mode === 'fixed' && (
                   <>
                     <TextInput
                       type="date"
@@ -1118,23 +1166,38 @@ const VODListsPage = () => {
                     />
                   </>
                 )}
-                {form.added_mode === 'recent' && (
-                  <NumberInput
-                    label="Added in the last X days"
-                    min={1}
-                    max={3650}
-                    value={form.rule.library_added_last_days}
-                    onChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        rule: {
-                          ...current.rule,
-                          library_added_last_days: value,
-                        },
-                      }))
-                    }
-                  />
-                )}
+                {form.date_source === 'added' &&
+                  form.date_mode === 'recent' && (
+                    <NumberInput
+                      label="Added in the last X days"
+                      min={1}
+                      max={3650}
+                      value={form.rule.library_added_last_days}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            library_added_last_days: value,
+                          },
+                        }))
+                      }
+                    />
+                  )}
+              </SimpleGrid>
+              <TagsInput
+                label="Genres"
+                placeholder="Select genres present in the library"
+                data={ruleOptions.genres}
+                value={form.rule.required_genres}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    rule: { ...current.rule, required_genres: value },
+                  }))
+                }
+              />
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <Select
                   label="Anime"
                   data={[
@@ -1151,7 +1214,21 @@ const VODListsPage = () => {
                   }
                 />
                 <NumberInput
-                  label="Maximum age rating"
+                  label={
+                    <Group gap={6} wrap="nowrap">
+                      Maximum age rating
+                      <Tooltip
+                        multiline
+                        maw={360}
+                        label="This filters the minimum viewer age from the canonical/TMDB certification, not the title's age since release. FSK 12 becomes 12 and PG-13 becomes 13; a limit of 12 includes numeric ratings up to 12. If several ratings exist, the lowest number is used. R, TV-MA and missing ratings have no numeric age and do not match. Empty or 0 disables the filter."
+                      >
+                        <Info
+                          size={15}
+                          aria-label="How age ratings are matched"
+                        />
+                      </Tooltip>
+                    </Group>
+                  }
                   value={form.rule.max_age_rating}
                   onChange={(value) =>
                     setForm((current) => ({
@@ -1261,18 +1338,6 @@ const VODListsPage = () => {
               />
             </Stack>
           )}
-          <Group>
-            <Switch
-              label="Enabled"
-              checked={form.is_enabled}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  is_enabled: event.currentTarget.checked,
-                }))
-              }
-            />
-          </Group>
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setEditorOpen(false)}>
               Cancel
