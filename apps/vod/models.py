@@ -704,6 +704,7 @@ class VODAccessPolicy(models.Model):
     class CategoryMode(models.TextChoices):
         PROVIDER = "provider", "Provider categories"
         LISTS = "lists", "VOD lists"
+        MOVIE_SERIES = "movie_series", "Movie & Series"
 
     class CanonicalTitleSource(models.TextChoices):
         PRIMARY = "primary", "Primary canonical title"
@@ -760,7 +761,7 @@ class VODAccessPolicy(models.Model):
         max_length=12,
         choices=CategoryMode.choices,
         default=CategoryMode.PROVIDER,
-        help_text="Choose provider categories or curated VOD lists for XC output.",
+        help_text="Choose provider categories, curated VOD lists, or one category per content type for XC output.",
     )
     include_unsorted = models.BooleanField(
         default=True,
