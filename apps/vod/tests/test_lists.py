@@ -23,6 +23,7 @@ from apps.vod.models import (
     VODListSourceMembership,
     VODAccessPolicy,
     VODMovieProfileSelection,
+    VODPolicyList,
 )
 
 
@@ -388,6 +389,49 @@ class VODListAPITests(TestCase):
             {},
             now=reference,
         ))
+
+    def test_dynamic_list_rejects_mixed_date_sources(self):
+        response = self._request(
+            "post",
+            "/api/vod/lists/",
+            "create",
+            data={
+                "name": "Conflicting dates",
+                "list_type": "dynamic",
+                "content_type": "movie",
+                "rules": [{
+                    "release_date_after": "2026-01-01",
+                    "library_added_after": "2026-01-01",
+                }],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("rules", response.data)
+
+    @patch("apps.vod.profile_selection.enqueue_profile_selection_rebuild")
+    def test_enabling_list_rebuilds_selected_profiles(self, enqueue):
+        vod_list = VODList.objects.create(name="Anime", is_enabled=False)
+        policy = VODAccessPolicy.objects.create(
+            name="Anime profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        VODPolicyList.objects.create(policy=policy, vod_list=vod_list)
+
+        response = self._request(
+            "patch",
+            f"/api/vod/lists/{vod_list.pk}/",
+            "partial_update",
+            data={"is_enabled": True},
+            pk=vod_list.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["is_enabled"])
+        enqueue.assert_called_once_with(
+            policy.pk,
+            trigger_reason="A selected VOD list was enabled or disabled",
+        )
 
     @patch("apps.vod.lists.CoreSettings.get_tmdb_languages", return_value=["de-DE"])
     @patch("apps.vod.lists.CoreSettings.get_tmdb_api_token", return_value="token")

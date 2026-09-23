@@ -1700,7 +1700,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
               <TabsPanel value="lists" pt="md">
                 <ScrollArea h="100%">
                   <Box pb="xs">
-                    <Paper withBorder p="lg" radius="md" w="100%">
+                    <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
                       <Stack gap="xs">
                         {selectedOutputLists.length > 0 && (
                           <>
