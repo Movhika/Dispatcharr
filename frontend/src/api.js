@@ -1643,6 +1643,12 @@ export default class API {
     });
   }
 
+  static async getVODListUsage(id) {
+    return await request(`${host}/api/vod/lists/${id}/usage/`, {
+      cache: 'no-store',
+    });
+  }
+
   static async getVODListRuleOptions(type = 'all') {
     const query = new URLSearchParams({ type });
     return await request(
