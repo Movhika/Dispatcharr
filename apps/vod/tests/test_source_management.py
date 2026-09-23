@@ -1856,6 +1856,43 @@ class VODSourceManagementTests(TestCase):
             ["ger"],
         )
 
+    def test_profile_preview_search_matches_visible_output_not_raw_title(self):
+        self.movie.name = "(DE-) (Pri)sons 4K - 2024"
+        self.movie.display_name = "Prisons"
+        self.movie.clean_title = "Prisons"
+        self.movie.tmdb_status = "matched"
+        self.movie.year = 2024
+        self.movie.save(update_fields=[
+            "name", "display_name", "clean_title", "tmdb_status", "year",
+            "updated_at",
+        ])
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="profile-visible-search-admin",
+            password="test-password",
+            user_level=10,
+        )
+
+        def preview(search):
+            request = APIRequestFactory().get(
+                f"/api/vod/access-policies/{self.policy.id}/selections/",
+                {"type": "movie", "search": search},
+            )
+            force_authenticate(request, user=admin)
+            return VODAccessPolicyViewSet.as_view({"get": "selections"})(
+                request, pk=self.policy.id
+            )
+
+        visible = preview("Prisons")
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual(visible.data["count"], 1)
+        self.assertIn("Prisons", visible.data["results"][0]["name"])
+        self.assertNotIn("4K", visible.data["results"][0]["name"])
+
+        hidden_raw_name = preview("4K")
+        self.assertEqual(hidden_raw_name.status_code, 200)
+        self.assertEqual(hidden_raw_name.data["count"], 0)
+
     def test_profile_preview_filters_by_current_canonical_metadata_state(self):
         build_vod_profile_selection(self.policy.id)
         admin = get_user_model().objects.create_user(
