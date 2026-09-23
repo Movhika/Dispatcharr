@@ -3959,6 +3959,8 @@ def refresh_series_episodes(
                 **({'request_timeout': (10, 30), 'max_retries': 0} if bounded else {}),
             ) as client:
                 series_info = client.get_series_info(external_series_id)
+                if bounded and not series_info:
+                    return
                 if series_info:
                     # Update series with detailed info
                     info = series_info.get('info', {})

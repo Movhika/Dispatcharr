@@ -143,3 +143,15 @@ class SeriesProviderInfoAsyncTests(TestCase):
             request_timeout=(10, 30),
             max_retries=0,
         )
+
+    @patch('apps.vod.tasks.XtreamCodesClient')
+    def test_empty_provider_reply_is_not_cached_as_success(self, client_class):
+        client_class.return_value.__enter__.return_value.get_series_info.return_value = None
+        _, status_key = series_provider_refresh_keys(self.relation.id)
+
+        refresh_series_provider_info_in_background.run(self.relation.id)
+
+        self.relation.refresh_from_db()
+        self.assertEqual(cache.get(status_key), 'failed')
+        self.assertIsNone(self.relation.last_episode_refresh)
+        self.assertFalse(self.relation.custom_properties.get('episodes_fetched', False))
