@@ -4070,10 +4070,7 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         )
         search = request.query_params.get("search", "").strip()
         if search:
-            queryset = queryset.filter(
-                Q(output_name__icontains=search)
-                | Q(**{f"{canonical}__name__icontains": search})
-            )
+            queryset = queryset.filter(output_name__icontains=search)
         if request.query_params.get("m3u_account"):
             queryset = queryset.filter(
                 relation__m3u_account_id=request.query_params["m3u_account"]
