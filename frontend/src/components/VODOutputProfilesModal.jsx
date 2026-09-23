@@ -73,6 +73,7 @@ import VODSourceRules from './VODSourceRules.jsx';
 import VODEditionRules from './VODEditionRules.jsx';
 import VODModal from './VODModal.jsx';
 import SeriesModal from './SeriesModal.jsx';
+import VODListPreviewModal from './VODListPreviewModal.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
   normalizeVODFailoverRanking,
@@ -352,7 +353,7 @@ const canonicalizeObject = (value) => {
 const profileDraftSignature = (profile) =>
   JSON.stringify(canonicalizeObject(profilePayload(profile)));
 
-const SortableOutputList = ({ list, onRemove }) => {
+const SortableOutputList = ({ list, onRemove, onPreview }) => {
   const id = String(list.id);
   const {
     attributes,
@@ -392,6 +393,13 @@ const SortableOutputList = ({ list, onRemove }) => {
           onChange={onRemove}
           style={{ flex: 1 }}
         />
+        <ActionIcon
+          variant="subtle"
+          aria-label={`Preview ${list.name}`}
+          onClick={onPreview}
+        >
+          <Eye size={17} />
+        </ActionIcon>
       </Group>
     </Paper>
   );
@@ -416,6 +424,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [vodLists, setVodLists] = useState([]);
+  const [previewList, setPreviewList] = useState(null);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -539,6 +548,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     setProfileId('');
     setActiveTab('settings');
     setCandidateTarget(null);
+    setPreviewList(null);
   }, [opened]);
 
   useEffect(() => {
@@ -1728,6 +1738,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                                     <SortableOutputList
                                       key={list.id}
                                       list={list}
+                                      onPreview={() => setPreviewList(list)}
                                       onRemove={() =>
                                         setOrderedListRules(
                                           selectedOutputLists.filter(
@@ -1749,19 +1760,29 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                             </Text>
                             {unselectedOutputLists.map((list) => (
                               <Paper key={list.id} withBorder p="sm">
-                                <Checkbox
-                                  checked={false}
-                                  label={list.name}
-                                  description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
-                                  onChange={(event) => {
-                                    if (event.currentTarget.checked) {
-                                      setOrderedListRules([
-                                        ...selectedOutputLists,
-                                        list,
-                                      ]);
-                                    }
-                                  }}
-                                />
+                                <Group wrap="nowrap">
+                                  <Checkbox
+                                    checked={false}
+                                    label={list.name}
+                                    description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
+                                    style={{ flex: 1 }}
+                                    onChange={(event) => {
+                                      if (event.currentTarget.checked) {
+                                        setOrderedListRules([
+                                          ...selectedOutputLists,
+                                          list,
+                                        ]);
+                                      }
+                                    }}
+                                  />
+                                  <ActionIcon
+                                    variant="subtle"
+                                    aria-label={`Preview ${list.name}`}
+                                    onClick={() => setPreviewList(list)}
+                                  >
+                                    <Eye size={17} />
+                                  </ActionIcon>
+                                </Group>
                               </Paper>
                             ))}
                           </>
@@ -2237,6 +2258,14 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
           </Tabs>
         </Stack>
       </Surface>
+
+      {previewList && (
+        <VODListPreviewModal
+          key={previewList.id}
+          list={previewList}
+          onClose={() => setPreviewList(null)}
+        />
+      )}
 
       {candidateTarget?.content_type === 'series' ? (
         <SeriesModal

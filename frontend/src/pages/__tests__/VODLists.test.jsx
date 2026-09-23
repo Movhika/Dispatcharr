@@ -7,6 +7,13 @@ import API from '../../api';
 import useAuthStore from '../../store/auth';
 import VODListsPage from '../VODLists';
 
+vi.mock('../../components/VODListItemDetails.jsx', () => ({
+  default: ({ item }) =>
+    item ? (
+      <div data-testid="list-item-details">{item.display_title}</div>
+    ) : null,
+}));
+
 vi.mock('../../api', () => ({
   default: {
     getVODLists: vi.fn(),
@@ -46,6 +53,8 @@ const list = {
   preview: [
     {
       id: 1,
+      canonical_id: 7,
+      content_type: 'movie',
       display_title: 'Available title',
       display_year: 2026,
       display_poster: '',
@@ -123,6 +132,24 @@ describe('VODListsPage', () => {
     expect(await screen.findByText('TMDB Trending')).toBeInTheDocument();
     expect(screen.getByText('2 titles · 1 available')).toBeInTheDocument();
     expect(screen.getByText('Not in library')).toBeInTheDocument();
+  });
+
+  it('opens the detail view when an available poster is selected', async () => {
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open details for Available title' })
+    );
+
+    expect(screen.getByTestId('list-item-details')).toHaveTextContent(
+      'Available title'
+    );
+    expect(
+      screen.queryByRole('button', {
+        name: 'Open details for Remote only title',
+      })
+    ).not.toBeInTheDocument();
   });
 
   it('creates a manual list from the large add button', async () => {
@@ -270,6 +297,33 @@ describe('VODListsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save list' }));
 
     await waitFor(() => expect(API.updateVODList).toHaveBeenCalled());
+    expect(API.rebuildVODList).not.toHaveBeenCalled();
+  });
+
+  it('preserves a list sorting choice without rebuilding its entries', async () => {
+    const sortedList = {
+      ...list,
+      settings: { sort_mode: 'release_date_desc' },
+    };
+    API.getVODLists.mockResolvedValue([sortedList]);
+    API.updateVODList.mockResolvedValue(sortedList);
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit TMDB Trending' }));
+    expect(
+      await screen.findByRole('textbox', { name: 'Sort titles' })
+    ).toHaveValue('Newest release first');
+    fireEvent.click(screen.getByRole('button', { name: 'Save list' }));
+
+    await waitFor(() =>
+      expect(API.updateVODList).toHaveBeenCalledWith(
+        sortedList.id,
+        expect.objectContaining({
+          settings: { sort_mode: 'release_date_desc' },
+        })
+      )
+    );
     expect(API.rebuildVODList).not.toHaveBeenCalled();
   });
 });
