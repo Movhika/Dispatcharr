@@ -17,6 +17,7 @@ vi.mock('../../components/VODListItemDetails.jsx', () => ({
 vi.mock('../../api', () => ({
   default: {
     getVODLists: vi.fn(),
+    getVODListUsage: vi.fn(),
     getVODListRuleOptions: vi.fn(),
     getVODListExternalOptions: vi.fn(),
     getVODFilterOptions: vi.fn(),
@@ -86,6 +87,7 @@ describe('VODListsPage', () => {
       selector({ user: { user_level: 10 } })
     );
     API.getVODLists.mockResolvedValue([list]);
+    API.getVODListUsage.mockResolvedValue({ profiles: [] });
     API.getVODListRuleOptions.mockResolvedValue({
       genres: [],
     });
@@ -131,6 +133,7 @@ describe('VODListsPage', () => {
 
     expect(await screen.findByText('TMDB Trending')).toBeInTheDocument();
     expect(screen.getByText('2 titles · 1 available')).toBeInTheDocument();
+    expect(screen.getByText('TMDB')).toBeInTheDocument();
     expect(screen.getByText('Not in library')).toBeInTheDocument();
   });
 
@@ -196,7 +199,66 @@ describe('VODListsPage', () => {
         is_enabled: false,
       })
     );
+    expect(API.getVODListUsage).toHaveBeenCalledWith(list.id);
     expect(API.rebuildVODList).not.toHaveBeenCalled();
+  });
+
+  it('warns before disabling a list used by VOD profiles', async () => {
+    API.getVODListUsage.mockResolvedValue({
+      profiles: [{ id: 4, name: 'Family', is_active: true }],
+    });
+    API.updateVODList.mockResolvedValue({ ...list, is_enabled: false });
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Enabled' }));
+
+    expect(await screen.findByText('Family')).toBeInTheDocument();
+    expect(API.updateVODList).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Disable list' }));
+    await waitFor(() =>
+      expect(API.updateVODList).toHaveBeenCalledWith(list.id, {
+        is_enabled: false,
+      })
+    );
+  });
+
+  it('confirms deletion and names profiles that use the list', async () => {
+    API.getVODListUsage.mockResolvedValue({
+      profiles: [{ id: 4, name: 'Family', is_active: true }],
+    });
+    API.deleteVODList.mockResolvedValue({});
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete TMDB Trending' })
+    );
+
+    expect(await screen.findByText('Family')).toBeInTheDocument();
+    expect(API.deleteVODList).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete list' }));
+    await waitFor(() =>
+      expect(API.deleteVODList).toHaveBeenCalledWith(list.id)
+    );
+  });
+
+  it('shows a disabled manual sync control and a greyed-out disabled list', async () => {
+    API.getVODLists.mockResolvedValue([
+      { ...list, list_type: 'manual', provider: '', is_enabled: false },
+    ]);
+    renderPage();
+    await screen.findByText('TMDB Trending');
+
+    expect(
+      screen.getByRole('button', { name: 'Sync TMDB Trending' })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Preview TMDB Trending' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('TMDB Trending').closest('.mantine-Paper-root')
+    ).toHaveStyle({ opacity: '0.55' });
   });
 
   it('shows only the selected date source for dynamic lists', async () => {
@@ -265,7 +327,9 @@ describe('VODListsPage', () => {
     renderPage();
     await screen.findByText('TMDB Trending');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview TMDB Trending' })
+    );
 
     expect(
       await screen.findByRole('textbox', { name: 'Search' })

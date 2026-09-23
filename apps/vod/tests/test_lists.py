@@ -845,6 +845,49 @@ class VODListAPITests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertTrue(VODList.objects.filter(pk=vod_list.pk).exists())
 
+    def test_list_usage_reports_only_selected_list_mode_profiles(self):
+        vod_list = VODList.objects.create(name="Shared list")
+        selected = VODAccessPolicy.objects.create(
+            name="Selected profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        inactive = VODAccessPolicy.objects.create(
+            name="Inactive profile",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+            is_active=False,
+        )
+        ignored = VODAccessPolicy.objects.create(
+            name="Ignored provider profile",
+            category_mode=VODAccessPolicy.CategoryMode.PROVIDER,
+        )
+        disabled_rule = VODAccessPolicy.objects.create(
+            name="Disabled selection",
+            category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        )
+        VODPolicyList.objects.create(policy=selected, vod_list=vod_list)
+        VODPolicyList.objects.create(policy=inactive, vod_list=vod_list)
+        VODPolicyList.objects.create(policy=ignored, vod_list=vod_list)
+        VODPolicyList.objects.create(
+            policy=disabled_rule, vod_list=vod_list, enabled=False
+        )
+
+        response = self._request(
+            "get", f"/api/vod/lists/{vod_list.pk}/usage/", "usage",
+            pk=vod_list.pk,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["profiles"], [
+            {"id": inactive.pk, "name": "Inactive profile", "is_active": False},
+            {"id": selected.pk, "name": "Selected profile", "is_active": True},
+        ])
+
+        forbidden = self._request(
+            "get", f"/api/vod/lists/{vod_list.pk}/usage/", "usage",
+            user=self.user, pk=vod_list.pk,
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
     @patch("apps.vod.profile_selection.enqueue_profile_selection_rebuild")
     def test_deleting_list_rebuilds_only_profiles_using_it(self, enqueue):
         deleted_list = VODList.objects.create(name="Delete this list")

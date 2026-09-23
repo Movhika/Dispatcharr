@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { notifications } from '@mantine/notifications';
 import API from '../api';
+import ConfirmationDialog from '../components/ConfirmationDialog.jsx';
 import VODListItemDetails from '../components/VODListItemDetails.jsx';
 import VODListPreviewModal from '../components/VODListPreviewModal.jsx';
 import useVODFilterOptions from '../hooks/useVODFilterOptions.js';
@@ -107,6 +108,11 @@ const TYPE_LABELS = {
   external: 'External',
   system: 'System',
 };
+
+const externalProviderLabel = (provider) =>
+  provider?.toLowerCase() === 'tmdb'
+    ? 'TMDB'
+    : provider?.trim().toUpperCase() || 'Unknown provider';
 
 const normalizeList = (value) => {
   const externalKey = value?.external_key || '';
@@ -316,6 +322,9 @@ const VODListsPage = () => {
   const [saving, setSaving] = useState(false);
   const [rebuildingId, setRebuildingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+  const [checkingId, setCheckingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [confirmation, setConfirmation] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
   const [ruleOptions, setRuleOptions] = useState({
@@ -590,11 +599,40 @@ const VODListsPage = () => {
     }
   };
 
-  const remove = async (list) => {
-    if (!window.confirm(`Delete the list “${list.name}”?`)) return;
+  const requestListAction = async (list, action) => {
+    setCheckingId(list.id);
+    try {
+      const usage = await API.getVODListUsage(list.id);
+      const profiles = usage?.profiles || [];
+      if (action === 'disable' && !profiles.length) {
+        await toggleEnabled(list, false);
+      } else {
+        setConfirmation({ action, list, profiles });
+      }
+    } catch (requestError) {
+      notifications.show({
+        color: 'red',
+        title: 'Could not check list usage',
+        message: requestError?.message || 'The request failed.',
+      });
+    } finally {
+      setCheckingId(null);
+    }
+  };
+
+  const confirmListAction = async () => {
+    if (!confirmation) return;
+    const { action, list } = confirmation;
+    if (action === 'disable') {
+      setConfirmation(null);
+      await toggleEnabled(list, false);
+      return;
+    }
+    setDeletingId(list.id);
     try {
       await API.deleteVODList(list.id);
-      await loadLists();
+      setLists((current) => current.filter((entry) => entry.id !== list.id));
+      setConfirmation(null);
       notifications.show({ color: 'green', message: 'List deleted.' });
     } catch (requestError) {
       notifications.show({
@@ -602,8 +640,32 @@ const VODListsPage = () => {
         title: 'Could not delete list',
         message: requestError?.message || 'The request failed.',
       });
+    } finally {
+      setDeletingId(null);
     }
   };
+
+  const confirmationMessage = confirmation && (
+    <Stack gap="xs">
+      <Text>
+        {confirmation.action === 'delete'
+          ? `Delete “${confirmation.list.name}”? This cannot be undone.`
+          : `Disable “${confirmation.list.name}”?`}
+      </Text>
+      {confirmation.profiles.length > 0 && (
+        <Alert color="yellow" title="Used by VOD profiles">
+          <Text size="sm">
+            {confirmation.profiles.map((profile) => profile.name).join(', ')}
+          </Text>
+          <Text size="sm" mt="xs">
+            {confirmation.action === 'delete'
+              ? 'Deleting this list removes it from these profiles and rebuilds affected active profiles.'
+              : 'Disabling this list removes its titles from affected active profiles until it is enabled again.'}
+          </Text>
+        </Alert>
+      )}
+    </Stack>
+  );
 
   if (!isAdmin) return <Navigate to="/vods" replace />;
 
@@ -632,7 +694,17 @@ const VODListsPage = () => {
           ) : (
             <>
               {lists.map((list) => (
-                <Paper key={list.id} withBorder p="md" radius="md">
+                <Paper
+                  key={list.id}
+                  withBorder
+                  p="md"
+                  radius="md"
+                  style={
+                    list.is_enabled
+                      ? undefined
+                      : { opacity: 0.55, filter: 'grayscale(0.75)' }
+                  }
+                >
                   <Stack gap="sm">
                     <Group justify="space-between" align="flex-start">
                       <Box>
@@ -643,6 +715,11 @@ const VODListsPage = () => {
                           <Badge variant="light">
                             {TYPE_LABELS[list.list_type] || list.list_type}
                           </Badge>
+                          {list.list_type === 'external' && (
+                            <Badge variant="outline" color="gray">
+                              {externalProviderLabel(list.provider)}
+                            </Badge>
+                          )}
                           {list.sync_status === 'queued' && (
                             <Badge color="blue" variant="light">
                               Queued
@@ -679,52 +756,87 @@ const VODListsPage = () => {
                           </Text>
                         )}
                       </Box>
-                      <Group gap={6}>
-                        <Switch
-                          label="Enabled"
-                          checked={list.is_enabled}
-                          disabled={list.is_system || togglingId === list.id}
-                          onChange={(event) =>
-                            toggleEnabled(list, event.currentTarget.checked)
-                          }
-                          mr="sm"
-                        />
-                        {list.list_type !== 'manual' && (
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label={`Rebuild ${list.name}`}
-                            loading={
-                              rebuildingId === list.id ||
-                              ['queued', 'running'].includes(list.sync_status)
+                      <Group gap="xs">
+                        <Paper withBorder px="sm" py={6} radius="md">
+                          <Switch
+                            label="Enabled"
+                            checked={list.is_enabled}
+                            disabled={
+                              list.is_system ||
+                              togglingId === list.id ||
+                              checkingId === list.id
                             }
-                            onClick={() => rebuild(list)}
-                          >
-                            <RefreshCw size={17} />
-                          </ActionIcon>
-                        )}
-                        <Button
-                          variant="subtle"
-                          leftSection={<Eye size={16} />}
-                          onClick={() => setViewer(list)}
-                        >
-                          Preview
-                        </Button>
-                        <ActionIcon
-                          variant="subtle"
-                          aria-label={`Edit ${list.name}`}
-                          onClick={() => openEdit(list)}
-                        >
-                          <Pencil size={17} />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="subtle"
-                          color="red"
-                          aria-label={`Delete ${list.name}`}
-                          disabled={list.is_system}
-                          onClick={() => remove(list)}
-                        >
-                          <Trash2 size={17} />
-                        </ActionIcon>
+                            onChange={(event) =>
+                              event.currentTarget.checked
+                                ? toggleEnabled(list, true)
+                                : requestListAction(list, 'disable')
+                            }
+                          />
+                        </Paper>
+                        <Paper withBorder px={6} py={4} radius="md">
+                          <Group gap={4} wrap="nowrap">
+                            <Tooltip
+                              label={
+                                list.list_type === 'manual'
+                                  ? 'Manual lists update when their items change'
+                                  : list.list_type === 'external' &&
+                                      list.provider !== 'tmdb'
+                                    ? 'This external provider has no automatic sync yet'
+                                    : `Sync ${list.name}`
+                              }
+                            >
+                              <span>
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label={`Sync ${list.name}`}
+                                  disabled={
+                                    list.list_type === 'manual' ||
+                                    (list.list_type === 'external' &&
+                                      list.provider !== 'tmdb')
+                                  }
+                                  loading={
+                                    rebuildingId === list.id ||
+                                    ['queued', 'running'].includes(
+                                      list.sync_status
+                                    )
+                                  }
+                                  onClick={() => rebuild(list)}
+                                >
+                                  <RefreshCw size={17} />
+                                </ActionIcon>
+                              </span>
+                            </Tooltip>
+                            <Tooltip label={`Preview ${list.name}`}>
+                              <ActionIcon
+                                variant="subtle"
+                                aria-label={`Preview ${list.name}`}
+                                onClick={() => setViewer(list)}
+                              >
+                                <Eye size={17} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <ActionIcon
+                              variant="subtle"
+                              aria-label={`Edit ${list.name}`}
+                              onClick={() => openEdit(list)}
+                            >
+                              <Pencil size={17} />
+                            </ActionIcon>
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              aria-label={`Delete ${list.name}`}
+                              disabled={
+                                list.is_system ||
+                                checkingId === list.id ||
+                                deletingId === list.id
+                              }
+                              onClick={() => requestListAction(list, 'delete')}
+                            >
+                              <Trash2 size={17} />
+                            </ActionIcon>
+                          </Group>
+                        </Paper>
                       </Group>
                     </Group>
 
@@ -755,6 +867,22 @@ const VODListsPage = () => {
           )}
         </Stack>
       </ScrollArea>
+
+      <ConfirmationDialog
+        opened={Boolean(confirmation)}
+        onClose={() => setConfirmation(null)}
+        onConfirm={confirmListAction}
+        title={
+          confirmation?.action === 'delete'
+            ? 'Delete VOD list'
+            : 'Disable VOD list'
+        }
+        message={confirmationMessage}
+        confirmLabel={
+          confirmation?.action === 'delete' ? 'Delete list' : 'Disable list'
+        }
+        loading={deletingId !== null}
+      />
 
       <Modal
         opened={editorOpen}

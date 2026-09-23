@@ -3255,6 +3255,31 @@ class VODListViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
+    @action(detail=True, methods=["get"], url_path="usage")
+    def usage(self, request, pk=None):
+        """Profiles that currently select this list for list-backed output."""
+        denied = self._admin_only(request)
+        if denied is not None:
+            return denied
+        vod_list = self.get_object()
+        profiles = VODPolicyList.objects.filter(
+            vod_list=vod_list,
+            enabled=True,
+            policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
+        ).order_by("policy__name", "policy_id").values(
+            "policy_id", "policy__name", "policy__is_active"
+        )
+        return Response({
+            "profiles": [
+                {
+                    "id": row["policy_id"],
+                    "name": row["policy__name"],
+                    "is_active": row["policy__is_active"],
+                }
+                for row in profiles
+            ],
+        })
+
     @action(detail=False, methods=["get"], url_path="rule-options")
     def rule_options(self, request):
         """Return canonical rule values which actually exist in the library."""
