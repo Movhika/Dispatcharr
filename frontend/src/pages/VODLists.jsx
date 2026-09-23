@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   ActionIcon,
@@ -13,22 +13,12 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
-  Pagination,
   Paper,
-  Popover,
-  PopoverDropdown,
-  PopoverTarget,
   ScrollArea,
   Select,
   SimpleGrid,
   Stack,
   Switch,
-  Table,
-  TableTbody,
-  TableTd,
-  TableTh,
-  TableThead,
-  TableTr,
   TagsInput,
   Text,
   Textarea,
@@ -39,21 +29,17 @@ import {
 import {
   Eye,
   Film,
-  Filter,
   Info,
   ListPlus,
   Pencil,
   Plus,
   RefreshCw,
-  Search,
   Trash2,
 } from 'lucide-react';
-import { useDebouncedValue } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import API from '../api';
-import SeriesModal from '../components/SeriesModal.jsx';
-import VODModal from '../components/VODModal.jsx';
-import VODTechnicalFilterFields from '../components/VODTechnicalFilterFields.jsx';
+import VODListItemDetails from '../components/VODListItemDetails.jsx';
+import VODListPreviewModal from '../components/VODListPreviewModal.jsx';
 import useVODFilterOptions from '../hooks/useVODFilterOptions.js';
 import useAuthStore from '../store/auth';
 import { USER_LEVELS } from '../constants';
@@ -96,34 +82,10 @@ const EMPTY_FORM = {
     watch_monetization_types: 'flatrate',
   },
   is_enabled: true,
+  sort_mode: '',
   date_source: 'none',
   date_mode: 'fixed',
   rule: EMPTY_RULE,
-};
-
-const EMPTY_PREVIEW_FILTERS = {
-  type: 'all',
-  availability: 'any',
-  year_from: '',
-  year_to: '',
-  genre: '',
-  anime_mode: '',
-  adult_mode: '',
-  library_added_after: '',
-  library_added_before: '',
-  audio_language: '',
-  subtitle_language: '',
-  resolution: '',
-  container_extension: '',
-  video_feature: '',
-};
-
-const EMPTY_FILTER_OPTIONS = {
-  audio_languages: [],
-  subtitle_languages: [],
-  resolutions: [],
-  container_extensions: [],
-  video_features: [],
 };
 
 const TMDB_PRESETS = [
@@ -177,6 +139,7 @@ const normalizeList = (value) => {
         ? 'custom'
         : '',
     settings: { ...EMPTY_FORM.settings, ...(value?.settings || {}) },
+    sort_mode: value?.settings?.sort_mode || '',
     date_source: dateSource,
     date_mode:
       dateSource === 'release'
@@ -224,14 +187,24 @@ const builderSignature = (value) => {
     provider: value.list_type === 'external' ? value.provider || '' : '',
     external_key:
       value.list_type === 'external' ? value.external_key || '' : '',
-    settings: value.list_type === 'external' ? value.settings || {} : {},
+    settings:
+      value.list_type === 'external' && value.external_key === 'watch-provider'
+        ? {
+            watch_provider_id: String(value.settings?.watch_provider_id || ''),
+            watch_region: String(value.settings?.watch_region || ''),
+            watch_monetization_types: String(
+              value.settings?.watch_monetization_types || 'flatrate'
+            ),
+          }
+        : {},
     rules: value.list_type === 'dynamic' ? [rule] : [],
   });
 };
 
-const Poster = ({ item }) => {
+const Poster = ({ item, onOpen }) => {
   const title = item.display_title || 'Untitled';
   const poster = item.display_poster;
+  const canOpen = Boolean(item.is_available && item.canonical_id);
   return (
     <Tooltip
       label={`${title}${item.display_year ? ` (${item.display_year})` : ''}${
@@ -240,10 +213,22 @@ const Poster = ({ item }) => {
       withArrow
     >
       <Box
-        w={88}
-        h={132}
+        component={canOpen ? 'button' : 'div'}
+        type={canOpen ? 'button' : undefined}
+        aria-label={canOpen ? `Open details for ${title}` : undefined}
+        onClick={canOpen ? () => onOpen(item) : undefined}
+        w={116}
+        h={174}
         pos="relative"
-        style={{ flex: '0 0 auto', borderRadius: 6, overflow: 'hidden' }}
+        style={{
+          flex: '0 0 auto',
+          border: 0,
+          padding: 0,
+          borderRadius: 6,
+          overflow: 'hidden',
+          background: 'transparent',
+          cursor: canOpen ? 'pointer' : 'default',
+        }}
       >
         {poster ? (
           <Image src={poster} alt={title} w="100%" h="100%" fit="cover" />
@@ -271,6 +256,55 @@ const Poster = ({ item }) => {
   );
 };
 
+const PosterStrip = ({ list, onOpen }) => {
+  const containerRef = useRef(null);
+  const [visibleCount, setVisibleCount] = useState(12);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return undefined;
+    const update = () => {
+      const nextWidth = node.clientWidth;
+      if (nextWidth <= 0) return;
+      setWidth(nextWidth);
+      setVisibleCount(Math.max(1, Math.floor((nextWidth + 8) / 124)));
+    };
+    update();
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    observer?.observe(node);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  const posters = (list.preview || []).slice(0, visibleCount);
+  const hasMore =
+    posters.length >= visibleCount &&
+    Number(list.item_count || 0) > posters.length;
+  const fadeWidth = Math.min(4 * 124, Math.max(124, width * 0.6));
+  const mask = hasMore
+    ? `linear-gradient(to right, #000 0%, #000 calc(100% - ${fadeWidth}px), transparent 100%)`
+    : undefined;
+
+  return (
+    <Box ref={containerRef} w="100%" style={{ overflow: 'hidden' }}>
+      <Group
+        gap={8}
+        wrap="nowrap"
+        style={{ overflow: 'hidden', maskImage: mask, WebkitMaskImage: mask }}
+      >
+        {posters.map((item) => (
+          <Poster key={item.id} item={item} onOpen={onOpen} />
+        ))}
+      </Group>
+    </Box>
+  );
+};
+
 const VODListsPage = () => {
   const user = useAuthStore((state) => state.user);
   const [lists, setLists] = useState([]);
@@ -283,15 +317,6 @@ const VODListsPage = () => {
   const [rebuildingId, setRebuildingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
   const [viewer, setViewer] = useState(null);
-  const [viewerPage, setViewerPage] = useState(1);
-  const [viewerSearch, setViewerSearch] = useState('');
-  const [debouncedViewerSearch] = useDebouncedValue(viewerSearch, 250);
-  const [viewerFilters, setViewerFilters] = useState(EMPTY_PREVIEW_FILTERS);
-  const [viewerFilterOptions, setViewerFilterOptions] =
-    useState(EMPTY_FILTER_OPTIONS);
-  const [viewerData, setViewerData] = useState(null);
-  const [viewerLoading, setViewerLoading] = useState(false);
-  const [removingItemId, setRemovingItemId] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
   const [ruleOptions, setRuleOptions] = useState({
     genres: [],
@@ -342,56 +367,6 @@ const VODListsPage = () => {
     );
     return () => window.clearInterval(timer);
   }, [lists, loadLists]);
-
-  useEffect(() => {
-    if (!viewer) return;
-    let active = true;
-    setViewerLoading(true);
-    API.getVODListItems(viewer.id, {
-      page: viewerPage,
-      page_size: 50,
-      search: debouncedViewerSearch,
-      ...viewerFilters,
-    })
-      .then((response) => {
-        if (active) setViewerData(response);
-      })
-      .catch((requestError) => {
-        if (active) {
-          notifications.show({
-            color: 'red',
-            title: 'Could not load list items',
-            message: requestError?.message || 'The request failed.',
-          });
-        }
-      })
-      .finally(() => {
-        if (active) setViewerLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [debouncedViewerSearch, viewer, viewerFilters, viewerPage]);
-
-  useEffect(() => {
-    if (!viewer) return undefined;
-    let active = true;
-    API.getVODListFilterOptions(viewer.id)
-      .then((response) => {
-        if (active) {
-          setViewerFilterOptions({
-            ...EMPTY_FILTER_OPTIONS,
-            ...(response || {}),
-          });
-        }
-      })
-      .catch(() => {
-        if (active) setViewerFilterOptions(EMPTY_FILTER_OPTIONS);
-      });
-    return () => {
-      active = false;
-    };
-  }, [viewer]);
 
   useEffect(() => {
     if (!editorOpen || form.list_type !== 'dynamic') return;
@@ -525,7 +500,14 @@ const VODListsPage = () => {
           ? form.external_key.trim()
           : form.external_source;
       const externalSettings =
-        form.external_source === 'watch-provider' ? form.settings : {};
+        form.external_source === 'watch-provider'
+          ? {
+              watch_provider_id: form.settings.watch_provider_id,
+              watch_provider_name: form.settings.watch_provider_name,
+              watch_region: form.settings.watch_region,
+              watch_monetization_types: form.settings.watch_monetization_types,
+            }
+          : {};
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
@@ -533,7 +515,10 @@ const VODListsPage = () => {
         content_type: form.content_type,
         provider: form.list_type === 'external' ? form.provider.trim() : '',
         external_key: form.list_type === 'external' ? externalKey : '',
-        settings: form.list_type === 'external' ? externalSettings : {},
+        settings: {
+          ...(form.list_type === 'external' ? externalSettings : {}),
+          ...(form.sort_mode ? { sort_mode: form.sort_mode } : {}),
+        },
         is_enabled: form.is_enabled,
         rules: form.list_type === 'dynamic' ? [normalizedRule] : [],
       };
@@ -620,52 +605,6 @@ const VODListsPage = () => {
     }
   };
 
-  const removeItem = async (item) => {
-    if (!viewer || viewer.list_type !== 'manual') return;
-    setRemovingItemId(item.id);
-    try {
-      await API.removeVODListItems(viewer.id, [item.id]);
-      setViewerData((current) => ({
-        ...current,
-        count: Math.max(0, Number(current?.count || 0) - 1),
-        results: (current?.results || []).filter((row) => row.id !== item.id),
-      }));
-      await loadLists();
-      notifications.show({ color: 'green', message: 'Removed from list.' });
-    } catch (requestError) {
-      notifications.show({
-        color: 'red',
-        title: 'Could not remove title',
-        message: requestError?.message || 'The request failed.',
-      });
-    } finally {
-      setRemovingItemId(null);
-    }
-  };
-
-  const viewerItems = useMemo(() => viewerData?.results || [], [viewerData]);
-  const viewerAdvancedFilterCount = useMemo(
-    () =>
-      Object.entries(viewerFilters).filter(
-        ([key, value]) =>
-          !['type', 'availability'].includes(key) && Boolean(value)
-      ).length,
-    [viewerFilters]
-  );
-  const updateViewerFilter = (field, value) => {
-    setViewerFilters((current) => ({ ...current, [field]: value }));
-    setViewerPage(1);
-  };
-
-  const openViewer = (list) => {
-    setViewer(list);
-    setViewerPage(1);
-    setViewerSearch('');
-    setViewerFilters(EMPTY_PREVIEW_FILTERS);
-    setViewerFilterOptions(EMPTY_FILTER_OPTIONS);
-    setViewerData(null);
-  };
-
   if (!isAdmin) return <Navigate to="/vods" replace />;
 
   return (
@@ -693,7 +632,7 @@ const VODListsPage = () => {
           ) : (
             <>
               {lists.map((list) => (
-                <Paper key={list.id} withBorder p="md" radius="md" mih={275}>
+                <Paper key={list.id} withBorder p="md" radius="md">
                   <Stack gap="sm">
                     <Group justify="space-between" align="flex-start">
                       <Box>
@@ -766,7 +705,7 @@ const VODListsPage = () => {
                         <Button
                           variant="subtle"
                           leftSection={<Eye size={16} />}
-                          onClick={() => openViewer(list)}
+                          onClick={() => setViewer(list)}
                         >
                           Preview
                         </Button>
@@ -790,17 +729,9 @@ const VODListsPage = () => {
                     </Group>
 
                     {list.preview?.length ? (
-                      <Group
-                        gap="xs"
-                        wrap="nowrap"
-                        style={{ overflow: 'hidden' }}
-                      >
-                        {list.preview.map((item) => (
-                          <Poster key={item.id} item={item} />
-                        ))}
-                      </Group>
+                      <PosterStrip list={list} onOpen={setDetailItem} />
                     ) : (
-                      <Center mih={132} bg="dark.7" style={{ borderRadius: 6 }}>
+                      <Center mih={174} bg="dark.7" style={{ borderRadius: 6 }}>
                         <Text c="dimmed" size="sm">
                           No titles in this list yet.
                         </Text>
@@ -829,515 +760,581 @@ const VODListsPage = () => {
         opened={editorOpen}
         onClose={() => setEditorOpen(false)}
         title={editing ? `Edit ${editing.name}` : 'Create VOD list'}
-        size="lg"
+        size="xl"
       >
-        <Stack>
-          <TextInput
-            label="Name"
-            required
-            value={form.name}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, name: event.target.value }))
-            }
-          />
-          <Textarea
-            label="Description"
-            value={form.description}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                description: event.target.value,
-              }))
-            }
-          />
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <Select
-              label="List type"
-              data={[
-                { value: 'manual', label: 'Manual' },
-                { value: 'dynamic', label: 'Metadata rules' },
-                { value: 'external', label: 'External provider' },
-              ]}
-              value={form.list_type}
-              disabled={Boolean(editing?.is_system)}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  list_type: value || 'manual',
-                }))
-              }
-            />
-            <Select
-              label="Content"
-              data={[
-                { value: 'all', label: 'Movies and series' },
-                { value: 'movie', label: 'Movies' },
-                { value: 'series', label: 'Series' },
-              ]}
-              value={form.content_type}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  content_type: value || 'all',
-                  settings:
-                    current.external_source === 'watch-provider' &&
-                    current.content_type !== value
-                      ? {
-                          ...current.settings,
-                          watch_provider_id: '',
-                          watch_provider_name: '',
-                        }
-                      : current.settings,
-                }))
-              }
-            />
-          </SimpleGrid>
-          {form.list_type === 'external' && (
+        <Stack gap="md">
+          <Paper withBorder p="md" radius="md">
             <Stack gap="sm">
+              <Text fw={700}>General</Text>
+              <TextInput
+                label="Name"
+                required
+                value={form.name}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
+                }
+              />
+              <Textarea
+                label="Description"
+                value={form.description}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+              />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <Select
-                  label="Provider"
-                  data={[{ value: 'tmdb', label: 'TMDB' }]}
-                  value={form.provider}
+                  label="List type"
+                  data={[
+                    { value: 'manual', label: 'Manual' },
+                    { value: 'dynamic', label: 'Metadata rules' },
+                    { value: 'external', label: 'External provider' },
+                  ]}
+                  value={form.list_type}
+                  disabled={Boolean(editing?.is_system)}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      provider: value || '',
+                      list_type: value || 'manual',
                     }))
                   }
                 />
                 <Select
-                  label="TMDB source"
-                  placeholder="Choose a list source"
+                  label="Content"
                   data={[
-                    ...TMDB_PRESETS,
-                    {
-                      value: 'watch-provider',
-                      label: 'Streaming service (Watch Provider)',
-                    },
-                    { value: 'custom', label: 'TMDB list ID' },
+                    { value: 'all', label: 'Movies and series' },
+                    { value: 'movie', label: 'Movies' },
+                    { value: 'series', label: 'Series' },
                   ]}
-                  value={form.external_source || null}
+                  value={form.content_type}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      external_source: value || '',
-                      content_type:
-                        value === 'trending-movies' ||
-                        value === 'now-playing' ||
-                        value === 'popular-movies'
-                          ? 'movie'
-                          : value === 'trending-series' ||
-                              value === 'popular-series'
-                            ? 'series'
-                            : current.content_type,
+                      content_type: value || 'all',
+                      settings:
+                        current.external_source === 'watch-provider' &&
+                        current.content_type !== value
+                          ? {
+                              ...current.settings,
+                              watch_provider_id: '',
+                              watch_provider_name: '',
+                            }
+                          : current.settings,
                     }))
                   }
                 />
               </SimpleGrid>
-              {form.external_source === 'custom' && (
-                <TextInput
-                  label="TMDB list ID"
-                  value={form.external_key}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      external_key: event.target.value,
-                    }))
-                  }
-                />
+            </Stack>
+          </Paper>
+          <Paper withBorder p="md" radius="md">
+            <Stack gap="sm">
+              <Text fw={700}>Source</Text>
+              {form.list_type === 'manual' && (
+                <Text size="sm" c="dimmed">
+                  Add titles to this list from their library detail view.
+                </Text>
               )}
-              {form.external_source === 'watch-provider' && (
+              {form.list_type === 'external' && (
                 <Stack gap="sm">
-                  {!['movie', 'series'].includes(form.content_type) && (
-                    <Alert color="yellow">
-                      Choose either Movies or Series above. TMDB exposes these
-                      streaming catalogs separately.
-                    </Alert>
-                  )}
                   <SimpleGrid cols={{ base: 1, sm: 2 }}>
                     <Select
-                      label="Streaming service"
-                      searchable
-                      disabled={
-                        externalOptionsLoading ||
-                        !['movie', 'series'].includes(form.content_type)
-                      }
-                      data={externalOptions.watch_providers}
-                      value={form.settings.watch_provider_id || null}
-                      onChange={(value) => {
-                        const selected = externalOptions.watch_providers.find(
-                          (option) => option.value === value
-                        );
-                        setForm((current) => ({
-                          ...current,
-                          settings: {
-                            ...current.settings,
-                            watch_provider_id: value || '',
-                            watch_provider_name: selected?.label || '',
-                          },
-                        }));
-                      }}
-                    />
-                    <TextInput
-                      label="Region"
-                      readOnly
-                      value={
-                        form.settings.watch_region ||
-                        externalOptions.region ||
-                        ''
-                      }
-                    />
-                    <Select
-                      label="Availability"
-                      data={[
-                        { value: 'flatrate', label: 'Subscription streaming' },
-                        { value: 'free', label: 'Free' },
-                        { value: 'ads', label: 'Free with ads' },
-                        { value: 'rent', label: 'Rent' },
-                        { value: 'buy', label: 'Buy' },
-                      ]}
-                      value={form.settings.watch_monetization_types}
+                      label="Provider"
+                      data={[{ value: 'tmdb', label: 'TMDB' }]}
+                      value={form.provider}
                       onChange={(value) =>
                         setForm((current) => ({
                           ...current,
-                          settings: {
-                            ...current.settings,
-                            watch_monetization_types: value || 'flatrate',
+                          provider: value || '',
+                        }))
+                      }
+                    />
+                    <Select
+                      label="TMDB source"
+                      placeholder="Choose a list source"
+                      data={[
+                        ...TMDB_PRESETS,
+                        {
+                          value: 'watch-provider',
+                          label: 'Streaming service (Watch Provider)',
+                        },
+                        { value: 'custom', label: 'TMDB list ID' },
+                      ]}
+                      value={form.external_source || null}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          external_source: value || '',
+                          content_type:
+                            value === 'trending-movies' ||
+                            value === 'now-playing' ||
+                            value === 'popular-movies'
+                              ? 'movie'
+                              : value === 'trending-series' ||
+                                  value === 'popular-series'
+                                ? 'series'
+                                : current.content_type,
+                        }))
+                      }
+                    />
+                  </SimpleGrid>
+                  {form.external_source === 'custom' && (
+                    <TextInput
+                      label="TMDB list ID"
+                      value={form.external_key}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          external_key: event.target.value,
+                        }))
+                      }
+                    />
+                  )}
+                  {form.external_source === 'watch-provider' && (
+                    <Stack gap="sm">
+                      {!['movie', 'series'].includes(form.content_type) && (
+                        <Alert color="yellow">
+                          Choose either Movies or Series above. TMDB exposes
+                          these streaming catalogs separately.
+                        </Alert>
+                      )}
+                      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                        <Select
+                          label="Streaming service"
+                          searchable
+                          disabled={
+                            externalOptionsLoading ||
+                            !['movie', 'series'].includes(form.content_type)
+                          }
+                          data={externalOptions.watch_providers}
+                          value={form.settings.watch_provider_id || null}
+                          onChange={(value) => {
+                            const selected =
+                              externalOptions.watch_providers.find(
+                                (option) => option.value === value
+                              );
+                            setForm((current) => ({
+                              ...current,
+                              settings: {
+                                ...current.settings,
+                                watch_provider_id: value || '',
+                                watch_provider_name: selected?.label || '',
+                              },
+                            }));
+                          }}
+                        />
+                        <TextInput
+                          label="Region"
+                          readOnly
+                          value={
+                            form.settings.watch_region ||
+                            externalOptions.region ||
+                            ''
+                          }
+                        />
+                        <Select
+                          label="Availability"
+                          data={[
+                            {
+                              value: 'flatrate',
+                              label: 'Subscription streaming',
+                            },
+                            { value: 'free', label: 'Free' },
+                            { value: 'ads', label: 'Free with ads' },
+                            { value: 'rent', label: 'Rent' },
+                            { value: 'buy', label: 'Buy' },
+                          ]}
+                          value={form.settings.watch_monetization_types}
+                          onChange={(value) =>
+                            setForm((current) => ({
+                              ...current,
+                              settings: {
+                                ...current.settings,
+                                watch_monetization_types: value || 'flatrate',
+                              },
+                            }))
+                          }
+                        />
+                      </SimpleGrid>
+                    </Stack>
+                  )}
+                </Stack>
+              )}
+              {form.list_type === 'dynamic' && (
+                <Stack gap="sm">
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <Select
+                      label="Date source"
+                      data={[
+                        { value: 'none', label: 'No date filter' },
+                        { value: 'release', label: 'Release date (TMDB)' },
+                        { value: 'added', label: 'Added to this library' },
+                      ]}
+                      value={form.date_source}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          date_source: value || 'none',
+                          date_mode: 'fixed',
+                        }))
+                      }
+                    />
+                    {form.date_source !== 'none' && (
+                      <Select
+                        label="Date range"
+                        data={[
+                          { value: 'fixed', label: 'Fixed dates' },
+                          ...(form.date_source === 'release'
+                            ? [{ value: 'yearly', label: 'Repeats each year' }]
+                            : []),
+                          { value: 'recent', label: 'Last X days' },
+                        ]}
+                        value={form.date_mode}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            date_mode: value || 'fixed',
+                          }))
+                        }
+                      />
+                    )}
+                  </SimpleGrid>
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    {form.date_source === 'release' &&
+                      form.date_mode === 'fixed' && (
+                        <>
+                          <TextInput
+                            type="date"
+                            label="Released from"
+                            value={form.rule.release_date_after}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  release_date_after: event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                          <TextInput
+                            type="date"
+                            label="Released until"
+                            value={form.rule.release_date_before}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  release_date_before:
+                                    event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                        </>
+                      )}
+                    {form.date_source === 'release' &&
+                      form.date_mode === 'yearly' && (
+                        <>
+                          <TextInput
+                            label="Every year from (MM-DD)"
+                            placeholder="01-01"
+                            value={form.rule.release_yearly_from}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  release_yearly_from:
+                                    event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                          <TextInput
+                            label="Every year until (MM-DD)"
+                            placeholder="04-30"
+                            value={form.rule.release_yearly_until}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  release_yearly_until:
+                                    event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                        </>
+                      )}
+                    {form.date_source === 'release' &&
+                      form.date_mode === 'recent' && (
+                        <NumberInput
+                          label="Released in the last X days"
+                          min={1}
+                          max={3650}
+                          value={form.rule.release_last_days}
+                          onChange={(value) =>
+                            setForm((current) => ({
+                              ...current,
+                              rule: {
+                                ...current.rule,
+                                release_last_days: value,
+                              },
+                            }))
+                          }
+                        />
+                      )}
+                    {form.date_source === 'added' &&
+                      form.date_mode === 'fixed' && (
+                        <>
+                          <TextInput
+                            type="date"
+                            label="Added to library from"
+                            value={form.rule.library_added_after}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  library_added_after:
+                                    event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                          <TextInput
+                            type="date"
+                            label="Added to library until"
+                            value={form.rule.library_added_before}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                rule: {
+                                  ...current.rule,
+                                  library_added_before:
+                                    event.currentTarget.value,
+                                },
+                              }))
+                            }
+                          />
+                        </>
+                      )}
+                    {form.date_source === 'added' &&
+                      form.date_mode === 'recent' && (
+                        <NumberInput
+                          label="Added in the last X days"
+                          min={1}
+                          max={3650}
+                          value={form.rule.library_added_last_days}
+                          onChange={(value) =>
+                            setForm((current) => ({
+                              ...current,
+                              rule: {
+                                ...current.rule,
+                                library_added_last_days: value,
+                              },
+                            }))
+                          }
+                        />
+                      )}
+                  </SimpleGrid>
+                  <TagsInput
+                    label="Genres"
+                    placeholder="Select genres present in the library"
+                    data={ruleOptions.genres}
+                    value={form.rule.required_genres}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        rule: { ...current.rule, required_genres: value },
+                      }))
+                    }
+                  />
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <Select
+                      label="Anime"
+                      data={[
+                        { value: 'any', label: 'Any' },
+                        { value: 'yes', label: 'Anime only' },
+                        { value: 'no', label: 'Exclude anime' },
+                      ]}
+                      value={form.rule.anime_mode}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: { ...current.rule, anime_mode: value || 'any' },
+                        }))
+                      }
+                    />
+                    <NumberInput
+                      label={
+                        <Group gap={6} wrap="nowrap">
+                          Maximum age rating
+                          <Tooltip
+                            multiline
+                            maw={360}
+                            label="This filters the minimum viewer age from the canonical/TMDB certification, not the title's age since release. FSK 12 becomes 12 and PG-13 becomes 13; a limit of 12 includes numeric ratings up to 12. If several ratings exist, the lowest number is used. R, TV-MA and missing ratings have no numeric age and do not match. Empty or 0 disables the filter."
+                          >
+                            <Info
+                              size={15}
+                              aria-label="How age ratings are matched"
+                            />
+                          </Tooltip>
+                        </Group>
+                      }
+                      value={form.rule.max_age_rating}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: { ...current.rule, max_age_rating: value },
+                        }))
+                      }
+                    />
+                  </SimpleGrid>
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <MultiSelect
+                      label="DUB"
+                      searchable
+                      disabled={technicalOptionsLoading}
+                      data={optionRows(
+                        technicalOptions.audio_languages,
+                        languageLabel
+                      )}
+                      value={form.rule.required_audio_languages}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            required_audio_languages: value,
+                          },
+                        }))
+                      }
+                    />
+                    <MultiSelect
+                      label="SUB"
+                      searchable
+                      disabled={technicalOptionsLoading}
+                      data={optionRows(
+                        technicalOptions.subtitle_languages,
+                        languageLabel
+                      )}
+                      value={form.rule.required_subtitle_languages}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            required_subtitle_languages: value,
+                          },
+                        }))
+                      }
+                    />
+                    <Select
+                      label="Minimum resolution"
+                      placeholder="No minimum"
+                      clearable
+                      disabled={technicalOptionsLoading}
+                      data={(technicalOptions.resolutions || []).map(
+                        (value) => ({
+                          value: resolutionNumber(value),
+                          label: value,
+                        })
+                      )}
+                      value={
+                        form.rule.min_resolution
+                          ? String(form.rule.min_resolution)
+                          : null
+                      }
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            min_resolution: value || '',
+                          },
+                        }))
+                      }
+                    />
+                    <Select
+                      label="Maximum resolution"
+                      placeholder="No maximum"
+                      clearable
+                      disabled={technicalOptionsLoading}
+                      data={(technicalOptions.resolutions || []).map(
+                        (value) => ({
+                          value: resolutionNumber(value),
+                          label: value,
+                        })
+                      )}
+                      value={
+                        form.rule.max_resolution
+                          ? String(form.rule.max_resolution)
+                          : null
+                      }
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          rule: {
+                            ...current.rule,
+                            max_resolution: value || '',
                           },
                         }))
                       }
                     />
                   </SimpleGrid>
-                </Stack>
-              )}
-            </Stack>
-          )}
-          {form.list_type === 'dynamic' && (
-            <Stack gap="sm">
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <Select
-                  label="Date source"
-                  data={[
-                    { value: 'none', label: 'No date filter' },
-                    { value: 'release', label: 'Release date (TMDB)' },
-                    { value: 'added', label: 'Added to this library' },
-                  ]}
-                  value={form.date_source}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      date_source: value || 'none',
-                      date_mode: 'fixed',
-                    }))
-                  }
-                />
-                {form.date_source !== 'none' && (
-                  <Select
-                    label="Date range"
-                    data={[
-                      { value: 'fixed', label: 'Fixed dates' },
-                      ...(form.date_source === 'release'
-                        ? [{ value: 'yearly', label: 'Repeats each year' }]
-                        : []),
-                      { value: 'recent', label: 'Last X days' },
-                    ]}
-                    value={form.date_mode}
+                  <MultiSelect
+                    label="Features"
+                    searchable
+                    disabled={technicalOptionsLoading}
+                    data={optionRows(
+                      technicalOptions.video_features,
+                      videoFeatureLabel
+                    )}
+                    value={form.rule.required_video_features}
                     onChange={(value) =>
                       setForm((current) => ({
                         ...current,
-                        date_mode: value || 'fixed',
+                        rule: {
+                          ...current.rule,
+                          required_video_features: value,
+                        },
                       }))
                     }
                   />
-                )}
-              </SimpleGrid>
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                {form.date_source === 'release' &&
-                  form.date_mode === 'fixed' && (
-                    <>
-                      <TextInput
-                        type="date"
-                        label="Released from"
-                        value={form.rule.release_date_after}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            rule: {
-                              ...current.rule,
-                              release_date_after: event.currentTarget.value,
-                            },
-                          }))
-                        }
-                      />
-                      <TextInput
-                        type="date"
-                        label="Released until"
-                        value={form.rule.release_date_before}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            rule: {
-                              ...current.rule,
-                              release_date_before: event.currentTarget.value,
-                            },
-                          }))
-                        }
-                      />
-                    </>
-                  )}
-                {form.date_source === 'release' &&
-                  form.date_mode === 'yearly' && (
-                    <>
-                      <TextInput
-                        label="Every year from (MM-DD)"
-                        placeholder="01-01"
-                        value={form.rule.release_yearly_from}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            rule: {
-                              ...current.rule,
-                              release_yearly_from: event.currentTarget.value,
-                            },
-                          }))
-                        }
-                      />
-                      <TextInput
-                        label="Every year until (MM-DD)"
-                        placeholder="04-30"
-                        value={form.rule.release_yearly_until}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            rule: {
-                              ...current.rule,
-                              release_yearly_until: event.currentTarget.value,
-                            },
-                          }))
-                        }
-                      />
-                    </>
-                  )}
-                {form.date_source === 'release' &&
-                  form.date_mode === 'recent' && (
-                    <NumberInput
-                      label="Released in the last X days"
-                      min={1}
-                      max={3650}
-                      value={form.rule.release_last_days}
-                      onChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: { ...current.rule, release_last_days: value },
-                        }))
-                      }
-                    />
-                  )}
-                {form.date_source === 'added' && form.date_mode === 'fixed' && (
-                  <>
-                    <TextInput
-                      type="date"
-                      label="Added to library from"
-                      value={form.rule.library_added_after}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            library_added_after: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                    <TextInput
-                      type="date"
-                      label="Added to library until"
-                      value={form.rule.library_added_before}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            library_added_before: event.currentTarget.value,
-                          },
-                        }))
-                      }
-                    />
-                  </>
-                )}
-                {form.date_source === 'added' &&
-                  form.date_mode === 'recent' && (
-                    <NumberInput
-                      label="Added in the last X days"
-                      min={1}
-                      max={3650}
-                      value={form.rule.library_added_last_days}
-                      onChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          rule: {
-                            ...current.rule,
-                            library_added_last_days: value,
-                          },
-                        }))
-                      }
-                    />
-                  )}
-              </SimpleGrid>
-              <TagsInput
-                label="Genres"
-                placeholder="Select genres present in the library"
-                data={ruleOptions.genres}
-                value={form.rule.required_genres}
+                </Stack>
+              )}
+            </Stack>
+          </Paper>
+          <Paper withBorder p="md" radius="md">
+            <Stack gap="sm">
+              <Text fw={700}>Sort</Text>
+              <Select
+                label="Sort titles"
+                placeholder="Original order"
+                description="Leave empty to keep the order supplied by the list source."
+                clearable
+                data={[
+                  { value: 'release_date_desc', label: 'Newest release first' },
+                  {
+                    value: 'library_added_desc',
+                    label: 'Recently added to library first',
+                  },
+                ]}
+                value={form.sort_mode || null}
                 onChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    rule: { ...current.rule, required_genres: value },
-                  }))
-                }
-              />
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <Select
-                  label="Anime"
-                  data={[
-                    { value: 'any', label: 'Any' },
-                    { value: 'yes', label: 'Anime only' },
-                    { value: 'no', label: 'Exclude anime' },
-                  ]}
-                  value={form.rule.anime_mode}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: { ...current.rule, anime_mode: value || 'any' },
-                    }))
-                  }
-                />
-                <NumberInput
-                  label={
-                    <Group gap={6} wrap="nowrap">
-                      Maximum age rating
-                      <Tooltip
-                        multiline
-                        maw={360}
-                        label="This filters the minimum viewer age from the canonical/TMDB certification, not the title's age since release. FSK 12 becomes 12 and PG-13 becomes 13; a limit of 12 includes numeric ratings up to 12. If several ratings exist, the lowest number is used. R, TV-MA and missing ratings have no numeric age and do not match. Empty or 0 disables the filter."
-                      >
-                        <Info
-                          size={15}
-                          aria-label="How age ratings are matched"
-                        />
-                      </Tooltip>
-                    </Group>
-                  }
-                  value={form.rule.max_age_rating}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: { ...current.rule, max_age_rating: value },
-                    }))
-                  }
-                />
-              </SimpleGrid>
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <MultiSelect
-                  label="DUB"
-                  searchable
-                  disabled={technicalOptionsLoading}
-                  data={optionRows(
-                    technicalOptions.audio_languages,
-                    languageLabel
-                  )}
-                  value={form.rule.required_audio_languages}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: {
-                        ...current.rule,
-                        required_audio_languages: value,
-                      },
-                    }))
-                  }
-                />
-                <MultiSelect
-                  label="SUB"
-                  searchable
-                  disabled={technicalOptionsLoading}
-                  data={optionRows(
-                    technicalOptions.subtitle_languages,
-                    languageLabel
-                  )}
-                  value={form.rule.required_subtitle_languages}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: {
-                        ...current.rule,
-                        required_subtitle_languages: value,
-                      },
-                    }))
-                  }
-                />
-                <Select
-                  label="Minimum resolution"
-                  placeholder="No minimum"
-                  clearable
-                  disabled={technicalOptionsLoading}
-                  data={(technicalOptions.resolutions || []).map((value) => ({
-                    value: resolutionNumber(value),
-                    label: value,
-                  }))}
-                  value={
-                    form.rule.min_resolution
-                      ? String(form.rule.min_resolution)
-                      : null
-                  }
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: { ...current.rule, min_resolution: value || '' },
-                    }))
-                  }
-                />
-                <Select
-                  label="Maximum resolution"
-                  placeholder="No maximum"
-                  clearable
-                  disabled={technicalOptionsLoading}
-                  data={(technicalOptions.resolutions || []).map((value) => ({
-                    value: resolutionNumber(value),
-                    label: value,
-                  }))}
-                  value={
-                    form.rule.max_resolution
-                      ? String(form.rule.max_resolution)
-                      : null
-                  }
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      rule: { ...current.rule, max_resolution: value || '' },
-                    }))
-                  }
-                />
-              </SimpleGrid>
-              <MultiSelect
-                label="Features"
-                searchable
-                disabled={technicalOptionsLoading}
-                data={optionRows(
-                  technicalOptions.video_features,
-                  videoFeatureLabel
-                )}
-                value={form.rule.required_video_features}
-                onChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    rule: { ...current.rule, required_video_features: value },
-                  }))
+                  setForm((current) => ({ ...current, sort_mode: value || '' }))
                 }
               />
             </Stack>
-          )}
+          </Paper>
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setEditorOpen(false)}>
               Cancel
@@ -1373,295 +1370,19 @@ const VODListsPage = () => {
         </Stack>
       </Modal>
 
-      <Modal
-        opened={Boolean(viewer)}
-        onClose={() => setViewer(null)}
-        title={viewer ? `${viewer.name} preview` : 'List preview'}
-        size="xl"
-      >
-        <Stack>
-          <Group align="end" wrap="wrap">
-            <TextInput
-              label="Search"
-              placeholder="Search titles…"
-              leftSection={<Search size={16} />}
-              value={viewerSearch}
-              onChange={(event) => {
-                setViewerSearch(event.currentTarget.value);
-                setViewerPage(1);
-              }}
-              style={{ flex: '1 1 260px' }}
-            />
-            <Select
-              label="Type"
-              data={[
-                { value: 'all', label: 'Movies and series' },
-                { value: 'movie', label: 'Movies' },
-                { value: 'series', label: 'Series' },
-              ]}
-              value={viewerFilters.type}
-              onChange={(value) => updateViewerFilter('type', value || 'all')}
-              w={175}
-            />
-            <Select
-              label="Availability"
-              data={[
-                { value: 'any', label: 'Any' },
-                { value: 'available', label: 'In library' },
-                { value: 'unavailable', label: 'Not in library' },
-              ]}
-              value={viewerFilters.availability}
-              onChange={(value) =>
-                updateViewerFilter('availability', value || 'any')
-              }
-              w={165}
-            />
-            <Popover
-              width={500}
-              position="bottom-end"
-              shadow="md"
-              withArrow
-              withinPortal
-            >
-              <PopoverTarget>
-                <Button
-                  variant={viewerAdvancedFilterCount ? 'light' : 'default'}
-                  leftSection={<Filter size={16} />}
-                >
-                  Filters
-                  {viewerAdvancedFilterCount
-                    ? ` (${viewerAdvancedFilterCount})`
-                    : ''}
-                </Button>
-              </PopoverTarget>
-              <PopoverDropdown>
-                <Stack gap="sm">
-                  <SimpleGrid cols={2}>
-                    <VODTechnicalFilterFields
-                      filters={viewerFilters}
-                      onChange={updateViewerFilter}
-                      optionsOverride={viewerFilterOptions}
-                    />
-                    <NumberInput
-                      label="Release year from"
-                      min={1800}
-                      max={2200}
-                      value={viewerFilters.year_from}
-                      onChange={(value) =>
-                        updateViewerFilter('year_from', value || '')
-                      }
-                    />
-                    <NumberInput
-                      label="Release year until"
-                      min={1800}
-                      max={2200}
-                      value={viewerFilters.year_to}
-                      onChange={(value) =>
-                        updateViewerFilter('year_to', value || '')
-                      }
-                    />
-                    <TextInput
-                      label="Genre contains"
-                      value={viewerFilters.genre}
-                      onChange={(event) =>
-                        updateViewerFilter('genre', event.currentTarget.value)
-                      }
-                    />
-                    <Select
-                      label="Anime"
-                      placeholder="Any"
-                      clearable
-                      data={[
-                        { value: 'yes', label: 'Yes' },
-                        { value: 'no', label: 'No' },
-                      ]}
-                      value={viewerFilters.anime_mode || null}
-                      onChange={(value) =>
-                        updateViewerFilter('anime_mode', value || '')
-                      }
-                    />
-                    <Select
-                      label="Adult content"
-                      placeholder="Any"
-                      clearable
-                      data={[
-                        { value: 'yes', label: 'Yes' },
-                        { value: 'no', label: 'No' },
-                      ]}
-                      value={viewerFilters.adult_mode || null}
-                      onChange={(value) =>
-                        updateViewerFilter('adult_mode', value || '')
-                      }
-                    />
-                    <TextInput
-                      type="date"
-                      label="Added since"
-                      value={viewerFilters.library_added_after}
-                      onChange={(event) =>
-                        updateViewerFilter(
-                          'library_added_after',
-                          event.currentTarget.value
-                        )
-                      }
-                    />
-                    <TextInput
-                      type="date"
-                      label="Added until"
-                      value={viewerFilters.library_added_before}
-                      onChange={(event) =>
-                        updateViewerFilter(
-                          'library_added_before',
-                          event.currentTarget.value
-                        )
-                      }
-                    />
-                  </SimpleGrid>
-                  <Group justify="flex-end">
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      disabled={!viewerAdvancedFilterCount}
-                      onClick={() => {
-                        setViewerFilters((current) => ({
-                          ...EMPTY_PREVIEW_FILTERS,
-                          type: current.type,
-                          availability: current.availability,
-                        }));
-                        setViewerPage(1);
-                      }}
-                    >
-                      Clear filters
-                    </Button>
-                  </Group>
-                </Stack>
-              </PopoverDropdown>
-            </Popover>
-          </Group>
-          {viewerLoading ? (
-            <Center mih={260}>
-              <Loader />
-            </Center>
-          ) : viewerItems.length ? (
-            <>
-              <ScrollArea h={520}>
-                <Table striped highlightOnHover withTableBorder stickyHeader>
-                  <TableThead>
-                    <TableTr>
-                      <TableTh>Title</TableTh>
-                      <TableTh>Type</TableTh>
-                      <TableTh>Year</TableTh>
-                      <TableTh>Sources</TableTh>
-                      <TableTh>Status</TableTh>
-                      <TableTh>Details</TableTh>
-                      {viewer?.list_type === 'manual' && (
-                        <TableTh>Actions</TableTh>
-                      )}
-                    </TableTr>
-                  </TableThead>
-                  <TableTbody>
-                    {viewerItems.map((item) => (
-                      <TableTr
-                        key={item.id}
-                        c={item.is_available ? undefined : 'dimmed'}
-                      >
-                        <TableTd>{item.display_title}</TableTd>
-                        <TableTd>
-                          {item.content_type === 'series' ? 'Series' : 'Movie'}
-                        </TableTd>
-                        <TableTd>{item.display_year || '—'}</TableTd>
-                        <TableTd>{item.source_count || '—'}</TableTd>
-                        <TableTd>
-                          {item.is_available ? 'In library' : 'Not in library'}
-                        </TableTd>
-                        <TableTd>
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label={`Open details for ${item.display_title}`}
-                            disabled={!item.is_available}
-                            onClick={() => setDetailItem(item)}
-                          >
-                            <Eye size={17} />
-                          </ActionIcon>
-                        </TableTd>
-                        {viewer?.list_type === 'manual' && (
-                          <TableTd>
-                            <ActionIcon
-                              variant="subtle"
-                              color="red"
-                              loading={removingItemId === item.id}
-                              aria-label={`Remove ${item.display_title}`}
-                              onClick={() => removeItem(item)}
-                            >
-                              <Trash2 size={16} />
-                            </ActionIcon>
-                          </TableTd>
-                        )}
-                      </TableTr>
-                    ))}
-                  </TableTbody>
-                </Table>
-              </ScrollArea>
-              <Group justify="center" gap="sm">
-                <Pagination
-                  value={viewerPage}
-                  onChange={setViewerPage}
-                  total={Math.max(1, Math.ceil((viewerData?.count || 0) / 50))}
-                  withEdges
-                />
-                <Text size="sm" c="dimmed">
-                  {viewerData?.count || 0} titles
-                </Text>
-              </Group>
-            </>
-          ) : (
-            <Center mih={220}>
-              <Text c="dimmed">
-                {viewerData?.count === 0 &&
-                (viewerSearch ||
-                  viewerAdvancedFilterCount ||
-                  viewerFilters.type !== 'all' ||
-                  viewerFilters.availability !== 'any')
-                  ? 'No list entries match the current filters.'
-                  : 'No titles in this list yet.'}
-              </Text>
-            </Center>
-          )}
-        </Stack>
-      </Modal>
-
-      {detailItem?.content_type === 'series' ? (
-        <SeriesModal
-          opened
-          initialRelationId={detailItem.relation_ids?.[0] || null}
-          listSourceScope={{
-            includeAllSources: detailItem.include_all_sources,
-            relationIds: detailItem.relation_ids || [],
-          }}
-          series={{
-            id: detailItem.canonical_id,
-            name: detailItem.display_title,
-            year: detailItem.display_year,
-            type: 'series',
-          }}
-          onClose={() => setDetailItem(null)}
+      {viewer && (
+        <VODListPreviewModal
+          key={viewer.id}
+          list={viewer}
+          onClose={() => setViewer(null)}
+          onListChanged={() => loadLists({ background: true })}
+          canRemove
         />
-      ) : detailItem ? (
-        <VODModal
-          opened
-          initialRelationId={detailItem.relation_ids?.[0] || null}
-          listSourceScope={{
-            includeAllSources: detailItem.include_all_sources,
-            relationIds: detailItem.relation_ids || [],
-          }}
-          vod={{
-            id: detailItem.canonical_id,
-            name: detailItem.display_title,
-            year: detailItem.display_year,
-            type: 'movie',
-          }}
-          onClose={() => setDetailItem(null)}
-        />
-      ) : null}
+      )}
+      <VODListItemDetails
+        item={detailItem}
+        onClose={() => setDetailItem(null)}
+      />
     </Box>
   );
 };

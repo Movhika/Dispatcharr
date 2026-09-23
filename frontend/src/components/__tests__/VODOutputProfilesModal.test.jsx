@@ -13,6 +13,8 @@ vi.mock('../../api', () => ({
     getVODAccessPolicyCandidates: vi.fn(),
     getVODFilterOptions: vi.fn(),
     getVODLists: vi.fn(),
+    getVODListItems: vi.fn(),
+    getVODListFilterOptions: vi.fn(),
   },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
@@ -85,6 +87,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => null,
   RefreshCw: () => null,
   Save: () => null,
+  Search: () => null,
   Trash2: () => null,
 }));
 vi.mock('@mantine/core', () => {
@@ -150,6 +153,7 @@ vi.mock('@mantine/core', () => {
         {label}
       </label>
     ),
+    Center: Wrapper,
     Group: Wrapper,
     Loader: () => <div>Loading</div>,
     Modal,
@@ -313,6 +317,8 @@ describe('VODOutputProfilesModal', () => {
       video_features: ['hdr'],
     });
     API.getVODLists.mockResolvedValue([]);
+    API.getVODListItems.mockResolvedValue({ count: 0, results: [] });
+    API.getVODListFilterOptions.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
         categories: {},
@@ -367,6 +373,40 @@ describe('VODOutputProfilesModal', () => {
       expect(API.updateVODAccessPolicy).toHaveBeenCalledWith(
         String(profile.id),
         expect.objectContaining({ category_mode: 'movie_series' })
+      )
+    );
+  });
+
+  it('opens the shared list preview from a selected profile list', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        category_mode: 'lists',
+        list_rules: [{ vod_list: 12, enabled: true, priority: 100 }],
+      },
+    ];
+    API.getVODLists.mockResolvedValue([
+      {
+        id: 12,
+        name: 'Anime Winter',
+        list_type: 'dynamic',
+        is_enabled: true,
+        available_item_count: 92,
+      },
+    ]);
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Preview Anime Winter' })
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Anime Winter preview' })
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(API.getVODListItems).toHaveBeenCalledWith(
+        12,
+        expect.objectContaining({ page: 1, page_size: 50 })
       )
     );
   });
