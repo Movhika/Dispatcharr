@@ -52,9 +52,9 @@ vi.mock('@dnd-kit/utilities', () => ({
 }));
 vi.mock('@dnd-kit/modifiers', () => ({ restrictToVerticalAxis: vi.fn() }));
 vi.mock('../forms/VODCategoryFilter.jsx', () => ({
-  default: ({ mode, type }) => (
+  default: vi.fn(({ mode, type }) => (
     <div>{`${mode} ${type} category selection`}</div>
-  ),
+  )),
 }));
 vi.mock('../VODFailoverRanking.jsx', () => ({
   default: ({ onProviderOrderChange }) => (
@@ -238,6 +238,7 @@ vi.mock('@mantine/core', () => {
 
 import API from '../../api';
 import useVODStore from '../../store/useVODStore';
+import VODCategoryFilter from '../forms/VODCategoryFilter.jsx';
 import VODOutputProfilesModal from '../VODOutputProfilesModal.jsx';
 
 describe('VODOutputProfilesModal', () => {
@@ -268,6 +269,7 @@ describe('VODOutputProfilesModal', () => {
     selection_available: true,
     selection_active_mode: 'compact',
     selection_progress: { phase: 'Ready', percent: 100 },
+    updated_at: '2026-09-09T06:40:00Z',
     selection_counts: {
       export_mode: 'compact',
       prepared_seconds: 78,
@@ -338,7 +340,18 @@ describe('VODOutputProfilesModal', () => {
     expect(screen.getByText(/Movies: 78 output entries/)).toBeInTheDocument();
     expect(screen.getByText(/Series: 42 output entries/)).toBeInTheDocument();
     expect(screen.getByText('Compact')).toBeInTheDocument();
-    expect(screen.getByText(/Last updated:/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `Settings saved: ${new Date(profile.updated_at).toLocaleString()}`
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `Catalog built: ${new Date(
+          profile.selection_counts.completed_at
+        ).toLocaleString()}`
+      )
+    ).toBeInTheDocument();
     expect(screen.getByText('Last build: 1m 18s')).toBeInTheDocument();
     expect(
       screen.queryByText(/Currently active catalog:/)
@@ -657,6 +670,45 @@ describe('VODOutputProfilesModal', () => {
     view.rerender(<VODOutputProfilesModal opened onClose={vi.fn()} />);
 
     expect(screen.getByLabelText('Profile name')).toHaveValue('Unsaved edit');
+  });
+
+  it('keeps import rule props stable when profile status is polled', async () => {
+    const rules = [
+      {
+        id: 'movie-rule',
+        scope: 'movie',
+        regex_pattern: '^DE',
+        action: 'enable',
+      },
+    ];
+    storeProfiles = [
+      {
+        ...profile,
+        hard_constraints: {
+          ...profile.hard_constraints,
+          category_import_rules: rules,
+        },
+      },
+    ];
+    const view = render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+    await screen.findByDisplayValue('German HD');
+    const lastMovieRules = () =>
+      VODCategoryFilter.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.type === 'movie')
+        .at(-1).rules;
+    const originalRules = lastMovieRules();
+
+    storeProfiles = [
+      {
+        ...storeProfiles[0],
+        selection_status: 'building',
+        selection_current: false,
+      },
+    ];
+    view.rerender(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(lastMovieRules()).toBe(originalRules);
   });
 
   it('uses one stable updating state while queued and building', async () => {

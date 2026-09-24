@@ -667,6 +667,15 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
         .sort((left, right) => left.label.localeCompare(right.label)),
     [categories]
   );
+  const profileImportRules = draft.hard_constraints?.category_import_rules;
+  const movieImportRules = useMemo(
+    () => (profileImportRules || []).filter((rule) => rule.scope === 'movie'),
+    [profileImportRules]
+  );
+  const seriesImportRules = useMemo(
+    () => (profileImportRules || []).filter((rule) => rule.scope === 'series'),
+    [profileImportRules]
+  );
   const movieCategoryStates = useMemo(
     () => resolveProfileCategoryRows(categories, draft, 'movie'),
     [categories, draft]
@@ -1152,7 +1161,8 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const buildElapsedSeconds = buildStartedAt
     ? Math.max((Date.now() - new Date(buildStartedAt).getTime()) / 1000, 0)
     : 0;
-  const lastUpdatedAt =
+  const settingsSavedAt = selectedProfile?.updated_at || '';
+  const catalogBuiltAt =
     counts.completed_at || selectedProfile?.selection_completed_at || '';
   const lastBuildSeconds = Number(counts.prepared_seconds);
   const hasLastBuildDuration =
@@ -1363,9 +1373,14 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                   No catalog prepared yet
                 </Text>
               )}
-              {lastUpdatedAt && (
+              {settingsSavedAt && (
                 <Text size="sm" c="dimmed">
-                  Last updated: {new Date(lastUpdatedAt).toLocaleString()}
+                  Settings saved: {new Date(settingsSavedAt).toLocaleString()}
+                </Text>
+              )}
+              {catalogBuiltAt && (
+                <Text size="sm" c="dimmed">
+                  Catalog built: {new Date(catalogBuiltAt).toLocaleString()}
                 </Text>
               )}
               {hasLastBuildDuration && (
@@ -1667,15 +1682,14 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                         </TabsList>
                         <TabsPanel value="movie">
                           <VODCategoryFilter
+                            key={`movie-${profileId}`}
                             mode="profile"
                             categoryStates={movieCategoryStates}
                             setCategoryStates={updateProfileCategoryStates(
                               movieCategoryStates
                             )}
                             type="movie"
-                            rules={(
-                              draft.hard_constraints.category_import_rules || []
-                            ).filter((rule) => rule.scope === 'movie')}
+                            rules={movieImportRules}
                             onRulesChange={(rules) =>
                               updateProfileCategoryRules('movie', rules)
                             }
@@ -1684,15 +1698,14 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                         </TabsPanel>
                         <TabsPanel value="series">
                           <VODCategoryFilter
+                            key={`series-${profileId}`}
                             mode="profile"
                             categoryStates={seriesCategoryStates}
                             setCategoryStates={updateProfileCategoryStates(
                               seriesCategoryStates
                             )}
                             type="series"
-                            rules={(
-                              draft.hard_constraints.category_import_rules || []
-                            ).filter((rule) => rule.scope === 'series')}
+                            rules={seriesImportRules}
                             onRulesChange={(rules) =>
                               updateProfileCategoryRules('series', rules)
                             }
