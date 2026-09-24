@@ -18,6 +18,7 @@ from .models import (
     VODAccessPolicy,
     VODMovieProfileSelection,
     VODPolicyCategory,
+    VODPolicyList,
     VODSeriesProfileSelection,
 )
 from .metadata import normalize_source_metadata
@@ -27,8 +28,11 @@ from .policies import (
     allowed_category_query,
     content_rules_use_canonical_metadata,
     policy_category_map,
+    relation_allowed,
     relation_edition,
     relation_metadata,
+    relation_rank,
+    _relation_selection_key,
     select_relation_ids_for_policy,
 )
 from .utils import get_vod_source_name, policy_output_name
@@ -455,6 +459,40 @@ def profile_selection_signature(policy):
                 key=lambda rule: (rule.category_relation_id, rule.id),
             )
         ]
+    if policy.category_mode == VODAccessPolicy.CategoryMode.LISTS:
+        # A list can publish a new generation while this profile is building.
+        # Include its generation so that build retries against the new items.
+        list_rules = list(
+            policy.vodpolicylist_set.order_by("vod_list_id", "id").values(
+                "vod_list_id", "enabled", "priority",
+                "vod_list__active_generation", "vod_list__is_enabled",
+            )
+        )
+        for rule in list_rules:
+            if not rule["enabled"] or not rule["vod_list__is_enabled"]:
+                rule["vod_list__active_generation"] = None
+    else:
+        prefetched_lists = getattr(policy, "_prefetched_objects_cache", {}).get(
+            "vodpolicylist_set"
+        )
+        if prefetched_lists is None:
+            list_rules = list(
+                policy.vodpolicylist_set.order_by("vod_list_id", "id").values(
+                    "vod_list_id", "enabled", "priority"
+                )
+            )
+        else:
+            list_rules = [
+                {
+                    "vod_list_id": rule.vod_list_id,
+                    "enabled": rule.enabled,
+                    "priority": rule.priority,
+                }
+                for rule in sorted(
+                    prefetched_lists,
+                    key=lambda rule: (rule.vod_list_id, rule.id),
+                )
+            ]
     payload = {
         "export_mode": policy.export_mode,
         "hard_constraints": policy.hard_constraints or {},
@@ -465,6 +503,9 @@ def profile_selection_signature(policy):
         "name_template": policy.name_template,
         "metadata_source": policy.metadata_source,
         "category_rules": category_rules,
+        "category_mode": policy.category_mode,
+        "include_unsorted": policy.include_unsorted,
+        "list_rules": list_rules,
     }
     # Title source now controls the generic {title} token in both modes.
     payload["output_format_schema"] = 4
@@ -476,6 +517,69 @@ def profile_selection_signature(policy):
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _select_list_relation_ids(relations, policy, canonical_field, relation_model, stats=None):
+    """Select the best source independently inside every selected list."""
+    from .lists import policy_list_membership_maps
+
+    category_mapping = policy_category_map(policy)
+    list_rules, exact_memberships, all_source_memberships = (
+        policy_list_membership_maps(policy, relation_model)
+    )
+    order = {rule.vod_list_id: index for index, rule in enumerate(list_rules)}
+    selected = {}
+    candidates = 0
+    eligible = 0
+    for relation in relations:
+        candidates += 1
+        category_relation = category_mapping.get(
+            (relation.m3u_account_id, relation.category_id)
+        )
+        metadata = relation_metadata(relation, category_relation)
+        if not relation_allowed(
+            relation, policy, category_mapping, metadata=metadata
+        ):
+            continue
+        canonical_id = getattr(relation, canonical_field)
+        memberships = set(exact_memberships.get(relation.pk, ()))
+        memberships.update(all_source_memberships.get(canonical_id, ()))
+        if memberships:
+            list_ids = sorted(memberships, key=lambda value: order.get(value, 999999))
+        elif policy.include_unsorted:
+            list_ids = [0]
+        else:
+            continue
+        eligible += 1
+        selection_key = _relation_selection_key(
+            relation,
+            policy,
+            canonical_field,
+            metadata=metadata,
+            category_mapping=category_mapping,
+        )
+        rank = relation_rank(
+            relation, category_mapping, policy, metadata=metadata
+        )
+        for list_id in list_ids:
+            key = (list_id, *selection_key)
+            current = selected.get(key)
+            if current is None or rank > current[0]:
+                selected[key] = (rank, relation.pk, list_id)
+    relation_lists = {}
+    for _rank, relation_id, list_id in selected.values():
+        relation_lists.setdefault(relation_id, []).append(list_id)
+    for relation_id, list_ids in relation_lists.items():
+        relation_lists[relation_id] = sorted(
+            set(list_ids), key=lambda value: (-1 if value == 0 else order.get(value, 999999))
+        )
+    if stats is not None:
+        stats.update(
+            candidates=candidates,
+            eligible=eligible,
+            selected=len(relation_lists),
+        )
+    return list(relation_lists), relation_lists
 
 
 def _validate_selection_counts(policy, counts):
@@ -565,6 +669,30 @@ def enqueue_profile_selection_rebuild(
 
     transaction.on_commit(enqueue)
     return True
+
+
+def enqueue_selected_list_profile_rebuilds(
+    list_ids, *, trigger_reason, include_disabled_lists=False
+):
+    """Rebuild only active list-mode profiles using an affected VOD list."""
+    list_ids = set(list_ids)
+    if not list_ids:
+        return 0
+    rules = VODPolicyList.objects.filter(
+        vod_list_id__in=list_ids,
+        enabled=True,
+        policy__is_active=True,
+        policy__category_mode=VODAccessPolicy.CategoryMode.LISTS,
+    )
+    if not include_disabled_lists:
+        rules = rules.filter(vod_list__is_enabled=True)
+    policy_ids = rules.order_by().values_list("policy_id", flat=True).distinct()
+    return sum(
+        enqueue_profile_selection_rebuild(
+            policy_id, trigger_reason=trigger_reason
+        )
+        for policy_id in policy_ids
+    )
 
 
 def enqueue_all_profile_selection_rebuilds(
@@ -725,12 +853,21 @@ def _selection_rows_for_canonical_ids(
         .order_by("pk")
     )
     output_category_ids = {}
-    selected_ids = select_relation_ids_for_policy(
-        candidates.iterator(chunk_size=500),
-        policy,
-        canonical_field,
-        output_category_ids=output_category_ids,
-    )
+    relation_list_ids = {}
+    if policy.category_mode == VODAccessPolicy.CategoryMode.LISTS:
+        selected_ids, relation_list_ids = _select_list_relation_ids(
+            candidates.iterator(chunk_size=500),
+            policy,
+            canonical_field,
+            relation_model,
+        )
+    else:
+        selected_ids = select_relation_ids_for_policy(
+            candidates.iterator(chunk_size=500),
+            policy,
+            canonical_field,
+            output_category_ids=output_category_ids,
+        )
     relations = relation_model.objects.filter(pk__in=selected_ids).select_related(
         "m3u_account",
         "category",
@@ -752,6 +889,7 @@ def _selection_rows_for_canonical_ids(
                 category_id=output_category_ids.get(
                     getattr(relation, canonical_field), relation.category_id
                 ),
+                list_ids=relation_list_ids.get(relation.pk, []),
                 **{canonical_field: getattr(relation, canonical_field)},
                 **_metadata_columns(metadata, relation),
                 **_edition_columns(
@@ -1076,15 +1214,25 @@ def _build_type(
     report_scan(0)
     stats = {}
     output_category_ids = {}
-    selected_ids = select_relation_ids_for_policy(
-        candidates.iterator(chunk_size=BUILD_CHUNK_SIZE),
-        policy,
-        canonical,
-        stats=stats,
-        progress_callback=report_scan,
-        progress_interval=PROGRESS_SCAN_INTERVAL,
-        output_category_ids=output_category_ids,
-    )
+    relation_list_ids = {}
+    if policy.category_mode == VODAccessPolicy.CategoryMode.LISTS:
+        selected_ids, relation_list_ids = _select_list_relation_ids(
+            candidates.iterator(chunk_size=BUILD_CHUNK_SIZE),
+            policy,
+            canonical,
+            relation_model,
+            stats=stats,
+        )
+    else:
+        selected_ids = select_relation_ids_for_policy(
+            candidates.iterator(chunk_size=BUILD_CHUNK_SIZE),
+            policy,
+            canonical,
+            stats=stats,
+            progress_callback=report_scan,
+            progress_interval=PROGRESS_SCAN_INTERVAL,
+            output_category_ids=output_category_ids,
+        )
     report_scan(candidate_total)
     canonical_ids = set()
     unknown_metadata = 0
@@ -1142,6 +1290,7 @@ def _build_type(
                 "category_id": output_category_ids.get(
                     canonical_id, relation.category_id
                 ),
+                "list_ids": relation_list_ids.get(relation.pk, []),
                 canonical: canonical_id,
                 **metadata_columns,
                 **_edition_columns(
@@ -1338,6 +1487,8 @@ def build_vod_profile_selection(policy_id, *, require_pending=False):
                 + series_counts["unknown_metadata"]
             ),
             "export_mode": policy.export_mode,
+            "category_mode": policy.category_mode,
+            "include_unsorted": policy.include_unsorted,
             "profile_signature": policy_signature,
             "generation": generation,
         }
@@ -1530,6 +1681,7 @@ def prepared_relation_rows(
         "edition_name",
         "edition_suffix",
         "output_name",
+        "list_ids",
     )
     return {row["relation_id"]: row for row in rows}
 

@@ -12,11 +12,45 @@ vi.mock('../../api', () => ({
     getVODAccessPolicySelections: vi.fn(),
     getVODAccessPolicyCandidates: vi.fn(),
     getVODFilterOptions: vi.fn(),
+    getVODLists: vi.fn(),
+    getVODListItems: vi.fn(),
+    getVODListFilterOptions: vi.fn(),
   },
 }));
 vi.mock('../../utils/notificationUtils', () => ({
   showNotification: vi.fn(),
 }));
+vi.mock('@dnd-kit/core', () => ({
+  closestCenter: vi.fn(),
+  DndContext: ({ children }) => <>{children}</>,
+  KeyboardSensor: vi.fn(),
+  PointerSensor: vi.fn(),
+  useSensor: vi.fn(() => ({})),
+  useSensors: vi.fn(() => []),
+}));
+vi.mock('@dnd-kit/sortable', () => ({
+  arrayMove: (rows, from, to) => {
+    const next = [...rows];
+    const [row] = next.splice(from, 1);
+    next.splice(to, 0, row);
+    return next;
+  },
+  SortableContext: ({ children }) => <>{children}</>,
+  sortableKeyboardCoordinates: vi.fn(),
+  useSortable: () => ({
+    attributes: {},
+    listeners: {},
+    setNodeRef: vi.fn(),
+    transform: null,
+    transition: undefined,
+    isDragging: false,
+  }),
+  verticalListSortingStrategy: vi.fn(),
+}));
+vi.mock('@dnd-kit/utilities', () => ({
+  CSS: { Transform: { toString: () => undefined } },
+}));
+vi.mock('@dnd-kit/modifiers', () => ({ restrictToVerticalAxis: vi.fn() }));
 vi.mock('../forms/VODCategoryFilter.jsx', () => ({
   default: ({ mode, type }) => (
     <div>{`${mode} ${type} category selection`}</div>
@@ -53,6 +87,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => null,
   RefreshCw: () => null,
   Save: () => null,
+  Search: () => null,
   Trash2: () => null,
 }));
 vi.mock('@mantine/core', () => {
@@ -118,6 +153,7 @@ vi.mock('@mantine/core', () => {
         {label}
       </label>
     ),
+    Center: Wrapper,
     Group: Wrapper,
     Loader: () => <div>Loading</div>,
     Modal,
@@ -177,7 +213,7 @@ vi.mock('@mantine/core', () => {
     Tabs: Wrapper,
     TabsList: Wrapper,
     TabsPanel: Wrapper,
-    TabsTab: Wrapper,
+    TabsTab: ({ children }) => <div role="tab">{children}</div>,
     TagsInput: ({ label, value = [], onChange }) => (
       <label>
         {label}
@@ -280,6 +316,9 @@ describe('VODOutputProfilesModal', () => {
       container_extensions: ['mkv'],
       video_features: ['hdr'],
     });
+    API.getVODLists.mockResolvedValue([]);
+    API.getVODListItems.mockResolvedValue({ count: 0, results: [] });
+    API.getVODListFilterOptions.mockResolvedValue({});
     useVODStore.mockImplementation((selector) =>
       selector({
         categories: {},
@@ -307,6 +346,87 @@ describe('VODOutputProfilesModal', () => {
     expect(
       screen.queryByRole('button', { name: 'Retry catalog update' })
     ).not.toBeInTheDocument();
+  });
+
+  it('chooses output groups in settings and only shows Lists for list output', async () => {
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
+    expect(screen.getByLabelText('Output groups')).toHaveValue('provider');
+    expect(
+      screen.queryByRole('tab', { name: 'Lists' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Output groups'), {
+      target: { value: 'lists' },
+    });
+    expect(screen.getByRole('tab', { name: 'Lists' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Output groups'), {
+      target: { value: 'movie_series' },
+    });
+    expect(
+      screen.queryByRole('tab', { name: 'Lists' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() =>
+      expect(API.updateVODAccessPolicy).toHaveBeenCalledWith(
+        String(profile.id),
+        expect.objectContaining({ category_mode: 'movie_series' })
+      )
+    );
+  });
+
+  it('opens the shared list preview from a selected profile list', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        category_mode: 'lists',
+        list_rules: [{ vod_list: 12, enabled: true, priority: 100 }],
+      },
+    ];
+    API.getVODLists.mockResolvedValue([
+      {
+        id: 12,
+        name: 'Anime Winter',
+        list_type: 'dynamic',
+        is_enabled: true,
+        available_item_count: 92,
+      },
+    ]);
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Preview Anime Winter' })
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Anime Winter preview' })
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(API.getVODListItems).toHaveBeenCalledWith(
+        12,
+        expect.objectContaining({ page: 1, page_size: 50 })
+      )
+    );
+  });
+
+  it('offers the matching content-type group in a grouped profile preview', async () => {
+    storeProfiles = [
+      {
+        ...profile,
+        category_mode: 'movie_series',
+        selection_counts: {
+          ...profile.selection_counts,
+          category_mode: 'movie_series',
+        },
+      },
+    ];
+    render(<VODOutputProfilesModal opened onClose={vi.fn()} />);
+
+    expect(await screen.findByDisplayValue('German HD')).toBeInTheDocument();
+    expect(screen.getByLabelText('Output group')).toHaveValue('');
+    expect(screen.getByRole('option', { name: 'Movies' })).toBeInTheDocument();
   });
 
   it('reuses the VOD category selection for both profile source scopes', async () => {

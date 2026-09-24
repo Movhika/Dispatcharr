@@ -43,6 +43,66 @@ from apps.vod.image_proxy import (
 
 logger = logging.getLogger(__name__)
 
+VOD_LIST_CATEGORY_BASE = 1_000_000_000
+VOD_UNSORTED_CATEGORY_ID = VOD_LIST_CATEGORY_BASE
+# Virtual XC category IDs; no provider category or database row is created.
+VOD_MOVIES_CATEGORY_ID = 2_000_000_000
+VOD_SERIES_CATEGORY_ID = 2_000_000_001
+
+
+def _xc_list_category_id(list_id):
+    return VOD_LIST_CATEGORY_BASE + int(list_id or 0)
+
+
+def _xc_list_id_from_category(category_id):
+    try:
+        value = int(category_id)
+    except (TypeError, ValueError):
+        return None
+    return value - VOD_LIST_CATEGORY_BASE if value >= VOD_LIST_CATEGORY_BASE else None
+
+
+def _xc_policy_list_categories(policy, content_type):
+    if not policy or _xc_active_category_mode(policy) != "lists":
+        return []
+    from apps.vod.models import VODPolicyList
+
+    rows = list(
+        VODPolicyList.objects.filter(
+            policy=policy,
+            enabled=True,
+            vod_list__is_enabled=True,
+            vod_list__content_type__in=("all", content_type),
+        )
+        .select_related("vod_list")
+        .order_by("-priority", "id")
+    )
+    response = [
+        {
+            "category_id": str(_xc_list_category_id(row.vod_list_id)),
+            "category_name": row.vod_list.name,
+            "parent_id": 0,
+        }
+        for row in rows
+    ]
+    if policy.include_unsorted:
+        response.append({
+            "category_id": str(VOD_UNSORTED_CATEGORY_ID),
+            "category_name": "Unsorted",
+            "parent_id": 0,
+        })
+    return response
+
+
+def _xc_active_category_mode(policy):
+    if not policy:
+        return "provider"
+    if policy.active_selection_generation:
+        active_mode = (policy.selection_counts or {}).get("category_mode")
+        if active_mode in {"provider", "lists", "movie_series"}:
+            return active_mode
+    return policy.category_mode
+
 
 def get_client_identifier(request):
     """Get client information including IP, user agent, and a unique hash identifier
@@ -1495,6 +1555,7 @@ def _xc_fetch_priority_distinct_relations(
                     profile_edition_name=snapshot.get("edition_name", ""),
                     profile_edition_suffix=snapshot.get("edition_suffix", ""),
                     profile_output_name=snapshot.get("output_name", ""),
+                    profile_list_ids=snapshot.get("list_ids", []),
                 )
             return rows
 
@@ -1549,6 +1610,36 @@ def _xc_policy_for_user(user):
     return user._vod_access_policy
 
 
+def _xc_order_relations_by_list(relations, list_id, content_type):
+    """Keep XC list categories in the same order as their list preview."""
+    if list_id is None or not relations:
+        return
+    from apps.vod.list_order import ordered_list_items
+    from apps.vod.models import VODList
+
+    vod_list = VODList.objects.filter(pk=list_id).first()
+    if vod_list is None:
+        return
+    canonical_field = "movie_id" if content_type == "movie" else "series_id"
+    canonical_ids = {row[canonical_field] for row in relations}
+    item_ids = ordered_list_items(
+        vod_list,
+        vod_list.items.filter(
+            generation=vod_list.active_generation,
+            content_type=content_type,
+            **{f"{canonical_field}__in": canonical_ids},
+        ),
+    ).values_list(canonical_field, flat=True)
+    positions = {}
+    for position, canonical_id in enumerate(item_ids):
+        if canonical_id is not None:
+            positions.setdefault(canonical_id, position)
+    fallback_position = len(positions)
+    relations.sort(
+        key=lambda row: positions.get(row[canonical_field], fallback_position)
+    )
+
+
 def xc_get_vod_categories(user, request=None):
     """Get VOD categories for XtreamCodes API"""
     if not is_vod_movies_enabled(user=user):
@@ -1567,6 +1658,19 @@ def xc_get_vod_categories(user, request=None):
         return cached
 
     response = []
+
+    if policy and _xc_active_category_mode(policy) == "lists":
+        response = _xc_policy_list_categories(policy, "movie")
+        safe_cache_set(cache_key, response, timeout=3600)
+        return response
+    if policy and _xc_active_category_mode(policy) == "movie_series":
+        response = [{
+            "category_id": str(VOD_MOVIES_CATEGORY_ID),
+            "category_name": "Movies",
+            "parent_id": 0,
+        }]
+        safe_cache_set(cache_key, response, timeout=3600)
+        return response
 
     # Before the first post-migration provider refresh, an upgraded catalog can
     # contain concrete movie relations but no category-inventory rows yet. In
@@ -1619,7 +1723,12 @@ def xc_get_vod_streams(request, user, category_id=None):
 
     rel_filters = {"m3u_account__is_active": True}
     compact_policy = bool(policy and policy.export_mode == "compact")
-    if category_id and not compact_policy:
+    list_mode = bool(policy and _xc_active_category_mode(policy) == "lists")
+    grouped_mode = bool(policy and _xc_active_category_mode(policy) == "movie_series")
+    requested_list_id = _xc_list_id_from_category(category_id) if list_mode else None
+    if grouped_mode and category_id and str(category_id) != str(VOD_MOVIES_CATEGORY_ID):
+        return []
+    if category_id and not compact_policy and not list_mode and not grouped_mode:
         rel_filters["category_id"] = category_id
     # Non-admins with Hide Mature Content skip adult VODs.
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
@@ -1637,16 +1746,23 @@ def xc_get_vod_streams(request, user, category_id=None):
         order_by_name_field='movie__name',
         policy=policy,
         canonical_field="movie_id",
-        prepared_filters={"category_id": category_id}
-        if category_id and compact_policy
-        else None,
+        prepared_filters=(
+            {"list_ids__contains": [requested_list_id]}
+            if category_id and list_mode and requested_list_id is not None
+            else {"category_id": category_id}
+            if category_id and compact_policy and not grouped_mode
+            else None
+        ),
     )
-    if category_id and compact_policy:
+    if category_id and compact_policy and not list_mode and not grouped_mode:
         relations = [
             row
             for row in relations
             if str(row["category_id"] or "0") == str(category_id)
         ]
+
+    if requested_list_id is not None:
+        _xc_order_relations_by_list(relations, requested_list_id, "movie")
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for the fallback-icon proxy rewrites below.
@@ -1657,9 +1773,32 @@ def xc_get_vod_streams(request, user, category_id=None):
     append = streams.append
     for num, row in enumerate(relations, 1):
         custom_props = row['movie__custom_properties'] or {}
-        category_id = row['category_id']
-        category_id_str = str(category_id) if category_id else "0"
-        category_id_list = [category_id] if category_id else []
+        provider_category_id = row['category_id']
+        if list_mode:
+            output_list_ids = row.get("profile_list_ids") or []
+            category_id_list = [
+                _xc_list_category_id(list_id) for list_id in output_list_ids
+            ]
+            primary_category_id = (
+                int(category_id)
+                if requested_list_id is not None
+                else (
+                    category_id_list[0]
+                    if category_id_list
+                    else VOD_UNSORTED_CATEGORY_ID
+                )
+            )
+            category_id_str = str(primary_category_id)
+        elif grouped_mode:
+            category_id_str = str(VOD_MOVIES_CATEGORY_ID)
+            category_id_list = [VOD_MOVIES_CATEGORY_ID]
+        else:
+            category_id_str = (
+                str(provider_category_id) if provider_category_id else "0"
+            )
+            category_id_list = (
+                [provider_category_id] if provider_category_id else []
+            )
         curated = (
             _xc_curated_row_values(row, "movie")
             if use_curated_metadata
@@ -1751,6 +1890,19 @@ def xc_get_series_categories(user, request=None):
 
     response = []
 
+    if policy and _xc_active_category_mode(policy) == "lists":
+        response = _xc_policy_list_categories(policy, "series")
+        safe_cache_set(cache_key, response, timeout=3600)
+        return response
+    if policy and _xc_active_category_mode(policy) == "movie_series":
+        response = [{
+            "category_id": str(VOD_SERIES_CATEGORY_ID),
+            "category_name": "Series",
+            "parent_id": 0,
+        }]
+        safe_cache_set(cache_key, response, timeout=3600)
+        return response
+
     from apps.vod.policies import policy_category_map
 
     allowed_categories = policy_category_map(policy)
@@ -1798,7 +1950,12 @@ def xc_get_series(request, user, category_id=None):
 
     rel_filters = {"m3u_account__is_active": True}
     compact_policy = bool(policy and policy.export_mode == "compact")
-    if category_id and not compact_policy:
+    list_mode = bool(policy and _xc_active_category_mode(policy) == "lists")
+    grouped_mode = bool(policy and _xc_active_category_mode(policy) == "movie_series")
+    requested_list_id = _xc_list_id_from_category(category_id) if list_mode else None
+    if grouped_mode and category_id and str(category_id) != str(VOD_SERIES_CATEGORY_ID):
+        return []
+    if category_id and not compact_policy and not list_mode and not grouped_mode:
         rel_filters["category_id"] = category_id
 
     relations = _xc_fetch_priority_distinct_relations(
@@ -1813,16 +1970,23 @@ def xc_get_series(request, user, category_id=None):
         order_by_name_field='series__name',
         policy=policy,
         canonical_field="series_id",
-        prepared_filters={"category_id": category_id}
-        if category_id and compact_policy
-        else None,
+        prepared_filters=(
+            {"list_ids__contains": [requested_list_id]}
+            if category_id and list_mode and requested_list_id is not None
+            else {"category_id": category_id}
+            if category_id and compact_policy and not grouped_mode
+            else None
+        ),
     )
-    if category_id and compact_policy:
+    if category_id and compact_policy and not list_mode and not grouped_mode:
         relations = [
             row
             for row in relations
             if str(row["category_id"] or "0") == str(category_id)
         ]
+
+    if requested_list_id is not None:
+        _xc_order_relations_by_list(relations, requested_list_id, "series")
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for all series backdrop rewrites.
@@ -1833,7 +1997,29 @@ def xc_get_series(request, user, category_id=None):
     _prefer_tmdb_artwork = CoreSettings.get_tmdb_prefer_artwork()
     for num, row in enumerate(relations, 1):
         custom_props = row['series__custom_properties'] or {}
-        category_id = row['category_id']
+        provider_category_id = row['category_id']
+        if list_mode:
+            output_list_ids = row.get("profile_list_ids") or []
+            output_category_ids = [
+                _xc_list_category_id(list_id) for list_id in output_list_ids
+            ]
+            primary_category_id = (
+                int(category_id)
+                if requested_list_id is not None
+                else (
+                    output_category_ids[0]
+                    if output_category_ids
+                    else VOD_UNSORTED_CATEGORY_ID
+                )
+            )
+        elif grouped_mode:
+            output_category_ids = [VOD_SERIES_CATEGORY_ID]
+            primary_category_id = VOD_SERIES_CATEGORY_ID
+        else:
+            output_category_ids = (
+                [provider_category_id] if provider_category_id else []
+            )
+            primary_category_id = provider_category_id or 0
         curated = (
             _xc_curated_row_values(row, "series")
             if use_curated_metadata
@@ -1899,8 +2085,8 @@ def xc_get_series(request, user, category_id=None):
                 if curated and curated["runtime"]
                 else custom_props.get('episode_run_time', '')
             ),
-            "category_id": str(category_id) if category_id else "0",
-            "category_ids": [category_id] if category_id else [],
+            "category_id": str(primary_category_id),
+            "category_ids": output_category_ids,
             "tmdb_id": (
                 row['tmdb_override_id']
                 or row['series__tmdb_match_id']
@@ -2286,8 +2472,16 @@ def xc_get_series_info(request, user, series_id):
                 or ""
             ),
             "episode_run_time": str(series_data['episode_run_time']),
-            "category_id": str(series_relation.category.id) if series_relation.category else "0",
-            "category_ids": [int(series_relation.category.id)] if series_relation.category else [],
+            "category_id": (
+                str(VOD_SERIES_CATEGORY_ID)
+                if policy and _xc_active_category_mode(policy) == "movie_series"
+                else str(series_relation.category.id) if series_relation.category else "0"
+            ),
+            "category_ids": (
+                [VOD_SERIES_CATEGORY_ID]
+                if policy and _xc_active_category_mode(policy) == "movie_series"
+                else [int(series_relation.category.id)] if series_relation.category else []
+            ),
         },
         "episodes": dict(seasons)
     }
@@ -2521,8 +2715,16 @@ def xc_get_vod_info(request, user, vod_id):
             "stream_id": movie_relation.id,
             "name": source_name,
             "added": str(int(movie_relation.created_at.timestamp())),
-            "category_id": str(movie_relation.category.id) if movie_relation.category else "0",
-            "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],
+            "category_id": (
+                str(VOD_MOVIES_CATEGORY_ID)
+                if policy and _xc_active_category_mode(policy) == "movie_series"
+                else str(movie_relation.category.id) if movie_relation.category else "0"
+            ),
+            "category_ids": (
+                [VOD_MOVIES_CATEGORY_ID]
+                if policy and _xc_active_category_mode(policy) == "movie_series"
+                else [int(movie_relation.category.id)] if movie_relation.category else []
+            ),
             "container_extension": movie_relation.container_extension or "mp4",
             "custom_sid": None,
             "direct_source": "",

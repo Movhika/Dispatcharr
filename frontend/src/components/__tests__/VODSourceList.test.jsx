@@ -110,4 +110,29 @@ describe('VODSourceList', () => {
     expect(screen.getByText('Excluded')).toBeVisible();
     expect(screen.getByText('source rule exclude')).toBeVisible();
   });
+
+  it('marks only exact sources which belong to the opened list item', () => {
+    const otherProvider = {
+      ...provider,
+      id: 18,
+      stream_id: '607404',
+      m3u_account: { name: 'Provider B' },
+    };
+    render(
+      <MantineProvider>
+        <VODSourceList
+          providers={[provider, otherProvider]}
+          selectedProvider={provider}
+          contentType="movie"
+          listSourceScope={{
+            includeAllSources: false,
+            relationIds: [provider.id],
+          }}
+        />
+      </MantineProvider>
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'List' })).toBeVisible();
+    expect(screen.getAllByText('Included')).toHaveLength(1);
+  });
 });

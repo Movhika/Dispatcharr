@@ -40,6 +40,7 @@ describe('navigation config', () => {
     it('keeps the implemented VOD pages together', () => {
       expect(NAV_ITEMS.vods.paths.map((entry) => entry.label)).toEqual([
         'Library',
+        'Lists',
         'VOD Profiles',
         'Playback History',
       ]);

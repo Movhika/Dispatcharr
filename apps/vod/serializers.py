@@ -3,6 +3,7 @@ import string
 
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import Q
 from core.utils import truncate_with_warning
 from .image_proxy import vodlogo_cache_url
 from drf_spectacular.types import OpenApiTypes
@@ -10,7 +11,8 @@ from drf_spectacular.utils import extend_schema_field
 from .models import (
     Series, VODCategory, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation,
-    VODAccessPolicy, VODPolicyCategory, VODPlaybackSession,
+    VODAccessPolicy, VODPolicyCategory, VODPolicyList, VODPlaybackSession,
+    VODList, VODListItem,
 )
 from apps.m3u.serializers import M3UAccountSerializer
 from .metadata import (
@@ -23,6 +25,7 @@ from .metadata import (
     normalize_video_features,
 )
 from .policies import enabled_category_map
+from .list_order import SORT_MODES, ordered_list_items
 
 
 class QualityInfoSerializer(serializers.Serializer):
@@ -436,9 +439,308 @@ class VODPolicyCategorySerializer(serializers.ModelSerializer):
         ]
 
 
+class VODListItemSerializer(serializers.ModelSerializer):
+    canonical_id = serializers.SerializerMethodField()
+    display_title = serializers.SerializerMethodField()
+    display_year = serializers.SerializerMethodField()
+    display_poster = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
+    source_count = serializers.SerializerMethodField()
+    relation_ids = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VODListItem
+        fields = [
+            "id", "generation", "content_type", "canonical_id",
+            "display_title", "display_year", "display_poster",
+            "is_available", "include_all_sources", "source_count",
+            "relation_ids",
+            "external_provider", "external_id", "position", "metadata",
+        ]
+
+    def _canonical(self, obj):
+        return obj.movie if obj.content_type == "movie" else obj.series
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_canonical_id(self, obj):
+        canonical = self._canonical(obj)
+        return canonical.pk if canonical is not None else None
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_display_title(self, obj):
+        canonical = self._canonical(obj)
+        if canonical is not None:
+            return canonical.display_name or canonical.name
+        return obj.title
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_display_year(self, obj):
+        canonical = self._canonical(obj)
+        return canonical.year if canonical is not None else obj.year
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_display_poster(self, obj):
+        canonical = self._canonical(obj)
+        if canonical is None:
+            return obj.poster_url
+        return canonical.tmdb_poster_url or (
+            canonical.logo.url if canonical.logo_id else ""
+        )
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_available(self, obj):
+        return self._canonical(obj) is not None
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_source_count(self, obj):
+        if obj.include_all_sources:
+            canonical = self._canonical(obj)
+            return canonical.m3u_relations.count() if canonical is not None else 0
+        prefetched = getattr(obj, "_prefetched_objects_cache", {})
+        if "source_memberships" in prefetched:
+            return len(prefetched["source_memberships"])
+        return obj.source_memberships.count()
+
+    @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
+    def get_relation_ids(self, obj):
+        if obj.include_all_sources:
+            return []
+        prefetched = getattr(obj, "_prefetched_objects_cache", {})
+        memberships = (
+            prefetched["source_memberships"]
+            if "source_memberships" in prefetched
+            else obj.source_memberships.all()
+        )
+        return sorted(
+            relation_id
+            for relation_id in (
+                membership.movie_relation_id or membership.series_relation_id
+                for membership in memberships
+            )
+            if relation_id is not None
+        )
+
+
+class VODListSerializer(serializers.ModelSerializer):
+    item_count = serializers.SerializerMethodField()
+    available_item_count = serializers.SerializerMethodField()
+    preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VODList
+        fields = [
+            "id", "name", "description", "list_type", "content_type",
+            "provider", "external_key", "rules", "settings",
+            "active_generation", "is_enabled", "is_visible", "is_system",
+            "sort_order", "sync_status", "sync_progress", "last_synced_at",
+            "sync_error", "item_count", "available_item_count", "preview",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "active_generation", "is_system", "sync_status",
+            "sync_progress", "last_synced_at", "sync_error", "item_count",
+            "available_item_count", "preview", "created_at", "updated_at",
+        ]
+
+    def validate(self, attrs):
+        settings = attrs.get("settings", getattr(self.instance, "settings", {}))
+        if not isinstance(settings, dict):
+            raise serializers.ValidationError({"settings": "Expected an object."})
+        if str(settings.get("sort_mode") or "") not in SORT_MODES:
+            raise serializers.ValidationError({
+                "settings": "Choose a supported list sorting option."
+            })
+        list_type = attrs.get(
+            "list_type",
+            getattr(self.instance, "list_type", VODList.ListType.MANUAL),
+        )
+        provider = str(
+            attrs.get("provider", getattr(self.instance, "provider", "")) or ""
+        ).strip().lower()
+        external_key = str(
+            attrs.get(
+                "external_key", getattr(self.instance, "external_key", "")
+            ) or ""
+        ).strip()
+        if (
+            list_type == VODList.ListType.SYSTEM
+            and not getattr(self.instance, "is_system", False)
+        ):
+            raise serializers.ValidationError({
+                "list_type": "System lists are managed by Dispatcharr."
+            })
+        if list_type == VODList.ListType.EXTERNAL:
+            if not provider:
+                raise serializers.ValidationError({
+                    "provider": "External lists require a provider identifier."
+                })
+            if not external_key:
+                raise serializers.ValidationError({
+                    "external_key": "External lists require a list identifier."
+                })
+            if provider == "tmdb" and external_key == "watch-provider":
+                content_type = attrs.get(
+                    "content_type",
+                    getattr(self.instance, "content_type", VODList.ContentType.ALL),
+                )
+                settings = attrs.get(
+                    "settings", getattr(self.instance, "settings", {})
+                )
+                settings = settings if isinstance(settings, dict) else {}
+                provider_id = str(settings.get("watch_provider_id") or "")
+                region = str(settings.get("watch_region") or "").upper()
+                if content_type not in {
+                    VODList.ContentType.MOVIE,
+                    VODList.ContentType.SERIES,
+                }:
+                    raise serializers.ValidationError({
+                        "content_type": (
+                            "TMDB watch-provider lists must target movies or series."
+                        )
+                    })
+                if not provider_id.isdigit():
+                    raise serializers.ValidationError({
+                        "settings": "Choose a TMDB watch provider."
+                    })
+                if not re.fullmatch(r"[A-Z]{2}", region):
+                    raise serializers.ValidationError({
+                        "settings": "Choose a two-letter TMDB watch region."
+                    })
+        elif provider or external_key:
+            raise serializers.ValidationError({
+                "provider": (
+                    "Provider and external key are only valid for external lists."
+                )
+            })
+        if list_type == VODList.ListType.DYNAMIC:
+            rules = attrs.get("rules", getattr(self.instance, "rules", []))
+            for rule in rules or []:
+                if not isinstance(rule, dict):
+                    raise serializers.ValidationError({
+                        "rules": "Invalid metadata rule."
+                    })
+                if "rules" in attrs:
+                    release_fields = (
+                        "release_date_after", "release_date_before",
+                        "release_yearly_from", "release_yearly_until",
+                        "release_last_days",
+                    )
+                    added_fields = (
+                        "library_added_after", "library_added_before",
+                        "library_added_last_days",
+                    )
+                    has_release = any(
+                        rule.get(field) not in (None, "", 0, "0")
+                        for field in release_fields
+                    )
+                    has_added = any(
+                        rule.get(field) not in (None, "", 0, "0")
+                        for field in added_fields
+                    )
+                    if has_release and has_added:
+                        raise serializers.ValidationError({
+                            "rules": "Choose either release dates or library-added dates."
+                        })
+                for field in ("release_last_days", "library_added_last_days"):
+                    value = rule.get(field)
+                    if value in (None, "", 0, "0"):
+                        continue
+                    try:
+                        days = int(value)
+                    except (TypeError, ValueError) as exc:
+                        raise serializers.ValidationError({
+                            "rules": f"{field} must be a number of days."
+                        }) from exc
+                    if not 1 <= days <= 3650:
+                        raise serializers.ValidationError({
+                            "rules": f"{field} must be between 1 and 3650."
+                        })
+                yearly = [
+                    str(rule.get(field) or "").strip()
+                    for field in ("release_yearly_from", "release_yearly_until")
+                ]
+                if any(yearly):
+                    from datetime import date
+
+                    if not all(yearly):
+                        raise serializers.ValidationError({
+                            "rules": "Enter both yearly release dates."
+                        })
+                    for value in yearly:
+                        if not re.fullmatch(r"\d{2}-\d{2}", value):
+                            raise serializers.ValidationError({
+                                "rules": "Use MM-DD for yearly release dates."
+                            })
+                        try:
+                            date(2000, int(value[:2]), int(value[3:]))
+                        except ValueError as exc:
+                            raise serializers.ValidationError({
+                                "rules": "Invalid yearly release date."
+                            }) from exc
+        attrs["provider"] = provider
+        attrs["external_key"] = external_key
+        return attrs
+
+    def _active_preview(self, obj):
+        cache = getattr(obj, "_active_preview_cache", None)
+        if cache is None:
+            cache = list(
+                ordered_list_items(
+                    obj,
+                    obj.items.filter(generation=obj.active_generation)
+                    .select_related("movie__logo", "series__logo")
+                    .prefetch_related("source_memberships"),
+                )[:48]
+            )
+            obj._active_preview_cache = cache
+        return cache
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_item_count(self, obj):
+        annotated = getattr(obj, "active_item_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.items.filter(generation=obj.active_generation).count()
+
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_available_item_count(self, obj):
+        annotated = getattr(obj, "active_available_item_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.items.filter(generation=obj.active_generation).filter(
+            Q(movie__isnull=False) | Q(series__isnull=False)
+        ).count()
+
+    @extend_schema_field(VODListItemSerializer(many=True))
+    def get_preview(self, obj):
+        return VODListItemSerializer(
+            self._active_preview(obj),
+            many=True,
+            context=self.context,
+        ).data
+
+
+class VODPolicyListSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="vod_list.name", read_only=True)
+    list_type = serializers.CharField(source="vod_list.list_type", read_only=True)
+    content_type = serializers.CharField(
+        source="vod_list.content_type", read_only=True
+    )
+
+    class Meta:
+        model = VODPolicyList
+        fields = [
+            "vod_list", "name", "list_type", "content_type",
+            "enabled", "priority",
+        ]
+
+
 class VODAccessPolicySerializer(serializers.ModelSerializer):
     category_rules = VODPolicyCategorySerializer(
         source="vodpolicycategory_set", many=True, required=False
+    )
+    list_rules = VODPolicyListSerializer(
+        source="vodpolicylist_set", many=True, required=False
     )
     selection_current = serializers.SerializerMethodField()
     selection_available = serializers.SerializerMethodField()
@@ -452,7 +754,7 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
             "hard_constraints", "ranking", "provider_order", "edition_rules",
             "naming_mode", "name_template", "metadata_source",
             "canonical_title_source", "users",
-            "category_rules",
+            "category_mode", "include_unsorted", "category_rules", "list_rules",
             "selection_status", "selection_current", "selection_available",
             "selection_task_state", "selection_active_mode",
             "selection_counts", "selection_progress",
@@ -545,6 +847,27 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
         # replacement even though the database already contains the new set.
         getattr(policy, "_prefetched_objects_cache", {}).pop(
             "vodpolicycategory_set", None
+        )
+
+    def _replace_list_rules(self, policy, rules):
+        if rules is None:
+            return
+        policy.vodpolicylist_set.all().delete()
+        list_ids = [rule["vod_list"].pk for rule in rules]
+        valid_ids = set(
+            VODList.objects.filter(pk__in=list_ids, is_enabled=True).values_list(
+                "pk", flat=True
+            )
+        )
+        if len(valid_ids) != len(set(list_ids)):
+            raise serializers.ValidationError(
+                {"list_rules": "Choose only enabled VOD lists."}
+            )
+        VODPolicyList.objects.bulk_create([
+            VODPolicyList(policy=policy, **rule) for rule in rules
+        ])
+        getattr(policy, "_prefetched_objects_cache", {}).pop(
+            "vodpolicylist_set", None
         )
 
     def validate_ranking(self, value):
@@ -1304,12 +1627,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", [])
+        list_rules = validated_data.pop("vodpolicylist_set", [])
         users = validated_data.pop("users", [])
         with transaction.atomic():
             policy = VODAccessPolicy.objects.create(**validated_data)
             self._assign_users(policy, users)
             self._normalize_default(policy)
             self._replace_category_rules(policy, rules)
+            self._replace_list_rules(policy, list_rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(
@@ -1324,12 +1649,14 @@ class VODAccessPolicySerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         rules = validated_data.pop("vodpolicycategory_set", None)
+        list_rules = validated_data.pop("vodpolicylist_set", None)
         users = validated_data.pop("users", None)
         with transaction.atomic():
             instance = super().update(instance, validated_data)
             self._assign_users(instance, users)
             self._normalize_default(instance)
             self._replace_category_rules(instance, rules)
+            self._replace_list_rules(instance, list_rules)
         from .profile_selection import enqueue_profile_selection_rebuild
 
         enqueue_profile_selection_rebuild(

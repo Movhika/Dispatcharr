@@ -1,5 +1,6 @@
 import {
   ListOrdered,
+  ListPlus,
   Play,
   Database,
   LayoutGrid,
@@ -61,6 +62,12 @@ export const NAV_ITEMS = {
     adminOnly: true,
     paths: [
       { label: 'Library', icon: Library, path: '/vods' },
+      {
+        label: 'Lists',
+        icon: ListPlus,
+        path: '/vods/lists',
+        adminOnly: true,
+      },
       {
         label: 'VOD Profiles',
         icon: SlidersHorizontal,

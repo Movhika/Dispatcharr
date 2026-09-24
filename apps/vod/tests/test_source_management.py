@@ -1589,6 +1589,7 @@ class VODSourceManagementTests(TestCase):
         build_vod_profile_selection(self.policy.id)
         cache.delete(SELECTION_GENERATION_KEY)
         cache.delete(PROFILE_REBUILD_ENQUEUE_KEY)
+        cache.delete(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY)
 
         with patch(
             "apps.vod.profile_selection.enqueue_all_profile_selection_rebuilds"
@@ -1779,8 +1780,8 @@ class VODSourceManagementTests(TestCase):
 
         enqueue.assert_called_once_with(
             trigger_reason=(
-                "One or more completed VOD provider refreshes changed the "
-                "source catalog"
+                "One or more provider VOD refreshes completed, then VOD lists "
+                "were rebuilt"
             )
         )
         self.assertIsNone(cache.get(VOD_PROFILE_REBUILD_AFTER_REFRESH_KEY))
@@ -1854,6 +1855,43 @@ class VODSourceManagementTests(TestCase):
             response.data["results"][0]["metadata"]["audio_languages"],
             ["ger"],
         )
+
+    def test_profile_preview_search_matches_visible_output_not_raw_title(self):
+        self.movie.name = "(DE-) (Pri)sons 4K - 2024"
+        self.movie.display_name = "Prisons"
+        self.movie.clean_title = "Prisons"
+        self.movie.tmdb_status = "matched"
+        self.movie.year = 2024
+        self.movie.save(update_fields=[
+            "name", "display_name", "clean_title", "tmdb_status", "year",
+            "updated_at",
+        ])
+        build_vod_profile_selection(self.policy.id)
+        admin = get_user_model().objects.create_user(
+            username="profile-visible-search-admin",
+            password="test-password",
+            user_level=10,
+        )
+
+        def preview(search):
+            request = APIRequestFactory().get(
+                f"/api/vod/access-policies/{self.policy.id}/selections/",
+                {"type": "movie", "search": search},
+            )
+            force_authenticate(request, user=admin)
+            return VODAccessPolicyViewSet.as_view({"get": "selections"})(
+                request, pk=self.policy.id
+            )
+
+        visible = preview("Prisons")
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual(visible.data["count"], 1)
+        self.assertIn("Prisons", visible.data["results"][0]["name"])
+        self.assertNotIn("4K", visible.data["results"][0]["name"])
+
+        hidden_raw_name = preview("4K")
+        self.assertEqual(hidden_raw_name.status_code, 200)
+        self.assertEqual(hidden_raw_name.data["count"], 0)
 
     def test_profile_preview_filters_by_current_canonical_metadata_state(self):
         build_vod_profile_selection(self.policy.id)

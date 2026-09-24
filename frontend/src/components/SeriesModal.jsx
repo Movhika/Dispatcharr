@@ -358,6 +358,7 @@ const SeriesModal = ({
   profileCandidates = null,
   profileCandidatesLoading = false,
   profileCandidatesError = '',
+  listSourceScope = null,
 }) => {
   const fetchSeriesInfo = useVODStore((state) => state.fetchSeriesInfo);
   const fetchSeriesProviders = useVODStore(
@@ -1042,6 +1043,7 @@ const SeriesModal = ({
                   profileCandidates={profileCandidates}
                   profileCandidatesLoading={profileCandidatesLoading}
                   profileCandidatesError={profileCandidatesError}
+                  listSourceScope={listSourceScope}
                 />
               ) : !loadingProviders ? (
                 <Text c="dimmed" ta="center" py="md">

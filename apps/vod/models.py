@@ -441,6 +441,242 @@ class VODMetadataState(models.Model):
         verbose_name_plural = "VOD metadata state"
 
 
+class VODList(models.Model):
+    """A curated, rule-driven or externally supplied VOD collection.
+
+    List entries are versioned. Builders write a complete next generation and
+    only then advance ``active_generation`` in one transaction, so clients
+    never observe a partially refreshed external or dynamic list.
+    """
+
+    class ListType(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        DYNAMIC = "dynamic", "Dynamic rules"
+        EXTERNAL = "external", "External provider"
+        SYSTEM = "system", "System"
+
+    class ContentType(models.TextChoices):
+        ALL = "all", "Movies and series"
+        MOVIE = "movie", "Movies"
+        SERIES = "series", "Series"
+
+    class SyncStatus(models.TextChoices):
+        IDLE = "idle", "Idle"
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        COMPLETE = "complete", "Complete"
+        FAILED = "failed", "Failed"
+
+    name = models.CharField(max_length=255, unique=True)
+    description = models.TextField(blank=True)
+    list_type = models.CharField(
+        max_length=12,
+        choices=ListType.choices,
+        default=ListType.MANUAL,
+    )
+    content_type = models.CharField(
+        max_length=10,
+        choices=ContentType.choices,
+        default=ContentType.ALL,
+    )
+    provider = models.CharField(
+        max_length=32,
+        blank=True,
+        help_text=(
+            "Integration identifier such as tmdb, mdblist, trakt or simkl. "
+            "It remains open-ended so new providers do not require a schema change."
+        ),
+    )
+    external_key = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Provider-specific list identifier.",
+    )
+    rules = models.JSONField(default=list, blank=True)
+    settings = models.JSONField(default=dict, blank=True)
+    active_generation = models.PositiveBigIntegerField(default=1)
+    is_enabled = models.BooleanField(default=True)
+    is_visible = models.BooleanField(default=True)
+    is_system = models.BooleanField(default=False)
+    sort_order = models.IntegerField(default=0)
+    sync_status = models.CharField(
+        max_length=12,
+        choices=SyncStatus.choices,
+        default=SyncStatus.IDLE,
+    )
+    sync_progress = models.JSONField(default=dict, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    sync_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("sort_order", "name", "id")
+        indexes = [
+            models.Index(
+                fields=("is_enabled", "sort_order"),
+                name="vod_list_enabled_order_idx",
+            ),
+            models.Index(
+                fields=("provider", "external_key"),
+                name="vod_list_external_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class VODListItem(models.Model):
+    """One ordered title in one immutable list generation.
+
+    ``movie``/``series`` are optional so an external list can retain titles
+    that are not available in the local library. Snapshot fields keep those
+    entries useful in the UI, where they are rendered as unavailable.
+    """
+
+    list = models.ForeignKey(
+        VODList,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    generation = models.PositiveBigIntegerField(default=1)
+    content_type = models.CharField(
+        max_length=10,
+        choices=(
+            ("movie", "Movie"),
+            ("series", "Series"),
+        ),
+    )
+    movie = models.ForeignKey(
+        Movie,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_items",
+    )
+    series = models.ForeignKey(
+        Series,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_items",
+    )
+    include_all_sources = models.BooleanField(
+        default=False,
+        help_text=(
+            "Include every otherwise eligible source for the canonical title. "
+            "When false, source memberships identify the exact variants."
+        ),
+    )
+    external_provider = models.CharField(max_length=32, blank=True)
+    external_id = models.CharField(max_length=255, blank=True)
+    title = models.CharField(max_length=500, blank=True)
+    year = models.IntegerField(null=True, blank=True)
+    poster_url = models.CharField(max_length=1000, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("position", "id")
+        indexes = [
+            models.Index(
+                fields=("list", "generation", "position"),
+                name="vod_list_item_order_idx",
+            ),
+            models.Index(
+                fields=("external_provider", "external_id"),
+                name="vod_list_item_external_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(content_type="movie", series__isnull=True)
+                    | Q(content_type="series", movie__isnull=True)
+                ),
+                name="vod_list_item_content_fk",
+            ),
+            models.UniqueConstraint(
+                fields=("list", "generation", "movie"),
+                condition=Q(movie__isnull=False),
+                name="unique_vod_list_movie_generation",
+            ),
+            models.UniqueConstraint(
+                fields=("list", "generation", "series"),
+                condition=Q(series__isnull=False),
+                name="unique_vod_list_series_generation",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "list", "generation", "content_type",
+                    "external_provider", "external_id",
+                ),
+                condition=~Q(external_id=""),
+                name="unique_vod_list_external_generation",
+            ),
+        ]
+
+    @property
+    def canonical(self):
+        return self.movie if self.content_type == "movie" else self.series
+
+    @property
+    def is_available(self):
+        return self.canonical is not None
+
+    def __str__(self):
+        return self.title or str(self.canonical or self.external_id)
+
+
+class VODListSourceMembership(models.Model):
+    """Attach a list item to exact provider sources when required."""
+
+    item = models.ForeignKey(
+        VODListItem,
+        on_delete=models.CASCADE,
+        related_name="source_memberships",
+    )
+    movie_relation = models.ForeignKey(
+        "M3UMovieRelation",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_memberships",
+    )
+    series_relation = models.ForeignKey(
+        "M3USeriesRelation",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_memberships",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(movie_relation__isnull=False, series_relation__isnull=True)
+                    | Q(movie_relation__isnull=True, series_relation__isnull=False)
+                ),
+                name="vod_list_membership_one_source",
+            ),
+            models.UniqueConstraint(
+                fields=("item", "movie_relation"),
+                condition=Q(movie_relation__isnull=False),
+                name="unique_vod_list_movie_source",
+            ),
+            models.UniqueConstraint(
+                fields=("item", "series_relation"),
+                condition=Q(series_relation__isnull=False),
+                name="unique_vod_list_series_source",
+            ),
+        ]
+
+
 class VODAccessPolicy(models.Model):
     """Per-user XC visibility, compact selection and failover policy."""
 
@@ -464,6 +700,11 @@ class VODAccessPolicy(models.Model):
     class MetadataSource(models.TextChoices):
         PROVIDER = "provider", "Provider metadata"
         CANONICAL = "canonical", "Canonical / TMDB metadata"
+
+    class CategoryMode(models.TextChoices):
+        PROVIDER = "provider", "Provider categories"
+        LISTS = "lists", "VOD lists"
+        MOVIE_SERIES = "movie_series", "Movie & Series"
 
     class CanonicalTitleSource(models.TextChoices):
         PRIMARY = "primary", "Primary canonical title"
@@ -516,6 +757,19 @@ class VODAccessPolicy(models.Model):
             "selected output title."
         ),
     )
+    category_mode = models.CharField(
+        max_length=12,
+        choices=CategoryMode.choices,
+        default=CategoryMode.PROVIDER,
+        help_text="Choose provider categories, curated VOD lists, or one category per content type for XC output.",
+    )
+    include_unsorted = models.BooleanField(
+        default=True,
+        help_text=(
+            "When list output is enabled, retain eligible sources which do not "
+            "belong to any selected list in a virtual Unsorted category."
+        ),
+    )
     canonical_title_source = models.CharField(
         max_length=10,
         choices=CanonicalTitleSource.choices,
@@ -533,6 +787,11 @@ class VODAccessPolicy(models.Model):
     category_relations = models.ManyToManyField(
         "M3UVODCategoryRelation",
         through="VODPolicyCategory",
+        related_name="access_policies",
+    )
+    vod_lists = models.ManyToManyField(
+        VODList,
+        through="VODPolicyList",
         related_name="access_policies",
     )
     selection_status = models.CharField(
@@ -825,6 +1084,22 @@ class VODPolicyCategory(models.Model):
         ]
 
 
+class VODPolicyList(models.Model):
+    policy = models.ForeignKey(VODAccessPolicy, on_delete=models.CASCADE)
+    vod_list = models.ForeignKey(VODList, on_delete=models.CASCADE)
+    enabled = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ("-priority", "vod_list__sort_order", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("policy", "vod_list"),
+                name="unique_vod_policy_list",
+            )
+        ]
+
+
 class VODMovieProfileSelection(models.Model):
     """Prepared movie output rows for one policy generation."""
 
@@ -851,6 +1126,7 @@ class VODMovieProfileSelection(models.Model):
     edition_name = models.CharField(max_length=120, blank=True)
     edition_suffix = models.CharField(max_length=120, blank=True)
     output_name = models.CharField(max_length=500, blank=True)
+    list_ids = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -875,6 +1151,7 @@ class VODMovieProfileSelection(models.Model):
             ),
             GinIndex(fields=("audio_languages",), name="vod_mov_prof_audio_gin"),
             GinIndex(fields=("subtitle_languages",), name="vod_mov_prof_sub_gin"),
+            GinIndex(fields=("list_ids",), name="vod_mov_prof_lists_gin"),
         ]
 
 
@@ -904,6 +1181,7 @@ class VODSeriesProfileSelection(models.Model):
     edition_name = models.CharField(max_length=120, blank=True)
     edition_suffix = models.CharField(max_length=120, blank=True)
     output_name = models.CharField(max_length=500, blank=True)
+    list_ids = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -928,6 +1206,7 @@ class VODSeriesProfileSelection(models.Model):
             ),
             GinIndex(fields=("audio_languages",), name="vod_ser_prof_audio_gin"),
             GinIndex(fields=("subtitle_languages",), name="vod_ser_prof_sub_gin"),
+            GinIndex(fields=("list_ids",), name="vod_ser_prof_lists_gin"),
         ]
 
 

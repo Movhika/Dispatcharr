@@ -5,6 +5,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   Paper,
@@ -34,7 +35,32 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Filter, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import {
+  Eye,
+  Filter,
+  GripVertical,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import API from '../api';
 import useVODStore from '../store/useVODStore';
 import { showNotification } from '../utils/notificationUtils';
@@ -47,6 +73,7 @@ import VODSourceRules from './VODSourceRules.jsx';
 import VODEditionRules from './VODEditionRules.jsx';
 import VODModal from './VODModal.jsx';
 import SeriesModal from './SeriesModal.jsx';
+import VODListPreviewModal from './VODListPreviewModal.jsx';
 import {
   DEFAULT_VOD_FAILOVER_RANKING,
   normalizeVODFailoverRanking,
@@ -73,6 +100,9 @@ const EMPTY_PROFILE = {
   metadata_source: 'canonical',
   canonical_title_source: 'primary',
   category_rules: [],
+  category_mode: 'provider',
+  include_unsorted: true,
+  list_rules: [],
 };
 
 const metadataText = (metadata, field) => {
@@ -296,6 +326,17 @@ const profilePayload = (profile) => ({
     }))
     .filter((rule) => Number.isInteger(rule.category_relation))
     .sort((left, right) => left.category_relation - right.category_relation),
+  category_mode: ['lists', 'movie_series'].includes(profile.category_mode)
+    ? profile.category_mode
+    : 'provider',
+  include_unsorted: profile.include_unsorted !== false,
+  list_rules: (profile.list_rules || [])
+    .map((rule) => ({
+      vod_list: Number(rule.vod_list),
+      enabled: rule.enabled !== false,
+      priority: Number(rule.priority || 0),
+    }))
+    .filter((rule) => Number.isInteger(rule.vod_list)),
 });
 
 const canonicalizeObject = (value) => {
@@ -311,6 +352,58 @@ const canonicalizeObject = (value) => {
 
 const profileDraftSignature = (profile) =>
   JSON.stringify(canonicalizeObject(profilePayload(profile)));
+
+const SortableOutputList = ({ list, onRemove, onPreview }) => {
+  const id = String(list.id);
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  return (
+    <Paper
+      ref={setNodeRef}
+      withBorder
+      p="sm"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+        zIndex: isDragging ? 2 : undefined,
+      }}
+    >
+      <Group wrap="nowrap">
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          aria-label={`Reorder ${list.name}`}
+          {...attributes}
+          {...listeners}
+          style={{ cursor: 'grab', touchAction: 'none' }}
+        >
+          <GripVertical size={17} />
+        </ActionIcon>
+        <Checkbox
+          checked
+          label={list.name}
+          description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
+          onChange={onRemove}
+          style={{ flex: 1 }}
+        />
+        <ActionIcon
+          variant="subtle"
+          aria-label={`Preview ${list.name}`}
+          onClick={onPreview}
+        >
+          <Eye size={17} />
+        </ActionIcon>
+      </Group>
+    </Paper>
+  );
+};
 
 const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const categories = useVODStore((state) => state.categories);
@@ -330,6 +423,8 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [vodLists, setVodLists] = useState([]);
+  const [previewList, setPreviewList] = useState(null);
   const [activeTab, setActiveTab] = useState('settings');
   const [preview, setPreview] = useState({ count: 0, results: [] });
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -352,6 +447,12 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     anime_mode: '',
     adult_mode: '',
   });
+  const listSensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const selectedProfile = profiles.find(
     (profile) => String(profile.id) === String(profileId)
@@ -420,6 +521,11 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       metadata_source: source.metadata_source || 'provider',
       canonical_title_source: outputSettings.titleSource,
       category_rules: source.category_rules || [],
+      category_mode: ['lists', 'movie_series'].includes(source.category_mode)
+        ? source.category_mode
+        : 'provider',
+      include_unsorted: source.include_unsorted !== false,
+      list_rules: source.list_rules || [],
     };
     setDraft(nextDraft);
     setSavedDraftSignature(profileDraftSignature(nextDraft));
@@ -427,7 +533,13 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
 
   useEffect(() => {
     if (!opened) return;
-    Promise.all([fetchCategories(), fetchProfiles()]);
+    Promise.all([
+      fetchCategories(),
+      fetchProfiles(),
+      API.getVODLists().then((response) =>
+        setVodLists(response?.results || response || [])
+      ),
+    ]);
   }, [fetchCategories, fetchProfiles, opened]);
 
   useEffect(() => {
@@ -436,6 +548,7 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
     setProfileId('');
     setActiveTab('settings');
     setCandidateTarget(null);
+    setPreviewList(null);
   }, [opened]);
 
   useEffect(() => {
@@ -528,12 +641,13 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
 
   useEffect(() => {
     if (
-      draft.export_mode === 'variants' &&
-      ['editions', 'failover'].includes(activeTab)
+      (draft.export_mode !== 'compact' &&
+        ['editions', 'failover'].includes(activeTab)) ||
+      (activeTab === 'lists' && draft.category_mode !== 'lists')
     ) {
       setActiveTab('settings');
     }
-  }, [activeTab, draft.export_mode]);
+  }, [activeTab, draft.export_mode, draft.category_mode]);
 
   const accountOptions = useMemo(
     () =>
@@ -571,6 +685,53 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
   const selectedCategoryIds = allowedCategoryStates.map((category) =>
     String(category.relation_id)
   );
+  const enabledVodLists = useMemo(
+    () => vodLists.filter((list) => list.is_enabled),
+    [vodLists]
+  );
+  const enabledVodListsById = useMemo(
+    () => new Map(enabledVodLists.map((list) => [Number(list.id), list])),
+    [enabledVodLists]
+  );
+  const selectedOutputLists = useMemo(
+    () =>
+      (draft.list_rules || [])
+        .filter((rule) => rule.enabled !== false)
+        .map((rule) => enabledVodListsById.get(Number(rule.vod_list)))
+        .filter(Boolean),
+    [draft.list_rules, enabledVodListsById]
+  );
+  const selectedOutputListIds = useMemo(
+    () => new Set(selectedOutputLists.map((list) => Number(list.id))),
+    [selectedOutputLists]
+  );
+  const unselectedOutputLists = enabledVodLists.filter(
+    (list) => !selectedOutputListIds.has(Number(list.id))
+  );
+
+  const setOrderedListRules = (lists) => {
+    setDraft((current) => ({
+      ...current,
+      list_rules: lists.map((list, index) => ({
+        vod_list: list.id,
+        enabled: true,
+        priority: -index,
+      })),
+    }));
+  };
+
+  const handleListDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const oldIndex = selectedOutputLists.findIndex(
+      (list) => String(list.id) === String(active.id)
+    );
+    const newIndex = selectedOutputLists.findIndex(
+      (list) => String(list.id) === String(over.id)
+    );
+    if (oldIndex >= 0 && newIndex >= 0) {
+      setOrderedListRules(arrayMove(selectedOutputLists, oldIndex, newIndex));
+    }
+  };
 
   const updateProfileCategoryStates = (currentRows) => (updater) => {
     const nextRows =
@@ -630,27 +791,70 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
       allowedAccountIds.has(String(option.value))
     );
   }, [accountOptions, allowedCategoryStates]);
+  const activeCategoryMode =
+    selectedProfile?.selection_counts?.category_mode ||
+    selectedProfile?.category_mode ||
+    'provider';
+  useEffect(() => {
+    setFilters((current) =>
+      current.category ? { ...current, category: '' } : current
+    );
+    setPage(1);
+  }, [activeCategoryMode, selectedProfileId]);
   const categoryOptions = useMemo(
     () =>
-      Object.values(categories || {})
-        .filter(
-          (category) =>
-            category.category_type === filters.type &&
-            (category.m3u_accounts || []).some(
-              (relation) =>
-                relation.enabled !== false &&
-                (!filters.m3u_account ||
-                  String(relation.m3u_account) === filters.m3u_account)
-            )
-        )
-        .map((category) => ({
-          value: String(category.id),
-          label: category.name,
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [categories, filters.m3u_account, filters.type]
+      activeCategoryMode === 'lists'
+        ? [
+            ...(selectedProfile?.list_rules || [])
+              .filter((rule) => rule.enabled !== false)
+              .map((rule) =>
+                vodLists.find(
+                  (list) => Number(list.id) === Number(rule.vod_list)
+                )
+              )
+              .filter(
+                (list) =>
+                  list && ['all', filters.type].includes(list.content_type)
+              )
+              .map((list) => ({ value: `list:${list.id}`, label: list.name })),
+            ...(selectedProfile?.include_unsorted
+              ? [{ value: 'list:0', label: 'Unsorted' }]
+              : []),
+          ]
+        : activeCategoryMode === 'movie_series'
+          ? [
+              {
+                value: `group:${filters.type}`,
+                label: filters.type === 'movie' ? 'Movies' : 'Series',
+              },
+            ]
+          : Object.values(categories || {})
+              .filter(
+                (category) =>
+                  category.category_type === filters.type &&
+                  (category.m3u_accounts || []).some(
+                    (relation) =>
+                      relation.enabled !== false &&
+                      (!filters.m3u_account ||
+                        String(relation.m3u_account) === filters.m3u_account)
+                  )
+              )
+              .map((category) => ({
+                value: String(category.id),
+                label: category.name,
+              }))
+              .sort((left, right) => left.label.localeCompare(right.label)),
+    [
+      activeCategoryMode,
+      categories,
+      filters.m3u_account,
+      filters.type,
+      selectedProfile,
+      vodLists,
+    ]
   );
-  const previewCategory = categories?.[filters.category];
+  const previewCategory =
+    activeCategoryMode === 'provider' ? categories?.[filters.category] : null;
   const previewFacetCategory = previewCategory
     ? `${previewCategory.name}|${previewCategory.category_type}`
     : '';
@@ -1265,6 +1469,9 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
               >
                 <TabsTab value="sources">Sources</TabsTab>
               </Tooltip>
+              {draft.category_mode === 'lists' && (
+                <TabsTab value="lists">Lists</TabsTab>
+              )}
               <Tooltip
                 label={CONTENT_RULES_TAB_HELP}
                 multiline
@@ -1334,6 +1541,21 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                                 ? 'primary'
                                 : draft.canonical_title_source,
                           })
+                        }
+                      />
+                      <Select
+                        label="Output groups"
+                        data={[
+                          { value: 'provider', label: 'Provider groups' },
+                          { value: 'lists', label: 'Lists' },
+                          { value: 'movie_series', label: 'Movie & Series' },
+                        ]}
+                        value={draft.category_mode}
+                        onChange={(value) =>
+                          setDraft((current) => ({
+                            ...current,
+                            category_mode: value || 'provider',
+                          }))
                         }
                       />
                       <Select
@@ -1484,6 +1706,112 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
               </ScrollArea>
             </TabsPanel>
 
+            {draft.category_mode === 'lists' && (
+              <TabsPanel value="lists" pt="md">
+                <ScrollArea h="100%">
+                  <Box pb="xs">
+                    <Paper withBorder p="lg" radius="md" maw={900} mx="auto">
+                      <Stack gap="xs">
+                        {selectedOutputLists.length > 0 && (
+                          <>
+                            <Text size="sm" fw={600}>
+                              Output order
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              Drag selected lists into the category order
+                              clients should receive.
+                            </Text>
+                            <DndContext
+                              sensors={listSensors}
+                              collisionDetection={closestCenter}
+                              modifiers={[restrictToVerticalAxis]}
+                              onDragEnd={handleListDragEnd}
+                            >
+                              <SortableContext
+                                items={selectedOutputLists.map((list) =>
+                                  String(list.id)
+                                )}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                <Stack gap="xs">
+                                  {selectedOutputLists.map((list) => (
+                                    <SortableOutputList
+                                      key={list.id}
+                                      list={list}
+                                      onPreview={() => setPreviewList(list)}
+                                      onRemove={() =>
+                                        setOrderedListRules(
+                                          selectedOutputLists.filter(
+                                            (row) => row.id !== list.id
+                                          )
+                                        )
+                                      }
+                                    />
+                                  ))}
+                                </Stack>
+                              </SortableContext>
+                            </DndContext>
+                          </>
+                        )}
+                        {unselectedOutputLists.length > 0 && (
+                          <>
+                            <Text size="sm" fw={600} mt="xs">
+                              Available lists
+                            </Text>
+                            {unselectedOutputLists.map((list) => (
+                              <Paper key={list.id} withBorder p="sm">
+                                <Group wrap="nowrap">
+                                  <Checkbox
+                                    checked={false}
+                                    label={list.name}
+                                    description={`${list.available_item_count || 0} available titles · ${list.list_type}`}
+                                    style={{ flex: 1 }}
+                                    onChange={(event) => {
+                                      if (event.currentTarget.checked) {
+                                        setOrderedListRules([
+                                          ...selectedOutputLists,
+                                          list,
+                                        ]);
+                                      }
+                                    }}
+                                  />
+                                  <ActionIcon
+                                    variant="subtle"
+                                    aria-label={`Preview ${list.name}`}
+                                    onClick={() => setPreviewList(list)}
+                                  >
+                                    <Eye size={17} />
+                                  </ActionIcon>
+                                </Group>
+                              </Paper>
+                            ))}
+                          </>
+                        )}
+                        {!enabledVodLists.length && (
+                          <Alert color="blue">
+                            Create and enable a VOD list before selecting list
+                            output.
+                          </Alert>
+                        )}
+                        <Switch
+                          mt="sm"
+                          label="Include Unsorted"
+                          description="Keep every otherwise eligible source which is not in one of the selected lists."
+                          checked={draft.include_unsorted}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              include_unsorted: event.currentTarget.checked,
+                            }))
+                          }
+                        />
+                      </Stack>
+                    </Paper>
+                  </Box>
+                </ScrollArea>
+              </TabsPanel>
+            )}
+
             <TabsPanel value="content-rules" pt="md">
               <ScrollArea h="100%">
                 <Box pb="xs">
@@ -1628,7 +1956,13 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                     />
                   )}
                   <Select
-                    label="Category"
+                    label={
+                      activeCategoryMode === 'lists'
+                        ? 'List'
+                        : activeCategoryMode === 'movie_series'
+                          ? 'Output group'
+                          : 'Category'
+                    }
                     clearable
                     searchable
                     data={categoryOptions}
@@ -1793,7 +2127,13 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
                           <TableTh>
                             {activeMode === 'compact' ? 'Sources' : 'Source'}
                           </TableTh>
-                          <TableTh>Category</TableTh>
+                          <TableTh>
+                            {activeCategoryMode === 'lists'
+                              ? 'Lists'
+                              : activeCategoryMode === 'movie_series'
+                                ? 'Output group'
+                                : 'Category'}
+                          </TableTh>
                           {activeMode !== 'compact' && (
                             <>
                               <TableTh>DUB</TableTh>
@@ -1918,6 +2258,14 @@ const VODOutputProfilesModal = ({ opened, onClose, embedded = false }) => {
           </Tabs>
         </Stack>
       </Surface>
+
+      {previewList && (
+        <VODListPreviewModal
+          key={previewList.id}
+          list={previewList}
+          onClose={() => setPreviewList(null)}
+        />
+      )}
 
       {candidateTarget?.content_type === 'series' ? (
         <SeriesModal

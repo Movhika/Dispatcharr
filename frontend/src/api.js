@@ -1637,6 +1637,96 @@ export default class API {
     });
   }
 
+  static async getVODLists() {
+    return await request(`${host}/api/vod/lists/`, {
+      cache: 'no-store',
+    });
+  }
+
+  static async getVODListUsage(id) {
+    return await request(`${host}/api/vod/lists/${id}/usage/`, {
+      cache: 'no-store',
+    });
+  }
+
+  static async getVODListRuleOptions(type = 'all') {
+    const query = new URLSearchParams({ type });
+    return await request(
+      `${host}/api/vod/lists/rule-options/?${query.toString()}`,
+      { cache: 'no-store' }
+    );
+  }
+
+  static async getVODListExternalOptions(type = 'movie', region) {
+    const query = new URLSearchParams({ type });
+    if (region) query.set('region', region);
+    return await request(
+      `${host}/api/vod/lists/external-options/?${query.toString()}`,
+      { cache: 'no-store' }
+    );
+  }
+
+  static async createVODList(values) {
+    return await request(`${host}/api/vod/lists/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async updateVODList(id, values) {
+    return await request(`${host}/api/vod/lists/${id}/`, {
+      method: 'PATCH',
+      body: values,
+    });
+  }
+
+  static async deleteVODList(id) {
+    return await request(`${host}/api/vod/lists/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async getVODListItems(id, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return await request(
+      `${host}/api/vod/lists/${id}/items/${query ? `?${query}` : ''}`,
+      { cache: 'no-store' }
+    );
+  }
+
+  static async getVODListFilterOptions(id) {
+    return await request(`${host}/api/vod/lists/${id}/filter-options/`, {
+      cache: 'no-store',
+    });
+  }
+
+  static async replaceManualVODListItems(id, items) {
+    return await request(`${host}/api/vod/lists/${id}/manual-items/`, {
+      method: 'PUT',
+      body: { items },
+    });
+  }
+
+  static async rebuildVODList(id) {
+    return await request(`${host}/api/vod/lists/${id}/rebuild/`, {
+      method: 'POST',
+    });
+  }
+
+  static async addVODListItems(id, selections) {
+    return await request(`${host}/api/vod/lists/${id}/add-items/`, {
+      method: 'POST',
+      body: { selections },
+    });
+  }
+
+  static async removeVODListItems(id, itemIds) {
+    return await request(`${host}/api/vod/lists/${id}/remove-items/`, {
+      method: 'POST',
+      body: { item_ids: itemIds },
+    });
+  }
+
   static async getVODMetadataStatus(settingsOnly = false) {
     return await request(
       `${host}/api/vod/metadata/${settingsOnly ? '?settings_only=1' : ''}`,
