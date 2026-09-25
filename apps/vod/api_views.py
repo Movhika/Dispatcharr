@@ -3942,11 +3942,12 @@ class VODAccessPolicyViewSet(viewsets.ModelViewSet):
         return [Authenticated()]
 
     def get_queryset(self):
+        queryset = super().get_queryset()
         if getattr(self, "swagger_fake_view", False):
-            return self.queryset.none()
+            return queryset.none()
         if _is_admin(self.request.user):
-            return self.queryset
-        return self.queryset.filter(
+            return queryset
+        return queryset.filter(
             Q(users=self.request.user) | Q(is_default=True)
         ).distinct()
 
