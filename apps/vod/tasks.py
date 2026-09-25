@@ -13,6 +13,7 @@ from .models import (
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
 )
 from .utils import category_language
+from .metadata import initialize_relations_metadata
 from datetime import datetime
 import logging
 import json
@@ -880,6 +881,13 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
                     'movie', 'category', 'container_extension', 'custom_properties', 'last_seen'
                 ])
 
+            if stream_ids:
+                initialize_relations_metadata(
+                    M3UMovieRelation.objects.filter(
+                        m3u_account=account, stream_id__in=stream_ids
+                    )
+                )
+
         logger.info("Movie batch processing completed successfully!")
         return f"Movie batch processed: {len(movies_to_create)} created, {len(movies_to_update)} updated"
 
@@ -1248,6 +1256,14 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
                 M3USeriesRelation.objects.bulk_update(relations_to_update, [
                     'series', 'category', 'custom_properties', 'last_seen'
                 ])
+
+            if series_ids:
+                initialize_relations_metadata(
+                    M3USeriesRelation.objects.filter(
+                        m3u_account=account,
+                        external_series_id__in=series_ids,
+                    )
+                )
 
         logger.info("Series batch processing completed successfully!")
         return f"Series batch processed: {len(series_to_create)} created, {len(series_to_update)} updated"
@@ -1767,6 +1783,15 @@ def batch_process_episodes(account, series, episodes_data, scan_start_time=None,
         removed_count = stale_qs.exclude(stream_id__in=episode_ids).delete()[0]
         if removed_count:
             logger.info(f"Removed {removed_count} episode relations no longer present in provider for series {series.name}")
+
+        if episode_ids:
+            initialize_relations_metadata(
+                M3UEpisodeRelation.objects.filter(
+                    m3u_account=account,
+                    episode__series=series,
+                    stream_id__in=episode_ids,
+                )
+            )
 
     logger.info(f"Batch processed episodes: {len(episodes_to_create)} new, {len(episodes_to_update)} updated, "
                 f"{len(relations_to_create)} new relations, {len(relations_to_update)} updated relations")
