@@ -451,20 +451,24 @@ describe('M3U', () => {
       expect(screen.getByTestId('text-input-server_url')).toBeInTheDocument();
     });
 
-    it('renders submit button with "Add" label for new account', () => {
+    it('uses creation labels for a new account', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
+      expect(screen.getByTestId('modal-title')).toHaveTextContent(
+        'Create M3U account'
+      );
       expect(
-        screen.getByRole('button', { name: /add|create|save/i })
+        screen.getByRole('button', { name: 'Create' })
       ).toBeInTheDocument();
     });
 
-    it('renders submit button with "Update" or "Save" label for existing account', () => {
+    it('uses editing labels for an existing account', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(
-        screen.getByRole('button', { name: /update|save/i })
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('modal-title')).toHaveTextContent(
+        'Edit M3U account'
+      );
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
     });
 
     it('pre-fills name when editing', () => {
