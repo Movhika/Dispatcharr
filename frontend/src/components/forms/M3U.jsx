@@ -237,7 +237,7 @@ const M3U = ({
         size={960}
         opened={isOpen}
         onClose={close}
-        title="M3U Account"
+        title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         scrollAreaComponent={Modal.NativeScrollArea}
         lockScroll={false}
         withinPortal={true}
@@ -532,7 +532,7 @@ const M3U = ({
                 disabled={form.submitting}
                 size="sm"
               >
-                Save
+                {m3uAccount?.id ? 'Save' : 'Create'}
               </Button>
             </Flex>
           </Flex>
