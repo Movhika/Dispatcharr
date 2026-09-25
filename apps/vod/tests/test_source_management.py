@@ -1268,6 +1268,40 @@ class VODSourceManagementTests(TestCase):
         self.assertTrue(serialized_policy["selection_current"])
         enqueue.assert_not_called()
 
+    def test_listing_profiles_reflects_new_profiles_and_build_status(self):
+        admin = get_user_model().objects.create_user(
+            username="profile-list-admin",
+            password="test-password",
+            user_level=10,
+        )
+
+        class IsolatedPolicyViewSet(VODAccessPolicyViewSet):
+            queryset = VODAccessPolicyViewSet.queryset.all()
+
+        list_profiles = IsolatedPolicyViewSet.as_view({"get": "list"})
+
+        def get_profiles():
+            request = APIRequestFactory().get("/api/vod/access-policies/")
+            force_authenticate(request, user=admin)
+            response = list_profiles(request)
+            self.assertEqual(response.status_code, 200, response.data)
+            return {row["id"]: row for row in response.data}
+
+        first = get_profiles()
+        self.assertIn(self.policy.pk, first)
+
+        new_policy = VODAccessPolicy.objects.create(name="English VOD")
+        VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
+            selection_status=VODAccessPolicy.SelectionStatus.READY,
+        )
+
+        second = get_profiles()
+        self.assertIn(new_policy.pk, second)
+        self.assertEqual(
+            second[self.policy.pk]["selection_status"],
+            VODAccessPolicy.SelectionStatus.READY,
+        )
+
     def test_profile_build_does_not_overlap_an_active_build(self):
         VODAccessPolicy.objects.filter(pk=self.policy.pk).update(
             selection_status=VODAccessPolicy.SelectionStatus.BUILDING,
