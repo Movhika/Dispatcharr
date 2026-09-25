@@ -177,6 +177,35 @@ describe('M3uUtils', () => {
     });
 
     describe('cron_expression / refresh_interval handling', () => {
+      it('keeps the VOD schedule independent from the Live TV schedule', () => {
+        const result = prepareSubmitValues(
+          {
+            account_type: 'XC',
+            refresh_interval: 12,
+            cron_expression: '',
+            vod_refresh_interval: 24,
+            vod_cron_expression: '0 5 * * *',
+          },
+          null
+        );
+        expect(result.refresh_interval).toBe(12);
+        expect(result.vod_refresh_interval).toBe(0);
+        expect(result.vod_cron_expression).toBe('0 5 * * *');
+      });
+
+      it('clears an empty VOD cron without changing its interval', () => {
+        const result = prepareSubmitValues(
+          {
+            account_type: 'XC',
+            vod_refresh_interval: 24,
+            vod_cron_expression: '   ',
+          },
+          null
+        );
+        expect(result.vod_refresh_interval).toBe(24);
+        expect(result.vod_cron_expression).toBe('');
+      });
+
       it('sets refresh_interval to 0 when cron_expression is non-empty', () => {
         const values = {
           account_type: 'M3U',

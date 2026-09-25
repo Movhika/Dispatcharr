@@ -646,6 +646,21 @@ describe('M3U', () => {
       render(<M3U {...defaultProps()} />);
       expect(screen.getByTestId('schedule-input')).toBeInTheDocument();
     });
+
+    it('shows an independent VOD schedule only when enabled', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ enable_vod: true }),
+          })}
+        />
+      );
+
+      expect(screen.getAllByTestId('schedule-input')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('switch', { name: 'Separate VOD refresh schedule' }));
+      expect(screen.getAllByTestId('schedule-input')).toHaveLength(2);
+    });
   });
 
   // ── Max streams ────────────────────────────────────────────────────────────
