@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models import Q
+from django.contrib.postgres.indexes import GinIndex
 from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -103,6 +104,9 @@ class Series(models.Model):
     """Series information for TV shows"""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
+    display_name = models.CharField(max_length=255, blank=True)
+    clean_title = models.CharField(max_length=255, blank=True)
+    tmdb_lookup_excluded = models.BooleanField(default=False, db_index=True)
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)
@@ -122,6 +126,16 @@ class Series(models.Model):
 
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the series')
+
+    tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_poster_url = models.CharField(max_length=500, blank=True)
+    tmdb_backdrop_url = models.CharField(max_length=500, blank=True)
+    tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
+    tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    tmdb_enrichment_signature = models.CharField(max_length=64, blank=True, db_index=True)
+    library_added_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -159,6 +173,9 @@ class Movie(models.Model):
     """Movie content"""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
+    display_name = models.CharField(max_length=255, blank=True)
+    clean_title = models.CharField(max_length=255, blank=True)
+    tmdb_lookup_excluded = models.BooleanField(default=False, db_index=True)
     description = models.TextField(blank=True, null=True)
     year = models.IntegerField(blank=True, null=True)
     rating = models.CharField(max_length=10, blank=True, null=True)
@@ -185,6 +202,16 @@ class Movie(models.Model):
 
     # Additional metadata and properties
     custom_properties = models.JSONField(blank=True, null=True, help_text='Additional metadata and properties for the movie')
+
+    tmdb_metadata = models.JSONField(default=dict, blank=True)
+    tmdb_match_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_imdb_id = models.CharField(max_length=50, blank=True, db_index=True)
+    tmdb_poster_url = models.CharField(max_length=500, blank=True)
+    tmdb_backdrop_url = models.CharField(max_length=500, blank=True)
+    tmdb_status = models.CharField(max_length=16, blank=True, db_index=True)
+    tmdb_enriched_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    tmdb_enrichment_signature = models.CharField(max_length=64, blank=True, db_index=True)
+    library_added_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -238,6 +265,7 @@ class Episode(models.Model):
 
     # Custom properties for episode
     custom_properties = models.JSONField(blank=True, null=True, help_text="Custom properties for this episode")
+    library_added_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -255,9 +283,89 @@ class Episode(models.Model):
         return f"{self.series.name} - {season_ep} - {self.name}"
 
 
+class VODSourceMetadataMixin(models.Model):
+    """Metadata owned by one exact provider relation.
+
+    Movie, series and episode relations already are the stable source identity:
+    account plus provider ID. Keeping metadata on that row avoids a second
+    identity/synchronisation layer and never assumes that matching provider IDs
+    or backends represent the same physical file.
+    """
+
+    declared_metadata = models.JSONField(default=dict, blank=True)
+    observed_metadata = models.JSONField(default=dict, blank=True)
+    manual_metadata = models.JSONField(default=dict, blank=True)
+    locked_fields = models.JSONField(default=list, blank=True)
+    last_observed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def effective_metadata(self, category_defaults=None, relation_declared=None):
+        """Resolve metadata and per-field provenance in priority order."""
+        from .metadata import (
+            MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS,
+            normalize_source_metadata,
+        )
+
+        values = {}
+        provenance = {}
+        manual_metadata = {
+            field: value
+            for field, value in (self.manual_metadata or {}).items()
+            if field in MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        }
+        for source, payload in (
+            ("category", category_defaults or {}),
+            ("provider", self.declared_metadata or {}),
+            ("relation", relation_declared or {}),
+            ("observed", self.observed_metadata or {}),
+            ("manual", manual_metadata),
+        ):
+            for key, value in payload.items():
+                if value not in (None, "", [], {}):
+                    values[key] = value
+                    provenance[key] = source
+        return {
+            "values": normalize_source_metadata(values),
+            "provenance": provenance,
+        }
+
+    def apply_observation(self, metadata):
+        """Apply playback telemetry without overwriting manual fields."""
+        from .metadata import (
+            MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS,
+            normalize_source_metadata,
+        )
+
+        metadata = normalize_source_metadata(metadata)
+        manual = {
+            field: value
+            for field, value in (self.manual_metadata or {}).items()
+            if field in MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        }
+        locked = (
+            set(self.locked_fields or [])
+            & MANUALLY_EDITABLE_SOURCE_METADATA_FIELDS
+        ) | set(manual)
+        observed = dict(self.observed_metadata or {})
+        changed = False
+        for key, value in (metadata or {}).items():
+            if key in locked or value in (None, "", [], {}):
+                continue
+            if observed.get(key) != value:
+                observed[key] = value
+                changed = True
+        if changed:
+            self.observed_metadata = observed
+            self.last_observed_at = timezone.now()
+            self.save(update_fields=["observed_metadata", "last_observed_at", "updated_at"])
+        return changed
+
+
 # New relation models to link M3U accounts with VOD content
 
-class M3USeriesRelation(models.Model):
+class M3USeriesRelation(VODSourceMetadataMixin):
     """Links M3U accounts to Series with provider-specific information"""
     m3u_account = models.ForeignKey(M3UAccount, on_delete=models.CASCADE, related_name='series_relations')
     series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name='m3u_relations')
@@ -265,6 +373,12 @@ class M3USeriesRelation(models.Model):
 
     # Provider-specific fields - renamed to avoid clash with series ForeignKey
     external_series_id = models.CharField(max_length=255, help_text="External series ID from M3U provider")
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID for this provider source.",
+    )
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data")
 
     # Timestamps
@@ -277,12 +391,18 @@ class M3USeriesRelation(models.Model):
         verbose_name = 'M3U Series Relation'
         verbose_name_plural = 'M3U Series Relations'
         unique_together = [('m3u_account', 'external_series_id')]
+        indexes = [
+            models.Index(fields=['series', 'category'], name='vod_series_category_idx'),
+            GinIndex(fields=['manual_metadata'], name='vod_ser_rel_manual_gin'),
+            GinIndex(fields=['observed_metadata'], name='vod_ser_rel_observed_gin'),
+            GinIndex(fields=['declared_metadata'], name='vod_ser_rel_declared_gin'),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.series.name}"
 
 
-class M3UMovieRelation(models.Model):
+class M3UMovieRelation(VODSourceMetadataMixin):
     """Links M3U accounts to Movies with provider-specific information"""
     m3u_account = models.ForeignKey(M3UAccount, on_delete=models.CASCADE, related_name='movie_relations')
     movie = models.ForeignKey(Movie, on_delete=models.CASCADE, related_name='m3u_relations')
@@ -291,6 +411,12 @@ class M3UMovieRelation(models.Model):
     # Streaming information (provider-specific)
     stream_id = models.CharField(max_length=255, help_text="External stream ID from M3U provider")
     container_extension = models.CharField(max_length=10, blank=True, null=True)
+    tmdb_override_id = models.CharField(
+        max_length=50,
+        blank=True,
+        db_index=True,
+        help_text="Administrator-selected TMDB ID for this provider source.",
+    )
 
     # Provider-specific data
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data like quality, language, etc.")
@@ -305,6 +431,12 @@ class M3UMovieRelation(models.Model):
         verbose_name = 'M3U Movie Relation'
         verbose_name_plural = 'M3U Movie Relations'
         unique_together = [('m3u_account', 'stream_id')]
+        indexes = [
+            models.Index(fields=['movie', 'category'], name='vod_movie_category_idx'),
+            GinIndex(fields=['manual_metadata'], name='vod_mov_rel_manual_gin'),
+            GinIndex(fields=['observed_metadata'], name='vod_mov_rel_observed_gin'),
+            GinIndex(fields=['declared_metadata'], name='vod_mov_rel_declared_gin'),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.movie.name}"
@@ -340,7 +472,7 @@ class M3UMovieRelation(models.Model):
         )
 
 
-class M3UEpisodeRelation(models.Model):
+class M3UEpisodeRelation(VODSourceMetadataMixin):
     """Links M3U accounts to Episodes with provider-specific information"""
     m3u_account = models.ForeignKey(M3UAccount, on_delete=models.CASCADE, related_name='episode_relations')
     episode = models.ForeignKey(Episode, on_delete=models.CASCADE, related_name='m3u_relations')
@@ -369,9 +501,37 @@ class M3UEpisodeRelation(models.Model):
         verbose_name = 'M3U Episode Relation'
         verbose_name_plural = 'M3U Episode Relations'
         unique_together = [('m3u_account', 'stream_id')]
+        indexes = [
+            GinIndex(fields=['manual_metadata'], name='vod_ep_rel_manual_gin'),
+            GinIndex(fields=['observed_metadata'], name='vod_ep_rel_observed_gin'),
+            GinIndex(fields=['declared_metadata'], name='vod_ep_rel_declared_gin'),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.episode}"
+
+    def effective_metadata(self, category_defaults=None, relation_declared=None):
+        inherited_values = category_defaults or {}
+        inherited_provenance = {
+            field: "category" for field in inherited_values
+        }
+        if self.series_relation_id:
+            parent = self.series_relation.effective_metadata(
+                category_defaults=category_defaults
+            )
+            inherited_values = parent["values"]
+            inherited_provenance = {
+                field: f"series_{source}"
+                for field, source in parent["provenance"].items()
+            }
+        resolved = super().effective_metadata(
+            category_defaults=inherited_values,
+            relation_declared=relation_declared,
+        )
+        for field, source in list(resolved["provenance"].items()):
+            if source == "category" and field in inherited_provenance:
+                resolved["provenance"][field] = inherited_provenance[field]
+        return resolved
 
     def get_stream_url(self, profile=None):
         """Build the XC series/episode URL using the same credential resolution as playback.
@@ -414,6 +574,12 @@ class M3UVODCategoryRelation(models.Model):
 
     custom_properties = models.JSONField(blank=True, null=True, help_text="Provider-specific data like quality, language, etc.")
 
+    metadata_defaults = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Default DUB, SUB, resolution and features for sources in this provider category.",
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -422,6 +588,9 @@ class M3UVODCategoryRelation(models.Model):
         verbose_name = 'M3U VOD Category Relation'
         verbose_name_plural = 'M3U VOD Category Relations'
         unique_together = [('m3u_account', 'category')]
+        indexes = [
+            GinIndex(fields=['metadata_defaults'], name='vod_cat_defaults_gin'),
+        ]
 
     def __str__(self):
         return f"{self.m3u_account.name} - {self.category.name}"
