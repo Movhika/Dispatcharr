@@ -19,8 +19,11 @@ export const getPlaylist = async (newPlaylist) => {
   return await API.getPlaylist(newPlaylist.id);
 };
 
-export const refreshPlaylist = async (playlist) => {
-  return await API.refreshPlaylist(playlist.id);
+export const refreshPlaylist = async (playlist, includeVod) => {
+  if (includeVod === undefined) {
+    return await API.refreshPlaylist(playlist.id);
+  }
+  return await API.refreshPlaylist(playlist.id, includeVod);
 };
 
 /**

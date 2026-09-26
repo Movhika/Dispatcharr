@@ -49,8 +49,11 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange }) => (
-    <div data-testid="m3u-group-filter">
+  default: ({ onChange, isInitialSetup }) => (
+    <div
+      data-testid="m3u-group-filter"
+      data-initial-setup={String(isInitialSetup)}
+    >
       <button onClick={() => onChange?.([])}>M3UGroupFilter</button>
     </div>
   ),
@@ -552,6 +555,20 @@ describe('M3U', () => {
       fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
+      });
+    });
+
+    it('marks the new account group save as the initial refresh', async () => {
+      setupStores();
+      render(<M3U {...defaultProps()} />);
+      fillRequiredFields();
+      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
+          'data-initial-setup',
+          'true'
+        );
       });
     });
 

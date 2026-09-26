@@ -1503,9 +1503,11 @@ export default class API {
     }
   }
 
-  static async refreshPlaylist(id) {
+  static async refreshPlaylist(id, includeVod) {
     try {
-      const response = await request(`${host}/api/m3u/refresh/${id}/`, {
+      const url = `${host}/api/m3u/refresh/${id}/`;
+      const refreshUrl = includeVod === true ? `${url}?include_vod=true` : url;
+      const response = await request(refreshUrl, {
         method: 'POST',
       });
       return response;

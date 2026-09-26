@@ -139,6 +139,11 @@ describe('M3uUtils', () => {
       expect(API.refreshPlaylist).toHaveBeenCalledWith(7);
     });
 
+    it('passes the one-time VOD override to the refresh API', async () => {
+      await refreshPlaylist({ id: 7 }, true);
+      expect(API.refreshPlaylist).toHaveBeenCalledWith(7, true);
+    });
+
     it('returns the result of API.refreshPlaylist', async () => {
       API.refreshPlaylist.mockResolvedValue(undefined);
       const result = await refreshPlaylist({ id: 7 });

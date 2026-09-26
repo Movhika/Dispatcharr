@@ -100,6 +100,13 @@ class VODAfterLiveDecisionTests(SimpleTestCase):
 
 class ManualLiveRefreshEndpointTests(SimpleTestCase):
     @patch("apps.m3u.api_views.refresh_single_m3u_account.delay")
+    def test_initial_combined_refresh_queues_vod_even_with_separate_schedule(self, delay):
+        request = SimpleNamespace(query_params={"include_vod": "true"})
+        response = RefreshSingleM3UAPIView().post(request, account_id=7)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        delay.assert_called_once_with(7, include_vod=True)
+
+    @patch("apps.m3u.api_views.refresh_single_m3u_account.delay")
     def test_live_only_request_does_not_queue_vod(self, delay):
         request = SimpleNamespace(query_params={"include_vod": "false"})
         response = RefreshSingleM3UAPIView().post(request, account_id=7)

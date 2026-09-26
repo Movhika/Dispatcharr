@@ -57,6 +57,7 @@ const M3U = ({
   const [expDate, setExpDate] = useState(null);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
+  const [initialGroupSetup, setInitialGroupSetup] = useState(false);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
@@ -107,6 +108,7 @@ const M3U = ({
 
   useEffect(() => {
     if (m3uAccount) {
+      setInitialGroupSetup(false);
       setPlaylist(m3uAccount);
       form.setValues({
         name: m3uAccount.name,
@@ -150,6 +152,7 @@ const M3U = ({
       setVodEnabled(Boolean(m3uAccount.enable_vod));
       setVodRefreshAfterLive(m3uAccount.vod_refresh_after_live !== false);
     } else {
+      setInitialGroupSetup(false);
       setPlaylist(null);
       form.reset();
       setScheduleType('interval');
@@ -199,6 +202,7 @@ const M3U = ({
     }
 
     setPlaylist(updatedPlaylist);
+    setInitialGroupSetup(true);
     setGroupFilterModalOpen(true);
   };
 
@@ -222,6 +226,7 @@ const M3U = ({
     form.reset();
     setFile(null);
     setPlaylist(null);
+    setInitialGroupSetup(false);
     onClose();
   };
 
@@ -231,6 +236,7 @@ const M3U = ({
     form.reset();
     setFile(null);
     setPlaylist(null);
+    setInitialGroupSetup(false);
     onClose();
   };
 
@@ -599,6 +605,7 @@ const M3U = ({
           <M3UGroupFilter
             isOpen={groupFilterModalOpen}
             playlist={playlist}
+            isInitialSetup={initialGroupSetup}
             onClose={closeGroupFilter}
           />
           <M3UFilters
