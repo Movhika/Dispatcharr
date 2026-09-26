@@ -65,6 +65,13 @@ import {
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
+const formatRefreshDuration = (seconds) => {
+  const total = Math.max(0, Math.round(Number(seconds)));
+  if (total >= 3600) return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
+  if (total >= 60) return `${Math.floor(total / 60)}m ${total % 60}s`;
+  return `${total}s`;
+};
+
 const StatusRow = ({ label, value }) => (
   <Flex justify="space-between" align="center">
     <Text size="xs" fw={500}>{label}{value ? ':' : ''}</Text>
@@ -364,8 +371,34 @@ const M3UTable = () => {
       {
         header: 'Name',
         accessorKey: 'name',
-        size: 200,
+        size: 300,
         sortable: true,
+        cell: ({ cell, row }) => {
+          const custom = row.original.custom_properties || {};
+          const live = custom.live_catalog_counts;
+          const vod = custom.vod_catalog_counts || {};
+          const summaries = row.original.account_type === 'XC'
+            ? [
+                ['Live TV', live],
+                ['Movies', vod.movies],
+                ['Series', vod.series],
+              ]
+            : [['Live TV', live]];
+          return (
+            <Box>
+              <Text size="sm">{cell.getValue()}</Text>
+              <Tooltip label="Provider entries / imported entries from the last successful refresh">
+                <Box style={{ cursor: 'help' }}>
+                  {summaries.map(([label, counts]) => (
+                    <Text key={label} size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                      {label}: {counts ? `${counts.provider_total} / ${counts.selected_total}` : '— / —'}
+                    </Text>
+                  ))}
+                </Box>
+              </Tooltip>
+            </Box>
+          );
+        },
       },
       {
         header: 'Type',
@@ -416,13 +449,25 @@ const M3UTable = () => {
         },
       },
       {
-        header: 'Status Message',
+        header: 'Refresh details',
         accessorKey: 'last_message',
         grow: true,
-        minSize: 250,
+        minSize: 350,
         cell: ({ cell, row }) => {
           const value = cell.getValue();
           const data = row.original;
+          const timings = data.custom_properties?.refresh_timings || {};
+          const completedDurations = [
+            timings.live_seconds != null ? `Live ${formatRefreshDuration(timings.live_seconds)}` : null,
+            timings.vod_seconds != null ? `VOD ${formatRefreshDuration(timings.vod_seconds)}` : null,
+          ].filter(Boolean);
+          const durationLine = completedDurations.length ? (
+            <Tooltip label="Duration of the last successful refresh for each content type">
+              <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                Last refresh: {completedDurations.join(' · ')}
+              </Text>
+            </Tooltip>
+          ) : null;
 
           // Get account id to check for refresh progress
           const accountId = data.id;
@@ -437,69 +482,79 @@ const M3UTable = () => {
                   height: '100%',
                   width: '100%',
                   display: 'flex',
-                  alignItems: 'center',
+                  flexDirection: 'column',
                   justifyContent: 'flex-start',
                   // Add some padding to give content room to breathe
                   padding: '4px 0',
                 }}
               >
                 {generateStatusString(progressData)}
+                {durationLine}
               </Box>
             );
           }
 
           // No progress data, display normal status message
-          if (!value) return null;
+          if (!value) return durationLine;
 
           // Show error message with red styling for errors
           if (data.status === 'error') {
             return (
-              <Tooltip label={value} multiline width={300}>
-                <Text
-                  c="dimmed"
-                  size="xs"
-                  lineClamp={2}
-                  style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
-                >
-                  {value}
-                </Text>
-              </Tooltip>
+              <Box>
+                <Tooltip label={value} multiline width={300}>
+                  <Text
+                    c="dimmed"
+                    size="xs"
+                    lineClamp={2}
+                    style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
+                  >
+                    {value}
+                  </Text>
+                </Tooltip>
+                {durationLine}
+              </Box>
             );
           }
 
           // Show success message with green styling for success
           if (data.status === 'success') {
             return (
-              <Tooltip label={value} multiline width={300}>
-                <Text
-                  c="dimmed"
-                  size="xs"
-                  style={{
-                    color: theme.colors.green[6],
-                    lineHeight: 1.3,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {value}
-                </Text>
-              </Tooltip>
+              <Box>
+                <Tooltip label={value} multiline width={300}>
+                  <Text
+                    c="dimmed"
+                    size="xs"
+                    style={{
+                      color: theme.colors.green[6],
+                      lineHeight: 1.3,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {value}
+                  </Text>
+                </Tooltip>
+                {durationLine}
+              </Box>
             );
           }
 
           // For all other status values, just use dimmed text
           return (
-            <Tooltip label={value} multiline width={300}>
-              <Text
-                c="dimmed"
-                size="xs"
-                lineClamp={2}
-                style={{ lineHeight: 1.1 }}
-              >
-                {value}
-              </Text>
-            </Tooltip>
+            <Box>
+              <Tooltip label={value} multiline width={300}>
+                <Text
+                  c="dimmed"
+                  size="xs"
+                  lineClamp={2}
+                  style={{ lineHeight: 1.1 }}
+                >
+                  {value}
+                </Text>
+              </Tooltip>
+              {durationLine}
+            </Box>
           );
         },
       },

@@ -791,6 +791,55 @@ describe('M3UTable', () => {
 
   // ── Column: Status ─────────────────────────────────────────────────────────
 
+  describe('Refresh summaries', () => {
+    it('shows provider and imported counts separately for Live, Movies and Series', () => {
+      setupMocks();
+      render(<M3UTable />);
+      const playlist = makePlaylist({
+        account_type: 'XC',
+        custom_properties: {
+          live_catalog_counts: { provider_total: 120, selected_total: 80 },
+          vod_catalog_counts: {
+            movies: { provider_total: 30, selected_total: 20 },
+            series: { provider_total: 10, selected_total: 9 },
+          },
+        },
+      });
+      const { getByText } = render(getCol('name').cell({
+        cell: { getValue: () => playlist.name },
+        row: { original: playlist },
+      }));
+      expect(getByText('Live TV: 120 / 80')).toBeInTheDocument();
+      expect(getByText('Movies: 30 / 20')).toBeInTheDocument();
+      expect(getByText('Series: 10 / 9')).toBeInTheDocument();
+    });
+
+    it('marks counts as unavailable until the first successful refresh', () => {
+      setupMocks();
+      render(<M3UTable />);
+      const playlist = makePlaylist({ account_type: 'XC' });
+      const { getByText } = render(getCol('name').cell({
+        cell: { getValue: () => playlist.name },
+        row: { original: playlist },
+      }));
+      expect(getByText('Live TV: — / —')).toBeInTheDocument();
+      expect(getByText('Movies: — / —')).toBeInTheDocument();
+    });
+
+    it('shows the last successful Live and VOD durations independently', () => {
+      setupMocks();
+      render(<M3UTable />);
+      const playlist = makePlaylist({
+        custom_properties: { refresh_timings: { live_seconds: 72, vod_seconds: 3661 } },
+      });
+      const { getByText } = render(getCol('last_message').cell({
+        cell: { getValue: () => playlist.last_message },
+        row: { original: playlist },
+      }));
+      expect(getByText('Last refresh: Live 1m 12s · VOD 1h 1m')).toBeInTheDocument();
+    });
+  });
+
   describe('Status column', () => {
     it('returns null when status value is empty', () => {
       setupMocks();

@@ -926,7 +926,7 @@ def cleanup_stale_group_relationships(account, scan_start_time):
     return deleted_count
 
 
-def collect_xc_streams(account_id, enabled_groups):
+def collect_xc_streams(account_id, enabled_groups, *, include_provider_total=False):
     """Collect all XC streams in a single API call and filter by enabled groups."""
     account = M3UAccount.objects.select_related("user_agent").get(id=account_id)
     all_streams = []
@@ -960,9 +960,10 @@ def collect_xc_streams(account_id, enabled_groups):
 
             if not all_xc_streams:
                 logger.warning("No live streams returned from XC provider")
-                return []
+                return ([], 0) if include_provider_total else []
 
             logger.info(f"Retrieved {len(all_xc_streams)} total live streams from provider")
+            provider_total = len(all_xc_streams)
 
             # Filter streams based on enabled categories
             for stream in all_xc_streams:
@@ -1016,12 +1017,12 @@ def collect_xc_streams(account_id, enabled_groups):
 
     except Exception as e:
         logger.error(f"Failed to fetch XC streams: {str(e)}")
-        return []
+        return ([], 0) if include_provider_total else []
 
     logger.info(
         f"Filtered {filtered_count} streams from {len(enabled_category_ids)} enabled categories"
     )
-    return all_streams
+    return (all_streams, provider_total) if include_provider_total else all_streams
 
 
 def _compile_m3u_stream_filters(filter_queryset):
@@ -3647,6 +3648,7 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         streams_created = 0
         streams_updated = 0
         streams_unchanged = 0
+        live_provider_total = len(extinf_data)
 
         if account.account_type == M3UAccount.Types.STADNARD:
             logger.debug(
@@ -3764,7 +3766,9 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
 
             # Collect all XC streams in a single API call and filter by enabled categories
             logger.info("Fetching all XC streams from provider and filtering by enabled categories...")
-            all_xc_streams = collect_xc_streams(account_id, filtered_groups)
+            all_xc_streams, live_provider_total = collect_xc_streams(
+                account_id, filtered_groups, include_provider_total=True
+            )
 
             del channel_group_relationships, filtered_groups
 
@@ -3954,6 +3958,15 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         )
         account.updated_at = timezone.now()
         account.save(update_fields=["status", "last_message", "updated_at"])
+
+        from apps.m3u.refresh_metrics import record_refresh_metrics
+        record_refresh_metrics(
+            account_id,
+            "live",
+            {"provider_total": live_provider_total, "selected_total": streams_processed},
+            elapsed_time,
+            account.updated_at,
+        )
 
         # Streams / auto-synced channels may have changed names, numbers,
         # logos, or membership. Clear M3U playlist cache and XMLTV channel

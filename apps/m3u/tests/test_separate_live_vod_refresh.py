@@ -2,11 +2,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 from rest_framework import status
 
 from apps.m3u.api_views import RefreshSingleM3UAPIView
 from apps.m3u.models import M3UAccount
+from apps.m3u.refresh_metrics import record_refresh_metrics
 from apps.m3u.serializers import M3UAccountSerializer
 from apps.m3u.tasks import should_refresh_vod_after_live
 
@@ -75,6 +77,31 @@ class SeparateVODScheduleTests(TestCase):
         self.assertFalse(
             PeriodicTask.objects.filter(name=f"m3u_account-vod-refresh-{account_id}").exists()
         )
+
+    def test_live_and_vod_refresh_summaries_preserve_each_other_and_settings(self):
+        completed_at = timezone.now()
+        record_refresh_metrics(
+            self.account.id, "live",
+            {"provider_total": 120, "selected_total": 80},
+            61.4, completed_at,
+        )
+        record_refresh_metrics(
+            self.account.id, "vod",
+            {
+                "movies": {"provider_total": 30, "selected_total": 20},
+                "series": {"provider_total": 10, "selected_total": 9},
+            },
+            4.2, completed_at,
+        )
+
+        self.account.refresh_from_db()
+        custom = self.account.custom_properties
+        self.assertTrue(custom["enable_vod"])
+        self.assertEqual(custom["live_catalog_counts"]["selected_total"], 80)
+        self.assertEqual(custom["vod_catalog_counts"]["movies"]["selected_total"], 20)
+        self.assertEqual(custom["refresh_timings"]["live_seconds"], 61.4)
+        self.assertEqual(custom["refresh_timings"]["vod_seconds"], 4.2)
+        self.assertEqual(custom["refresh_timings"]["vod_completed_at"], completed_at.isoformat())
 
 
 class VODAfterLiveDecisionTests(SimpleTestCase):
