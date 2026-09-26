@@ -484,6 +484,29 @@ const User = ({ user = null, isOpen, onClose }) => {
                 }
               />
               {isAdmin && (
+                <>
+                  <Switch
+                    label="Allow XC client to trigger Live TV refresh"
+                    description="After this user's XC client requests the Live stream list, queue a Live-only provider refresh in the background."
+                    {...form.getInputProps('xc_live_refresh_on_request', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('xc_live_refresh_on_request')}
+                  />
+                  <NumberInput
+                    min={0}
+                    max={10080}
+                    allowDecimal={false}
+                    label="User request interval (minutes)"
+                    description="Minimum time between refresh requests from this user for each provider. 0 disables this user limit."
+                    {...form.getInputProps(
+                      'xc_live_refresh_request_interval_minutes'
+                    )}
+                    key={form.key('xc_live_refresh_request_interval_minutes')}
+                  />
+                </>
+              )}
+              {isAdmin && (
                 <Select
                   label="Output Format Override"
                   description="Override the system default output format for this user. Clear to use system default."

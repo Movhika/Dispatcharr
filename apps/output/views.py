@@ -526,7 +526,7 @@ def xc_player_api(request, full=False):
         return JsonResponse(xc_get_live_categories(user), safe=False)
     elif action == "get_live_streams":
         return StreamingHttpResponse(
-            _xc_stream_live_streams(request, user, request.GET.get("category_id")),
+            _xc_stream_live_streams_then_refresh(request, user, request.GET.get("category_id")),
             content_type="application/json",
         )
     elif action == "get_short_epg":
@@ -849,6 +849,16 @@ def _xc_stream_live_streams(request, user, category_id=None):
         )
         sep = ","
     yield "]"
+
+
+def _xc_stream_live_streams_then_refresh(request, user, category_id=None):
+    """Serve the existing catalog unchanged, then schedule any opt-in refresh."""
+    yield from _xc_stream_live_streams(request, user, category_id)
+    try:
+        from apps.m3u.client_refresh import handle_xc_live_catalog_request
+        handle_xc_live_catalog_request(user)
+    except Exception:
+        logger.warning("Could not handle XC Live catalog refresh request", exc_info=True)
 
 
 def xc_get_epg(request, user, short=False):

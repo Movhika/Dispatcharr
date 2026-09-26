@@ -510,6 +510,8 @@ describe('UserUtils', () => {
         catchup_enabled: true,
         vod_movies_enabled: true,
         vod_series_enabled: true,
+        xc_live_refresh_on_request: false,
+        xc_live_refresh_request_interval_minutes: 55,
         dvr_access: 'view',
         epg_days: 0,
         epg_prev_days: 0,

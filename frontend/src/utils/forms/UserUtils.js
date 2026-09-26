@@ -64,6 +64,13 @@ export const userToFormValues = (user) => {
     catchup_enabled: customProps.catchup_enabled !== false,
     vod_movies_enabled: customProps.vod_movies_enabled !== false,
     vod_series_enabled: customProps.vod_series_enabled !== false,
+    xc_live_refresh_on_request:
+      customProps.xc_live_refresh_on_request === true,
+    xc_live_refresh_request_interval_minutes:
+      Number.isInteger(customProps.xc_live_refresh_request_interval_minutes) &&
+      customProps.xc_live_refresh_request_interval_minutes >= 0
+        ? customProps.xc_live_refresh_request_interval_minutes
+        : 55,
     dvr_access:
       customProps.dvr_access === DVR_ACCESS.NONE ||
       customProps.dvr_access === DVR_ACCESS.VIEW ||
@@ -130,6 +137,20 @@ export const formValuesToPayload = (values, existingUser) => {
   customProps.vod_series_enabled = payload.vod_series_enabled !== false;
   delete payload.vod_series_enabled;
 
+  customProps.xc_live_refresh_on_request =
+    payload.xc_live_refresh_on_request === true;
+  delete payload.xc_live_refresh_on_request;
+
+  const userRefreshInterval = Number(
+    payload.xc_live_refresh_request_interval_minutes
+  );
+  customProps.xc_live_refresh_request_interval_minutes = Number.isFinite(
+    userRefreshInterval
+  )
+    ? Math.max(0, Math.min(10080, Math.trunc(userRefreshInterval)))
+    : 55;
+  delete payload.xc_live_refresh_request_interval_minutes;
+
   // DVR is a single access level for standard users and admins. Streamers
   // have no DVR surface (unlike catchup/VOD via XC), so force none.
   // Coerce with == so string form values ('0') match numeric USER_LEVELS.
@@ -191,6 +212,8 @@ export const getFormInitialValues = () => {
     catchup_enabled: true,
     vod_movies_enabled: true,
     vod_series_enabled: true,
+    xc_live_refresh_on_request: false,
+    xc_live_refresh_request_interval_minutes: 55,
     dvr_access: DVR_ACCESS.VIEW,
     epg_days: 0,
     epg_prev_days: 0,

@@ -14,6 +14,7 @@ from django.db import models, transaction
 from .models import M3UAccount
 from apps.channels.models import Stream, ChannelGroup, ChannelGroupM3UAccount
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 import time
 import json
 from core.utils import (
@@ -3350,11 +3351,46 @@ def refresh_account_info(profile_id):
         release_task_lock("refresh_account_info", profile_id)
         return error_msg
 @shared_task(time_limit=3600, soft_time_limit=3500)
-def refresh_single_m3u_account(account_id, include_vod=None):
+def refresh_single_m3u_account(
+    account_id,
+    include_vod=None,
+    minimum_age_seconds=None,
+    skip_if_refreshed_after=None,
+    client_request_token=None,
+):
     """Splits M3U processing into chunks and dispatches them as parallel tasks."""
     if not acquire_task_lock("refresh_single_m3u_account", account_id):
+        if client_request_token:
+            from .client_refresh import release_client_refresh_reservation
+            release_client_refresh_reservation(account_id, client_request_token)
         return f"Task already running for account_id={account_id}."
 
+    if client_request_token:
+        from .client_refresh import release_client_refresh_reservation
+        release_client_refresh_reservation(account_id, client_request_token)
+
+    # The provider may have completed a scheduled refresh while this request
+    # waited in the queue. Check again under the account refresh lock.
+    if minimum_age_seconds is not None or skip_if_refreshed_after is not None:
+        try:
+            minimum_age_seconds = max(0, int(minimum_age_seconds or 0))
+            queued_at = parse_datetime(str(skip_if_refreshed_after)) if skip_if_refreshed_after else None
+            last_success = (
+                M3UAccount.objects.filter(id=account_id, is_active=True)
+                .values_list("updated_at", flat=True)
+                .first()
+            )
+            if last_success and (
+                (queued_at and last_success >= queued_at)
+                or (minimum_age_seconds and (timezone.now() - last_success).total_seconds() < minimum_age_seconds)
+            ):
+                logger.info("Skipping XC Live refresh for recently refreshed account %s", account_id)
+                release_task_lock("refresh_single_m3u_account", account_id)
+                return "Skipped conditional Live refresh because the account is fresh"
+        except (TypeError, ValueError):
+            logger.warning("Invalid XC Live refresh freshness values for account %s", account_id)
+        except Exception:
+            logger.warning("Could not check XC Live refresh freshness for account %s", account_id, exc_info=True)
     # Keep the lock alive while this long-running task is working.
     # Without renewal, the 300s lock TTL can expire during large
     # downloads/parses, allowing duplicate tasks to start.

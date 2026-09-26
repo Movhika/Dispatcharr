@@ -107,6 +107,25 @@ class UserSerializer(serializers.ModelSerializer):
         if 'hiddenNav' in value:
             validate_nav_array(value['hiddenNav'], 'hiddenNav')
 
+        if (
+            "xc_live_refresh_on_request" in value
+            and not isinstance(value["xc_live_refresh_on_request"], bool)
+        ):
+            raise serializers.ValidationError(
+                "xc_live_refresh_on_request must be a boolean"
+            )
+
+        if "xc_live_refresh_request_interval_minutes" in value:
+            interval = value["xc_live_refresh_request_interval_minutes"]
+            if (
+                isinstance(interval, bool)
+                or not isinstance(interval, int)
+                or not 0 <= interval <= 10080
+            ):
+                raise serializers.ValidationError(
+                    "xc_live_refresh_request_interval_minutes must be an integer between 0 and 10080"
+                )
+
         xc_password = value.get("xc_password")
 
         if xc_password and not SAFE_CREDENTIAL_RE.fullmatch(xc_password):
