@@ -5,6 +5,11 @@ on:
     branches:
       - codex/vod-foundation
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or commit to deploy to the VOD test instance
+        required: true
+        default: codex/vod-management-01-foundation
 
 permissions:
   contents: read
@@ -13,6 +18,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: vod-split-test
+  SOURCE_REF: ${{ inputs.source_ref || 'codex/vod-management-01-foundation' }}
 
 jobs:
   prepare:
@@ -20,7 +26,17 @@ jobs:
     outputs:
       timestamp: ${{ steps.timestamp.outputs.timestamp }}
       image_name: ${{ steps.image.outputs.image_name }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
     steps:
+      - name: Check out selected source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_REF }}
+
+      - name: Resolve source revision
+        id: source
+        run: echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Generate build timestamp
         id: timestamp
         run: echo "timestamp=$(date -u +'%Y%m%d%H%M%S')" >> "$GITHUB_OUTPUT"
@@ -49,6 +65,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -69,7 +87,7 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ env.IMAGE_TAG }}-${{ matrix.platform }}
-            ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ github.sha }}-${{ matrix.platform }}
+            ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.source_sha }}-${{ matrix.platform }}
           build-args: |
             REPO_OWNER=dispatcharr
             REPO_NAME=dispatcharr
@@ -77,7 +95,7 @@ jobs:
             TIMESTAMP=${{ needs.prepare.outputs.timestamp }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
             org.opencontainers.image.description=Movhika VOD split test image
 
   create-manifest:
@@ -99,10 +117,10 @@ jobs:
         run: |
           docker buildx imagetools create \
             --annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
+            --annotation "index:org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}" \
             --annotation "index:org.opencontainers.image.created=${{ needs.prepare.outputs.timestamp }}" \
             --annotation "index:org.opencontainers.image.description=Movhika VOD split test image" \
             --tag ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ env.IMAGE_TAG }} \
-            --tag ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ github.sha }} \
+            --tag ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.source_sha }} \
             ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ env.IMAGE_TAG }}-amd64 \
             ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:${{ env.IMAGE_TAG }}-arm64
