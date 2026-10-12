@@ -298,3 +298,10 @@ class UserSerializer(serializers.ModelSerializer):
             self._assign_vod_policy(instance, vod_policy_id)
 
         return instance
+
+
+class ProxyLoginResponseSerializer(serializers.Serializer):
+    """JWT pair returned by the reverse proxy sign-in endpoint."""
+
+    access = serializers.CharField()
+    refresh = serializers.CharField()

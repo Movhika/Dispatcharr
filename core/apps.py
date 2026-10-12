@@ -1,5 +1,4 @@
 from django.apps import AppConfig
-from django.db.models.signals import post_migrate
 import logging
 
 # Define TRACE level (5 is below DEBUG which is 10)
@@ -23,15 +22,13 @@ class CoreConfig(AppConfig):
     def ready(self):
         # Import signals to ensure they get registered
         import core.signals
-        post_migrate.connect(
-            self._initialize_runtime_state,
-            sender=self,
-            dispatch_uid="core.initialize_runtime_state",
-            weak=False,
-        )
+        from dispatcharr.app_initialization import should_skip_initialization
+
+        if not should_skip_initialization():
+            self._initialize_runtime_state()
 
     def _initialize_runtime_state(self, **kwargs):
-        """Apply database-backed runtime state after migrations finish."""
+        """Apply database-backed settings in the initializing web process."""
         from django.db import close_old_connections
         from django.conf import settings
         from core.models import CoreSettings, SYSTEM_SETTINGS_KEY
@@ -46,6 +43,11 @@ class CoreConfig(AppConfig):
                 .first()
                 or {},
             )
+        except Exception:
+            # Database not migrated yet: the collector keeps its defaults.
+            pass
+
+        try:
             sync_developer_notifications()
         except Exception as e:
             logging.getLogger(__name__).warning(

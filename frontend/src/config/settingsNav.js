@@ -5,6 +5,7 @@ import {
   Eraser,
   FileOutput,
   Gauge,
+  KeyRound,
   Menu,
   Monitor,
   Network,
@@ -60,6 +61,9 @@ const VODMetadataPanel = lazy(
 );
 const VODTitleCleanupPanel = lazy(
   () => import('../components/forms/settings/VODTitleCleanupPanel.jsx')
+);
+const ReverseProxyAuthForm = lazy(
+  () => import('../components/forms/settings/ReverseProxyAuthForm.jsx')
 );
 
 // Component lives on each section so it can never drift out of sync with the
@@ -183,6 +187,12 @@ export const SETTINGS_GROUPS = [
         label: 'Resources',
         icon: Gauge,
         Component: SystemResourcesPanel,
+      },
+      {
+        id: 'reverse-proxy-auth',
+        label: 'Reverse Proxy Auth',
+        icon: KeyRound,
+        Component: ReverseProxyAuthForm,
       },
       {
         id: 'user-limits',

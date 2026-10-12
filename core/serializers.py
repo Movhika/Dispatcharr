@@ -2,7 +2,9 @@
 import json
 import ipaddress
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
+from dispatcharr.utils import validate_proxy_auth_header
 
 from dispatcharr.log_collector import (
     DEFAULT_LOG_KEEP,
@@ -19,6 +21,7 @@ from .models import (
     NETWORK_ACCESS_KEY,
     SYSTEM_SETTINGS_KEY,
     VOD_SETTINGS_KEY,
+    REVERSE_PROXY_AUTH_KEY,
 )
 
 
@@ -44,6 +47,14 @@ class UserAgentSerializer(serializers.ModelSerializer):
         ]
 
 
+def _update_profile(serializer, instance, validated_data):
+    """Save a profile and turn a locked-profile rejection into a 400."""
+    try:
+        return serializers.ModelSerializer.update(serializer, instance, validated_data)
+    except DjangoValidationError as exc:
+        raise serializers.ValidationError(exc.messages)
+
+
 class StreamProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = StreamProfile
@@ -57,11 +68,17 @@ class StreamProfileSerializer(serializers.ModelSerializer):
             "locked",
         ]
 
+    def update(self, instance, validated_data):
+        return _update_profile(self, instance, validated_data)
+
 
 class OutputProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = OutputProfile
         fields = ["id", "name", "command", "parameters", "is_active", "locked"]
+
+    def update(self, instance, validated_data):
+        return _update_profile(self, instance, validated_data)
 
 
 class CoreSettingsSerializer(serializers.ModelSerializer):
@@ -133,6 +150,26 @@ class CoreSettingsSerializer(serializers.ModelSerializer):
                     )
                 if "log_persist" in value:
                     value["log_persist"] = value["log_persist"] is not False
+
+        if instance.key == REVERSE_PROXY_AUTH_KEY:
+            value = validated_data.get("value") or {}
+            header = (value.get("header") or "").strip()
+            if value.get("enabled") and not header:
+                raise serializers.ValidationError(
+                    {"message": "A header name is required to enable reverse proxy auth."}
+                )
+            if header and not validate_proxy_auth_header(header):
+                raise serializers.ValidationError(
+                    {
+                        "message": (
+                            "Invalid header name. Use letters, digits and dashes "
+                            "only (for example X-Forwarded-User)."
+                        ),
+                        "value": header,
+                    }
+                )
+            value["header"] = header
+            value["enabled"] = bool(value.get("enabled"))
 
         # Sanitize series_rules when DVR settings are saved through the
         # generic settings API (e.g. Settings page round-trip) to prevent

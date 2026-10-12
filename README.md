@@ -116,6 +116,7 @@ cannot be applied portably from an unprivileged container):
 echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-dispatcharr.conf
 sudo sysctl --system
 ```
+The optional Reverse Proxy Auth setting (Settings → Reverse Proxy Auth) signs users in from an identity header asserted by an authenticating proxy such as Cloudflare Access, oauth2-proxy, or Authelia. It only honors proxies listed in an explicitly set `DISPATCHARR_TRUSTED_PROXIES`: the private/loopback default is not trusted for sign-in, so while that variable is unset the setting signs nobody in.
 
 ---
 

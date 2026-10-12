@@ -5,6 +5,11 @@ on:
     branches:
       - codex/vod-management-deploy
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag for a separately validated deployment candidate
+        required: true
+        default: vod-source-management
 
 permissions:
   contents: read
@@ -12,7 +17,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_TAG: vod-source-management
+  IMAGE_TAG: ${{ inputs.image_tag || 'vod-source-management' }}
 
 jobs:
   prepare:
