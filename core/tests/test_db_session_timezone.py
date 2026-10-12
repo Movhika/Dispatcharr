@@ -18,7 +18,9 @@ class DatabaseSessionTimezoneTests(TestCase):
         settings_dict = copy.deepcopy(connections.databases["default"])
         settings_dict["ENGINE"] = "dispatcharr.db.backends.postgresql_psycopg3"
         settings_dict.setdefault("OPTIONS", {})
-        return DatabaseWrapper(settings_dict, alias="tz_probe")
+        wrapper = DatabaseWrapper(settings_dict, alias="tz_probe")
+        connections["tz_probe"] = wrapper
+        return wrapper
 
     @staticmethod
     def _teardown_wrapper(wrapper):
@@ -26,6 +28,7 @@ class DatabaseSessionTimezoneTests(TestCase):
         pool = wrapper._connection_pools.pop("tz_probe", None)
         if pool is not None:
             pool.close()
+        del connections["tz_probe"]
 
     def test_pool_session_timezone_pinned_to_utc(self):
         wrapper = self._pool_backend_wrapper()

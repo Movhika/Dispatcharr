@@ -14,6 +14,29 @@ from apps.vod.models import (
 
 
 class SourceMetadataFoundationTests(TestCase):
+    def test_source_metadata_keeps_upstream_language_identity_separate(self):
+        account = M3UAccount.objects.create(name="two-language-provider")
+        movies = [
+            Movie.objects.create(name="Example", tmdb_id="123", language=language)
+            for language in ("de", "en")
+        ]
+        relations = [
+            M3UMovieRelation.objects.create(
+                m3u_account=account,
+                movie=movie,
+                stream_id=str(index),
+            )
+            for index, movie in enumerate(movies, start=1)
+        ]
+        for relation in relations:
+            initialize_relation_metadata(relation)
+            relation.refresh_from_db()
+        self.assertEqual(
+            list(Movie.objects.order_by("language").values_list("language", flat=True)),
+            ["de", "en"],
+        )
+        self.assertEqual([relation.movie_id for relation in relations], [movie.id for movie in movies])
+
     def test_category_defaults_are_stored_on_the_exact_provider_relation(self):
         account = M3UAccount.objects.create(
             name="metadata-provider",

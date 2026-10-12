@@ -881,10 +881,10 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
                     'movie', 'category', 'container_extension', 'custom_properties', 'last_seen'
                 ])
 
-            if stream_ids:
+            if batch_stream_ids:
                 initialize_relations_metadata(
                     M3UMovieRelation.objects.filter(
-                        m3u_account=account, stream_id__in=stream_ids
+                        m3u_account=account, stream_id__in=batch_stream_ids
                     )
                 )
 
@@ -1257,11 +1257,11 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
                     'series', 'category', 'custom_properties', 'last_seen'
                 ])
 
-            if series_ids:
+            if batch_series_ids:
                 initialize_relations_metadata(
                     M3USeriesRelation.objects.filter(
                         m3u_account=account,
-                        external_series_id__in=series_ids,
+                        external_series_id__in=batch_series_ids,
                     )
                 )
 
