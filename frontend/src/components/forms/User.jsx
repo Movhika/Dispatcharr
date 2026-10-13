@@ -281,7 +281,12 @@ const User = ({ user = null, isOpen, onClose }) => {
   };
 
   return (
-    <Modal opened={isOpen} onClose={onClose} title="User" size="xl">
+    <Modal
+      opened={isOpen}
+      onClose={onClose}
+      title={user?.id ? 'Edit user' : 'Create user'}
+      size="xl"
+    >
       <form onSubmit={form.onSubmit(onSubmit)}>
         <Tabs defaultValue="account">
           <TabsList mb="md">
@@ -291,6 +296,7 @@ const User = ({ user = null, isOpen, onClose }) => {
             )}
             <TabsTab value="epg">EPG Defaults</TabsTab>
             <TabsTab value="api">API &amp; XC</TabsTab>
+            {isAdmin && <TabsTab value="live-refresh">Live refresh</TabsTab>}
           </TabsList>
 
           <TabsPanel value="account">
@@ -497,16 +503,6 @@ const User = ({ user = null, isOpen, onClose }) => {
                 }
               />
               {isAdmin && (
-                <Switch
-                  label="Allow XC client to trigger Live TV refresh"
-                  description="Request a Live-only refresh when this user's XC client loads the stream list. Wait up to 15 seconds total, then return the available catalog while unfinished refreshes continue. Each provider's client refresh cooldown applies to all users."
-                  {...form.getInputProps('xc_live_refresh_on_request', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('xc_live_refresh_on_request')}
-                />
-              )}
-              {isAdmin && (
                 <Select
                   label="Output Format Override"
                   description="Override the system default output format for this user. Clear to use system default."
@@ -601,6 +597,18 @@ const User = ({ user = null, isOpen, onClose }) => {
               )}
             </Stack>
           </TabsPanel>
+          {isAdmin && (
+            <TabsPanel value="live-refresh">
+              <Switch
+                label="Allow XC client to trigger Live TV refresh"
+                description="When this user's XC client requests the Live catalog, refresh eligible providers first. Return as soon as the newly queued refreshes finish, or after at most 15 seconds total. Unfinished refreshes continue in the background. Each provider's client refresh cooldown applies to all users."
+                {...form.getInputProps('xc_live_refresh_on_request', {
+                  type: 'checkbox',
+                })}
+                key={form.key('xc_live_refresh_on_request')}
+              />
+            </TabsPanel>
+          )}
         </Tabs>
 
         <Group justify="flex-end" mt="md">
@@ -610,7 +618,7 @@ const User = ({ user = null, isOpen, onClose }) => {
             disabled={form.submitting}
             size="small"
           >
-            Save
+            {user?.id ? 'Save' : 'Create'}
           </Button>
         </Group>
       </form>

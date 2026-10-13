@@ -164,6 +164,7 @@ const M3UProfiles = ({
   isOpen,
   onClose,
   pendingExpDate,
+  embedded = false,
 }) => {
   const allProfiles = usePlaylistsStore((s) => s.profiles);
   const fetchPlaylist = usePlaylistsStore((s) => s.fetchPlaylist);
@@ -284,51 +285,62 @@ const M3UProfiles = ({
   };
 
   // Don't render if modal is not open, or if playlist data is invalid
-  if (!isOpen || !playlist || !playlist.id) {
+  if ((!embedded && !isOpen) || !playlist || !playlist.id) {
     return <></>;
   }
 
   // Make sure profiles is always an array even if we have no data
   const profilesArray = Array.isArray(profiles) ? profiles : [];
 
+  const profileList = (
+    <Stack gap="sm">
+      {[...profilesArray].sort(profileSortComparator).map((item) => {
+        return (
+          <M3uProfileCard
+            key={item.id}
+            item={item}
+            accountType={playlist?.account_type}
+            onClickInfo={() => showAccountInfo(item)}
+            onChangeMaxStreams={(value) => modifyMaxStreams(value, item)}
+            onChangeActive={() => toggleActive(item)}
+            onClickEdit={() => editProfile(item)}
+            onClickDelete={() => deleteProfile(item.id)}
+          />
+        );
+      })}
+
+      <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
+        <Button
+          variant="contained"
+          color="primary"
+          size="small"
+          onClick={() => editProfile()}
+          style={{ width: '100%' }}
+        >
+          New
+        </Button>
+      </Flex>
+    </Stack>
+  );
+
   return (
     <>
-      <Modal
-        opened={isOpen}
-        onClose={onClose}
-        title="Profiles"
-        scrollAreaComponent={Modal.NativeScrollArea}
-        lockScroll={false}
-        withinPortal={true}
-        yOffset="2vh"
-      >
-        {profilesArray.sort(profileSortComparator).map((item) => {
-          return (
-            <M3uProfileCard
-              key={item.id}
-              item={item}
-              accountType={playlist?.account_type}
-              onClickInfo={() => showAccountInfo(item)}
-              onChangeMaxStreams={(value) => modifyMaxStreams(value, item)}
-              onChangeActive={() => toggleActive(item)}
-              onClickEdit={() => editProfile(item)}
-              onClickDelete={() => deleteProfile(item.id)}
-            />
-          );
-        })}
+      {embedded ? (
+        profileList
+      ) : (
+        <Modal
+          opened={isOpen}
+          onClose={onClose}
+          title="Connection Profiles"
+          scrollAreaComponent={Modal.NativeScrollArea}
+          lockScroll={false}
+          withinPortal={true}
+          yOffset="2vh"
+        >
+          {profileList}
+        </Modal>
+      )}
 
-        <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => editProfile()}
-            style={{ width: '100%' }}
-          >
-            New
-          </Button>
-        </Flex>
-      </Modal>{' '}
       <M3UProfile
         m3u={playlist}
         profile={profile}

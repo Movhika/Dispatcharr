@@ -13,6 +13,7 @@ vi.mock('../../../utils/notificationUtils.js', () => ({
 
 vi.mock('../../../utils/forms/M3uGroupFilterUtils.js', () => ({
   saveAndRefreshPlaylist: vi.fn(),
+  savePlaylistGroupSettings: vi.fn(),
   buildGroupStates: vi.fn(),
 }));
 
@@ -160,6 +161,9 @@ const setupStores = ({
 describe('M3UGroupFilter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(M3uGroupFilterUtils.savePlaylistGroupSettings).mockResolvedValue(
+      undefined
+    );
     vi.mocked(M3uGroupFilterUtils.saveAndRefreshPlaylist).mockResolvedValue(
       undefined
     );
@@ -227,7 +231,7 @@ describe('M3UGroupFilter', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       expect(
-        screen.getByRole('button', { name: /cancel/i })
+        screen.getByRole('button', { name: /close/i })
       ).toBeInTheDocument();
     });
   });
@@ -289,7 +293,7 @@ describe('M3UGroupFilter', () => {
       const onClose = vi.fn();
       setupStores();
       render(<M3UGroupFilter {...defaultProps({ onClose })} />);
-      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      fireEvent.click(screen.getByRole('button', { name: /close/i }));
       expect(onClose).toHaveBeenCalled();
     });
   });
@@ -353,13 +357,15 @@ describe('M3UGroupFilter', () => {
   // ── Save ───────────────────────────────────────────────────────────────────
 
   describe('saving', () => {
-    it('calls saveAndRefreshPlaylist with playlist and current states on Save click', async () => {
+    it('saves current states without refreshing on an ordinary Save click', async () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       await waitFor(() => screen.getByRole('button', { name: /save/i }));
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
       await waitFor(() => {
-        expect(M3uGroupFilterUtils.saveAndRefreshPlaylist).toHaveBeenCalledWith(
+        expect(
+          M3uGroupFilterUtils.savePlaylistGroupSettings
+        ).toHaveBeenCalledWith(
           expect.objectContaining({ id: 1 }),
           expect.any(Array),
           expect.any(Array),
@@ -391,14 +397,17 @@ describe('M3UGroupFilter', () => {
       });
     });
 
-    it('calls onClose after successful save', async () => {
+    it('keeps the dialog open after an ordinary save', async () => {
       const onClose = vi.fn();
       setupStores();
       render(<M3UGroupFilter {...defaultProps({ onClose })} />);
       await waitFor(() => screen.getByRole('button', { name: /save/i }));
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
       await waitFor(() => {
-        expect(onClose).toHaveBeenCalled();
+        expect(
+          M3uGroupFilterUtils.savePlaylistGroupSettings
+        ).toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
       });
     });
 
@@ -456,9 +465,9 @@ describe('M3UGroupFilter', () => {
     });
 
     it('does not call onClose when saveAndRefreshPlaylist throws', async () => {
-      vi.mocked(M3uGroupFilterUtils.saveAndRefreshPlaylist).mockRejectedValue(
-        new Error('save failed')
-      );
+      vi.mocked(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).mockRejectedValue(new Error('save failed'));
       const onClose = vi.fn();
       setupStores();
       render(<M3UGroupFilter {...defaultProps({ onClose })} />);
@@ -473,7 +482,9 @@ describe('M3UGroupFilter', () => {
   describe('loading state', () => {
     it('disables Save button while submitting', async () => {
       let resolveSave;
-      vi.mocked(M3uGroupFilterUtils.saveAndRefreshPlaylist).mockImplementation(
+      vi.mocked(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).mockImplementation(
         () =>
           new Promise((res) => {
             resolveSave = res;

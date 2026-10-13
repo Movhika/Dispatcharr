@@ -159,6 +159,14 @@ vi.mock('@mantine/form', () => {
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
+  Tabs: ({ children }) => <div>{children}</div>,
+  TabsList: ({ children }) => <div role="tablist">{children}</div>,
+  TabsTab: ({ children, value, disabled }) => (
+    <button role="tab" data-value={value} disabled={disabled}>
+      {children}
+    </button>
+  ),
+  TabsPanel: ({ children }) => <div>{children}</div>,
   Box: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, type, loading, disabled, variant, color }) => (
     <button
@@ -539,20 +547,24 @@ describe('M3U', () => {
       expect(screen.getByTestId('text-input-server_url')).toBeInTheDocument();
     });
 
-    it('renders submit button with "Add" label for new account', () => {
+    it('uses creation labels for a new account', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
+      expect(screen.getByTestId('modal-title')).toHaveTextContent(
+        'Create M3U account'
+      );
       expect(
-        screen.getByRole('button', { name: /add|create|save/i })
+        screen.getByRole('button', { name: 'Create' })
       ).toBeInTheDocument();
     });
 
-    it('renders submit button with "Update" or "Save" label for existing account', () => {
+    it('uses editing labels for an existing account', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(
-        screen.getByRole('button', { name: /update|save/i })
-      ).toBeInTheDocument();
+      expect(screen.getByTestId('modal-title')).toHaveTextContent(
+        'Edit M3U account'
+      );
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
     });
 
     it('pre-fills name when editing', () => {
@@ -858,90 +870,142 @@ describe('M3U', () => {
     });
   });
 
-  describe('separate Live TV and VOD columns', () => {
-    it('applies responsive separators to all four settings columns', () => {
+  describe('account and content tabs', () => {
+    it('keeps responsive separators for account, connection and content settings', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-      for (const name of ['Account settings', 'Connection settings', 'Live TV settings', 'VOD settings']) {
+      for (const name of [
+        'Account settings',
+        'Connection settings',
+        'Live TV settings',
+        'VOD settings',
+      ]) {
         expect(screen.getByRole('group', { name })).toHaveClass(classes.column);
       }
+      expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
     });
 
-    it('uses four responsive columns and keeps the refresh controls in their own groups', () => {
+    it('keeps Live and VOD refresh controls in their own two-column content groups', () => {
       setupStores();
-      render(<M3U {...defaultProps({
-        m3uAccount: makeM3uAccount({ enable_vod: true, vod_refresh_after_live: false }),
-      })} />);
-
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '1280');
-      expect(screen.getByTestId('account-columns')).toHaveAttribute(
-        'data-cols', JSON.stringify({ base: 1, sm: 2, md: 4 })
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({
+              enable_vod: true,
+              vod_refresh_after_live: false,
+            }),
+          })}
+        />
       );
-      const live = within(screen.getByRole('group', { name: 'Live TV settings' }));
+      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '1040');
+      expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
+      const live = within(
+        screen.getByRole('group', { name: 'Live TV settings' })
+      );
       const vod = within(screen.getByRole('group', { name: 'VOD settings' }));
-      expect(live.getByLabelText('Live TV refresh interval (hours)')).toBeInTheDocument();
-      expect(live.getByRole('spinbutton', { name: 'Client refresh cooldown (minutes)' })).toBeInTheDocument();
-      expect(live.getByRole('spinbutton', { name: 'Stale Stream Retention (days)' })).toBeInTheDocument();
-      expect(live.queryByRole('spinbutton', { name: 'VOD Priority' })).not.toBeInTheDocument();
-      expect(vod.getByLabelText('VOD refresh interval (hours)')).toBeInTheDocument();
-      expect(vod.getByRole('spinbutton', { name: 'VOD Priority' })).toBeInTheDocument();
-      expect(vod.getByRole('switch', { name: 'Enable VOD Scanning' })).toBeInTheDocument();
-      expect(vod.queryByLabelText('Live TV refresh interval (hours)')).not.toBeInTheDocument();
+      expect(
+        live.getByLabelText('Live TV refresh interval (hours)')
+      ).toBeInTheDocument();
+      expect(
+        live.getByRole('spinbutton', {
+          name: 'Client refresh cooldown (minutes)',
+        })
+      ).toBeInTheDocument();
+      expect(
+        live.queryByRole('spinbutton', { name: 'VOD Priority' })
+      ).not.toBeInTheDocument();
+      expect(
+        vod.getByLabelText('VOD refresh interval (hours)')
+      ).toBeInTheDocument();
+      expect(
+        vod.getByRole('switch', { name: 'Enable VOD Scanning' })
+      ).toBeInTheDocument();
+      expect(
+        vod.queryByLabelText('Live TV refresh interval (hours)')
+      ).not.toBeInTheDocument();
     });
 
-    it('keeps Create EPG in the Live TV column when creating an XC account', () => {
+    it('keeps Create EPG in Live content settings for a new XC account', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-      const live = within(screen.getByRole('group', { name: 'Live TV settings' }));
-      const vod = within(screen.getByRole('group', { name: 'VOD settings' }));
-      expect(live.getByRole('switch', { name: 'Create EPG' })).toBeInTheDocument();
-      expect(vod.queryByRole('switch', { name: 'Create EPG' })).not.toBeInTheDocument();
-    });
-
-    it('uses three columns without VOD controls for a standard M3U account', () => {
-      setupStores();
-      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount({ account_type: 'STD' }) })} />);
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '960');
-      expect(screen.getByTestId('account-columns')).toHaveAttribute(
-        'data-cols', JSON.stringify({ base: 1, sm: 2, md: 3 })
+      const live = within(
+        screen.getByRole('group', { name: 'Live TV settings' })
       );
-      expect(screen.queryByRole('group', { name: 'VOD settings' })).not.toBeInTheDocument();
+      const vod = within(screen.getByRole('group', { name: 'VOD settings' }));
+      expect(
+        live.getByRole('switch', { name: 'Create EPG' })
+      ).toBeInTheDocument();
+      expect(
+        vod.queryByRole('switch', { name: 'Create EPG' })
+      ).not.toBeInTheDocument();
     });
 
-    it('updates the column layout immediately when the account type changes', () => {
+    it('hides VOD controls for standard accounts', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ account_type: 'STD' }),
+          })}
+        />
+      );
+      expect(
+        screen.queryByRole('group', { name: 'VOD settings' })
+      ).not.toBeInTheDocument();
+    });
+
+    it('updates content controls when the account type changes', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
         target: { value: 'STD' },
       });
-      expect(screen.queryByRole('group', { name: 'VOD settings' })).not.toBeInTheDocument();
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '960');
+      expect(
+        screen.queryByRole('group', { name: 'VOD settings' })
+      ).not.toBeInTheDocument();
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
         target: { value: 'XC' },
       });
-      expect(screen.getByRole('group', { name: 'VOD settings' })).toBeInTheDocument();
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '1280');
+      expect(
+        screen.getByRole('group', { name: 'VOD settings' })
+      ).toBeInTheDocument();
     });
 
     it('defaults new account client refresh cooldowns to thirty minutes', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-      expect(screen.getByLabelText('Client refresh cooldown (minutes)')).toHaveValue(30);
+      expect(
+        screen.getByLabelText('Client refresh cooldown (minutes)')
+      ).toHaveValue(30);
     });
 
     it('uses thirty minutes when an existing account response omits the cooldown', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(screen.getByLabelText('Client refresh cooldown (minutes)')).toHaveValue(30);
+      expect(
+        screen.getByLabelText('Client refresh cooldown (minutes)')
+      ).toHaveValue(30);
     });
 
-    it.each([0, 45, 55])('preserves an existing client refresh cooldown of %s minutes', (minutes) => {
-      setupStores();
-      render(<M3U {...defaultProps({
-        m3uAccount: makeM3uAccount({ xc_live_refresh_min_age_minutes: minutes }),
-      })} />);
-      expect(screen.getByLabelText('Client refresh cooldown (minutes)')).toHaveValue(minutes);
-    });
+    it.each([0, 45, 55])(
+      'preserves an existing client refresh cooldown of %s minutes',
+      (minutes) => {
+        setupStores();
+        render(
+          <M3U
+            {...defaultProps({
+              m3uAccount: makeM3uAccount({
+                xc_live_refresh_min_age_minutes: minutes,
+              }),
+            })}
+          />
+        );
+        expect(
+          screen.getByLabelText('Client refresh cooldown (minutes)')
+        ).toHaveValue(minutes);
+      }
+    );
 
     it('preserves the independent Live TV and VOD values when saving the new layout', async () => {
       setupStores();

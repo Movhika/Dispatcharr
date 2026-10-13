@@ -763,7 +763,7 @@ describe('User', () => {
       setupMocks({ authUser: makeAdminUser() });
 
       render(<User isOpen={true} onClose={vi.fn()} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(UserUtils.createUser).toHaveBeenCalled();
@@ -782,7 +782,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 2 })}
         />
       );
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(UserUtils.updateUser).toHaveBeenCalledWith(
@@ -801,7 +801,7 @@ describe('User', () => {
       vi.mocked(UserUtils.updateUser).mockResolvedValue(updatedAdmin);
 
       render(<User isOpen={true} onClose={vi.fn()} user={admin} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(mockSetUser).toHaveBeenCalledWith(updatedAdmin);
@@ -813,7 +813,7 @@ describe('User', () => {
       const onClose = vi.fn();
 
       render(<User isOpen={true} onClose={onClose} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(mockForm.reset).toHaveBeenCalled();
@@ -837,7 +837,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 2 })}
         />
       );
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         const payload = vi.mocked(UserUtils.updateUser).mock.calls[0][1];
@@ -886,7 +886,7 @@ describe('User', () => {
     expect(mockForm.getInputProps).not.toHaveBeenCalledWith(
       'xc_live_refresh_wait_timeout_seconds'
     );
-    expect(screen.getByText(/Wait up to 15 seconds total/)).toBeInTheDocument();
+    expect(screen.getByText(/at most 15 seconds total/i)).toBeInTheDocument();
     expect(
       screen.queryByText('User request interval (minutes)')
     ).not.toBeInTheDocument();

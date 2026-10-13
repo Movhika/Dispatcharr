@@ -1,19 +1,34 @@
-import React, { memo, startTransition, useCallback, useEffect, useState } from 'react';
+import React, {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   TextInput,
   Button,
   Flex,
   Stack,
-  Group,
-  SimpleGrid,
+  ActionIcon,
+  Tooltip,
+  ScrollArea,
+  Table,
+  TableThead,
+  TableTbody,
+  TableTr,
+  TableTh,
+  TableTd,
   Text,
-  Box,
   Checkbox,
   SegmentedControl,
   Select,
 } from '@mantine/core';
-import { CircleCheck, CircleX } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
+import ListPagination from '../ListPagination.jsx';
+import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
 
 export const VOD_CATEGORY_QUALITIES = ['4K', '1080p', '720p', '480p', 'SD'];
 
@@ -68,35 +83,27 @@ const CategoryCard = memo(function CategoryCard({
   category,
   onToggle,
   onCustomPropertyChange,
+  onPreview,
 }) {
   const props = category.custom_properties || {};
-
   return (
-    <Stack
-      gap={4}
-      style={{
-        padding: '8px',
-        border: '1px solid #444',
-        borderRadius: '8px',
-        backgroundColor: category.enabled ? '#2A2A2E' : '#1E1E22',
-      }}
-    >
-      <Button
-        color={category.enabled ? 'green' : 'gray'}
-        variant="filled"
-        onClick={() => onToggle(category.id)}
-        radius="md"
-        size="xs"
-        leftSection={
-          category.enabled ? <CircleCheck size={14} /> : <CircleX size={14} />
-        }
-        fullWidth
-      >
-        <Text size="xs" truncate>
+    <TableTr>
+      <TableTd>
+        <Button
+          color={category.enabled ? 'green' : 'gray'}
+          variant="subtle"
+          size="xs"
+          onClick={() => onToggle(category.id)}
+        >
           {category.name}
+        </Button>
+      </TableTd>
+      <TableTd>
+        <Text size="xs" c={category.enabled ? 'green' : 'dimmed'}>
+          {category.enabled ? 'Active' : 'Inactive'}
         </Text>
-      </Button>
-      <Group grow gap="xs" wrap="nowrap">
+      </TableTd>
+      <TableTd>
         <Select
           size="xs"
           aria-label="Language"
@@ -110,6 +117,8 @@ const CategoryCard = memo(function CategoryCard({
           clearable
           allowDeselect
         />
+      </TableTd>
+      <TableTd>
         <Select
           size="xs"
           aria-label="Quality"
@@ -122,8 +131,19 @@ const CategoryCard = memo(function CategoryCard({
           clearable
           allowDeselect
         />
-      </Group>
-    </Stack>
+      </TableTd>
+      <TableTd>
+        <Tooltip label="Preview category">
+          <ActionIcon
+            variant="subtle"
+            aria-label="Preview category"
+            onClick={() => onPreview(category)}
+          >
+            <Eye size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </TableTd>
+    </TableTr>
   );
 });
 
@@ -134,17 +154,28 @@ const VODCategoryFilter = ({
   type,
   autoEnableNewGroups,
   setAutoEnableNewGroups,
+  onOpenRules,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [previewCategory, setPreviewCategory] = useState(null);
+  const initializedScope = useRef(null);
+  useEffect(() => {
+    setPage(1);
+  }, [filter, statusFilter, type]);
 
   useEffect(() => {
     if (Object.keys(categories).length === 0) {
       return;
     }
 
-    setCategoryStates(
+    const key = `${playlist.id}:${type}`;
+    const sameScope = initializedScope.current === key;
+    initializedScope.current = key;
+    setCategoryStates((previous) =>
       Object.values(categories)
         .filter(
           (cat) =>
@@ -152,11 +183,17 @@ const VODCategoryFilter = ({
             cat.category_type == type
         )
         .map((cat) => {
+          const existing = sameScope
+            ? previous.find((row) => row.id === cat.id)
+            : null;
+          if (existing) return { ...cat, ...existing, name: cat.name };
           const match = cat.m3u_accounts.find(
             (acc) => acc.m3u_account == playlist.id
           );
           if (!match) return null;
-          const custom_properties = parseCustomProperties(match.custom_properties);
+          const custom_properties = parseCustomProperties(
+            match.custom_properties
+          );
           return {
             ...cat,
             enabled: match.enabled || false,
@@ -275,24 +312,53 @@ const VODCategoryFilter = ({
         <Button variant="default" size="xs" onClick={deselectAll}>
           Deselect Visible
         </Button>
+        <Button variant="default" size="xs" onClick={onOpenRules}>
+          Import rules
+        </Button>
       </Flex>
 
-      <Box style={{ maxHeight: '50vh', overflowY: 'auto' }}>
-        <SimpleGrid
-          cols={{ base: 1, sm: 2, md: 2 }}
-          spacing="xs"
-          verticalSpacing="xs"
-        >
-          {visibleCategories.map((category) => (
-            <CategoryCard
-              key={category.id}
-              category={category}
-              onToggle={toggleEnabled}
-              onCustomPropertyChange={updateCustomProperty}
-            />
-          ))}
-        </SimpleGrid>
-      </Box>
+      <ScrollArea h="55vh">
+        <Table striped withTableBorder miw={700}>
+          <TableThead>
+            <TableTr>
+              <TableTh>Category</TableTh>
+              <TableTh>Enabled</TableTh>
+              <TableTh>Language</TableTh>
+              <TableTh>Quality</TableTh>
+              <TableTh>Actions</TableTh>
+            </TableTr>
+          </TableThead>
+          <TableTbody>
+            {visibleCategories
+              .slice((page - 1) * pageSize, page * pageSize)
+              .map((category) => (
+                <CategoryCard
+                  key={category.id}
+                  category={category}
+                  onToggle={toggleEnabled}
+                  onCustomPropertyChange={updateCustomProperty}
+                  onPreview={setPreviewCategory}
+                />
+              ))}
+          </TableTbody>
+        </Table>
+      </ScrollArea>
+      <ListPagination
+        page={page}
+        pageSize={pageSize}
+        total={visibleCategories.length}
+        onPageChange={setPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+      />
+      <M3UGroupContentPreview
+        accountId={playlist.id}
+        scope={type}
+        group={previewCategory}
+        onClose={() => setPreviewCategory(null)}
+      />
     </Stack>
   );
 };

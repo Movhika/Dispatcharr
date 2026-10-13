@@ -12,6 +12,9 @@ vi.mock('../../../hooks/useSmartLogos', () => ({
 }));
 
 // ── Child component mocks ─────────────────────────────────────────────────────
+vi.mock('../M3UGroupContentPreview.jsx', () => ({ default: () => null }));
+vi.mock('../M3UFilters.jsx', () => ({ default: () => null }));
+vi.mock('../../ListPagination.jsx', () => ({ default: () => null }));
 vi.mock('../GroupConfigureModal', () => ({
   default: ({ opened, onDone, onCancel, group, children }) =>
     opened ? (
@@ -137,8 +140,34 @@ vi.mock('../../../utils/forms/LiveGroupFilterUtils.js', () => ({
 
 // ── Mantine core mock ─────────────────────────────────────────────────────────
 vi.mock('@mantine/core', async () => ({
-  ActionIcon: ({ children, onClick, disabled }) => (
-    <button data-testid="action-icon" onClick={onClick} disabled={disabled}>
+  Table: ({ children }) => <table>{children}</table>,
+  TableThead: ({ children }) => <thead>{children}</thead>,
+  TableTbody: ({ children }) => <tbody>{children}</tbody>,
+  TableTr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
+  TableTh: ({ children }) => <th>{children}</th>,
+  TableTd: ({ children }) => <td>{children}</td>,
+  ScrollArea: ({ children }) => <div>{children}</div>,
+  Select: ({ value, onChange, data, disabled, ...props }) => (
+    <select
+      aria-label={props['aria-label']}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {data.map((item) => (
+        <option key={item.value} value={item.value}>
+          {item.label}
+        </option>
+      ))}
+    </select>
+  ),
+  ActionIcon: ({ children, onClick, disabled, ...props }) => (
+    <button
+      aria-label={props['aria-label']}
+      data-testid="action-icon"
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   ),
@@ -208,6 +237,7 @@ vi.mock('@mantine/core', async () => ({
 
 // ── lucide-react mock ─────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
+  Eye: () => <svg data-testid="icon-eye" />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
   Info: () => <svg data-testid="icon-info" />,

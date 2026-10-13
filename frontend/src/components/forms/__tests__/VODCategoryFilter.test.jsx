@@ -2,16 +2,32 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
+vi.mock('../M3UGroupContentPreview.jsx', () => ({ default: () => null }));
+vi.mock('../../ListPagination.jsx', () => ({ default: () => null }));
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
 
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
+  Eye: () => <svg />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
 }));
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
+  Table: ({ children }) => <table>{children}</table>,
+  TableThead: ({ children }) => <thead>{children}</thead>,
+  TableTbody: ({ children }) => <tbody>{children}</tbody>,
+  TableTr: ({ children }) => <tr>{children}</tr>,
+  TableTh: ({ children }) => <th>{children}</th>,
+  TableTd: ({ children }) => <td>{children}</td>,
+  ScrollArea: ({ children }) => <div>{children}</div>,
+  Tooltip: ({ children }) => <>{children}</>,
+  ActionIcon: ({ children, onClick, ...props }) => (
+    <button aria-label={props['aria-label']} onClick={onClick}>
+      {children}
+    </button>
+  ),
   Box: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, disabled, color, variant }) => (
     <button
@@ -187,7 +203,7 @@ describe('VODCategoryFilter', () => {
   describe('rendering', () => {
     it('renders without crashing', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      expect(screen.getByTestId('simple-grid')).toBeInTheDocument();
+      expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
     it('renders a button for each category matching the type and playlist', () => {

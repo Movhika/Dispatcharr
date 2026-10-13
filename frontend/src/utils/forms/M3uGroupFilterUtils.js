@@ -35,13 +35,12 @@ const parseCustomProperties = (raw) => {
   }
 };
 
-export const saveAndRefreshPlaylist = async (
+export const savePlaylistGroupSettings = async (
   playlist,
   groupStates,
   movieCategoryStates,
   seriesCategoryStates,
-  autoEnableSettings,
-  isInitialSetup = false
+  autoEnableSettings
 ) => {
   const groupSettings = prepareGroupSettings(groupStates);
   const categorySettings = prepareCategorySettings(
@@ -51,6 +50,23 @@ export const saveAndRefreshPlaylist = async (
 
   await updatePlaylist(playlist, autoEnableSettings);
   await updateM3UGroupSettings(playlist, groupSettings, categorySettings);
+};
+
+export const saveAndRefreshPlaylist = async (
+  playlist,
+  groupStates,
+  movieCategoryStates,
+  seriesCategoryStates,
+  autoEnableSettings,
+  isInitialSetup = false
+) => {
+  await savePlaylistGroupSettings(
+    playlist,
+    groupStates,
+    movieCategoryStates,
+    seriesCategoryStates,
+    autoEnableSettings
+  );
   if (
     isInitialSetup &&
     playlist.account_type === 'XC' &&

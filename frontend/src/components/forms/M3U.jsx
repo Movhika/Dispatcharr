@@ -18,6 +18,10 @@ import {
   SimpleGrid,
   Stack,
   Switch,
+  Tabs,
+  TabsList,
+  TabsPanel,
+  TabsTab,
   Text,
   TextInput,
 } from '@mantine/core';
@@ -59,7 +63,6 @@ const M3U = ({
   const [playlist, setPlaylist] = useState(null);
   const [file, setFile] = useState(null);
   const [expDate, setExpDate] = useState(null);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [initialGroupSetup, setInitialGroupSetup] = useState(false);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
@@ -256,6 +259,7 @@ const M3U = ({
 
   const closeGroupFilter = () => {
     setGroupFilterModalOpen(false);
+    if (!initialGroupSetup) return;
     // After group filter setup for a new account, reset everything
     form.reset();
     setFile(null);
@@ -281,10 +285,10 @@ const M3U = ({
   return (
     <>
       <Modal
-        size={accountType === 'XC' ? 1280 : 960}
+        size={1040}
         opened={isOpen}
         onClose={close}
-        title="M3U Account"
+        title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         scrollAreaComponent={Modal.NativeScrollArea}
         lockScroll={false}
         withinPortal={true}
@@ -294,313 +298,347 @@ const M3U = ({
         <LoadingOverlay visible={form.submitting} overlayBlur={2} />
 
         <form onSubmit={form.onSubmit(onSubmit)}>
-          <SimpleGrid
-            cols={{ base: 1, sm: 2, md: accountType === 'XC' ? 4 : 3 }}
-            spacing="xl"
-            verticalSpacing="xl"
-          >
-            <Stack
-              gap="xs"
-              style={{ minWidth: 0 }}
-              role="group"
-              aria-label="Account settings"
-              className={classes.column}
-            >
-              <Text fw={600}>Account</Text>
-              <TextInput
-                id="name"
-                name="name"
-                label="Name"
-                description="Unique identifier for this M3U account"
-                {...form.getInputProps('name')}
-                key={form.key('name')}
-              />
-              <TextInput
-                id="server_url"
-                name="server_url"
-                label="URL"
-                description="Direct URL to the M3U playlist or server"
-                {...form.getInputProps('server_url')}
-                key={form.key('server_url')}
-              />
-              <Select
-                id="account_type"
-                name="account_type"
-                label="Account Type"
-                description={
-                  <>
-                    Standard for direct M3U URLs, <br />
-                    Xtream Codes for panel-based services
-                  </>
-                }
-                data={[
-                  { value: 'STD', label: 'Standard' },
-                  { value: 'XC', label: 'Xtream Codes' },
-                ]}
-                key={form.key('account_type')}
-                {...form.getInputProps('account_type')}
-                onChange={(value) => {
-                  form.setFieldValue('account_type', value);
-                  setAccountType(value);
-                }}
-              />
-
-              {accountType === 'XC' && (
-                <>
+          <Tabs defaultValue="account" style={{ minHeight: 520 }}>
+            <TabsList>
+              <TabsTab value="account">Account</TabsTab>
+              <TabsTab value="content">Content</TabsTab>
+              <TabsTab value="profiles" disabled={!playlist?.id}>
+                Connection Profiles
+              </TabsTab>
+            </TabsList>
+            <TabsPanel value="account" pt="md">
+              <SimpleGrid
+                cols={{ base: 1, sm: 2 }}
+                spacing="xl"
+                verticalSpacing="xl"
+              >
+                <Stack
+                  gap="xs"
+                  style={{ minWidth: 0 }}
+                  role="group"
+                  aria-label="Account settings"
+                  className={classes.column}
+                >
+                  <Text fw={600}>Account</Text>
                   <TextInput
-                    id="username"
-                    name="username"
-                    label="Username"
-                    description="Username for Xtream Codes authentication"
-                    {...form.getInputProps('username')}
+                    id="name"
+                    name="name"
+                    label="Name"
+                    description="Unique identifier for this M3U account"
+                    {...form.getInputProps('name')}
+                    key={form.key('name')}
                   />
-                  <PasswordInput
-                    id="password"
-                    name="password"
-                    label="Password"
-                    description="Password for Xtream Codes authentication (leave empty to keep existing)"
-                    {...form.getInputProps('password')}
+                  <TextInput
+                    id="server_url"
+                    name="server_url"
+                    label="URL"
+                    description="Direct URL to the M3U playlist or server"
+                    {...form.getInputProps('server_url')}
+                    key={form.key('server_url')}
                   />
-                </>
-              )}
-
-              {accountType !== 'XC' && (
-                <>
-                  <FileInput
-                    id="file"
-                    label="Upload files"
-                    placeholder="Upload files"
-                    description="Upload a local M3U file instead of using URL"
-                    onChange={setFile}
-                    styles={{
-                      input: {
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        display: 'block',
-                      },
+                  <Select
+                    id="account_type"
+                    name="account_type"
+                    label="Account Type"
+                    description={
+                      <>
+                        Standard for direct M3U URLs, <br />
+                        Xtream Codes for panel-based services
+                      </>
+                    }
+                    data={[
+                      { value: 'STD', label: 'Standard' },
+                      { value: 'XC', label: 'Xtream Codes' },
+                    ]}
+                    key={form.key('account_type')}
+                    {...form.getInputProps('account_type')}
+                    onChange={(value) => {
+                      form.setFieldValue('account_type', value);
+                      setAccountType(value);
                     }}
                   />
-                  <DateTimePicker
-                    label="Expiration Date"
-                    description="Set an expiration date to receive a warning notification"
-                    placeholder="No expiration"
-                    clearable
-                    valueFormat={`${dateYearFormat} ${timeformat}`}
-                    value={expDate}
-                    onChange={(v) => setExpDate(v ? new Date(v) : null)}
+
+                  {accountType === 'XC' && (
+                    <>
+                      <TextInput
+                        id="username"
+                        name="username"
+                        label="Username"
+                        description="Username for Xtream Codes authentication"
+                        {...form.getInputProps('username')}
+                      />
+                      <PasswordInput
+                        id="password"
+                        name="password"
+                        label="Password"
+                        description="Password for Xtream Codes authentication (leave empty to keep existing)"
+                        {...form.getInputProps('password')}
+                      />
+                    </>
+                  )}
+
+                  {accountType !== 'XC' && (
+                    <>
+                      <FileInput
+                        id="file"
+                        label="Upload files"
+                        placeholder="Upload files"
+                        description="Upload a local M3U file instead of using URL"
+                        onChange={setFile}
+                        styles={{
+                          input: {
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            display: 'block',
+                          },
+                        }}
+                      />
+                      <DateTimePicker
+                        label="Expiration Date"
+                        description="Set an expiration date to receive a warning notification"
+                        placeholder="No expiration"
+                        clearable
+                        valueFormat={`${dateYearFormat} ${timeformat}`}
+                        value={expDate}
+                        onChange={(v) => setExpDate(v ? new Date(v) : null)}
+                      />
+                    </>
+                  )}
+                </Stack>
+
+                <Stack
+                  gap="xs"
+                  style={{ minWidth: 0 }}
+                  role="group"
+                  aria-label="Connection settings"
+                  className={classes.column}
+                >
+                  <Text fw={600}>Connection</Text>
+                  <NumberInput
+                    id="max_streams"
+                    name="max_streams"
+                    label="Max Streams"
+                    placeholder="0 = Unlimited"
+                    description="Maximum number of concurrent streams (0 for unlimited)"
+                    min={0}
+                    {...form.getInputProps('max_streams')}
+                    key={form.key('max_streams')}
                   />
-                </>
-              )}
-            </Stack>
-
-            <Stack
-              gap="xs"
-              style={{ minWidth: 0 }}
-              role="group"
-              aria-label="Connection settings"
-              className={classes.column}
-            >
-              <Text fw={600}>Connection</Text>
-              <NumberInput
-                id="max_streams"
-                name="max_streams"
-                label="Max Streams"
-                placeholder="0 = Unlimited"
-                description="Maximum number of concurrent streams (0 for unlimited)"
-                min={0}
-                {...form.getInputProps('max_streams')}
-                key={form.key('max_streams')}
-              />
-              <Select
-                id="server_group"
-                name="server_group"
-                label="Server Group"
-                description="Share login limits across accounts in a server group. Set max streams on each profile (unlimited profiles skip group enforcement)."
-                key={form.key('server_group')}
-                value={form.getValues().server_group}
-                onChange={(value) => {
-                  if (value === '__new__') {
-                    setServerGroupsCreateOnOpen(true);
-                    setServerGroupsManagerOpen(true);
-                    return;
-                  }
-                  form.setFieldValue('server_group', value);
-                }}
-                data={[
-                  { value: '0', label: '(None)' },
-                  ...serverGroups.map((group) => ({
-                    label: group.name,
-                    value: `${group.id}`,
-                  })),
-                  { value: '__new__', label: '+ Add server group...' },
-                ]}
-              />
-              <Button
-                variant="subtle"
-                size="compact-xs"
-                onClick={() => {
-                  setServerGroupsCreateOnOpen(false);
-                  setServerGroupsManagerOpen(true);
-                }}
-                style={{ alignSelf: 'flex-start' }}
+                  <Select
+                    id="server_group"
+                    name="server_group"
+                    label="Server Group"
+                    description="Share login limits across accounts in a server group. Set max streams on each profile (unlimited profiles skip group enforcement)."
+                    key={form.key('server_group')}
+                    value={form.getValues().server_group}
+                    onChange={(value) => {
+                      if (value === '__new__') {
+                        setServerGroupsCreateOnOpen(true);
+                        setServerGroupsManagerOpen(true);
+                        return;
+                      }
+                      form.setFieldValue('server_group', value);
+                    }}
+                    data={[
+                      { value: '0', label: '(None)' },
+                      ...serverGroups.map((group) => ({
+                        label: group.name,
+                        value: `${group.id}`,
+                      })),
+                      { value: '__new__', label: '+ Add server group...' },
+                    ]}
+                  />
+                  <Button
+                    variant="subtle"
+                    size="compact-xs"
+                    onClick={() => {
+                      setServerGroupsCreateOnOpen(false);
+                      setServerGroupsManagerOpen(true);
+                    }}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    Manage server groups
+                  </Button>
+                  <Select
+                    id="user_agent"
+                    name="user_agent"
+                    label="User-Agent"
+                    description="User-Agent header to use when accessing this M3U source"
+                    {...form.getInputProps('user_agent')}
+                    key={form.key('user_agent')}
+                    data={[{ value: '0', label: '(Use Default)' }].concat(
+                      userAgents.map((ua) => ({
+                        label: ua.name,
+                        value: `${ua.id}`,
+                      }))
+                    )}
+                  />
+                  <MultiSelect
+                    id="hash_key"
+                    name="hash_key"
+                    label="Hash Key Override"
+                    description="Fields used to identify this account's streams. Empty inherits the global default. Changing this rehashes only this account."
+                    placeholder={
+                      hasHashKeyOverride ? undefined : 'Use global default'
+                    }
+                    clearable
+                    data={M3U_HASH_KEY_OPTIONS}
+                    {...form.getInputProps('hash_key')}
+                    onChange={(value) => {
+                      form.getInputProps('hash_key').onChange(value);
+                      setHasHashKeyOverride(!!(value && value.length));
+                    }}
+                    key={form.key('hash_key')}
+                  />
+                </Stack>
+              </SimpleGrid>
+            </TabsPanel>
+            <TabsPanel value="content" pt="md">
+              <SimpleGrid
+                cols={{ base: 1, sm: accountType === 'XC' ? 2 : 1 }}
+                spacing="xl"
+                verticalSpacing="xl"
               >
-                Manage server groups
-              </Button>
-              <Select
-                id="user_agent"
-                name="user_agent"
-                label="User-Agent"
-                description="User-Agent header to use when accessing this M3U source"
-                {...form.getInputProps('user_agent')}
-                key={form.key('user_agent')}
-                data={[{ value: '0', label: '(Use Default)' }].concat(
-                  userAgents.map((ua) => ({
-                    label: ua.name,
-                    value: `${ua.id}`,
-                  }))
-                )}
-              />
-              <MultiSelect
-                id="hash_key"
-                name="hash_key"
-                label="Hash Key Override"
-                description="Fields used to identify this account's streams. Empty inherits the global default. Changing this rehashes only this account."
-                placeholder={
-                  hasHashKeyOverride ? undefined : 'Use global default'
-                }
-                clearable
-                data={M3U_HASH_KEY_OPTIONS}
-                {...form.getInputProps('hash_key')}
-                onChange={(value) => {
-                  form.getInputProps('hash_key').onChange(value);
-                  setHasHashKeyOverride(!!(value && value.length));
-                }}
-                key={form.key('hash_key')}
-              />
-            </Stack>
-
-            <Stack
-              gap="xs"
-              style={{ minWidth: 0 }}
-              role="group"
-              aria-label="Live TV settings"
-              className={classes.column}
-            >
-              <Text fw={600}>Live TV</Text>
-              <ScheduleInput
-                scheduleType={scheduleType}
-                onScheduleTypeChange={setScheduleType}
-                intervalValue={form.getValues().refresh_interval}
-                onIntervalChange={(v) =>
-                  form.setFieldValue('refresh_interval', v)
-                }
-                cronValue={form.getValues().cron_expression}
-                onCronChange={(expr) =>
-                  form.setFieldValue('cron_expression', expr)
-                }
-                intervalLabel="Live TV refresh interval (hours)"
-                intervalDescription={
-                  <>
-                    How often to automatically refresh Live TV data
-                    <br />
-                    (0 to disable automatic refreshes)
-                  </>
-                }
-              />
-              {accountType === 'XC' && (
-                <NumberInput
-                  min={0}
-                  max={10080}
-                  allowDecimal={false}
-                  label="Client refresh cooldown (minutes)"
-                  description="Minimum wait after a successful Live refresh. Applies to all users; 0 disables this cooldown."
-                  {...form.getInputProps('xc_live_refresh_min_age_minutes')}
-                  key={form.key('xc_live_refresh_min_age_minutes')}
-                />
-              )}
-              <NumberInput
-                min={0}
-                max={365}
-                label="Stale Stream Retention (days)"
-                description="Streams not seen for this many days will be removed"
-                {...form.getInputProps('stale_stream_days')}
-              />
-              {accountType === 'XC' && !m3uAccount && (
-                <Switch
-                  id="create_epg"
-                  name="create_epg"
-                  label="Create EPG"
-                  description="Automatically create matching EPG source for this Xtream account"
-                  key={form.key('create_epg')}
-                  {...form.getInputProps('create_epg', { type: 'checkbox' })}
-                />
-              )}
-            </Stack>
-
-            {accountType === 'XC' && (
-              <Stack
-                gap="xs"
-                style={{ minWidth: 0 }}
-                role="group"
-                aria-label="VOD settings"
-                className={classes.column}
-              >
-                <Text fw={600}>VOD</Text>
-                <Switch
-                  id="enable_vod"
-                  name="enable_vod"
-                  label="Enable VOD Scanning"
-                  description="Scan and import VOD content (movies/series) from this Xtream account"
-                  checked={vodEnabled}
-                  onChange={(event) => {
-                    const enabled = event.currentTarget.checked;
-                    setVodEnabled(enabled);
-                    form.setFieldValue('enable_vod', enabled);
-                  }}
-                />
-                <NumberInput
-                  min={0}
-                  max={999}
-                  label="VOD Priority"
-                  description="Priority for VOD provider selection (higher numbers = higher priority). Used when multiple providers offer the same content."
-                  {...form.getInputProps('priority')}
-                  key={form.key('priority')}
-                />
-
-                {vodEnabled && (
-                  <Stack gap="xs" mt="sm">
+                <Stack
+                  gap="xs"
+                  style={{ minWidth: 0 }}
+                  role="group"
+                  aria-label="Live TV settings"
+                  className={classes.column}
+                >
+                  <Text fw={600}>Live TV</Text>
+                  <ScheduleInput
+                    scheduleType={scheduleType}
+                    onScheduleTypeChange={setScheduleType}
+                    intervalValue={form.getValues().refresh_interval}
+                    onIntervalChange={(v) =>
+                      form.setFieldValue('refresh_interval', v)
+                    }
+                    cronValue={form.getValues().cron_expression}
+                    onCronChange={(expr) =>
+                      form.setFieldValue('cron_expression', expr)
+                    }
+                    intervalLabel="Live TV refresh interval (hours)"
+                    intervalDescription={
+                      <>
+                        How often to automatically refresh Live TV data
+                        <br />
+                        (0 to disable automatic refreshes)
+                      </>
+                    }
+                  />
+                  {accountType === 'XC' && (
+                    <NumberInput
+                      min={0}
+                      max={10080}
+                      allowDecimal={false}
+                      label="Client refresh cooldown (minutes)"
+                      description="Minimum wait after a successful Live refresh. Applies to all users; 0 disables this cooldown."
+                      {...form.getInputProps('xc_live_refresh_min_age_minutes')}
+                      key={form.key('xc_live_refresh_min_age_minutes')}
+                    />
+                  )}
+                  <NumberInput
+                    min={0}
+                    max={365}
+                    label="Stale Stream Retention (days)"
+                    description="Streams not seen for this many days will be removed"
+                    {...form.getInputProps('stale_stream_days')}
+                  />
+                  {accountType === 'XC' && !m3uAccount && (
                     <Switch
-                      label="Separate VOD refresh schedule"
-                      description="Otherwise VOD refreshes after a successful scheduled Live TV refresh."
-                      checked={!vodRefreshAfterLive}
+                      id="create_epg"
+                      name="create_epg"
+                      label="Create EPG"
+                      description="Automatically create matching EPG source for this Xtream account"
+                      key={form.key('create_epg')}
+                      {...form.getInputProps('create_epg', {
+                        type: 'checkbox',
+                      })}
+                    />
+                  )}
+                </Stack>
+
+                {accountType === 'XC' && (
+                  <Stack
+                    gap="xs"
+                    style={{ minWidth: 0 }}
+                    role="group"
+                    aria-label="VOD settings"
+                    className={classes.column}
+                  >
+                    <Text fw={600}>VOD</Text>
+                    <Switch
+                      id="enable_vod"
+                      name="enable_vod"
+                      label="Enable VOD Scanning"
+                      description="Scan and import VOD content (movies/series) from this Xtream account"
+                      checked={vodEnabled}
                       onChange={(event) => {
-                        const afterLive = !event.currentTarget.checked;
-                        setVodRefreshAfterLive(afterLive);
-                        form.setFieldValue('vod_refresh_after_live', afterLive);
+                        const enabled = event.currentTarget.checked;
+                        setVodEnabled(enabled);
+                        form.setFieldValue('enable_vod', enabled);
                       }}
                     />
-                    {!vodRefreshAfterLive && (
-                      <ScheduleInput
-                        scheduleType={vodScheduleType}
-                        onScheduleTypeChange={setVodScheduleType}
-                        intervalValue={form.getValues().vod_refresh_interval}
-                        onIntervalChange={(value) =>
-                          form.setFieldValue('vod_refresh_interval', value)
-                        }
-                        cronValue={form.getValues().vod_cron_expression}
-                        onCronChange={(value) =>
-                          form.setFieldValue('vod_cron_expression', value)
-                        }
-                        intervalLabel="VOD refresh interval (hours)"
-                        intervalDescription="Use 0 to disable automatic VOD refreshes."
-                      />
+                    <NumberInput
+                      min={0}
+                      max={999}
+                      label="VOD Priority"
+                      description="Priority for VOD provider selection (higher numbers = higher priority). Used when multiple providers offer the same content."
+                      {...form.getInputProps('priority')}
+                      key={form.key('priority')}
+                    />
+
+                    {vodEnabled && (
+                      <Stack gap="xs" mt="sm">
+                        <Switch
+                          label="Separate VOD refresh schedule"
+                          description="Otherwise VOD refreshes after a successful scheduled Live TV refresh."
+                          checked={!vodRefreshAfterLive}
+                          onChange={(event) => {
+                            const afterLive = !event.currentTarget.checked;
+                            setVodRefreshAfterLive(afterLive);
+                            form.setFieldValue(
+                              'vod_refresh_after_live',
+                              afterLive
+                            );
+                          }}
+                        />
+                        {!vodRefreshAfterLive && (
+                          <ScheduleInput
+                            scheduleType={vodScheduleType}
+                            onScheduleTypeChange={setVodScheduleType}
+                            intervalValue={
+                              form.getValues().vod_refresh_interval
+                            }
+                            onIntervalChange={(value) =>
+                              form.setFieldValue('vod_refresh_interval', value)
+                            }
+                            cronValue={form.getValues().vod_cron_expression}
+                            onCronChange={(value) =>
+                              form.setFieldValue('vod_cron_expression', value)
+                            }
+                            intervalLabel="VOD refresh interval (hours)"
+                            intervalDescription="Use 0 to disable automatic VOD refreshes."
+                          />
+                        )}
+                      </Stack>
                     )}
                   </Stack>
                 )}
-              </Stack>
-            )}
-          </SimpleGrid>
+              </SimpleGrid>
+            </TabsPanel>
+            <TabsPanel value="profiles" pt="md">
+              {playlist?.id && (
+                <M3UProfiles
+                  playlist={playlist}
+                  embedded
+                  pendingExpDate={expDate}
+                />
+              )}
+            </TabsPanel>
+          </Tabs>
 
           <Divider my="md" />
 
@@ -632,7 +670,6 @@ const M3U = ({
                   </Button>
                   <Button
                     variant="filled"
-                    // color={theme.custom.colors.buttonPrimary}
                     size="sm"
                     onClick={() => {
                       // If this is an XC account with VOD enabled, fetch VOD categories
@@ -647,14 +684,6 @@ const M3U = ({
                   >
                     Groups
                   </Button>
-                  <Button
-                    variant="filled"
-                    // color={theme.custom.colors.buttonPrimary}
-                    size="sm"
-                    onClick={() => setProfileModalOpen(true)}
-                  >
-                    Profiles
-                  </Button>
                 </>
               )}
 
@@ -664,7 +693,7 @@ const M3U = ({
                 disabled={form.submitting}
                 size="sm"
               >
-                Save
+                {playlist?.id ? 'Save' : 'Create'}
               </Button>
             </Flex>
           </Flex>
@@ -672,12 +701,6 @@ const M3U = ({
       </Modal>
       {playlist && (
         <>
-          <M3UProfiles
-            playlist={playlist}
-            isOpen={profileModalOpen}
-            onClose={() => setProfileModalOpen(false)}
-            pendingExpDate={expDate}
-          />
           <M3UGroupFilter
             isOpen={groupFilterModalOpen}
             playlist={playlist}

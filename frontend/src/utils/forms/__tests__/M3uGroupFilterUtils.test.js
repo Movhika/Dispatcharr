@@ -3,6 +3,7 @@ import {
   buildGroupStates,
   prepareCategorySettings,
   saveAndRefreshPlaylist,
+  savePlaylistGroupSettings,
 } from '../M3uGroupFilterUtils.js';
 
 // ── API mock ───────────────────────────────────────────────────────────────────
@@ -56,6 +57,22 @@ const makeCategoryState = (overrides = {}) => ({
 const makeAutoEnableSettings = () => ({ auto_enable: true });
 
 describe('M3uGroupFilterUtils', () => {
+  it('saves selections without triggering Live or VOD refresh', async () => {
+    await savePlaylistGroupSettings(
+      makePlaylist(),
+      [],
+      [],
+      [],
+      makeAutoEnableSettings()
+    );
+    expect(updatePlaylist).toHaveBeenCalled();
+    expect(API.updateM3UGroupSettings).toHaveBeenCalledWith(
+      'playlist-1',
+      [],
+      []
+    );
+    expect(refreshPlaylist).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(updatePlaylist).mockResolvedValue(undefined);
