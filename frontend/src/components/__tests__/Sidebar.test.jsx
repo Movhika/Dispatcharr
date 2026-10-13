@@ -208,7 +208,7 @@ describe('Sidebar', () => {
       const toggleDrawer = vi.fn();
       renderSidebar({ toggleDrawer });
 
-      const brand = screen.getByText('Dispatcharr').closest('div');
+      const brand = screen.getByRole('button', { name: 'Collapse sidebar' });
       fireEvent.click(brand);
 
       expect(toggleDrawer).toHaveBeenCalledTimes(1);
@@ -220,8 +220,11 @@ describe('Sidebar', () => {
       renderSidebar();
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
-      expect(screen.getByText('M3U & EPG Manager')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
+      expect(screen.getByText('Sources')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Sources'));
+      expect(screen.getByText('M3U Accounts')).toBeInTheDocument();
+      expect(screen.getByText('EPG Sources')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
       expect(screen.getByText('DVR')).toBeInTheDocument();
       expect(screen.getByText('Stats')).toBeInTheDocument();
@@ -289,7 +292,7 @@ describe('Sidebar', () => {
       renderSidebar();
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
       expect(screen.getByText('Settings')).toBeInTheDocument();
       // DVR view and VOD default on for standard users with no custom_properties.
@@ -353,7 +356,7 @@ describe('Sidebar', () => {
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
       expect(screen.queryByText('DVR')).not.toBeInTheDocument();
     });
   });
@@ -383,7 +386,7 @@ describe('Sidebar', () => {
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
-      expect(screen.queryByText('VODs')).not.toBeInTheDocument();
+      expect(screen.queryByText('Library')).not.toBeInTheDocument();
     });
   });
 

@@ -198,7 +198,7 @@ describe('navigation config', () => {
       expect(resultIds.indexOf('vods')).toBeGreaterThan(
         resultIds.indexOf('channels')
       );
-      expect(resultIds.indexOf('vods')).toBeLessThan(
+      expect(resultIds.indexOf('vods')).toBeGreaterThan(
         resultIds.indexOf('guide')
       );
     });
@@ -215,9 +215,9 @@ describe('navigation config', () => {
       });
       expect(result.map((item) => item.id)).toEqual([
         'channels',
-        'vods',
         'guide',
         'dvr',
+        'vods',
         'settings',
       ]);
     });
