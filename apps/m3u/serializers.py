@@ -1,7 +1,7 @@
 from core.utils import validate_flexible_url, ensure_custom_properties_dict
 from rest_framework import serializers, status
 from rest_framework.response import Response
-from .models import M3UAccount, M3UFilter, ServerGroup, M3UAccountProfile
+from .models import M3UAccount, M3UFilter, M3UGroupRule, ServerGroup, M3UAccountProfile
 from .utils import parse_m3u_hash_keys
 from core.models import UserAgent
 from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
@@ -28,6 +28,114 @@ class M3UFilterSerializer(serializers.ModelSerializer):
             "order",
             "custom_properties",
         ]
+
+    def validate_regex_pattern(self, value):
+        import regex
+
+        if not value.strip():
+            raise serializers.ValidationError("Enter a regular expression.")
+        try:
+            regex.compile(value)
+        except regex.error as exc:
+            raise serializers.ValidationError(
+                f"Invalid regular expression: {exc}"
+            ) from exc
+        return value
+
+    def validate_custom_properties(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be an object.")
+        if "case_sensitive" in value and not isinstance(value["case_sensitive"], bool):
+            raise serializers.ValidationError("case_sensitive must be a boolean.")
+        return value
+
+
+class M3UGroupRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = M3UGroupRule
+        fields = [
+            "id",
+            "scope",
+            "match_field",
+            "match_mode",
+            "regex_pattern",
+            "action",
+            "case_sensitive",
+            "enabled",
+            "order",
+        ]
+
+    validate_regex_pattern = M3UFilterSerializer.validate_regex_pattern
+
+
+class M3UFilterPreviewRowSerializer(M3UFilterSerializer):
+    preview_id = serializers.CharField(max_length=128)
+
+    class Meta(M3UFilterSerializer.Meta):
+        fields = M3UFilterSerializer.Meta.fields + ["preview_id"]
+
+
+class M3UGroupRulePreviewRowSerializer(M3UGroupRuleSerializer):
+    preview_id = serializers.CharField(max_length=128)
+
+    class Meta(M3UGroupRuleSerializer.Meta):
+        fields = M3UGroupRuleSerializer.Meta.fields + ["preview_id"]
+
+
+class M3UFilterPreviewRequestSerializer(serializers.Serializer):
+    target_id = serializers.CharField(max_length=128)
+    rules = M3UFilterPreviewRowSerializer(many=True, allow_empty=False)
+
+
+class M3UGroupRulePreviewRequestSerializer(serializers.Serializer):
+    target_id = serializers.CharField(max_length=128)
+    rules = M3UGroupRulePreviewRowSerializer(many=True, allow_empty=False)
+
+
+class M3URuleOrderSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.IntegerField(min_value=1))
+    positions = serializers.ListField(
+        child=serializers.IntegerField(min_value=0), required=False
+    )
+    scope = serializers.ChoiceField(choices=M3UGroupRule.Scope.choices, required=False)
+
+
+class M3UPreviewResultSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    group = serializers.CharField(required=False)
+    result = serializers.CharField(required=False)
+    relation_id = serializers.IntegerField(required=False)
+    target_id = serializers.IntegerField(required=False)
+    currently_enabled = serializers.BooleanField(required=False)
+    would_enable = serializers.BooleanField(allow_null=True, required=False)
+    action = serializers.CharField(required=False)
+    item_count = serializers.IntegerField(required=False)
+
+
+class M3UGroupContentQuerySerializer(serializers.Serializer):
+    scope = serializers.ChoiceField(choices=M3UGroupRule.Scope.choices)
+    group_id = serializers.IntegerField(min_value=1)
+    search = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class M3UPreviewResponseSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    results = M3UPreviewResultSerializer(many=True)
+    page = serializers.IntegerField()
+    page_size = serializers.IntegerField()
+    inventory_count = serializers.IntegerField(required=False)
+    catalog_complete = serializers.BooleanField(required=False)
+    last_completed_refresh = serializers.DateTimeField(allow_null=True, required=False)
+    refresh_in_progress = serializers.BooleanField(required=False)
+
+
+class M3URuleApplyResponseSerializer(serializers.Serializer):
+    updated = serializers.IntegerField()
+    target_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+    scope = serializers.CharField(required=False)
+    enabled = serializers.BooleanField(required=False)
 
 
 class M3UAccountProfileSerializer(serializers.ModelSerializer):
@@ -477,7 +585,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     def get_filters(self, obj):
         # Sort over the prefetch cache; .order_by() would fire one SELECT
         # per account (viewset prefetches "filters").
-        filters = sorted(obj.filters.all(), key=lambda f: f.order)
+        filters = sorted(obj.filters.all(), key=lambda f: (f.order, f.id))
         return M3UFilterSerializer(filters, many=True).data
 
     def get_earliest_expiration(self, obj):

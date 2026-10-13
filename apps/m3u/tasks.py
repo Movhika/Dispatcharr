@@ -756,15 +756,41 @@ def process_groups(account, groups, scan_start_time=None):
     if scan_start_time is None:
         scan_start_time = timezone.now()
 
+    from .group_rules import account_group_rules, evaluate_group_rules
+
+    existing_names = set(
+        ChannelGroupM3UAccount.objects.filter(
+            m3u_account=account, channel_group__name__in=groups
+        ).values_list("channel_group__name", flat=True)
+    )
+    account_custom_props = ensure_custom_properties_dict(account.custom_properties)
+    auto_enable_new_groups_live = account_custom_props.get(
+        "auto_enable_new_groups_live", True
+    )
+    rules = account_group_rules(account, "live")
+    decisions = {}
+    kept_groups = {}
+    for name, properties in groups.items():
+        if name not in existing_names:
+            decision = evaluate_group_rules(
+                rules,
+                group_name=name,
+                item_names=properties.get("_item_names", []),
+                default_enabled=auto_enable_new_groups_live,
+            )
+            decisions[name] = decision
+            if decision.ignored:
+                continue
+        kept_groups[name] = {
+            key: value for key, value in properties.items() if key != "_item_names"
+        }
+    groups = kept_groups
+
     existing_groups = {
         group.name: group
         for group in ChannelGroup.objects.filter(name__in=groups.keys())
     }
     logger.info(f"Currently {len(existing_groups)} existing groups")
-
-    # Check if we should auto-enable new groups based on account settings
-    account_custom_props = ensure_custom_properties_dict(account.custom_properties)
-    auto_enable_new_groups_live = account_custom_props.get("auto_enable_new_groups_live", True)
 
     # Separate existing groups from groups that need to be created
     existing_group_objs = []
@@ -851,7 +877,7 @@ def process_groups(account, groups, scan_start_time=None):
                     channel_group=group,
                     m3u_account=account,
                     custom_properties=custom_props,
-                    enabled=auto_enable_new_groups_live,
+                    enabled=decisions[group.name].enabled,
                     last_seen=scan_start_time,
                     is_stale=False,
                 )
@@ -1034,14 +1060,13 @@ def _compile_m3u_stream_filters(filter_queryset):
             if (filter_obj.custom_properties or {}).get("case_sensitive", True) is False
             else 0
         )
-        compiled.append((re.compile(filter_obj.regex_pattern, flags), filter_obj))
+        compiled.append((regex.compile(filter_obj.regex_pattern, flags), filter_obj))
     return compiled
 
 
 def _stream_passes_m3u_filters(name, url, group_title, compiled_filters):
     """Return False when the first matching filter excludes the stream."""
     for pattern, filter_obj in compiled_filters:
-        logger.trace("Checking filter pattern %s", pattern.pattern)
         if filter_obj.filter_type == "url":
             target = url
         elif filter_obj.filter_type == "group":
@@ -1049,11 +1074,7 @@ def _stream_passes_m3u_filters(name, url, group_title, compiled_filters):
         else:
             target = name
 
-        if pattern.search(target or ""):
-            logger.debug(
-                "Stream %s - %s matches filter pattern %s",
-                name, url, filter_obj.regex_pattern,
-            )
+        if pattern.search(target or "", timeout=0.1):
             return not filter_obj.exclude
     return True
 
@@ -1313,7 +1334,9 @@ def process_m3u_batch_direct(account_id, batch, groups, hash_keys, compiled_filt
     account = M3UAccount.objects.select_related("user_agent").get(id=account_id)
 
     if compiled_filters is None:
-        compiled_filters = _compile_m3u_stream_filters(account.filters.order_by("order"))
+        compiled_filters = _compile_m3u_stream_filters(
+            account.filters.order_by("order", "id")
+        )
 
     streams_to_create = []
     streams_to_update = []
@@ -1705,6 +1728,9 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
 
     extinf_data = []
     groups = {"Default Group": {}}
+    uses_item_rules = account.group_rules.filter(
+        scope="live", match_field="item_name", enabled=True
+    ).exists()
 
     if account.account_type == M3UAccount.Types.XC:
         # Log detailed information about the account
@@ -1827,6 +1853,20 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
                             groups[cat_name] = {
                                 "xc_id": cat_id,
                             }
+                        if uses_item_rules:
+                            by_category_id = {
+                                str(values.get("xc_id")): values
+                                for values in groups.values()
+                                if values.get("xc_id") is not None
+                            }
+                            for item in xc_client.get_live_streams():
+                                properties = by_category_id.get(
+                                    str(item.get("category_id"))
+                                )
+                                if properties is not None:
+                                    properties.setdefault("_item_names", []).append(
+                                        str(item.get("name") or "")
+                                    )
                     except Exception as e:
                         # Determine if this is an authentication error or category retrieval error
                         error_str = str(e).lower()
@@ -1952,10 +1992,48 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
 
     send_m3u_update(account_id, "processing_groups", 0)
 
-    process_groups(account, groups, scan_start_time)
+    if uses_item_rules and account.account_type != M3UAccount.Types.XC:
+        for stream in extinf_data:
+            name = (stream.get("attributes") or {}).get(
+                "group-title"
+            ) or "Default Group"
+            groups.setdefault(name, {}).setdefault("_item_names", []).append(
+                stream.get("name") or ""
+            )
+    try:
+        process_groups(account, groups, scan_start_time)
+        from .filter_catalog import write_live_filter_catalog
 
-    lock_renewer.stop()
-    release_task_lock("refresh_m3u_account_groups", account_id)
+        if account.account_type != M3UAccount.Types.XC:
+            write_live_filter_catalog(
+                account_id,
+                (
+                    {
+                        "name": stream.get("name") or "",
+                        "attributes": {
+                            "group-title": (stream.get("attributes") or {}).get(
+                                "group-title"
+                            )
+                            or "Default Group",
+                        },
+                    }
+                    for stream in extinf_data
+                ),
+                scope="live-groups",
+            )
+        elif uses_item_rules:
+            write_live_filter_catalog(
+                account_id,
+                (
+                    {"name": item, "attributes": {"group-title": name}}
+                    for name, properties in groups.items()
+                    for item in properties.get("_item_names", ())
+                ),
+                scope="live-groups",
+            )
+    finally:
+        lock_renewer.stop()
+        release_task_lock("refresh_m3u_account_groups", account_id)
 
     if not full_refresh:
         # Use update() instead of save() to avoid triggering signals
@@ -3588,6 +3666,7 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
     streams_unchanged = 0
     streams_stale = 0
     streams_deleted = 0
+    filter_catalog_stage = None
 
     try:
         account = _get_active_m3u_account(account_id)
@@ -3605,7 +3684,7 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         account = _get_active_m3u_account(account_id)
 
         compiled_stream_filters = _compile_m3u_stream_filters(
-            account.filters.order_by("order")
+            account.filters.order_by("order", "id")
         )
         if compiled_stream_filters:
             logger.debug(
@@ -3801,6 +3880,20 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         live_provider_total = len(extinf_data)
 
         if account.account_type == M3UAccount.Types.STADNARD:
+            from .filter_catalog import write_live_filter_catalog
+
+            filter_catalog_stage = write_live_filter_catalog(
+                account_id,
+                (
+                    stream
+                    for stream in extinf_data
+                    if (stream.get("attributes") or {}).get(
+                        "group-title", "Default Group"
+                    )
+                    in existing_groups
+                ),
+                publish=False,
+            )
             logger.debug(
                 f"Processing Standard account ({account_id}) with groups: {existing_groups}"
             )
@@ -3894,6 +3987,11 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
                 )
                 return "Failed to update m3u account, no streams returned from provider"
             else:
+                from .filter_catalog import write_live_filter_catalog
+
+                filter_catalog_stage = write_live_filter_catalog(
+                    account_id, all_xc_streams, publish=False
+                )
                 # Now batch by stream count (like standard M3U processing)
                 batches = [
                     all_xc_streams[i : i + BATCH_SIZE]
@@ -4045,6 +4143,10 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         )
         account.updated_at = timezone.now()
         account.save(update_fields=["status", "last_message", "updated_at"])
+        from .filter_catalog import publish_live_filter_catalog
+
+        publish_live_filter_catalog(account_id, filter_catalog_stage)
+        filter_catalog_stage = None
 
         from apps.m3u.refresh_metrics import record_refresh_metrics
         record_refresh_metrics(
@@ -4119,6 +4221,9 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         raise
     finally:
         # Free large data structures regardless of success or failure
+        from .filter_catalog import discard_live_filter_catalog
+
+        discard_live_filter_catalog(filter_catalog_stage)
         if 'existing_groups' in locals():
             del existing_groups
         if 'extinf_data' in locals():

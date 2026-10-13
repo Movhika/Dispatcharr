@@ -39,6 +39,7 @@ from .serializers import (
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
 from .utils import hash_key_fields
+from .rule_previews import StreamFilterPreviewMixin
 from core.tasks import (
     rehash_streams,
     release_rehash_locks,
@@ -697,7 +698,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             )
 
 
-class M3UFilterViewSet(viewsets.ModelViewSet):
+class M3UFilterViewSet(StreamFilterPreviewMixin, viewsets.ModelViewSet):
     queryset = M3UFilter.objects.all()
     serializer_class = M3UFilterSerializer
 
@@ -705,21 +706,16 @@ class M3UFilterViewSet(viewsets.ModelViewSet):
         return permissions_for_action(self)
 
     def get_queryset(self):
-        m3u_account_id = self.kwargs["account_id"]
-        return M3UFilter.objects.filter(m3u_account_id=m3u_account_id)
+        m3u_account_id = self.kwargs.get("account_id")
+        if m3u_account_id is None:
+            return self.queryset.none()
+        return M3UFilter.objects.filter(m3u_account_id=m3u_account_id).order_by(
+            "order", "id"
+        )
 
     def perform_create(self, serializer):
-        # Get the account ID from the URL
-        account_id = self.kwargs["account_id"]
-
-        # # Get the M3UAccount instance for the account_id
-        # m3u_account = M3UAccount.objects.get(id=account_id)
-
-        # Save the 'm3u_account' in the serializer context
-        serializer.context["m3u_account"] = account_id
-
-        # Perform the actual save
-        serializer.save(m3u_account_id=account_id)
+        account = get_object_or_404(M3UAccount, pk=self.kwargs["account_id"])
+        serializer.save(m3u_account=account)
 
 
 class ServerGroupViewSet(viewsets.ModelViewSet):
