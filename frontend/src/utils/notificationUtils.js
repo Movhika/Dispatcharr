@@ -5,5 +5,9 @@ export function showNotification(notificationObject) {
 }
 
 export function updateNotification(notificationId, notificationObject) {
-  return notifications.update(notificationId, notificationObject);
+  return notifications.update({ ...notificationObject, id: notificationId });
+}
+
+export function hideNotification(notificationId) {
+  return notifications.hide(notificationId);
 }

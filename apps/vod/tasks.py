@@ -18,6 +18,7 @@ from .models import (
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
 )
 from .utils import category_language
+from .refresh_progress import VODRefreshProgress
 from datetime import datetime
 import logging
 import json
@@ -139,9 +140,10 @@ def _refresh_vod_content_impl(account_id):
 
         logger.info(f"Starting batch VOD refresh for account {account.name}")
         start_time = timezone.now()
+        progress = VODRefreshProgress(account_id)
 
         # Send start notification
-        send_m3u_update(account_id, "vod_refresh", 0, status="processing")
+        progress.send("Connecting to provider", 0)
 
         with XtreamCodesClient(
             account.server_url,
@@ -150,6 +152,7 @@ def _refresh_vod_content_impl(account_id):
             account.get_user_agent_string()
         ) as client:
 
+            progress.send("Fetching categories and catalog", 5)
             category_maps = refresh_categories(account.id, client)
             if category_maps is None:
                 message = (
@@ -171,12 +174,22 @@ def _refresh_vod_content_impl(account_id):
 
             # Refresh movies with batch processing (pass scan start time)
             movie_provider_total = refresh_movies(
-                client, account, movie_categories, relations, scan_start_time=start_time
+                client,
+                account,
+                movie_categories,
+                relations,
+                scan_start_time=start_time,
+                progress=progress,
             )
 
             # Refresh series with batch processing (pass scan start time)
             series_provider_total = refresh_series(
-                client, account, series_categories, relations, scan_start_time=start_time
+                client,
+                account,
+                series_categories,
+                relations,
+                scan_start_time=start_time,
+                progress=progress,
             )
 
         # Reconcile language once per account refresh, not per batch. Relations
@@ -184,11 +197,13 @@ def _refresh_vod_content_impl(account_id):
         # process_series_batch). Must run before cleanup_orphaned_vod_content
         # so cleanup's orphan-deletion stays a backstop, not the primary mechanism.
         logger.info(f"Reconciling VOD language identity for account {account.name}")
+        progress.send("Reconciling imported content", 91)
         movie_summary = reconcile_movie_language_identity(account, scan_start_time=start_time)
         series_summary = reconcile_series_language_identity(account, scan_start_time=start_time)
 
         # Cleanup orphaned VOD content after refresh (scoped to this account only)
         logger.info(f"Starting cleanup of orphaned VOD content for account {account.name}")
+        progress.send("Cleaning up stale content", 97)
         cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
         logger.info(f"VOD cleanup completed: {cleanup_result}")
         selected_movies = M3UMovieRelation.objects.filter(
@@ -351,7 +366,9 @@ def refresh_categories(account_id, client=None):
 
     return movies_category_id_map, series_category_id_map
 
-def refresh_movies(client, account, categories_by_provider, relations, scan_start_time=None):
+def refresh_movies(
+    client, account, categories_by_provider, relations, scan_start_time=None, progress=None
+):
     """Refresh movie content using single API call for all movies"""
     logger.info(f"Refreshing movies for account {account.name}")
 
@@ -389,6 +406,8 @@ def refresh_movies(client, account, categories_by_provider, relations, scan_star
 
     # Get all movies in a single API call
     logger.info("Fetching all movies from provider...")
+    if progress:
+        progress.send("Fetching movies", 10)
     all_movies_data = getattr(categories_by_provider, "catalog", None)
     if all_movies_data is None:
         all_movies_data = client.get_vod_streams()
@@ -407,13 +426,26 @@ def refresh_movies(client, account, categories_by_provider, relations, scan_star
 
         logger.info(f"Processing movie chunk {chunk_num}/{total_chunks} ({len(chunk)} movies)")
         process_movie_batch(account, chunk, categories_by_provider, relations, scan_start_time)
+        if progress:
+            processed = i + len(chunk)
+            progress.send(
+                "Processing movies",
+                10 + 45 * processed / total_movies,
+                processed=processed,
+                total=total_movies,
+            )
+
+    if progress and not total_movies:
+        progress.send("Processing movies", 55, processed=0, total=0)
 
     del all_movies_data
     logger.info(f"Completed processing all {total_movies} movies in {total_chunks} chunks")
     return total_movies
 
 
-def refresh_series(client, account, categories_by_provider, relations, scan_start_time=None):
+def refresh_series(
+    client, account, categories_by_provider, relations, scan_start_time=None, progress=None
+):
     """Refresh series content using single API call for all series"""
     logger.info(f"Refreshing series for account {account.name}")
 
@@ -451,6 +483,8 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
 
     # Get all series in a single API call
     logger.info("Fetching all series from provider...")
+    if progress:
+        progress.send("Fetching series", 60)
     all_series_data = getattr(categories_by_provider, "catalog", None)
     if all_series_data is None:
         all_series_data = client.get_series()
@@ -471,6 +505,17 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
 
         logger.info(f"Processing series chunk {chunk_num}/{total_chunks} ({len(chunk)} series)")
         process_series_batch(account, chunk, categories_by_provider, relations, scan_start_time)
+        if progress:
+            processed = i + len(chunk)
+            progress.send(
+                "Processing series",
+                60 + 30 * processed / total_series,
+                processed=processed,
+                total=total_series,
+            )
+
+    if progress and not total_series:
+        progress.send("Processing series", 90, processed=0, total=0)
 
     del all_series_data
     logger.info(f"Completed processing all {total_series} series in {total_chunks} chunks")
