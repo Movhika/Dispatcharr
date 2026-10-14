@@ -57,6 +57,7 @@ import {
   makeHeaderCellRenderer,
   makeSortingChangeHandler,
 } from './tableSortingUtils.jsx';
+import tableClasses from './M3UsTable.module.css';
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
@@ -65,8 +66,8 @@ const resizableColumns = [
   { id: 'server_url', size: 220, minRatio: 0.1 },
   { id: 'status', size: 90, minRatio: 0.055 },
   { id: 'last_message', size: 160, minRatio: 0.1 },
-  { id: 'max_streams', size: 75, minRatio: 0.045 },
-  { id: 'earliest_expiration', size: 95, minRatio: 0.06 },
+  { id: 'max_streams', size: 100, minRatio: 0.045 },
+  { id: 'earliest_expiration', size: 110, minRatio: 0.06 },
   { id: 'updated_at', size: 220, minRatio: 0.14 },
 ];
 
@@ -126,50 +127,68 @@ const RowActions = ({
     tableSize == 'default' ? 'sm' : tableSize == 'compact' ? 'xs' : 'md';
 
   return (
-    <Flex gap={2} wrap="nowrap">
-      <ActionIcon
-        variant="transparent"
-        size={iconSize}
-        color="yellow.5"
-        onClick={() => {
-          editPlaylist(row.original);
-        }}
-      >
-        <SquarePen size={tableSize === 'compact' ? 16 : 18} />
-      </ActionIcon>
-      <ActionIcon
-        variant="transparent"
-        size={iconSize}
-        color="red.9"
-        onClick={() => handleDeletePlaylist(row.original.id)}
-      >
-        <SquareMinus size={tableSize === 'compact' ? 16 : 18} />
-      </ActionIcon>
-      <Tooltip label="Refresh Live TV">
-        <ActionIcon
-          variant="transparent"
-          size={iconSize}
-          color="blue.5"
-          onClick={() => handleRefreshPlaylist(row.original.id)}
-          disabled={!row.original.is_active}
-        >
-          <RefreshCcw size={tableSize === 'compact' ? 16 : 18} />
-        </ActionIcon>
-      </Tooltip>
-      {row.original.account_type === 'XC' && (
-        <Tooltip label="Refresh VOD">
+    <Paper
+      className={tableClasses.controls}
+      withBorder
+      px={4}
+      py={4}
+      radius="md"
+      role="group"
+      aria-label={`Actions for ${row.original.name}`}
+    >
+      <Flex gap={2} wrap="nowrap">
+        <Tooltip label="Edit account">
           <ActionIcon
+            aria-label={`Edit ${row.original.name}`}
+            variant="transparent"
+            size={iconSize}
+            color="yellow.5"
+            onClick={() => {
+              editPlaylist(row.original);
+            }}
+          >
+            <SquarePen size={tableSize === 'compact' ? 16 : 18} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Delete account">
+          <ActionIcon
+            aria-label={`Delete ${row.original.name}`}
+            variant="transparent"
+            size={iconSize}
+            color="red.9"
+            onClick={() => handleDeletePlaylist(row.original.id)}
+          >
+            <SquareMinus size={tableSize === 'compact' ? 16 : 18} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Refresh Live TV">
+          <ActionIcon
+            aria-label={`Refresh Live TV for ${row.original.name}`}
             variant="transparent"
             size={iconSize}
             color="blue.5"
-            onClick={() => handleRefreshVOD(row.original.id)}
-            disabled={!row.original.is_active || !row.original.enable_vod}
+            onClick={() => handleRefreshPlaylist(row.original.id)}
+            disabled={!row.original.is_active}
           >
-            <Film size={tableSize === 'compact' ? 16 : 18} />
+            <RefreshCcw size={tableSize === 'compact' ? 16 : 18} />
           </ActionIcon>
         </Tooltip>
-      )}
-    </Flex>
+        {row.original.account_type === 'XC' && (
+          <Tooltip label="Refresh VOD">
+            <ActionIcon
+              aria-label={`Refresh VOD for ${row.original.name}`}
+              variant="transparent"
+              size={iconSize}
+              color="blue.5"
+              onClick={() => handleRefreshVOD(row.original.id)}
+              disabled={!row.original.is_active || !row.original.enable_vod}
+            >
+              <Film size={tableSize === 'compact' ? 16 : 18} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </Flex>
+    </Paper>
   );
 };
 
@@ -445,7 +464,7 @@ const M3UTable = () => {
               : [['Live TV', live]];
           return (
             <Box>
-              <Text size="sm" title={cell.getValue()}>
+              <Text size="sm" fw={600} title={cell.getValue()}>
                 {cell.getValue()}
               </Text>
               <Tooltip label="Provider entries / imported entries from the last successful refresh">
@@ -546,12 +565,7 @@ const M3UTable = () => {
                   <Tooltip label="Duration of the last successful Live TV and VOD refresh; — means no duration has been recorded yet">
                     <Box>
                       {refreshKinds(data).map(([kind, label]) => (
-                        <Text
-                          key={kind}
-                          size="xs"
-                          c="dimmed"
-                          style={{ whiteSpace: 'nowrap' }}
-                        >
+                        <Text key={kind} size="xs" c="dimmed">
                           {label}:{' '}
                           {formatRefreshDuration(timings[`${kind}_seconds`])}
                         </Text>
@@ -773,19 +787,30 @@ const M3UTable = () => {
         },
       },
       {
-        header: 'Active',
+        header: 'Enabled',
         accessorKey: 'is_active',
-        size: 50,
+        size: tableSize === 'compact' ? 100 : 110,
         enableResizing: false,
         cell: ({ cell, row }) => {
           return (
-            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Paper
+              className={tableClasses.controls}
+              withBorder
+              px={4}
+              py={4}
+              radius="md"
+              role="group"
+              aria-label={`Enabled state for ${row.original.name}`}
+            >
               <Switch
                 size="xs"
+                label="Enabled"
+                aria-label={`Enable ${row.original.name}`}
+                styles={{ label: { fontSize: 'var(--mantine-font-size-xs)' } }}
                 checked={cell.getValue()}
                 onChange={() => toggleActive(row.original)}
               />
-            </Box>
+            </Paper>
           );
         },
       },
@@ -793,7 +818,7 @@ const M3UTable = () => {
         id: 'actions',
         header: 'Actions',
         size:
-          tableSize === 'compact' ? 100 : tableSize === 'default' ? 120 : 150,
+          tableSize === 'compact' ? 110 : tableSize === 'default' ? 130 : 160,
         enableResizing: false,
       },
     ],
@@ -867,11 +892,18 @@ const M3UTable = () => {
     }
   }, [editPlaylistId, processedData, playlists, setEditPlaylistId]);
 
-  const onSortingChange = makeSortingChangeHandler(sorting, setSorting, (col, desc) =>
-    setData(getSortedPlaylists(playlists, col, desc))
+  const onSortingChange = makeSortingChangeHandler(
+    sorting,
+    setSorting,
+    (col, desc) => setData(getSortedPlaylists(playlists, col, desc))
   );
 
-  const renderHeaderCell = makeHeaderCellRenderer(sorting, onSortingChange);
+  const renderSortedHeader = makeHeaderCellRenderer(sorting, onSortingChange);
+  const renderHeaderCell = (header) => (
+    <Box className={tableClasses.header} title={header.column.columnDef.header}>
+      {renderSortedHeader(header)}
+    </Box>
+  );
 
   const renderBodyCell = ({ cell, row }) => {
     switch (cell.column.id) {
@@ -923,6 +955,7 @@ const M3UTable = () => {
     setColumnSizing,
     pairedColumnSizing: resizableColumns,
     tableId: 'm3u-accounts',
+    getRowStyles: (row) => (row.original.is_active ? {} : { opacity: 0.65 }),
     onResetColumnSizing: () => setColumnSizing({}),
     manualSorting: true,
     rowVirtualizerInstanceRef, //optional
@@ -967,7 +1000,13 @@ const M3UTable = () => {
 
   return (
     <Box
-      style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}
+      className={tableClasses.table}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        height: '100%',
+      }}
     >
       <Flex
         style={{

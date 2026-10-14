@@ -129,13 +129,37 @@ vi.mock('../CustomTable', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  ActionIcon: ({ children, onClick, disabled, color }) => (
-    <button data-testid="action-icon" data-color={color} onClick={onClick} disabled={disabled}>
+  ActionIcon: ({
+    children,
+    onClick,
+    disabled,
+    color,
+    'aria-label': ariaLabel,
+  }) => (
+    <button
+      aria-label={ariaLabel}
+      data-testid="action-icon"
+      data-color={color}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   ),
-  Box: ({ children, style }) => <div style={style}>{children}</div>,
-  Button: ({ children, onClick, leftSection, disabled, loading, variant, color }) => (
+  Box: ({ children, style, title, className }) => (
+    <div title={title} className={className} style={style}>
+      {children}
+    </div>
+  ),
+  Button: ({
+    children,
+    onClick,
+    leftSection,
+    disabled,
+    loading,
+    variant,
+    color,
+  }) => (
     <button
       data-testid="button"
       data-variant={variant}
@@ -159,11 +183,16 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   MenuTarget: ({ children }) => <div>{children}</div>,
-  Paper: ({ children, style }) => <div style={style}>{children}</div>,
-  Switch: ({ checked, onChange }) => (
+  Paper: ({ children, style, role, 'aria-label': ariaLabel }) => (
+    <div role={role} aria-label={ariaLabel} style={style}>
+      {children}
+    </div>
+  ),
+  Switch: ({ checked, onChange, 'aria-label': ariaLabel }) => (
     <input
       data-testid="active-switch"
       type="checkbox"
+      aria-label={ariaLabel}
       checked={checked ?? false}
       onChange={onChange}
     />
@@ -691,6 +720,33 @@ describe('M3UTable', () => {
   // ── Toggle active ──────────────────────────────────────────────────────────
 
   describe('toggle active', () => {
+    it('separates the Enabled block from the action block without disabling reactivation', () => {
+      const playlist = makePlaylist({ is_active: false });
+      setupMocks({ playlists: [playlist] });
+      render(<M3UTable />);
+      const { row, cell } = makeRowCtx(playlist);
+      render(
+        <>
+          {getCol('is_active').cell({ cell: { getValue: () => false }, row })}
+          {capturedTableOptions.bodyCellRenderFns.actions({ cell, row })}
+        </>
+      );
+      expect(
+        screen.getByRole('group', {
+          name: `Enabled state for ${playlist.name}`,
+        })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('group', { name: `Actions for ${playlist.name}` })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('checkbox', { name: `Enable ${playlist.name}` })
+      ).toBeEnabled();
+      expect(
+        screen.getByRole('button', { name: `Edit ${playlist.name}` })
+      ).toBeEnabled();
+      expect(capturedTableOptions.getRowStyles(row)).toEqual({ opacity: 0.65 });
+    });
     const renderSwitch = (playlist) => {
       const col = getCol('is_active');
       return col.cell({
@@ -1467,6 +1523,17 @@ describe('M3UTable', () => {
   // ── Table structure (useTable options) ────────────────────────────────────
 
   describe('table structure', () => {
+    it('keeps full header names available when narrow columns truncate them', () => {
+      setupMocks();
+      render(<M3UTable />);
+      render(
+        capturedTableOptions.headerCellRenderFns.earliest_expiration({
+          id: 'earliest_expiration',
+          column: { columnDef: getCol('earliest_expiration') },
+        })
+      );
+      expect(screen.getByTitle('Expiration')).toHaveTextContent('Expiration');
+    });
     it('fits the container with paired ratios and ignores legacy widths for fixed controls', () => {
       setupMocks({
         columnSizing: { name: 400, actions: 800, account_type: 700 },
@@ -1547,7 +1614,7 @@ describe('M3UTable', () => {
       const actionsCol = capturedTableOptions.columns.find(
         (c) => c.id === 'actions'
       );
-      expect(actionsCol.size).toBe(100);
+      expect(actionsCol.size).toBe(110);
     });
 
     it('actions column leaves room for all four buttons in default mode', () => {
@@ -1556,7 +1623,7 @@ describe('M3UTable', () => {
       const actionsCol = capturedTableOptions.columns.find(
         (c) => c.id === 'actions'
       );
-      expect(actionsCol.size).toBe(120);
+      expect(actionsCol.size).toBe(130);
     });
   });
 
