@@ -49,7 +49,11 @@
 }
 
 .accountContent {
-  --modal-size: 75vw;
+  --modal-size: 68vw;
+}
+
+.accountContent.accountContent {
+  --modal-content-height: 80dvh;
 }
 
 @media (max-width: 50em) {

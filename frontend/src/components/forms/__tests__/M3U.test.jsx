@@ -660,7 +660,7 @@ describe('M3U', () => {
         screen.queryByRole('button', { name: 'Filters' })
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Groups & filters' })
+        screen.getByRole('button', { name: 'Categories' })
       ).toBeInTheDocument();
     });
 
@@ -992,7 +992,9 @@ describe('M3U', () => {
         screen.getByRole('spinbutton', { name: 'VOD Priority' })
       ).toHaveValue(15);
       expect(
-        screen.getByRole('switch', { name: 'Separate VOD refresh schedule' })
+        screen.getByRole('switch', {
+          name: 'Enable separate VOD refresh schedule',
+        })
       ).toBeDisabled();
     });
     it('renders the ScheduleInput', () => {
@@ -1012,7 +1014,11 @@ describe('M3U', () => {
       );
 
       expect(screen.getAllByTestId('schedule-input')).toHaveLength(1);
-      fireEvent.click(screen.getByRole('switch', { name: 'Separate VOD refresh schedule' }));
+      fireEvent.click(
+        screen.getByRole('switch', {
+          name: 'Enable separate VOD refresh schedule',
+        })
+      );
       expect(screen.getAllByTestId('schedule-input')).toHaveLength(2);
     });
   });
@@ -1028,7 +1034,7 @@ describe('M3U', () => {
         'data-close-on-escape',
         'true'
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Groups & filters' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Categories' }));
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-close-on-escape',
         'false'
@@ -1040,7 +1046,7 @@ describe('M3U', () => {
       );
       expect(onClose).not.toHaveBeenCalled();
     });
-    it('keeps only Groups & filters and Save in the fixed footer', () => {
+    it('keeps only Categories and Save in the fixed footer', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       const footer = screen.getByRole('contentinfo', {
@@ -1048,7 +1054,7 @@ describe('M3U', () => {
       });
       expect(footer).toHaveClass(editorClasses.footer);
       expect(
-        within(footer).getByRole('button', { name: 'Groups & filters' })
+        within(footer).getByRole('button', { name: 'Categories' })
       ).toBeInTheDocument();
       expect(
         within(footer).getByRole('button', { name: 'Save' })
@@ -1087,7 +1093,7 @@ describe('M3U', () => {
           })}
         />
       );
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '75vw');
+      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '68vw');
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-content-class',
         `${editorClasses.content} ${editorClasses.accountContent}`
@@ -1118,7 +1124,7 @@ describe('M3U', () => {
         vodSchedule.getByLabelText('VOD refresh interval (hours)')
       ).toBeInTheDocument();
       expect(
-        vod.getByRole('switch', { name: 'Enable VOD Scanning' })
+        vod.getByRole('switch', { name: 'Enable VOD' })
       ).toBeInTheDocument();
       expect(
         vod.queryByLabelText('Live TV refresh interval (hours)')
@@ -1149,9 +1155,7 @@ describe('M3U', () => {
           })}
         />
       );
-      expect(
-        screen.getByRole('switch', { name: 'Enable VOD Scanning' })
-      ).toBeDisabled();
+      expect(screen.getByRole('switch', { name: 'Enable VOD' })).toBeDisabled();
       expect(
         screen.getByText(
           'VOD scanning is available for Xtream Codes accounts only.'
@@ -1165,9 +1169,7 @@ describe('M3U', () => {
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
         target: { value: 'STD' },
       });
-      expect(
-        screen.getByRole('switch', { name: 'Enable VOD Scanning' })
-      ).toBeDisabled();
+      expect(screen.getByRole('switch', { name: 'Enable VOD' })).toBeDisabled();
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
         target: { value: 'XC' },
       });

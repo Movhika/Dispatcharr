@@ -334,7 +334,7 @@ const M3U = ({
   return (
     <>
       <Modal
-        size="75vw"
+        size="68vw"
         opened={isOpen}
         onClose={close}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
@@ -492,7 +492,7 @@ const M3U = ({
                       name="max_streams"
                       label={helpLabel(
                         'Max Streams',
-                        'Maximum number of concurrent streams. 0 means unlimited.'
+                        'Maximum concurrent streams for the default connection profile. Use 0 for unlimited.'
                       )}
                       aria-label="Max Streams"
                       placeholder="0 = Unlimited"
@@ -505,7 +505,7 @@ const M3U = ({
                       name="server_group"
                       label={helpLabel(
                         'Server Group',
-                        'Share login limits across accounts in a server group. Set max streams on each connection profile; unlimited profiles skip group enforcement.'
+                        'Link M3U and XC accounts that belong to the same provider subscription so connection limits are tracked across all imported sources. Matching effective logins share the same counter; unlimited profiles are not restricted.'
                       )}
                       aria-label="Server Group"
                       key={form.key('server_group')}
@@ -642,18 +642,28 @@ const M3U = ({
                   >
                     <Group justify="space-between">
                       <Text fw={600}>VOD</Text>
-                      <Switch
-                        id="enable_vod"
-                        name="enable_vod"
-                        label="Enable VOD Scanning"
-                        disabled={accountType !== 'XC'}
-                        checked={accountType === 'XC' && vodEnabled}
-                        onChange={(event) => {
-                          const enabled = event.currentTarget.checked;
-                          setVodEnabled(enabled);
-                          form.setFieldValue('enable_vod', enabled);
-                        }}
-                      />
+                      <Tooltip
+                        label="Import movies and series from this Xtream Codes account."
+                        multiline
+                        maw={320}
+                        withArrow
+                      >
+                        <Paper withBorder px="xs" py={6} radius="md">
+                          <Switch
+                            id="enable_vod"
+                            name="enable_vod"
+                            label="Enabled"
+                            aria-label="Enable VOD"
+                            disabled={accountType !== 'XC'}
+                            checked={accountType === 'XC' && vodEnabled}
+                            onChange={(event) => {
+                              const enabled = event.currentTarget.checked;
+                              setVodEnabled(enabled);
+                              form.setFieldValue('enable_vod', enabled);
+                            }}
+                          />
+                        </Paper>
+                      </Tooltip>
                     </Group>
                     {accountType === 'XC' ? (
                       <NumberInput
@@ -721,19 +731,31 @@ const M3U = ({
                   >
                     <Group justify="space-between">
                       <Text fw={600}>VOD refresh schedule</Text>
-                      <Switch
-                        label="Separate VOD refresh schedule"
-                        disabled={accountType !== 'XC' || !vodEnabled}
-                        checked={accountType === 'XC' && !vodRefreshAfterLive}
-                        onChange={(event) => {
-                          const afterLive = !event.currentTarget.checked;
-                          setVodRefreshAfterLive(afterLive);
-                          form.setFieldValue(
-                            'vod_refresh_after_live',
-                            afterLive
-                          );
-                        }}
-                      />
+                      <Tooltip
+                        label="When disabled, VOD refresh runs after a successful scheduled Live TV refresh."
+                        multiline
+                        maw={320}
+                        withArrow
+                      >
+                        <Paper withBorder px="xs" py={6} radius="md">
+                          <Switch
+                            label="Enabled"
+                            aria-label="Enable separate VOD refresh schedule"
+                            disabled={accountType !== 'XC' || !vodEnabled}
+                            checked={
+                              accountType === 'XC' && !vodRefreshAfterLive
+                            }
+                            onChange={(event) => {
+                              const afterLive = !event.currentTarget.checked;
+                              setVodRefreshAfterLive(afterLive);
+                              form.setFieldValue(
+                                'vod_refresh_after_live',
+                                afterLive
+                              );
+                            }}
+                          />
+                        </Paper>
+                      </Tooltip>
                     </Group>
                     {accountType === 'XC' && vodEnabled ? (
                       !vodRefreshAfterLive ? (
@@ -826,7 +848,7 @@ const M3U = ({
                       setGroupFilterModalOpen(true);
                     }}
                   >
-                    Groups &amp; filters
+                    Categories
                   </Button>
                 </>
               )}
