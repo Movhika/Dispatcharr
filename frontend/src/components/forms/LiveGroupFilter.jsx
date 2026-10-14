@@ -18,6 +18,7 @@ import {
   Loader,
   Group,
   Modal,
+  Paper,
   SegmentedControl,
   ScrollArea,
   Select,
@@ -62,7 +63,6 @@ const EMPTY_OVERLAPS = Object.freeze([]);
 const EMPTY_BULK_SETTINGS = Object.freeze({
   enabled: 'keep',
   autoSync: 'keep',
-  numberingMode: 'keep',
   orphanCleanup: 'keep',
 });
 
@@ -808,9 +808,6 @@ const LiveGroupFilter = ({
             );
           }
         }
-        if (bulkSettings.numberingMode !== 'keep')
-          next.custom_properties.channel_numbering_mode =
-            bulkSettings.numberingMode;
         if (bulkSettings.orphanCleanup !== 'keep')
           next.custom_properties.orphan_channel_cleanup =
             bulkSettings.orphanCleanup;
@@ -1040,73 +1037,74 @@ const LiveGroupFilter = ({
       <Modal
         opened={bulkEditorOpen}
         onClose={closeBulkEditor}
-        title={`Edit settings for ${selectedGroupIds.size} categories`}
+        title={`Edit settings for ${selectedGroupIds.size} ${selectedGroupIds.size === 1 ? 'category' : 'categories'}`}
       >
-        <Stack>
+        <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            Keep unchanged preserves each group's settings. Apply changes the
-            draft; Save persists it.
+            Keep unchanged preserves each category's setting. Apply updates the
+            selection below; use Save in Categories to persist the changes.
           </Text>
-          <Select
-            label="Enabled"
-            value={bulkSettings.enabled}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                enabled: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'enabled', label: 'Enabled' },
-              { value: 'disabled', label: 'Disabled' },
-            ]}
-          />
-          <Select
-            label="Auto sync"
-            value={bulkSettings.autoSync}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                autoSync: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'enabled', label: 'Enabled' },
-              { value: 'disabled', label: 'Disabled' },
-            ]}
-          />
-          <Select
-            label="Numbering mode"
-            value={bulkSettings.numberingMode}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                numberingMode: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              ...NUMBERING_MODE_OPTIONS,
-            ]}
-          />
-          <Select
-            label="Auto-sync orphan cleanup"
-            value={bulkSettings.orphanCleanup}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                orphanCleanup: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'always', label: 'Always remove' },
-              { value: 'preserve_customized', label: 'Preserve customized' },
-              { value: 'never', label: 'Never remove' },
-            ]}
-          />
+          <Paper withBorder p="sm">
+            <Stack gap="xs" role="group" aria-label="Category status settings">
+              <Select
+                label="Status"
+                value={bulkSettings.enabled}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    enabled: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'enabled', label: 'Enabled' },
+                  { value: 'disabled', label: 'Disabled' },
+                ]}
+              />
+            </Stack>
+          </Paper>
+          <Paper withBorder p="sm">
+            <Stack gap="xs" role="group" aria-label="Channel sync settings">
+              <Text fw={600}>Channel sync</Text>
+              <Select
+                label="Auto sync"
+                value={bulkSettings.autoSync}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    autoSync: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'enabled', label: 'Enabled' },
+                  { value: 'disabled', label: 'Disabled' },
+                ]}
+              />
+              <Select
+                label="Auto-sync orphan cleanup"
+                value={bulkSettings.orphanCleanup}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    orphanCleanup: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'always', label: 'Always remove' },
+                  {
+                    value: 'preserve_customized',
+                    label: 'Preserve customized',
+                  },
+                  { value: 'never', label: 'Never remove' },
+                ]}
+              />
+              <Text size="xs" c="dimmed">
+                Numbering and channel ranges remain configured per category.
+              </Text>
+            </Stack>
+          </Paper>
           <Group justify="flex-end">
             <Button variant="default" onClick={closeBulkEditor}>
               Cancel
@@ -1115,7 +1113,7 @@ const LiveGroupFilter = ({
               onClick={applyBulkSettings}
               disabled={!selectedGroupIds.size}
             >
-              Apply
+              Apply to selected
             </Button>
           </Group>
         </Stack>

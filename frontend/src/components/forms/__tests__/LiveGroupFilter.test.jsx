@@ -184,6 +184,7 @@ vi.mock('@mantine/core', async () => ({
   ),
   Alert: ({ children }) => <div data-testid="alert">{children}</div>,
   Box: ({ children, style }) => <div style={style}>{children}</div>,
+  Paper: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, disabled, variant, color }) => (
     <button
       onClick={onClick}
@@ -774,21 +775,32 @@ describe('LiveGroupFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 categories',
+        name: 'Edit settings for 1 category',
       });
-      fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
-        target: { value: 'provider' },
-      });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
       expect(
-        within(screen.getByText('Sports').closest('tr')).getByText('Provider')
+        within(dialog).queryByLabelText('Numbering mode')
+      ).not.toBeInTheDocument();
+      fireEvent.change(within(dialog).getByLabelText('Status'), {
+        target: { value: 'disabled' },
+      });
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Apply to selected' })
+      );
+      expect(
+        within(screen.getByText('Sports').closest('tr')).getByText('Fixed')
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByText('Sports').closest('tr')).getByText('Disabled')
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByText('News').closest('tr')).getByText('Enabled')
       ).toBeInTheDocument();
       expect(
         within(screen.getByText('News').closest('tr')).getByText('Fixed')
       ).toBeInTheDocument();
       expect(
         screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
-      ).toBeChecked();
+      ).toBeDisabled();
     });
 
     it('canceling a bulk edit leaves group settings unchanged', () => {
@@ -796,10 +808,10 @@ describe('LiveGroupFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 categories',
+        name: 'Edit settings for 1 category',
       });
-      fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
-        target: { value: 'provider' },
+      fireEvent.change(within(dialog).getByLabelText('Status'), {
+        target: { value: 'disabled' },
       });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
       expect(

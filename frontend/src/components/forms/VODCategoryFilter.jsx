@@ -6,6 +6,7 @@ import {
   Flex,
   Group,
   Modal,
+  Paper,
   Stack,
   ActionIcon,
   Badge,
@@ -561,58 +562,67 @@ const VODCategoryFilter = ({
       <Modal
         opened={bulkEditorOpen}
         onClose={closeBulkEditor}
-        title={`Edit settings for ${selectedCategoryIds.size} categories`}
+        title={`Edit settings for ${selectedCategoryIds.size} ${selectedCategoryIds.size === 1 ? 'category' : 'categories'}`}
       >
-        <Stack>
+        <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            Keep unchanged preserves each category's settings. Apply changes the
-            draft; Save persists it.
+            Keep unchanged preserves each category's setting. Apply updates the
+            selection below; use Save in Categories to persist the changes.
           </Text>
-          <Select
-            label="Enabled"
-            value={bulkSettings.enabled}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                enabled: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'enabled', label: 'Enabled' },
-              { value: 'disabled', label: 'Disabled' },
-            ]}
-          />
-          <Select
-            label="Language"
-            value={bulkSettings.language}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                language: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'clear', label: 'Clear' },
-              ...VOD_CATEGORY_LANGUAGES,
-            ]}
-          />
-          <Select
-            label="Quality"
-            value={bulkSettings.quality}
-            onChange={(value) =>
-              setBulkSettings((current) => ({
-                ...current,
-                quality: value || 'keep',
-              }))
-            }
-            data={[
-              { value: 'keep', label: 'Keep unchanged' },
-              { value: 'clear', label: 'Clear' },
-              ...QUALITY_OPTIONS,
-            ]}
-          />
+          <Paper withBorder p="sm">
+            <Stack gap="xs" role="group" aria-label="Category status settings">
+              <Select
+                label="Status"
+                value={bulkSettings.enabled}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    enabled: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'enabled', label: 'Enabled' },
+                  { value: 'disabled', label: 'Disabled' },
+                ]}
+              />
+            </Stack>
+          </Paper>
+          <Paper withBorder p="sm">
+            <Stack gap="xs" role="group" aria-label="Category content settings">
+              <Text fw={600}>Content</Text>
+              <Select
+                label="Language"
+                value={bulkSettings.language}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    language: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'clear', label: 'Clear' },
+                  ...VOD_CATEGORY_LANGUAGES,
+                ]}
+              />
+              <Select
+                label="Quality"
+                value={bulkSettings.quality}
+                onChange={(value) =>
+                  setBulkSettings((current) => ({
+                    ...current,
+                    quality: value || 'keep',
+                  }))
+                }
+                data={[
+                  { value: 'keep', label: 'Keep unchanged' },
+                  { value: 'clear', label: 'Clear' },
+                  ...QUALITY_OPTIONS,
+                ]}
+              />
+            </Stack>
+          </Paper>
           <Group justify="flex-end">
             <Button variant="default" onClick={closeBulkEditor}>
               Cancel
@@ -621,7 +631,7 @@ const VODCategoryFilter = ({
               onClick={applyBulkSettings}
               disabled={!selectedCategoryIds.size}
             >
-              Apply
+              Apply to selected
             </Button>
           </Group>
         </Stack>

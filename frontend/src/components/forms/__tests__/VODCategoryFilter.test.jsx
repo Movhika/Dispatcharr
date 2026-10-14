@@ -42,6 +42,7 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Box: ({ children }) => <div>{children}</div>,
+  Paper: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, disabled, color, variant }) => (
     <button
       onClick={onClick}
@@ -517,12 +518,14 @@ describe('VODCategoryFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Action' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 categories',
+        name: 'Edit settings for 1 category',
       });
       fireEvent.change(within(dialog).getByLabelText('Language'), {
         target: { value: 'de' },
       });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Apply to selected' })
+      );
       const next = latestCategoryStates(setCategoryStates, categoryStates);
       expect(next[0].custom_properties).toEqual({
         language: 'de',
@@ -540,7 +543,7 @@ describe('VODCategoryFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Action' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 categories',
+        name: 'Edit settings for 1 category',
       });
       fireEvent.change(within(dialog).getByLabelText('Quality'), {
         target: { value: 'clear' },

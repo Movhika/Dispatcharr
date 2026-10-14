@@ -84,6 +84,42 @@ function Categories({ vod = false, previewAvailableIds }) {
 
 describe('Category selection with Mantine controls', () => {
   it.each([false, true])(
+    'groups bulk settings and omits numbering (VOD=%s)',
+    async (vod) => {
+      render(
+        <MantineProvider>
+          <Categories vod={vod} />
+        </MantineProvider>
+      );
+      fireEvent.click(
+        await screen.findByRole('checkbox', { name: 'Select Category 01' })
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit settings (1)' })
+      );
+      const dialog = await screen.findByRole('dialog', {
+        name: 'Edit settings for 1 category',
+      });
+      expect(
+        within(dialog).getByRole('group', { name: 'Category status settings' })
+      ).toContainElement(within(dialog).getByLabelText('Status'));
+      expect(
+        within(dialog).queryByLabelText('Numbering mode')
+      ).not.toBeInTheDocument();
+      expect(
+        within(dialog).getByRole('group', {
+          name: vod ? 'Category content settings' : 'Channel sync settings',
+        })
+      ).toBeInTheDocument();
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Apply to selected' })
+      );
+      expect(
+        screen.getByRole('checkbox', { name: 'Select Category 01' })
+      ).toBeChecked();
+    }
+  );
+  it.each([false, true])(
     'disables preview only for categories without imported content (VOD=%s)',
     async (vod) => {
       render(
