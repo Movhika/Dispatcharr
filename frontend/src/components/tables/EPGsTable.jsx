@@ -226,6 +226,10 @@ const EPGsTable = () => {
     ALL_SOURCE_TYPES,
     { storage: 'session' }
   );
+  const [columnSizing, setColumnSizing] = useBrowserStorage(
+    'epg-table-column-sizing',
+    {}
+  );
   const isWarningSuppressed = useWarningsStore((s) => s.isWarningSuppressed);
   const suppressWarning = useWarningsStore((s) => s.suppressWarning);
 
@@ -516,6 +520,8 @@ const EPGsTable = () => {
     enablePagination: false,
     enableRowSelection: false,
     renderTopToolbar: false,
+    columnSizing,
+    setColumnSizing,
     manualSorting: true,
     bodyCellRenderFns: {
       actions: renderBodyCell,

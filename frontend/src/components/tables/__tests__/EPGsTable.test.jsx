@@ -285,6 +285,7 @@ const setupMocks = ({
   suppressWarning = vi.fn(),
   tableSize = 'default',
   typeFilter = ['xmltv', 'schedules_direct', 'dummy'],
+  columnSizing = {},
 } = {}) => {
   vi.mocked(useEPGsStore).mockImplementation((sel) =>
     sel({ epgs, refreshProgress })
@@ -295,9 +296,12 @@ const setupMocks = ({
   );
 
   const mockSetTypeFilter = vi.fn();
+  const mockSetColumnSizing = vi.fn();
   vi.mocked(useBrowserStorage).mockImplementation((key, defaultValue) => {
     if (key === 'table-size') return [tableSize, vi.fn()];
     if (key === 'epg-table-type-filter') return [typeFilter, mockSetTypeFilter];
+    if (key === 'epg-table-column-sizing')
+      return [columnSizing, mockSetColumnSizing];
     return [defaultValue, vi.fn()];
   });
 
@@ -312,7 +316,7 @@ const setupMocks = ({
     };
   });
 
-  return { mockSetTypeFilter };
+  return { mockSetTypeFilter, mockSetColumnSizing };
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1319,6 +1323,19 @@ describe('EPGsTable', () => {
   // ── Table structure ────────────────────────────────────────────────────────
 
   describe('table structure', () => {
+    it('restores column widths and passes the persistence setter to the table', () => {
+      const columnSizing = { name: 280 };
+      const { mockSetColumnSizing } = setupMocks({ columnSizing });
+      render(<EPGsTable />);
+      expect(useBrowserStorage).toHaveBeenCalledWith(
+        'epg-table-column-sizing',
+        {}
+      );
+      expect(capturedTableOptions.columnSizing).toEqual(columnSizing);
+      expect(capturedTableOptions.setColumnSizing).toBe(mockSetColumnSizing);
+      capturedTableOptions.setColumnSizing({ name: 320 });
+      expect(mockSetColumnSizing).toHaveBeenCalledWith({ name: 320 });
+    });
     it('renders the CustomTable component', () => {
       setupMocks();
       render(<EPGsTable />);

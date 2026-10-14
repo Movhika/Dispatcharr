@@ -211,6 +211,10 @@ const M3UTable = () => {
     ALL_ACCOUNT_TYPES,
     { storage: 'session' }
   );
+  const [columnSizing, setColumnSizing] = useBrowserStorage(
+    'm3u-table-column-sizing',
+    {}
+  );
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
 
   const generateStatusString = (data) => {
@@ -875,6 +879,8 @@ const M3UTable = () => {
     enableRowSelection: false,
     renderTopToolbar: false,
     sorting,
+    columnSizing,
+    setColumnSizing,
     manualSorting: true,
     rowVirtualizerInstanceRef, //optional
     rowVirtualizerOptions: { overscan: 5 }, //optionally customize the row virtualizer

@@ -252,6 +252,7 @@ const setupMocks = ({
   suppressWarning = vi.fn(),
   tableSize = 'default',
   typeFilter = ['STD', 'XC'],
+  columnSizing = {},
 } = {}) => {
   const mockSetRefreshProgress = vi.fn();
   const mockSetEditPlaylistId = vi.fn();
@@ -271,9 +272,12 @@ const setupMocks = ({
   );
 
   const mockSetTypeFilter = vi.fn();
+  const mockSetColumnSizing = vi.fn();
   vi.mocked(useBrowserStorage).mockImplementation((key, defaultValue) => {
     if (key === 'table-size') return [tableSize, vi.fn()];
     if (key === 'm3u-table-type-filter') return [typeFilter, mockSetTypeFilter];
+    if (key === 'm3u-table-column-sizing')
+      return [columnSizing, mockSetColumnSizing];
     return [defaultValue, vi.fn()];
   });
 
@@ -282,7 +286,12 @@ const setupMocks = ({
     return { getRowModel: () => ({ rows: [] }), getHeaderGroups: () => [] };
   });
 
-  return { mockSetRefreshProgress, mockSetEditPlaylistId, mockSetTypeFilter };
+  return {
+    mockSetRefreshProgress,
+    mockSetEditPlaylistId,
+    mockSetTypeFilter,
+    mockSetColumnSizing,
+  };
 };
 
 const getCol = (keyOrId) =>
@@ -1458,6 +1467,19 @@ describe('M3UTable', () => {
   // ── Table structure (useTable options) ────────────────────────────────────
 
   describe('table structure', () => {
+    it('restores column widths and passes the persistence setter to the table', () => {
+      const columnSizing = { name: 360 };
+      const { mockSetColumnSizing } = setupMocks({ columnSizing });
+      render(<M3UTable />);
+      expect(useBrowserStorage).toHaveBeenCalledWith(
+        'm3u-table-column-sizing',
+        {}
+      );
+      expect(capturedTableOptions.columnSizing).toEqual(columnSizing);
+      expect(capturedTableOptions.setColumnSizing).toBe(mockSetColumnSizing);
+      capturedTableOptions.setColumnSizing({ name: 400 });
+      expect(mockSetColumnSizing).toHaveBeenCalledWith({ name: 400 });
+    });
     it('passes enablePagination: false to useTable', () => {
       setupMocks();
       render(<M3UTable />);

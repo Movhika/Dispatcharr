@@ -159,6 +159,10 @@ const UsersTable = () => {
   // Empty query uses delay 0 so the clear button restores the list immediately.
   const debouncedSearch = useDebounce(search, search.trim() === '' ? 0 : 300);
   const [sorting, setSorting] = useState([]);
+  const [columnSizing, setColumnSizing] = useBrowserStorage(
+    'users-table-column-sizing',
+    {}
+  );
 
   const executeDeleteUser = useCallback(async (id) => {
     setIsLoading(true);
@@ -383,6 +387,8 @@ const UsersTable = () => {
     enableRowVirtualization: false,
     renderTopToolbar: false,
     sorting,
+    columnSizing,
+    setColumnSizing,
     manualSorting: true,
     manualFiltering: true,
     manualPagination: false,
