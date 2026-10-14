@@ -193,6 +193,9 @@ describe('M3UGroupFilter', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       expect(screen.getByTestId('modal-title')).toBeInTheDocument();
+      expect(screen.getByTestId('modal-title')).toHaveTextContent(
+        'Groups & filters'
+      );
     });
 
     it('renders tab list with Live and VOD tabs', () => {

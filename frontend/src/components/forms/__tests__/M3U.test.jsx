@@ -65,12 +65,14 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange, isInitialSetup }) => (
+  default: ({ onChange, isInitialSetup, isOpen, onClose }) => (
     <div
       data-testid="m3u-group-filter"
       data-initial-setup={String(isInitialSetup)}
+      data-open={String(isOpen)}
     >
       <button onClick={() => onChange?.([])}>M3UGroupFilter</button>
+      <button onClick={onClose}>Close groups</button>
     </div>
   ),
 }));
@@ -220,18 +222,35 @@ vi.mock('@mantine/core', () => ({
       </label>
     </div>
   ),
-  Flex: ({ children }) => <div>{children}</div>,
+  Flex: ({ children, className, component, 'aria-label': ariaLabel }) => (
+    <div
+      role={component === 'footer' ? 'contentinfo' : undefined}
+      className={className}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </div>
+  ),
   Group: ({ children }) => <div>{children}</div>,
   Paper: ({ children }) => <div data-testid="settings-box">{children}</div>,
   Tooltip: ({ children, label }) => <span data-help={label}>{children}</span>,
   LoadingOverlay: ({ visible }) =>
     visible ? <div data-testid="loading-overlay" /> : null,
-  Modal: ({ children, opened, onClose, title, size, classNames }) =>
+  Modal: ({
+    children,
+    opened,
+    onClose,
+    title,
+    size,
+    classNames,
+    closeOnEscape,
+  }) =>
     opened ? (
       <div
         data-testid="modal"
         data-size={size}
         data-content-class={classNames?.content}
+        data-close-on-escape={String(closeOnEscape ?? true)}
       >
         <div data-testid="modal-title">{title}</div>
         <button data-testid="modal-close" onClick={onClose}>
@@ -641,7 +660,7 @@ describe('M3U', () => {
         screen.queryByRole('button', { name: 'Filters' })
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Source import' })
+        screen.getByRole('button', { name: 'Groups & filters' })
       ).toBeInTheDocument();
     });
 
@@ -796,6 +815,7 @@ describe('M3U', () => {
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
       });
+      expect(M3uUtils.addPlaylist.mock.calls[0][0].is_active).toBe(true);
     });
 
     it('marks the new account group save as the initial refresh', async () => {
@@ -844,6 +864,24 @@ describe('M3U', () => {
   // ── Updating a playlist ────────────────────────────────────────────────────
 
   describe('updating an existing playlist', () => {
+    it('does not write the editor snapshot of enabled state when saving', async () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ is_active: false }),
+          })}
+        />
+      );
+      expect(
+        screen.getByText('Disabled — enable this account from the overview.')
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(M3uUtils.updatePlaylist).toHaveBeenCalled());
+      expect(M3uUtils.updatePlaylist.mock.calls[0][1]).not.toHaveProperty(
+        'is_active'
+      );
+    });
     it('calls updatePlaylist on submit', async () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
@@ -980,6 +1018,43 @@ describe('M3U', () => {
   });
 
   describe('account and content tabs', () => {
+    it('keeps the account editor open while a nested groups dialog handles Escape', () => {
+      const onClose = vi.fn();
+      setupStores();
+      render(
+        <M3U {...defaultProps({ m3uAccount: makeM3uAccount(), onClose })} />
+      );
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-close-on-escape',
+        'true'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Groups & filters' }));
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-close-on-escape',
+        'false'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Close groups' }));
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-close-on-escape',
+        'true'
+      );
+      expect(onClose).not.toHaveBeenCalled();
+    });
+    it('keeps only Groups & filters and Save in the fixed footer', () => {
+      setupStores();
+      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
+      const footer = screen.getByRole('contentinfo', {
+        name: 'M3U account actions',
+      });
+      expect(footer).toHaveClass(editorClasses.footer);
+      expect(
+        within(footer).getByRole('button', { name: 'Groups & filters' })
+      ).toBeInTheDocument();
+      expect(
+        within(footer).getByRole('button', { name: 'Save' })
+      ).toBeInTheDocument();
+      expect(within(footer).queryByRole('switch')).not.toBeInTheDocument();
+    });
     it('groups account, connection and content settings into bordered boxes', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
@@ -1012,10 +1087,10 @@ describe('M3U', () => {
           })}
         />
       );
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '94vw');
+      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '75vw');
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-content-class',
-        editorClasses.content
+        `${editorClasses.content} ${editorClasses.accountContent}`
       );
       expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
       const live = within(

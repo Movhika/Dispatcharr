@@ -233,7 +233,7 @@ const M3UGroupFilter = ({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title="Source import"
+      title="Groups & filters"
       size="94vw"
       classNames={{
         content: editorClasses.content,
@@ -246,6 +246,7 @@ const M3UGroupFilter = ({
       lockScroll={false}
       withinPortal={true}
       trapFocus={!rulesScope && !childOverlayOpen}
+      closeOnEscape={!rulesScope && !childOverlayOpen}
       yOffset="2vh"
       xOffset="3vw"
     >

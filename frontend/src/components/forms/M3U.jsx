@@ -289,6 +289,8 @@ const M3U = ({
     const values = prepareSubmitValues(rawValues, expDate);
 
     if (playlist?.id) {
+      // Enabled is controlled in the overview, not by a stale editor snapshot.
+      delete values.is_active;
       await updatePlaylist(playlist, values, file);
       form.reset();
       setFile(null);
@@ -332,18 +334,23 @@ const M3U = ({
   return (
     <>
       <Modal
-        size="94vw"
+        size="75vw"
         opened={isOpen}
         onClose={close}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         classNames={{
-          content: editorClasses.content,
+          content: `${editorClasses.content} ${editorClasses.accountContent}`,
           body: editorClasses.body,
           header: editorClasses.header,
         }}
         lockScroll={false}
         withinPortal={true}
         trapFocus={
+          !groupFilterModalOpen &&
+          !serverGroupsManagerOpen &&
+          !profileOverlayOpen
+        }
+        closeOnEscape={
           !groupFilterModalOpen &&
           !serverGroupsManagerOpen &&
           !profileOverlayOpen
@@ -376,6 +383,11 @@ const M3U = ({
                     aria-label="Account settings"
                   >
                     <Text fw={600}>Account</Text>
+                    {playlist?.is_active === false && (
+                      <Text size="xs" c="dimmed">
+                        Disabled — enable this account from the overview.
+                      </Text>
+                    )}
                     <TextInput
                       id="name"
                       name="name"
@@ -788,21 +800,15 @@ const M3U = ({
           </Tabs>
 
           <Flex
+            component="footer"
+            aria-label="M3U account actions"
             className={editorClasses.footer}
             gap="md"
-            justify="space-between"
+            justify="flex-end"
             align="center"
-            wrap="wrap"
+            wrap="nowrap"
             mih={50}
           >
-            <Switch
-              id="is_active"
-              name="is_active"
-              label="Is Active"
-              key={form.key('is_active')}
-              {...form.getInputProps('is_active', { type: 'checkbox' })}
-            />
-
             <Flex gap="xs" align="center">
               {playlist && (
                 <>
@@ -820,7 +826,7 @@ const M3U = ({
                       setGroupFilterModalOpen(true);
                     }}
                   >
-                    Source import
+                    Groups &amp; filters
                   </Button>
                 </>
               )}
