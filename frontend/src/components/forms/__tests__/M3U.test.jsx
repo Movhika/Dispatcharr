@@ -1362,6 +1362,17 @@ describe('M3U', () => {
       expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
     });
 
+    it('can close the question while retaining the account already created', async () => {
+      await createAccount();
+      fireEvent.click(screen.getByTestId('modal-close'));
+      expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
+      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
+      expect(M3uUtils.getPlaylist).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText('Create matching EPG source?')
+      ).not.toBeInTheDocument();
+    });
+
     it('keeps the created account when EPG fails and allows skipping', async () => {
       await createAccount();
       vi.mocked(DummyEpgUtils.addEPG).mockRejectedValueOnce(

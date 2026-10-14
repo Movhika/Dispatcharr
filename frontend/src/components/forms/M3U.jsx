@@ -906,7 +906,7 @@ const M3U = ({
       </Modal>
       <Modal
         opened={!!pendingCreation}
-        onClose={() => finishCreation(false)}
+        onClose={close}
         title="Create matching EPG source?"
         centered
         closeOnClickOutside={false}
