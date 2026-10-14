@@ -10,6 +10,8 @@ import {
   TextInput,
   Button,
   Flex,
+  Group,
+  Modal,
   Stack,
   ActionIcon,
   Tooltip,
@@ -69,6 +71,11 @@ const QUALITY_OPTIONS = VOD_CATEGORY_QUALITIES.map((q) => ({
   value: q,
   label: q,
 }));
+const EMPTY_BULK_SETTINGS = Object.freeze({
+  enabled: 'keep',
+  language: 'keep',
+  quality: 'keep',
+});
 
 const parseCustomProperties = (raw) => {
   if (!raw) return {};
@@ -84,10 +91,21 @@ const CategoryCard = memo(function CategoryCard({
   onToggle,
   onCustomPropertyChange,
   onPreview,
+  selected,
+  onSelect,
 }) {
   const props = category.custom_properties || {};
   return (
     <TableTr>
+      <TableTd>
+        <Checkbox
+          aria-label={`Select ${category.name}`}
+          checked={selected}
+          onChange={(event) =>
+            onSelect(category.id, event.currentTarget.checked)
+          }
+        />
+      </TableTd>
       <TableTd>
         <Button
           color={category.enabled ? 'green' : 'gray'}
@@ -155,6 +173,7 @@ const VODCategoryFilter = ({
   autoEnableNewGroups,
   setAutoEnableNewGroups,
   onOpenRules,
+  onOverlayChange,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
@@ -162,10 +181,28 @@ const VODCategoryFilter = ({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [previewCategory, setPreviewCategory] = useState(null);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState(new Set());
+  const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
+  useEffect(() => {
+    const ids = new Set(categoryStates.map((category) => category.id));
+    setSelectedCategoryIds((current) => {
+      const next = new Set([...current].filter((id) => ids.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [categoryStates]);
+  useEffect(() => {
+    onOverlayChange?.(bulkEditorOpen || !!previewCategory);
+    return () => onOverlayChange?.(false);
+  }, [bulkEditorOpen, previewCategory, onOverlayChange]);
   const initializedScope = useRef(null);
   useEffect(() => {
     setPage(1);
   }, [filter, statusFilter, type]);
+  useEffect(() => {
+    setSelectedCategoryIds(new Set());
+    setBulkEditorOpen(false);
+  }, [playlist.id, type]);
 
   useEffect(() => {
     if (Object.keys(categories).length === 0) {
@@ -254,41 +291,88 @@ const VODCategoryFilter = ({
     [filter, statusFilter]
   );
 
-  const selectAll = () => {
-    setCategoryStates((prev) =>
-      prev.map((state) => ({
-        ...state,
-        enabled: isVisible(state) ? true : state.enabled,
-      }))
+  const toggleSelectedCategory = useCallback((id, checked) => {
+    setSelectedCategoryIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const updateSelectedCategories = (changes) => {
+    setCategoryStates((current) =>
+      current.map((category) =>
+        selectedCategoryIds.has(category.id)
+          ? { ...category, ...changes }
+          : category
+      )
     );
   };
-
-  const deselectAll = () => {
-    setCategoryStates((prev) =>
-      prev.map((state) => ({
-        ...state,
-        enabled: isVisible(state) ? false : state.enabled,
-      }))
+  const closeBulkEditor = () => {
+    setBulkEditorOpen(false);
+    setBulkSettings(EMPTY_BULK_SETTINGS);
+  };
+  const applyBulkSettings = () => {
+    setCategoryStates((current) =>
+      current.map((category) => {
+        if (!selectedCategoryIds.has(category.id)) return category;
+        const next = {
+          ...category,
+          custom_properties: { ...category.custom_properties },
+        };
+        if (bulkSettings.enabled !== 'keep')
+          next.enabled = bulkSettings.enabled === 'enabled';
+        ['language', 'quality'].forEach((key) => {
+          if (bulkSettings[key] !== 'keep')
+            next.custom_properties[key] =
+              bulkSettings[key] === 'clear' ? null : bulkSettings[key];
+        });
+        return next;
+      })
     );
+    closeBulkEditor();
   };
 
   const visibleCategories = categoryStates
     .filter((category) => isVisible(category))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const selectedVisibleCount = visibleCategories.filter((category) =>
+    selectedCategoryIds.has(category.id)
+  ).length;
+  const toggleVisibleSelection = (checked) => {
+    setSelectedCategoryIds((current) => {
+      const next = new Set(current);
+      visibleCategories.forEach((category) =>
+        checked ? next.add(category.id) : next.delete(category.id)
+      );
+      return next;
+    });
+  };
 
   return (
-    <Stack style={{ paddingTop: 10 }}>
-      <Checkbox
-        label={`Automatically enable new ${type === 'movie' ? 'movie' : 'series'} categories discovered on future scans`}
-        checked={autoEnableNewGroups}
-        onChange={(event) =>
-          setAutoEnableNewGroups(event.currentTarget.checked)
-        }
-        size="sm"
-        description="When disabled, new categories from the provider will be created but disabled by default. You can enable them manually later."
-      />
+    <Stack style={{ height: '100%', minHeight: 0 }}>
+      <Flex gap="xs" align="center" wrap="wrap">
+        <Button variant="default" size="xs" onClick={onOpenRules}>
+          Import rules
+        </Button>
+        <Tooltip
+          label="Fallback for new categories not matched by an import rule. Existing selections are unchanged."
+          multiline
+          maw={360}
+          withArrow
+        >
+          <Checkbox
+            label={`Enable unmatched new ${type === 'movie' ? 'movie' : 'series'} categories`}
+            checked={autoEnableNewGroups}
+            onChange={(event) =>
+              setAutoEnableNewGroups(event.currentTarget.checked)
+            }
+            size="sm"
+          />
+        </Tooltip>
+      </Flex>
 
-      <Flex gap="sm" align="center">
+      <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
           placeholder="Filter categories..."
           value={filter}
@@ -306,21 +390,65 @@ const VODCategoryFilter = ({
             { label: 'Disabled', value: 'disabled' },
           ]}
         />
-        <Button variant="default" size="xs" onClick={selectAll}>
-          Select Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedCategoryIds.size}
+          onClick={() => updateSelectedCategories({ enabled: true })}
+        >
+          Enable selected
         </Button>
-        <Button variant="default" size="xs" onClick={deselectAll}>
-          Deselect Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedCategoryIds.size}
+          onClick={() => updateSelectedCategories({ enabled: false })}
+        >
+          Disable selected
         </Button>
-        <Button variant="default" size="xs" onClick={onOpenRules}>
-          Import rules
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedCategoryIds.size}
+          onClick={() => {
+            setBulkSettings(EMPTY_BULK_SETTINGS);
+            setBulkEditorOpen(true);
+          }}
+        >
+          Edit settings ({selectedCategoryIds.size})
         </Button>
+        {selectedCategoryIds.size > 0 && (
+          <Button
+            variant="subtle"
+            size="xs"
+            onClick={() => setSelectedCategoryIds(new Set())}
+          >
+            Clear selection
+          </Button>
+        )}
       </Flex>
 
-      <ScrollArea h="55vh">
-        <Table striped withTableBorder miw={700}>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+        <Table striped withTableBorder stickyHeader miw={700}>
           <TableThead>
             <TableTr>
+              <TableTh w={44}>
+                <Checkbox
+                  aria-label="Select visible categories"
+                  checked={
+                    visibleCategories.length > 0 &&
+                    selectedVisibleCount === visibleCategories.length
+                  }
+                  indeterminate={
+                    selectedVisibleCount > 0 &&
+                    selectedVisibleCount < visibleCategories.length
+                  }
+                  disabled={!visibleCategories.length}
+                  onChange={(event) =>
+                    toggleVisibleSelection(event.currentTarget.checked)
+                  }
+                />
+              </TableTh>
               <TableTh>Category</TableTh>
               <TableTh>Enabled</TableTh>
               <TableTh>Language</TableTh>
@@ -338,6 +466,8 @@ const VODCategoryFilter = ({
                   onToggle={toggleEnabled}
                   onCustomPropertyChange={updateCustomProperty}
                   onPreview={setPreviewCategory}
+                  selected={selectedCategoryIds.has(category.id)}
+                  onSelect={toggleSelectedCategory}
                 />
               ))}
           </TableTbody>
@@ -359,6 +489,74 @@ const VODCategoryFilter = ({
         group={previewCategory}
         onClose={() => setPreviewCategory(null)}
       />
+      <Modal
+        opened={bulkEditorOpen}
+        onClose={closeBulkEditor}
+        title={`Edit settings for ${selectedCategoryIds.size} categories`}
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Keep unchanged preserves each category's settings. Apply changes the
+            draft; Save persists it.
+          </Text>
+          <Select
+            label="Enabled"
+            value={bulkSettings.enabled}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                enabled: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+          />
+          <Select
+            label="Language"
+            value={bulkSettings.language}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                language: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'clear', label: 'Clear' },
+              ...VOD_CATEGORY_LANGUAGES,
+            ]}
+          />
+          <Select
+            label="Quality"
+            value={bulkSettings.quality}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                quality: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'clear', label: 'Clear' },
+              ...QUALITY_OPTIONS,
+            ]}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={closeBulkEditor}>
+              Cancel
+            </Button>
+            <Button
+              onClick={applyBulkSettings}
+              disabled={!selectedCategoryIds.size}
+            >
+              Apply
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 };

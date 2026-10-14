@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mocks ───────────────────────────────────────────────────────────────
@@ -147,9 +153,9 @@ vi.mock('@mantine/core', async () => ({
   TableTh: ({ children }) => <th>{children}</th>,
   TableTd: ({ children }) => <td>{children}</td>,
   ScrollArea: ({ children }) => <div>{children}</div>,
-  Select: ({ value, onChange, data, disabled, ...props }) => (
+  Select: ({ value, onChange, data, disabled, label, ...props }) => (
     <select
-      aria-label={props['aria-label']}
+      aria-label={props['aria-label'] || label}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -183,14 +189,23 @@ vi.mock('@mantine/core', async () => ({
       {children}
     </button>
   ),
-  Checkbox: ({ label, checked, onChange, description, disabled }) => (
+  Checkbox: ({
+    label,
+    checked,
+    onChange,
+    description,
+    disabled,
+    'aria-label': ariaLabel,
+  }) => (
     <label>
       <input
         type="checkbox"
         checked={checked ?? false}
         onChange={onChange}
         disabled={disabled}
-        aria-label={typeof label === 'string' ? label : 'checkbox'}
+        aria-label={
+          ariaLabel || (typeof label === 'string' ? label : 'checkbox')
+        }
       />
       {typeof label === 'string' ? label : label}
       {description && <span>{description}</span>}
@@ -198,11 +213,13 @@ vi.mock('@mantine/core', async () => ({
   ),
   Divider: () => <hr />,
   Flex: ({ children }) => <div>{children}</div>,
-  Group: ({ children, style }) => (
-    <div data-testid="group-card" style={style}>
-      {children}
-    </div>
-  ),
+  Group: ({ children }) => <div>{children}</div>,
+  Modal: ({ children, opened, title }) =>
+    opened ? (
+      <div role="dialog" aria-label={title}>
+        {children}
+      </div>
+    ) : null,
   Loader: () => <div data-testid="loader" />,
   SegmentedControl: ({ onChange, data }) => (
     <div>
@@ -362,17 +379,19 @@ describe('LiveGroupFilter', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    it('renders the info alert', () => {
+    it('keeps auto-sync help available without a large info banner', () => {
       renderWith();
-      expect(screen.getByTestId('alert')).toBeInTheDocument();
-      expect(screen.getByText(/Auto Channel Sync/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('alert')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Auto channel sync help' })
+      ).toBeInTheDocument();
     });
 
     it('renders the auto-enable new groups checkbox', () => {
       renderWith();
       expect(
         screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
+          name: /Enable unmatched new groups/i,
         })
       ).toBeInTheDocument();
     });
@@ -381,7 +400,7 @@ describe('LiveGroupFilter', () => {
       renderWith({ initialAutoEnable: true });
       expect(
         screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
+          name: /Enable unmatched new groups/i,
         })
       ).toBeChecked();
     });
@@ -390,7 +409,7 @@ describe('LiveGroupFilter', () => {
       renderWith({ initialAutoEnable: false });
       expect(
         screen.getByRole('checkbox', {
-          name: /Automatically enable new groups/i,
+          name: /Enable unmatched new groups/i,
         })
       ).not.toBeChecked();
     });
@@ -415,10 +434,11 @@ describe('LiveGroupFilter', () => {
       expect(screen.getByTestId('seg-disabled')).toBeInTheDocument();
     });
 
-    it('renders Select Visible and Deselect Visible buttons', () => {
+    it('requires a selection before bulk actions are enabled', () => {
       renderWith();
-      expect(screen.getByText('Select Visible')).toBeInTheDocument();
-      expect(screen.getByText('Deselect Visible')).toBeInTheDocument();
+      expect(screen.getByText('Enable selected')).toBeDisabled();
+      expect(screen.getByText('Disable selected')).toBeDisabled();
+      expect(screen.getByText('Edit settings (0)')).toBeDisabled();
     });
 
     it('renders a card for each group in groupStates', () => {
@@ -561,7 +581,7 @@ describe('LiveGroupFilter', () => {
     it('toggles off when clicked while checked', () => {
       renderWith({ initialAutoEnable: true });
       const cb = screen.getByRole('checkbox', {
-        name: /Automatically enable new groups/i,
+        name: /Enable unmatched new groups/i,
       });
       fireEvent.click(cb);
       expect(cb).not.toBeChecked();
@@ -570,7 +590,7 @@ describe('LiveGroupFilter', () => {
     it('toggles on when clicked while unchecked', () => {
       renderWith({ initialAutoEnable: false });
       const cb = screen.getByRole('checkbox', {
-        name: /Automatically enable new groups/i,
+        name: /Enable unmatched new groups/i,
       });
       fireEvent.click(cb);
       expect(cb).toBeChecked();
@@ -683,32 +703,58 @@ describe('LiveGroupFilter', () => {
 
   // ── Select Visible / Deselect Visible ─────────────────────────────────────
 
-  describe('Select Visible / Deselect Visible', () => {
-    it('Select Visible enables all currently visible groups', () => {
+  describe('group selection and bulk actions', () => {
+    it('selects every filtered group across pages, not only the first page', () => {
+      renderWith({
+        initialGroups: Array.from({ length: 40 }, (_, index) =>
+          makeGroup({
+            channel_group: index + 1,
+            name: `Group ${index + 1}`,
+            enabled: false,
+            auto_channel_sync: false,
+          })
+        ),
+      });
+      expect(screen.getAllByTestId('group-card')).toHaveLength(25);
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible groups' })
+      );
+      expect(screen.getByText('Edit settings (40)')).toBeEnabled();
+      fireEvent.click(screen.getByText('Enable selected'));
+      fireEvent.click(screen.getByTestId('seg-disabled'));
+      expect(screen.queryByTestId('group-card')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Clear selection'));
+      expect(screen.getByText('Edit settings (0)')).toBeDisabled();
+    });
+    it('selecting visible groups does not enable them until the explicit action', () => {
       renderWith({
         initialGroups: [
           makeGroup({ channel_group: 1, name: 'Sports', enabled: false }),
           makeGroup({ channel_group: 2, name: 'News', enabled: false }),
         ],
       });
-      fireEvent.click(screen.getByText('Select Visible'));
-      // Both groups remain visible (isGroupVisible still returns true)
-      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible groups' })
+      );
+      expect(screen.getAllByText('Inactive')).toHaveLength(2);
+      fireEvent.click(screen.getByText('Enable selected'));
+      expect(screen.getAllByText('Active')).toHaveLength(2);
     });
 
-    it('Deselect Visible disables all currently visible groups', () => {
+    it('disables only selected groups', () => {
       renderWith({
         initialGroups: [
           makeGroup({ channel_group: 1, name: 'Sports', enabled: true }),
           makeGroup({ channel_group: 2, name: 'News', enabled: true }),
         ],
       });
-      // With status=all, isGroupVisible still returns true after deselect
-      fireEvent.click(screen.getByText('Deselect Visible'));
-      expect(screen.getAllByTestId('group-card')).toHaveLength(2);
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select News' }));
+      fireEvent.click(screen.getByText('Disable selected'));
+      expect(screen.getAllByText('Inactive')).toHaveLength(1);
+      expect(screen.getAllByText('Active')).toHaveLength(1);
     });
 
-    it('Select Visible only applies to groups passing the current filter', () => {
+    it('selects only groups passing the current filter', () => {
       // With Enabled filter active, only already-enabled groups are "visible"
       // so disabling one and clicking Select Visible should not re-enable the hidden one
       renderWith({
@@ -718,9 +764,55 @@ describe('LiveGroupFilter', () => {
         ],
       });
       fireEvent.click(screen.getByTestId('seg-enabled'));
-      fireEvent.click(screen.getByText('Select Visible'));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible groups' })
+      );
+      expect(screen.getByText('Edit settings (1)')).toBeEnabled();
       // News (disabled) is not visible in Enabled filter, so it stays hidden
       expect(screen.queryByText('News')).not.toBeInTheDocument();
+    });
+
+    it('bulk editing changes only selected fields and groups', () => {
+      renderWith({
+        initialGroups: [
+          makeGroup({ channel_group: 1, name: 'Sports' }),
+          makeGroup({ channel_group: 2, name: 'News' }),
+        ],
+      });
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
+      fireEvent.click(screen.getByText('Edit settings (1)'));
+      const dialog = screen.getByRole('dialog', {
+        name: 'Edit settings for 1 groups',
+      });
+      fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
+        target: { value: 'provider' },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+      expect(
+        screen.getByRole('combobox', { name: 'Numbering for Sports' })
+      ).toHaveValue('provider');
+      expect(
+        screen.getByRole('combobox', { name: 'Numbering for News' })
+      ).toHaveValue('fixed');
+      expect(
+        screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
+      ).toBeChecked();
+    });
+
+    it('canceling a bulk edit leaves group settings unchanged', () => {
+      renderWith({ initialGroups: [makeGroup()] });
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
+      fireEvent.click(screen.getByText('Edit settings (1)'));
+      const dialog = screen.getByRole('dialog', {
+        name: 'Edit settings for 1 groups',
+      });
+      fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
+        target: { value: 'provider' },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      expect(
+        screen.getByRole('combobox', { name: 'Numbering for Sports' })
+      ).toHaveValue('fixed');
     });
   });
 

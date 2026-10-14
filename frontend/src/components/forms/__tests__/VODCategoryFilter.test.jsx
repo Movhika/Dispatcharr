@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
@@ -15,6 +15,12 @@ vi.mock('lucide-react', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
+  Modal: ({ children, opened, title }) =>
+    opened ? (
+      <div role="dialog" aria-label={title}>
+        {children}
+      </div>
+    ) : null,
   Table: ({ children }) => <table>{children}</table>,
   TableThead: ({ children }) => <thead>{children}</thead>,
   TableTbody: ({ children }) => <tbody>{children}</tbody>,
@@ -39,11 +45,17 @@ vi.mock('@mantine/core', () => ({
       {children}
     </button>
   ),
-  Checkbox: ({ label, checked, onChange, disabled }) => (
+  Checkbox: ({
+    label,
+    checked,
+    onChange,
+    disabled,
+    'aria-label': ariaLabel,
+  }) => (
     <label>
       <input
         type="checkbox"
-        aria-label={label}
+        aria-label={ariaLabel || label}
         checked={checked}
         onChange={(e) =>
           onChange?.({ currentTarget: { checked: e.target.checked } })
@@ -233,16 +245,16 @@ describe('VODCategoryFilter', () => {
       expect(screen.getByTestId('segmented-control')).toBeInTheDocument();
     });
 
-    it('renders Enable All and Disable All buttons', () => {
+    it('requires a selection before bulk actions', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      expect(screen.getByText('Select Visible')).toBeInTheDocument();
-      expect(screen.getByText('Deselect Visible')).toBeInTheDocument();
+      expect(screen.getByText('Enable selected')).toBeDisabled();
+      expect(screen.getByText('Disable selected')).toBeDisabled();
     });
 
     it('renders the Auto-enable new groups checkbox', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
       expect(
-        screen.getByLabelText(/automatically enable new/i)
+        screen.getByLabelText(/enable unmatched new/i)
       ).toBeInTheDocument();
     });
   });
@@ -395,7 +407,10 @@ describe('VODCategoryFilter', () => {
           {...defaultProps({ setCategoryStates, categoryStates })}
         />
       );
-      fireEvent.click(screen.getByText('Select Visible'));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      fireEvent.click(screen.getByText('Enable selected'));
       const called = latestCategoryStates(setCategoryStates, categoryStates);
       expect(called.find((s) => s.id === 1).enabled).toBe(true);
       expect(called.find((s) => s.id === 2).enabled).toBe(true);
@@ -417,7 +432,10 @@ describe('VODCategoryFilter', () => {
       fireEvent.change(screen.getByPlaceholderText(/filter/i), {
         target: { value: 'act' },
       });
-      fireEvent.click(screen.getByText('Select Visible'));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      fireEvent.click(screen.getByText('Enable selected'));
       const called = latestCategoryStates(setCategoryStates, categoryStates);
       expect(called.find((s) => s.id === 1).enabled).toBe(true);
       // Comedy and Drama were filtered out — their state should be unchanged
@@ -431,7 +449,10 @@ describe('VODCategoryFilter', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      fireEvent.click(screen.getByText('Deselect Visible'));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      fireEvent.click(screen.getByText('Disable selected'));
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
@@ -456,7 +477,10 @@ describe('VODCategoryFilter', () => {
       fireEvent.change(screen.getByPlaceholderText(/filter/i), {
         target: { value: 'comedy' },
       });
-      fireEvent.click(screen.getByText('Deselect Visible'));
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      fireEvent.click(screen.getByText('Disable selected'));
       const called = latestCategoryStates(setCategoryStates, categoryStates);
       expect(called.find((s) => s.id === 2).enabled).toBe(false);
       expect(called.find((s) => s.id === 1).enabled).toBe(true);
@@ -465,6 +489,93 @@ describe('VODCategoryFilter', () => {
   });
 
   // ── Auto-enable new groups ────────────────────────────────────────────────
+
+  describe('selection and bulk settings', () => {
+    it('clears a selection when switching accounts', () => {
+      const props = defaultProps();
+      const view = render(<VODCategoryFilter {...props} />);
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Action' }));
+      expect(screen.getByText('Edit settings (1)')).toBeEnabled();
+      view.rerender(
+        <VODCategoryFilter {...props} playlist={makePlaylist({ id: 11 })} />
+      );
+      expect(screen.getByText('Edit settings (0)')).toBeDisabled();
+    });
+    it('selection alone never changes enabled or category metadata', () => {
+      const setCategoryStates = vi.fn();
+      render(<VODCategoryFilter {...defaultProps({ setCategoryStates })} />);
+      setCategoryStates.mockClear();
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      expect(setCategoryStates).not.toHaveBeenCalled();
+      expect(screen.getByText('Edit settings (3)')).toBeEnabled();
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
+      );
+      expect(screen.getByText('Edit settings (0)')).toBeDisabled();
+    });
+
+    it('bulk updates only selected categories and preserves unrelated properties', () => {
+      const setCategoryStates = vi.fn();
+      const categoryStates = [
+        {
+          id: 1,
+          name: 'Action',
+          enabled: true,
+          custom_properties: {
+            language: 'en',
+            quality: '1080p',
+            custom: 'keep',
+          },
+        },
+        {
+          id: 2,
+          name: 'Comedy',
+          enabled: false,
+          custom_properties: { language: 'fr' },
+        },
+      ];
+      render(
+        <VODCategoryFilter
+          {...defaultProps({ setCategoryStates, categoryStates })}
+        />
+      );
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Action' }));
+      fireEvent.click(screen.getByText('Edit settings (1)'));
+      const dialog = screen.getByRole('dialog', {
+        name: 'Edit settings for 1 categories',
+      });
+      fireEvent.change(within(dialog).getByLabelText('Language'), {
+        target: { value: 'de' },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+      const next = latestCategoryStates(setCategoryStates, categoryStates);
+      expect(next[0].custom_properties).toEqual({
+        language: 'de',
+        quality: '1080p',
+        custom: 'keep',
+      });
+      expect(next[1]).toBe(categoryStates[1]);
+      expect(next[0].enabled).toBe(true);
+    });
+
+    it('canceling a bulk edit does not change the draft', () => {
+      const setCategoryStates = vi.fn();
+      render(<VODCategoryFilter {...defaultProps({ setCategoryStates })} />);
+      setCategoryStates.mockClear();
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Action' }));
+      fireEvent.click(screen.getByText('Edit settings (1)'));
+      const dialog = screen.getByRole('dialog', {
+        name: 'Edit settings for 1 categories',
+      });
+      fireEvent.change(within(dialog).getByLabelText('Quality'), {
+        target: { value: 'clear' },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      expect(setCategoryStates).not.toHaveBeenCalled();
+    });
+  });
 
   describe('autoEnableNewGroups checkbox', () => {
     it('calls setAutoEnableNewGroups(true) when checked', () => {
@@ -477,7 +588,7 @@ describe('VODCategoryFilter', () => {
           })}
         />
       );
-      fireEvent.click(screen.getByLabelText(/automatically enable new/i));
+      fireEvent.click(screen.getByLabelText(/enable unmatched new/i));
       expect(setAutoEnableNewGroups).toHaveBeenCalledWith(true);
     });
 
@@ -491,7 +602,7 @@ describe('VODCategoryFilter', () => {
           })}
         />
       );
-      fireEvent.click(screen.getByLabelText(/automatically enable new/i));
+      fireEvent.click(screen.getByLabelText(/enable unmatched new/i));
       expect(setAutoEnableNewGroups).toHaveBeenCalledWith(false);
     });
   });

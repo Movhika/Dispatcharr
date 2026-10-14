@@ -9,13 +9,14 @@ import React, {
 } from 'react';
 import {
   ActionIcon,
-  Alert,
   Box,
   Button,
   Checkbox,
   Divider,
   Flex,
   Loader,
+  Group,
+  Modal,
   SegmentedControl,
   ScrollArea,
   Select,
@@ -59,6 +60,12 @@ import {
 
 const EMPTY_OVERLAPS = Object.freeze([]);
 const EMPTY_CONFLICTS = Object.freeze({});
+const EMPTY_BULK_SETTINGS = Object.freeze({
+  enabled: 'keep',
+  autoSync: 'keep',
+  numberingMode: 'keep',
+  orphanCleanup: 'keep',
+});
 
 const NUMBERING_MODE_OPTIONS = [
   { value: 'fixed', label: 'Fixed' },
@@ -76,12 +83,23 @@ const LiveGroupCard = memo(function LiveGroupCard({
   onConfigure,
   onApplyGroupChange,
   onPreview,
+  selected,
+  onSelect,
 }) {
   const numberingMode =
     group.custom_properties?.channel_numbering_mode || 'fixed';
   const showAutoSyncControls = group.auto_channel_sync && group.enabled;
   return (
     <TableTr data-testid="group-card">
+      <TableTd>
+        <Checkbox
+          aria-label={`Select ${group.name}`}
+          checked={selected}
+          onChange={(event) =>
+            onSelect(group.channel_group, event.currentTarget.checked)
+          }
+        />
+      </TableTd>
       <TableTd>
         <Tooltip
           label="Not seen in the last Live refresh; removed after the retention period."
@@ -109,7 +127,6 @@ const LiveGroupCard = memo(function LiveGroupCard({
       <TableTd>
         <Checkbox
           aria-label={`Auto Channel Sync for ${group.name}`}
-          label="Auto Channel Sync"
           checked={!!(group.auto_channel_sync && group.enabled)}
           disabled={!group.enabled}
           onChange={() => onToggleAutoSync(group.channel_group)}
@@ -182,6 +199,7 @@ const LiveGroupFilter = ({
   autoEnableNewGroupsLive,
   setAutoEnableNewGroupsLive,
   onOpenRules,
+  onOverlayChange,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const streamProfiles = useStreamProfilesStore((s) => s.profiles);
@@ -192,6 +210,20 @@ const LiveGroupFilter = ({
   const [pageSize, setPageSize] = useState(25);
   const [previewGroup, setPreviewGroup] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds] = useState(new Set());
+  const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
+  useEffect(() => {
+    const ids = new Set(groupStates.map((group) => group.channel_group));
+    setSelectedGroupIds((current) => {
+      const next = new Set([...current].filter((id) => ids.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [groupStates]);
+  useEffect(() => {
+    setSelectedGroupIds(new Set());
+    setBulkEditorOpen(false);
+  }, [playlist.id]);
   useEffect(() => {
     setPage(1);
   }, [groupFilter, statusFilter]);
@@ -205,6 +237,23 @@ const LiveGroupFilter = ({
   const [logoModalOpen, setLogoModalOpen] = useState(false);
   const [currentEditingGroupId, setCurrentEditingGroupId] = useState(null);
   const [configuringGroupId, setConfiguringGroupId] = useState(null);
+  useEffect(() => {
+    onOverlayChange?.(
+      filtersOpen ||
+        bulkEditorOpen ||
+        !!configuringGroupId ||
+        logoModalOpen ||
+        !!previewGroup
+    );
+    return () => onOverlayChange?.(false);
+  }, [
+    filtersOpen,
+    bulkEditorOpen,
+    configuringGroupId,
+    logoModalOpen,
+    previewGroup,
+    onOverlayChange,
+  ]);
   // Snapshot of the configuring group's state taken when the Configure
   // modal opens. Cancel restores from this; Done discards it.
   const configureSnapshotRef = useRef(null);
@@ -689,33 +738,67 @@ const LiveGroupFilter = ({
     setCurrentEditingGroupId(null);
   };
 
-  const selectAll = useCallback(() => {
-    setGroupStates((prev) =>
-      prev.map((state) => {
-        if (
-          !isGroupVisible(state, groupFilter, statusFilter) ||
-          state.enabled
-        ) {
-          return state;
-        }
-        return { ...state, enabled: true };
-      })
-    );
-  }, [groupFilter, setGroupStates, statusFilter]);
+  const toggleSelectedGroup = useCallback((id, checked) => {
+    setSelectedGroupIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
 
-  const deselectAll = useCallback(() => {
-    setGroupStates((prev) =>
-      prev.map((state) => {
-        if (
-          !isGroupVisible(state, groupFilter, statusFilter) ||
-          !state.enabled
-        ) {
-          return state;
-        }
-        return { ...state, enabled: false };
-      })
+  const updateSelectedGroups = (changes) => {
+    setGroupStates((current) =>
+      current.map((group) =>
+        selectedGroupIds.has(group.channel_group)
+          ? { ...group, ...changes }
+          : group
+      )
     );
-  }, [groupFilter, setGroupStates, statusFilter]);
+  };
+
+  const closeBulkEditor = () => {
+    setBulkEditorOpen(false);
+    setBulkSettings(EMPTY_BULK_SETTINGS);
+  };
+
+  const applyBulkSettings = () => {
+    setGroupStates((current) => {
+      const nextGroups = [...current];
+      current.forEach((group, index) => {
+        if (!selectedGroupIds.has(group.channel_group)) return;
+        const next = {
+          ...group,
+          custom_properties: { ...group.custom_properties },
+        };
+        if (bulkSettings.enabled !== 'keep')
+          next.enabled = bulkSettings.enabled === 'enabled';
+        if (bulkSettings.autoSync !== 'keep') {
+          next.auto_channel_sync = bulkSettings.autoSync === 'enabled';
+          if (
+            next.auto_channel_sync &&
+            !group.auto_channel_sync &&
+            (!group.auto_sync_channel_start ||
+              group.auto_sync_channel_start <= 1)
+          ) {
+            next.auto_sync_channel_start = computeAutoSyncStart(
+              nextGroups,
+              group.channel_group
+            );
+          }
+        }
+        if (bulkSettings.numberingMode !== 'keep')
+          next.custom_properties.channel_numbering_mode =
+            bulkSettings.numberingMode;
+        if (bulkSettings.orphanCleanup !== 'keep')
+          next.custom_properties.orphan_channel_cleanup =
+            bulkSettings.orphanCleanup;
+        nextGroups[index] = next;
+      });
+      return nextGroups;
+    });
+    closeBulkEditor();
+  };
 
   const overlapsByGroup = useMemo(() => {
     const map = new Map();
@@ -732,31 +815,24 @@ const LiveGroupFilter = ({
   const visibleGroups = groupStates
     .filter((group) => isGroupVisible(group, groupFilter, statusFilter))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const selectedVisibleCount = visibleGroups.filter((group) =>
+    selectedGroupIds.has(group.channel_group)
+  ).length;
+  const toggleVisibleSelection = (checked) => {
+    setSelectedGroupIds((current) => {
+      const next = new Set(current);
+      visibleGroups.forEach((group) =>
+        checked
+          ? next.add(group.channel_group)
+          : next.delete(group.channel_group)
+      );
+      return next;
+    });
+  };
 
   return (
-    <Stack style={{ paddingTop: 10 }}>
-      <Alert icon={<Info size={16} />} color="blue" variant="light">
-        <Text size="sm">
-          <strong>Auto Channel Sync:</strong> When enabled, channels will be
-          automatically created for all streams in the group during M3U updates,
-          and removed when streams are no longer present. Set a starting channel
-          number for each group to organize your channels.
-        </Text>
-      </Alert>
-
-      <Checkbox
-        label="Automatically enable new groups discovered on future scans"
-        checked={autoEnableNewGroupsLive}
-        onChange={(event) =>
-          setAutoEnableNewGroupsLive(event.currentTarget.checked)
-        }
-        size="sm"
-        description="When disabled, new groups from the M3U source will be created but disabled by default. You can enable them manually later."
-      />
-
-      <OrphanCleanupControl playlist={playlist} />
-
-      <Flex justify="flex-end" gap="xs">
+    <Stack style={{ height: '100%', minHeight: 0 }}>
+      <Flex gap="xs" align="center" wrap="wrap">
         <Button size="xs" variant="default" onClick={onOpenRules}>
           Import rules
         </Button>
@@ -767,9 +843,36 @@ const LiveGroupFilter = ({
         >
           Stream filters
         </Button>
+        <Tooltip
+          label="Auto sync creates and maintains channels for imported streams in each enabled group. Number ranges and advanced options can be configured per group."
+          multiline
+          maw={360}
+          withArrow
+        >
+          <ActionIcon variant="subtle" aria-label="Auto channel sync help">
+            <Info size={16} />
+          </ActionIcon>
+        </Tooltip>
       </Flex>
+      <Tooltip
+        label="Fallback for new groups not matched by an import rule. Existing selections are unchanged."
+        multiline
+        maw={360}
+        withArrow
+      >
+        <Checkbox
+          label="Enable unmatched new groups"
+          checked={autoEnableNewGroupsLive}
+          onChange={(event) =>
+            setAutoEnableNewGroupsLive(event.currentTarget.checked)
+          }
+          size="sm"
+        />
+      </Tooltip>
 
-      <Flex gap="sm" align="center">
+      <OrphanCleanupControl playlist={playlist} />
+
+      <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
           placeholder="Filter groups..."
           value={groupFilter}
@@ -787,20 +890,67 @@ const LiveGroupFilter = ({
             { label: 'Disabled', value: 'disabled' },
           ]}
         />
-        <Button variant="default" size="xs" onClick={selectAll}>
-          Select Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() => updateSelectedGroups({ enabled: true })}
+        >
+          Enable selected
         </Button>
-        <Button variant="default" size="xs" onClick={deselectAll}>
-          Deselect Visible
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() => updateSelectedGroups({ enabled: false })}
+        >
+          Disable selected
         </Button>
+        <Button
+          variant="default"
+          size="xs"
+          disabled={!selectedGroupIds.size}
+          onClick={() => {
+            setBulkSettings(EMPTY_BULK_SETTINGS);
+            setBulkEditorOpen(true);
+          }}
+        >
+          Edit settings ({selectedGroupIds.size})
+        </Button>
+        {selectedGroupIds.size > 0 && (
+          <Button
+            variant="subtle"
+            size="xs"
+            onClick={() => setSelectedGroupIds(new Set())}
+          >
+            Clear selection
+          </Button>
+        )}
       </Flex>
 
       <Divider label="Groups & Auto Sync Settings" labelPosition="center" />
 
-      <ScrollArea h="55vh">
-        <Table striped withTableBorder miw={1000}>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+        <Table striped withTableBorder stickyHeader miw={1000}>
           <TableThead>
             <TableTr>
+              <TableTh w={44}>
+                <Checkbox
+                  aria-label="Select visible groups"
+                  checked={
+                    visibleGroups.length > 0 &&
+                    selectedVisibleCount === visibleGroups.length
+                  }
+                  indeterminate={
+                    selectedVisibleCount > 0 &&
+                    selectedVisibleCount < visibleGroups.length
+                  }
+                  disabled={!visibleGroups.length}
+                  onChange={(event) =>
+                    toggleVisibleSelection(event.currentTarget.checked)
+                  }
+                />
+              </TableTh>
               <TableTh>Group</TableTh>
               <TableTh>Enabled</TableTh>
               <TableTh>Auto sync</TableTh>
@@ -828,6 +978,8 @@ const LiveGroupFilter = ({
                   onConfigure={openConfigure}
                   onApplyGroupChange={applyGroupChange}
                   onPreview={setPreviewGroup}
+                  selected={selectedGroupIds.has(group.channel_group)}
+                  onSelect={toggleSelectedGroup}
                 />
               ))}
           </TableTbody>
@@ -854,6 +1006,90 @@ const LiveGroupFilter = ({
         isOpen={filtersOpen}
         onClose={() => setFiltersOpen(false)}
       />
+
+      <Modal
+        opened={bulkEditorOpen}
+        onClose={closeBulkEditor}
+        title={`Edit settings for ${selectedGroupIds.size} groups`}
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Keep unchanged preserves each group's settings. Apply changes the
+            draft; Save persists it.
+          </Text>
+          <Select
+            label="Enabled"
+            value={bulkSettings.enabled}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                enabled: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+          />
+          <Select
+            label="Auto sync"
+            value={bulkSettings.autoSync}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                autoSync: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+          />
+          <Select
+            label="Numbering mode"
+            value={bulkSettings.numberingMode}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                numberingMode: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              ...NUMBERING_MODE_OPTIONS,
+            ]}
+          />
+          <Select
+            label="Auto-sync orphan cleanup"
+            value={bulkSettings.orphanCleanup}
+            onChange={(value) =>
+              setBulkSettings((current) => ({
+                ...current,
+                orphanCleanup: value || 'keep',
+              }))
+            }
+            data={[
+              { value: 'keep', label: 'Keep unchanged' },
+              { value: 'always', label: 'Always remove' },
+              { value: 'preserve_customized', label: 'Preserve customized' },
+              { value: 'never', label: 'Never remove' },
+            ]}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={closeBulkEditor}>
+              Cancel
+            </Button>
+            <Button
+              onClick={applyBulkSettings}
+              disabled={!selectedGroupIds.size}
+            >
+              Apply
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {/* Per-group Configure modal. Holds the Advanced Options MultiSelect
           and all its conditional fields so the inline row only renders the
