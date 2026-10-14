@@ -115,6 +115,9 @@ const M3U = ({
   const [accountType, setAccountType] = useState('XC');
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [hasHashKeyOverride, setHasHashKeyOverride] = useState(false);
+  const [activeTab, setActiveTab] = useState('account');
+  const [pendingCreation, setPendingCreation] = useState(null);
+  const [finishingCreation, setFinishingCreation] = useState(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
 
@@ -155,7 +158,6 @@ const M3U = ({
       vod_cron_expression: '',
       vod_refresh_after_live: true,
       account_type: 'XC',
-      create_epg: false,
       username: '',
       password: '',
       stale_stream_days: 7,
@@ -171,6 +173,8 @@ const M3U = ({
   });
 
   useEffect(() => {
+    setActiveTab('account');
+    setPendingCreation(null);
     if (m3uAccount) {
       setInitialGroupSetup(false);
       setPlaylist(m3uAccount);
@@ -245,23 +249,10 @@ const M3U = ({
   useEffect(() => {
     if (storeExpDate === undefined) return;
     const next = expDateFromPlaylist(storeExpDate);
-    setExpDate((prev) =>
-      expDateKey(prev) === expDateKey(next) ? prev : next
-    );
+    setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
   }, [storeExpDate]);
 
-  const handleNewPlaylist = async (newPlaylist, values, create_epg) => {
-    if (create_epg) {
-      addEPG({
-        name: values.name,
-        source_type: 'xmltv',
-        url: `${new URL(values.server_url).origin}/xmltv.php?username=${values.username}&password=${values.password}`,
-        api_key: '',
-        is_active: true,
-        refresh_interval: 24,
-      });
-    }
-
+  const handleNewPlaylist = async (newPlaylist, values) => {
     if (values.account_type != 'XC') {
       showNotification({
         title: 'Fetching M3U Groups',
@@ -285,7 +276,7 @@ const M3U = ({
   };
 
   const onSubmit = async () => {
-    const { create_epg, ...rawValues } = form.getValues();
+    const rawValues = form.getValues();
     const values = prepareSubmitValues(rawValues, expDate);
 
     if (playlist?.id) {
@@ -299,7 +290,51 @@ const M3U = ({
     }
 
     const newPlaylist = await addPlaylist(values, file);
-    await handleNewPlaylist(newPlaylist, values, create_epg);
+    if (values.account_type === 'XC') {
+      // The account already exists before asking about its optional EPG source.
+      setPlaylist(newPlaylist);
+      setPendingCreation({ playlist: newPlaylist, values, epgCreated: false });
+    } else {
+      await handleNewPlaylist(newPlaylist, values);
+    }
+  };
+
+  const finishCreation = async (createEpg) => {
+    if (!pendingCreation || finishingCreation) return;
+    setFinishingCreation(true);
+    let creatingEpg = createEpg && !pendingCreation.epgCreated;
+    try {
+      const { playlist: newPlaylist, values } = pendingCreation;
+      if (creatingEpg) {
+        const url = new URL('/xmltv.php', values.server_url);
+        url.searchParams.set('username', values.username || '');
+        url.searchParams.set('password', values.password || '');
+        await addEPG({
+          name: values.name,
+          source_type: 'xmltv',
+          url: url.toString(),
+          api_key: '',
+          is_active: true,
+          refresh_interval: 24,
+        });
+        setPendingCreation((current) => ({ ...current, epgCreated: true }));
+        creatingEpg = false;
+      }
+      await handleNewPlaylist(newPlaylist, values);
+      setPendingCreation(null);
+    } catch {
+      showNotification({
+        title: creatingEpg
+          ? 'EPG source was not created'
+          : 'Categories could not be loaded',
+        message: creatingEpg
+          ? 'The M3U account is already created. Retry or continue without an EPG source.'
+          : 'The M3U account is already created. Please retry opening its categories.',
+        color: 'red',
+      });
+    } finally {
+      setFinishingCreation(false);
+    }
   };
 
   const close = () => {
@@ -307,6 +342,7 @@ const M3U = ({
     setFile(null);
     setPlaylist(null);
     setInitialGroupSetup(false);
+    setPendingCreation(null);
     onClose();
   };
 
@@ -335,7 +371,7 @@ const M3U = ({
     <>
       <Modal
         size="68vw"
-        opened={isOpen}
+        opened={isOpen && !pendingCreation}
         onClose={close}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         classNames={{
@@ -361,7 +397,11 @@ const M3U = ({
         <LoadingOverlay visible={form.submitting} overlayBlur={2} />
 
         <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
-          <Tabs defaultValue="account" className={editorClasses.tabs}>
+          <Tabs
+            value={activeTab}
+            onChange={setActiveTab}
+            className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
+          >
             <TabsList className={editorClasses.tabList}>
               <TabsTab value="account">Account</TabsTab>
               <TabsTab value="content">Content</TabsTab>
@@ -369,7 +409,13 @@ const M3U = ({
                 Profiles
               </TabsTab>
             </TabsList>
-            <TabsPanel value="account" className={editorClasses.panel}>
+            <TabsPanel
+              value="account"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'account'}
+              aria-hidden={activeTab !== 'account'}
+              inert={activeTab !== 'account'}
+            >
               <SimpleGrid
                 cols={{ base: 1, sm: 2 }}
                 spacing="md"
@@ -579,7 +625,13 @@ const M3U = ({
                 </Paper>
               </SimpleGrid>
             </TabsPanel>
-            <TabsPanel value="content" className={editorClasses.panel}>
+            <TabsPanel
+              value="content"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'content'}
+              aria-hidden={activeTab !== 'content'}
+              inert={activeTab !== 'content'}
+            >
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                 <Paper withBorder p="sm">
                   <Stack
@@ -615,21 +667,6 @@ const M3U = ({
                       aria-label="Stale Stream Retention (days)"
                       {...form.getInputProps('stale_stream_days')}
                     />
-                    {accountType === 'XC' && !m3uAccount && (
-                      <Switch
-                        id="create_epg"
-                        name="create_epg"
-                        label={helpLabel(
-                          'Create EPG',
-                          'Automatically create a matching EPG source for this Xtream account.'
-                        )}
-                        aria-label="Create EPG"
-                        key={form.key('create_epg')}
-                        {...form.getInputProps('create_epg', {
-                          type: 'checkbox',
-                        })}
-                      />
-                    )}
                   </Stack>
                 </Paper>
 
@@ -805,7 +842,13 @@ const M3U = ({
                 </Paper>
               </SimpleGrid>
             </TabsPanel>
-            <TabsPanel value="profiles" className={editorClasses.panel}>
+            <TabsPanel
+              value="profiles"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'profiles'}
+              aria-hidden={activeTab !== 'profiles'}
+              inert={activeTab !== 'profiles'}
+            >
               {playlist?.id && (
                 <M3UProfiles
                   playlist={playlist}
@@ -860,6 +903,39 @@ const M3U = ({
             </Flex>
           </Flex>
         </form>
+      </Modal>
+      <Modal
+        opened={!!pendingCreation}
+        onClose={() => finishCreation(false)}
+        title="Create matching EPG source?"
+        centered
+        closeOnClickOutside={false}
+        closeOnEscape={!finishingCreation}
+        withCloseButton={!finishingCreation}
+      >
+        <Stack>
+          <Text size="sm">
+            The M3U account has been created. Would you also like to create an
+            XMLTV EPG source using this account’s provider and credentials?
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => finishCreation(false)}
+              disabled={finishingCreation}
+            >
+              {pendingCreation?.epgCreated ? 'Continue' : 'Skip'}
+            </Button>
+            {!pendingCreation?.epgCreated && (
+              <Button
+                onClick={() => finishCreation(true)}
+                loading={finishingCreation}
+              >
+                Create EPG
+              </Button>
+            )}
+          </Group>
+        </Stack>
       </Modal>
       {playlist && (
         <>

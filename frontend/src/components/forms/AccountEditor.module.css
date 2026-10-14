@@ -49,11 +49,30 @@
 }
 
 .accountContent {
-  --modal-size: 82vw;
+  --modal-size: 72vw;
 }
 
 .accountContent.accountContent {
-  --modal-content-height: 92dvh;
+  height: auto;
+  max-height: 92dvh;
+}
+
+/* All panels share one grid cell, so the tallest panel sets a stable height. */
+.accountTabs.accountTabs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.accountPanel.accountPanel {
+  display: block !important;
+  grid-area: 2 / 1;
+}
+
+.accountPanel[data-editor-active='false'] {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .categoryPanel.categoryPanel {
@@ -75,8 +94,18 @@
   min-height: 0;
 }
 
+.sourceContent {
+  --modal-size: 68vw;
+}
+
+.sourceContent.sourceContent {
+  height: auto;
+  max-height: 92dvh;
+}
+
 @media (max-width: 50em) {
-  .accountContent {
+  .accountContent,
+  .sourceContent {
     --modal-size: 94vw;
   }
 }

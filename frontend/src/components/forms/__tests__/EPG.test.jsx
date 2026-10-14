@@ -98,6 +98,8 @@ vi.mock('../ScheduleInput', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', async () => ({
+  SimpleGrid: ({ children }) => <div>{children}</div>,
+  Paper: ({ children }) => <div>{children}</div>,
   Box: ({ children, style }) => <div style={style}>{children}</div>,
   Button: ({ children, onClick, disabled, loading, type, color, variant }) => (
     <button
@@ -255,7 +257,11 @@ vi.mock('@mantine/core', async () => ({
       {children}
     </div>
   ),
-  Stack: ({ children, gap }) => <div data-testid="stack">{children}</div>,
+  Stack: ({ children, gap, role, 'aria-label': ariaLabel }) => (
+    <div data-testid="stack" role={role} aria-label={ariaLabel}>
+      {children}
+    </div>
+  ),
   Text: ({ children, ...props }) => <span>{children}</span>,
   TextInput: ({ label, value, onChange, placeholder, ...props }) => (
     <input
@@ -545,6 +551,9 @@ describe('EPG', () => {
       await waitFor(() => {
         expect(DummyEpgUtils.updateEPG).toHaveBeenCalled();
       });
+      expect(DummyEpgUtils.updateEPG.mock.calls[0][0]).not.toHaveProperty(
+        'is_active'
+      );
     });
 
     it('does not call addEPG when epg.id is present', async () => {
@@ -682,12 +691,24 @@ describe('EPG', () => {
 
   // ── Active checkbox ────────────────────────────────────────────────────────
 
-  describe('active checkbox', () => {
-    it('renders the Active checkbox', () => {
+  describe('overview-controlled enabled state', () => {
+    it.each([null, makeEPG({ is_active: false })])(
+      'does not duplicate the enabled control (epg=%j)',
+      (epg) => {
+        render(<EPG {...defaultProps({ epg })} />);
+        expect(
+          screen.queryByTestId('checkbox-enable-this-epg-source')
+        ).not.toBeInTheDocument();
+      }
+    );
+    it('keeps URL with the source and the schedule in the refresh section', () => {
       render(<EPG {...defaultProps()} />);
       expect(
-        screen.getByTestId('checkbox-enable-this-epg-source')
-      ).toBeInTheDocument();
+        screen.getByRole('group', { name: 'EPG source settings' })
+      ).toContainElement(screen.getByTestId('input-url'));
+      expect(
+        screen.getByRole('group', { name: 'EPG refresh settings' })
+      ).toContainElement(screen.getByTestId('schedule-input'));
     });
   });
 });

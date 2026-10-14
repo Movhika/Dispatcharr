@@ -20,6 +20,8 @@ import {
   Table,
   Switch,
   UnstyledButton,
+  Paper,
+  SimpleGrid,
 } from '@mantine/core';
 import { TriangleAlert, Trash2, Plus, Search } from 'lucide-react';
 import { isNotEmpty, useForm } from '@mantine/form';
@@ -28,6 +30,7 @@ import { addEPG, updateEPG } from '../../utils/forms/DummyEpgUtils.js';
 import { showNotification } from '../../utils/notificationUtils.js';
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
+import editorClasses from './AccountEditor.module.css';
 
 // Countries are fetched with lineups from the backend on component mount.
 // Fallback list used if the API call fails.
@@ -710,7 +713,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
   });
 
   const onSubmit = async () => {
-    const values = form.getValues();
+    const values = { ...form.getValues() };
 
     const hasCronExpression =
       values.cron_expression && values.cron_expression.trim() !== '';
@@ -724,6 +727,8 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
     const existingId = epg?.id || savedEpgId;
 
     if (existingId) {
+      // Enabled is controlled in the overview, not by this editor snapshot.
+      delete values.is_active;
       const epgObj = epg || { id: existingId };
       await updateEPG(values, epgObj);
       onClose();
@@ -808,214 +813,195 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
         opened={isOpen}
         onClose={handleClose}
         title="EPG Source"
-        size={hasSDPanel ? 1100 : 700}
+        size="68vw"
+        yOffset="2vh"
+        classNames={{
+          content: `${editorClasses.content} ${editorClasses.sourceContent}`,
+          body: editorClasses.body,
+          header: editorClasses.header,
+        }}
       >
-        <form onSubmit={form.onSubmit(onSubmit)}>
-          <Group justify="space-between" align="top" wrap="nowrap">
-            {/* Left Column */}
-            <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
-              <TextInput
-                id="name"
-                name="name"
-                label="Name"
-                description="Unique identifier for this EPG source"
-                {...form.getInputProps('name')}
-                key={form.key('name')}
-              />
-
-              <NativeSelect
-                id="source_type"
-                name="source_type"
-                label="Source Type"
-                description="Format of the EPG data source"
-                {...form.getInputProps('source_type')}
-                key={form.key('source_type')}
-                data={[
-                  { label: 'XMLTV', value: 'xmltv' },
-                  { label: 'Schedules Direct', value: 'schedules_direct' },
-                ]}
-                onChange={(event) =>
-                  handleSourceTypeChange(event.currentTarget.value)
-                }
-              />
-
-              {isSD && (
-                <Alert
-                  icon={<TriangleAlert size={16} />}
-                  color="yellow"
-                  variant="light"
-                  title="Schedules Direct API Limits"
-                >
-                  Schedules Direct enforces a limit of approximately 200
-                  requests per 2 hours. Each refresh uses ~15 requests. Avoid
-                  frequent manual refreshes to prevent your account from being
-                  temporarily blocked. A 24-hour refresh interval is
-                  recommended.
-                </Alert>
-              )}
-
-              <ScheduleInput
-                scheduleType={scheduleType}
-                onScheduleTypeChange={setScheduleType}
-                intervalValue={form.getValues().refresh_interval}
-                onIntervalChange={(v) =>
-                  form.setFieldValue('refresh_interval', v)
-                }
-                cronValue={form.getValues().cron_expression}
-                onCronChange={(expr) =>
-                  form.setFieldValue('cron_expression', expr)
-                }
-                intervalLabel="Refresh Interval (hours)"
-                intervalDescription="How often to refresh EPG data (0 to disable)"
-              />
-
-              {isSD && scheduleType === 'cron' && (
-                <Alert
-                  icon={<TriangleAlert size={16} />}
-                  color="orange"
-                  variant="light"
-                  title="Schedules Direct Rate Limit Warning"
-                >
-                  <strong>
-                    Exceeding SD's rate limits may result in a permanent account
-                    ban.
-                  </strong>{' '}
-                  Schedules Direct enforces a limit of ~200 API requests per
-                  2-hour window. Your cron schedule must not trigger a refresh
-                  more than once every 2 hours. The recommended minimum schedule
-                  is <code>0 */2 * * *</code> (every 2 hours).{' '}
-                  <a
-                    href="https://github.com/SchedulesDirect/JSON-Service/wiki/API-20141201#tasks-your-client-must-perform"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Learn more
-                  </a>
-                </Alert>
-              )}
-
-              {isSD &&
-                scheduleType === 'interval' &&
-                form.getValues().refresh_interval > 0 &&
-                form.getValues().refresh_interval < 2 && (
-                  <Alert
-                    icon={<TriangleAlert size={16} />}
-                    color="red"
-                    variant="light"
-                    title="Interval Too Short"
-                  >
-                    <strong>
-                      Schedules Direct requires a minimum refresh interval of 2
-                      hours.
-                    </strong>{' '}
-                    Setting a shorter interval may result in your account being
-                    banned. Please set the interval to 2 or higher, or use 0 to
-                    disable auto-refresh.
-                  </Alert>
-                )}
-            </Stack>
-
-            <Divider size="sm" orientation="vertical" />
-
-            {/* Middle Column */}
-            <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
-              {!isSD && (
-                <TextInput
-                  id="url"
-                  name="url"
-                  label="URL"
-                  description="Direct URL to the XMLTV file or API endpoint"
-                  {...form.getInputProps('url')}
-                  key={form.key('url')}
-                />
-              )}
-
-              {isSD && (
-                <>
+        <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
+          <div className={editorClasses.panel}>
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+              <Paper withBorder p="sm">
+                <Stack gap="xs" role="group" aria-label="EPG source settings">
+                  <Text fw={600}>Source</Text>
                   <TextInput
-                    id="username"
-                    name="username"
-                    label="Username"
-                    description="Your Schedules Direct account username"
-                    {...form.getInputProps('username')}
-                    key={form.key('username')}
+                    id="name"
+                    name="name"
+                    label="Name"
+                    description="Unique identifier for this EPG source"
+                    {...form.getInputProps('name')}
+                    key={form.key('name')}
                   />
-                  <TextInput
-                    id="password"
-                    name="password"
-                    label="Password"
-                    description="Your Schedules Direct account password"
-                    type="password"
-                    {...form.getInputProps('password')}
-                    key={form.key('password')}
+
+                  <NativeSelect
+                    id="source_type"
+                    name="source_type"
+                    label="Source Type"
+                    description="Format of the EPG data source"
+                    {...form.getInputProps('source_type')}
+                    key={form.key('source_type')}
+                    data={[
+                      { label: 'XMLTV', value: 'xmltv' },
+                      { label: 'Schedules Direct', value: 'schedules_direct' },
+                    ]}
+                    onChange={(event) =>
+                      handleSourceTypeChange(event.currentTarget.value)
+                    }
                   />
-                </>
-              )}
 
-              <NumberInput
-                min={0}
-                max={999}
-                label="Priority"
-                description="Priority for EPG matching (higher numbers = higher priority). Used when multiple EPG sources have matching entries for a channel."
-                {...form.getInputProps('priority')}
-                key={form.key('priority')}
-              />
+                  {!isSD && (
+                    <TextInput
+                      id="url"
+                      name="url"
+                      label="URL"
+                      description="Direct URL to the XMLTV file or API endpoint"
+                      {...form.getInputProps('url')}
+                      key={form.key('url')}
+                    />
+                  )}
 
-              {savedEpgId && (
-                <AutoApplyEpgLogosSwitch
-                  sourceId={savedEpgId}
-                  customProperties={sdCustomProps}
-                  description="When enabled, matched channels are updated from EPG channel icons on each refresh. When disabled, icons are still stored in EPG data and can be applied manually via Set Logo from EPG."
-                />
-              )}
+                  {isSD && (
+                    <>
+                      <TextInput
+                        id="username"
+                        name="username"
+                        label="Username"
+                        description="Your Schedules Direct account username"
+                        {...form.getInputProps('username')}
+                        key={form.key('username')}
+                      />
+                      <TextInput
+                        id="password"
+                        name="password"
+                        label="Password"
+                        description="Your Schedules Direct account password"
+                        type="password"
+                        {...form.getInputProps('password')}
+                        key={form.key('password')}
+                      />
+                    </>
+                  )}
 
-              <Box style={{ marginTop: 0 }}>
-                <Text size="sm" fw={500} mb={3}>
-                  Status
-                </Text>
-                <Text size="xs" c="dimmed" mb={12}>
-                  When enabled, this EPG source will auto update.
-                </Text>
-                <Box
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    height: '30px',
-                    marginTop: '-4px',
-                  }}
-                >
-                  <Checkbox
-                    id="is_active"
-                    name="is_active"
-                    label="Enable this EPG source"
-                    {...form.getInputProps('is_active', { type: 'checkbox' })}
-                    key={form.key('is_active')}
+                  <NumberInput
+                    min={0}
+                    max={999}
+                    label="Priority"
+                    description="Priority for EPG matching (higher numbers = higher priority). Used when multiple EPG sources have matching entries for a channel."
+                    {...form.getInputProps('priority')}
+                    key={form.key('priority')}
                   />
-                </Box>
-              </Box>
-            </Stack>
 
-            {/* Right Column — SD settings + Lineup Manager */}
-            {hasSDPanel && (
-              <>
-                <Divider size="sm" orientation="vertical" />
-                <Stack gap="md" style={{ flex: 1.2, minWidth: 0 }}>
-                  <ScrollArea h={550} offsetScrollbars>
-                    <SDSettings
+                  {savedEpgId && (
+                    <AutoApplyEpgLogosSwitch
                       sourceId={savedEpgId}
                       customProperties={sdCustomProps}
+                      description="When enabled, matched channels are updated from EPG channel icons on each refresh. When disabled, icons are still stored in EPG data and can be applied manually via Set Logo from EPG."
                     />
-                    <SDLineupManager sourceId={savedEpgId} />
-                  </ScrollArea>
+                  )}
                 </Stack>
-              </>
+              </Paper>
+
+              <Paper withBorder p="sm">
+                <Stack gap="xs" role="group" aria-label="EPG refresh settings">
+                  <Text fw={600}>Refresh</Text>
+                  {isSD && (
+                    <Alert
+                      icon={<TriangleAlert size={16} />}
+                      color="yellow"
+                      variant="light"
+                      title="Schedules Direct API Limits"
+                    >
+                      Schedules Direct enforces a limit of approximately 200
+                      requests per 2 hours. Each refresh uses ~15 requests.
+                      Avoid frequent manual refreshes to prevent your account
+                      from being temporarily blocked. A 24-hour refresh interval
+                      is recommended.
+                    </Alert>
+                  )}
+
+                  <ScheduleInput
+                    scheduleType={scheduleType}
+                    onScheduleTypeChange={setScheduleType}
+                    intervalValue={form.getValues().refresh_interval}
+                    onIntervalChange={(v) =>
+                      form.setFieldValue('refresh_interval', v)
+                    }
+                    cronValue={form.getValues().cron_expression}
+                    onCronChange={(expr) =>
+                      form.setFieldValue('cron_expression', expr)
+                    }
+                    intervalLabel="Refresh Interval (hours)"
+                    intervalDescription="How often to refresh EPG data (0 to disable)"
+                  />
+
+                  {isSD && scheduleType === 'cron' && (
+                    <Alert
+                      icon={<TriangleAlert size={16} />}
+                      color="orange"
+                      variant="light"
+                      title="Schedules Direct Rate Limit Warning"
+                    >
+                      <strong>
+                        Exceeding SD's rate limits may result in a permanent
+                        account ban.
+                      </strong>{' '}
+                      Schedules Direct enforces a limit of ~200 API requests per
+                      2-hour window. Your cron schedule must not trigger a
+                      refresh more than once every 2 hours. The recommended
+                      minimum schedule is <code>0 */2 * * *</code> (every 2
+                      hours).{' '}
+                      <a
+                        href="https://github.com/SchedulesDirect/JSON-Service/wiki/API-20141201#tasks-your-client-must-perform"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Learn more
+                      </a>
+                    </Alert>
+                  )}
+
+                  {isSD &&
+                    scheduleType === 'interval' &&
+                    form.getValues().refresh_interval > 0 &&
+                    form.getValues().refresh_interval < 2 && (
+                      <Alert
+                        icon={<TriangleAlert size={16} />}
+                        color="red"
+                        variant="light"
+                        title="Interval Too Short"
+                      >
+                        <strong>
+                          Schedules Direct requires a minimum refresh interval
+                          of 2 hours.
+                        </strong>{' '}
+                        Setting a shorter interval may result in your account
+                        being banned. Please set the interval to 2 or higher, or
+                        use 0 to disable auto-refresh.
+                      </Alert>
+                    )}
+                </Stack>
+              </Paper>
+            </SimpleGrid>
+
+            {/* Settings and lineups for an existing Schedules Direct source. */}
+            {hasSDPanel && (
+              <Paper withBorder p="sm" mt="md">
+                <Stack gap="md">
+                  <SDSettings
+                    sourceId={savedEpgId}
+                    customProperties={sdCustomProps}
+                  />
+                  <SDLineupManager sourceId={savedEpgId} />
+                </Stack>
+              </Paper>
             )}
-          </Group>
+          </div>
 
           {/* Full Width Section */}
-          <Box mt="md">
-            <Divider my="sm" />
-
+          <Box className={editorClasses.footer}>
             {isSD && !savedEpgId && (
               <Text size="xs" c="dimmed" mb="sm">
                 Save this source first to manage Schedules Direct settings and
@@ -1023,7 +1009,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
               </Text>
             )}
 
-            <Group justify="end" mt="xl">
+            <Group justify="end">
               <Button variant="outline" onClick={handleClose}>
                 Cancel
               </Button>
