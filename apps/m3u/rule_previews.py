@@ -30,6 +30,7 @@ from .serializers import (
     M3UGroupRulePreviewRequestSerializer,
     M3UGroupRuleSerializer,
     M3UGroupContentQuerySerializer,
+    M3UGroupContentAvailabilitySerializer,
     M3UPreviewResponseSerializer,
     M3URuleApplyResponseSerializer,
     M3URuleOrderSerializer,
@@ -236,6 +237,39 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         account = get_object_or_404(M3UAccount, pk=self.kwargs["account_id"])
         serializer.save(m3u_account=account)
+
+    @extend_schema(
+        description="List category IDs with imported content for this account. Read-only; does not contact the provider or import anything.",
+        responses=M3UGroupContentAvailabilitySerializer,
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="content-availability",
+        permission_classes=[IsAdmin],
+    )
+    def content_availability(self, request, *args, **kwargs):
+        account = get_object_or_404(M3UAccount, pk=self.kwargs["account_id"])
+        available = {
+            "live": list(
+                Stream.objects.filter(m3u_account=account)
+                .exclude(channel_group_id=None)
+                .order_by("channel_group_id")
+                .values_list("channel_group_id", flat=True)
+                .distinct()
+            )
+        }
+        for scope, model in (
+            (M3UGroupRule.Scope.MOVIE, M3UMovieRelation),
+            (M3UGroupRule.Scope.SERIES, M3USeriesRelation),
+        ):
+            available[scope] = list(
+                model.objects.filter(m3u_account=account, category__category_type=scope)
+                .order_by("category_id")
+                .values_list("category_id", flat=True)
+                .distinct()
+            )
+        return Response(M3UGroupContentAvailabilitySerializer(available).data)
 
     @extend_schema(
         parameters=PREVIEW_PARAMETERS + [M3UGroupContentQuerySerializer],

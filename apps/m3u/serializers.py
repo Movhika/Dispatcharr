@@ -121,6 +121,12 @@ class M3UGroupContentQuerySerializer(serializers.Serializer):
     search = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
+class M3UGroupContentAvailabilitySerializer(serializers.Serializer):
+    live = serializers.ListField(child=serializers.IntegerField())
+    movie = serializers.ListField(child=serializers.IntegerField())
+    series = serializers.ListField(child=serializers.IntegerField())
+
+
 class M3UPreviewResponseSerializer(serializers.Serializer):
     count = serializers.IntegerField()
     results = M3UPreviewResultSerializer(many=True)
