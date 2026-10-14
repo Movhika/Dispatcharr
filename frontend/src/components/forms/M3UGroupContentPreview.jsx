@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import API from '../../api.js';
 import ListPagination from '../ListPagination.jsx';
+import editorClasses from './AccountEditor.module.css';
 
 const M3UGroupContentPreview = ({ accountId, scope, group, onClose }) => {
   const [search, setSearch] = useState('');
@@ -67,12 +68,18 @@ const M3UGroupContentPreview = ({ accountId, scope, group, onClose }) => {
     <Modal
       opened={!!group}
       onClose={onClose}
-      title={`${group?.name || 'Group'} preview`}
-      size="min(1100px, 94vw)"
+      title={`${group?.name || 'Category'} preview`}
+      size="94vw"
+      yOffset="2vh"
+      classNames={{
+        content: editorClasses.content,
+        body: editorClasses.body,
+        header: editorClasses.header,
+      }}
     >
-      <Stack>
+      <Stack className={editorClasses.previewStack} gap="xs">
         <Text size="sm" c="dimmed">
-          Currently imported content from this account and group. Disabled or
+          Currently imported content from this account and category. Disabled or
           ignored content is not imported; use the rule preview to inspect
           import decisions.
         </Text>
@@ -87,7 +94,7 @@ const M3UGroupContentPreview = ({ accountId, scope, group, onClose }) => {
         {error && <Alert color="red">{error}</Alert>}
         {busy && <Loader size="sm" />}
         <Text size="sm">{result?.count || 0} entries</Text>
-        <ScrollArea h="55vh">
+        <ScrollArea className={editorClasses.previewScroll}>
           <Table striped withTableBorder>
             <TableThead>
               <TableTr>
@@ -103,16 +110,18 @@ const M3UGroupContentPreview = ({ accountId, scope, group, onClose }) => {
             </TableTbody>
           </Table>
         </ScrollArea>
-        <ListPagination
-          page={page}
-          pageSize={pageSize}
-          total={result?.count || 0}
-          onPageChange={setPage}
-          onPageSizeChange={(size) => {
-            setPageSize(size);
-            setPage(1);
-          }}
-        />
+        <div className={editorClasses.footer}>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={result?.count || 0}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+        </div>
       </Stack>
     </Modal>
   );

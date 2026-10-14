@@ -43,6 +43,7 @@ const M3UGroupFilter = ({
   const [rulesScope, setRulesScope] = useState(null);
   const [childOverlayOpen, setChildOverlayOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
+  const [paginationContainer, setPaginationContainer] = useState(null);
   const groupsAccount = useRef(null);
 
   useEffect(() => {
@@ -243,17 +244,25 @@ const M3UGroupFilter = ({
             <TabsTab value="vod-series">VOD - Series</TabsTab>
           </TabsList>
 
-          <TabsPanel value="live" className={editorClasses.panel}>
+          <TabsPanel
+            value="live"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
             <LiveGroupFilter
               playlist={playlist}
               groupStates={groupStates}
               setGroupStates={setGroupStates}
               onOpenRules={() => setRulesScope('live')}
               onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'live'}
             />
           </TabsPanel>
 
-          <TabsPanel value="vod-movie" className={editorClasses.panel}>
+          <TabsPanel
+            value="vod-movie"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
             <VODCategoryFilter
               playlist={playlist}
               categoryStates={movieCategoryStates}
@@ -261,10 +270,15 @@ const M3UGroupFilter = ({
               type="movie"
               onOpenRules={() => setRulesScope('movie')}
               onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'vod-movie'}
             />
           </TabsPanel>
 
-          <TabsPanel value="vod-series" className={editorClasses.panel}>
+          <TabsPanel
+            value="vod-series"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
             <VODCategoryFilter
               playlist={playlist}
               categoryStates={seriesCategoryStates}
@@ -272,17 +286,26 @@ const M3UGroupFilter = ({
               type="series"
               onOpenRules={() => setRulesScope('series')}
               onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'vod-series'}
             />
           </TabsPanel>
         </Tabs>
 
         <Flex
+          component="footer"
+          aria-label="Category actions"
           className={editorClasses.footer}
           mih={50}
           gap="xs"
           justify="flex-end"
           align="center"
+          wrap="wrap"
         >
+          <div
+            ref={setPaginationContainer}
+            className={editorClasses.paginationSlot}
+          />
           {!isInitialSetup && (
             <Button
               variant="default"

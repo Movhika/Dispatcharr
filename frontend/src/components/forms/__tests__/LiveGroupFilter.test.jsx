@@ -717,9 +717,13 @@ describe('LiveGroupFilter', () => {
       fireEvent.click(
         screen.getByRole('checkbox', { name: 'Select visible categories' })
       );
-      expect(screen.getAllByText('Inactive')).toHaveLength(2);
+      expect(
+        screen.getAllByText('Disabled').filter((el) => el.closest('table'))
+      ).toHaveLength(2);
       fireEvent.click(screen.getByText('Enable selected'));
-      expect(screen.getAllByText('Active')).toHaveLength(2);
+      expect(
+        screen.getAllByText('Enabled').filter((el) => el.closest('table'))
+      ).toHaveLength(2);
     });
 
     it('disables only selected groups', () => {
@@ -731,8 +735,12 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select News' }));
       fireEvent.click(screen.getByText('Disable selected'));
-      expect(screen.getAllByText('Inactive')).toHaveLength(1);
-      expect(screen.getAllByText('Active')).toHaveLength(1);
+      expect(
+        screen.getAllByText('Disabled').filter((el) => el.closest('table'))
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByText('Enabled').filter((el) => el.closest('table'))
+      ).toHaveLength(1);
     });
 
     it('selects only groups passing the current filter', () => {

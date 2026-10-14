@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   TextInput,
   Button,
@@ -107,14 +108,14 @@ const CategoryCard = memo(function CategoryCard({
           {category.name}
         </Text>
       </TableTd>
-      <TableTd>
+      <TableTd ta="center">
         <Badge
           size="sm"
           radius="sm"
           color={category.enabled ? 'green' : 'gray'}
           variant={category.enabled ? 'filled' : 'light'}
         >
-          {category.enabled ? 'Active' : 'Inactive'}
+          {category.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
       </TableTd>
       <TableTd>
@@ -162,6 +163,8 @@ const VODCategoryFilter = ({
   type,
   onOpenRules,
   onOverlayChange,
+  paginationContainer = null,
+  paginationVisible = true,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
@@ -354,6 +357,19 @@ const VODCategoryFilter = ({
     });
   };
 
+  const pagination = (
+    <ListPagination
+      page={page}
+      pageSize={pageSize}
+      total={visibleCategories.length}
+      onPageChange={setPage}
+      onPageSizeChange={(size) => {
+        setPageSize(size);
+        setPage(1);
+      }}
+    />
+  );
+
   return (
     <Stack gap="xs" style={{ height: '100%', minHeight: 0 }}>
       <Flex gap="xs" align="center" wrap="wrap">
@@ -448,7 +464,9 @@ const VODCategoryFilter = ({
                 />
               </TableTh>
               <TableTh>Category</TableTh>
-              <TableTh w="12%">Enabled</TableTh>
+              <TableTh w="12%" ta="center">
+                Status
+              </TableTh>
               <TableTh w="20%">Language</TableTh>
               <TableTh w="12%">Quality</TableTh>
               <TableTh w={76}>Actions</TableTh>
@@ -470,16 +488,10 @@ const VODCategoryFilter = ({
           </TableTbody>
         </Table>
       </ScrollArea>
-      <ListPagination
-        page={page}
-        pageSize={pageSize}
-        total={visibleCategories.length}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(1);
-        }}
-      />
+      {paginationVisible &&
+        (paginationContainer
+          ? createPortal(pagination, paginationContainer)
+          : pagination)}
       <M3UGroupContentPreview
         accountId={playlist.id}
         scope={type}

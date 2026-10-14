@@ -1,6 +1,12 @@
 import { StrictMode, useState } from 'react';
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import LiveGroupFilter from '../LiveGroupFilter';
 import VODCategoryFilter from '../VODCategoryFilter';
@@ -43,23 +49,32 @@ vi.mock('../AutoSyncBasic.jsx', () => ({ default: () => null }));
 vi.mock('../AutoSyncAdvanced.jsx', () => ({ default: () => null }));
 
 function Categories({ vod = false }) {
+  const [paginationContainer, setPaginationContainer] = useState(null);
   const [rows, setRows] = useState(
     vod ? groups.map((group) => ({ ...group, id: group.channel_group })) : []
   );
   const playlist = { id: 1, channel_groups: groups };
-  return vod ? (
+  const content = vod ? (
     <VODCategoryFilter
       playlist={playlist}
       categoryStates={rows}
       setCategoryStates={setRows}
       type="movie"
+      paginationContainer={paginationContainer}
     />
   ) : (
     <LiveGroupFilter
       playlist={playlist}
       groupStates={rows}
       setGroupStates={setRows}
+      paginationContainer={paginationContainer}
     />
+  );
+  return (
+    <>
+      {content}
+      <footer aria-label="Category actions" ref={setPaginationContainer} />
+    </>
   );
 }
 
@@ -99,7 +114,22 @@ describe('Category selection with Mantine controls', () => {
         screen.queryByRole('button', { name: 'Category 01' })
       ).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Enable selected' }));
-      expect(screen.getAllByText('Active')).toHaveLength(25);
+      expect(
+        screen.getByRole('columnheader', { name: 'Status' })
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByRole('table')).getAllByText('Enabled')
+      ).toHaveLength(25);
+      expect(
+        screen.getByRole('contentinfo', { name: 'Category actions' })
+      ).toContainElement(screen.getByRole('button', { name: '2' }));
+      fireEvent.click(screen.getByRole('button', { name: '2' }));
+      expect(
+        screen.getByRole('checkbox', { name: 'Select Category 26' })
+      ).toBeChecked();
+      expect(
+        within(screen.getByRole('table')).getAllByText('Enabled')
+      ).toHaveLength(15);
     },
     15000
   );

@@ -56,6 +56,25 @@
   --modal-content-height: 92dvh;
 }
 
+.categoryPanel.categoryPanel {
+  overflow: hidden;
+}
+
+.paginationSlot {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.previewStack.previewStack {
+  flex: 1;
+  min-height: 0;
+}
+
+.previewScroll {
+  flex: 1;
+  min-height: 0;
+}
+
 @media (max-width: 50em) {
   .accountContent {
     --modal-size: 94vw;

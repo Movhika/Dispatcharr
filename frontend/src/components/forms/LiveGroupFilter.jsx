@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ActionIcon,
   Badge,
@@ -126,24 +127,26 @@ const LiveGroupCard = memo(function LiveGroupCard({
           </Text>
         </Tooltip>
       </TableTd>
-      <TableTd>
+      <TableTd ta="center">
         <Badge
           size="sm"
           radius="sm"
           color={group.enabled ? 'green' : 'gray'}
           variant={group.enabled ? 'filled' : 'light'}
         >
-          {group.enabled ? 'Active' : 'Inactive'}
+          {group.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
       </TableTd>
       <TableTd>
-        <Checkbox
-          aria-label={`Auto Channel Sync for ${group.name}`}
-          checked={!!(group.auto_channel_sync && group.enabled)}
-          disabled={!group.enabled}
-          onChange={() => onToggleAutoSync(group.channel_group)}
-          size="xs"
-        />
+        <Flex justify="center">
+          <Checkbox
+            aria-label={`Auto Channel Sync for ${group.name}`}
+            checked={!!(group.auto_channel_sync && group.enabled)}
+            disabled={!group.enabled}
+            onChange={() => onToggleAutoSync(group.channel_group)}
+            size="xs"
+          />
+        </Flex>
       </TableTd>
       <TableTd>
         <Text size="xs" c={showAutoSyncControls ? undefined : 'dimmed'}>
@@ -210,6 +213,8 @@ const LiveGroupFilter = ({
   setGroupStates,
   onOpenRules,
   onOverlayChange,
+  paginationContainer = null,
+  paginationVisible = true,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const streamProfiles = useStreamProfilesStore((s) => s.profiles);
@@ -827,6 +832,19 @@ const LiveGroupFilter = ({
     });
   };
 
+  const pagination = (
+    <ListPagination
+      page={page}
+      pageSize={pageSize}
+      total={visibleGroups.length}
+      onPageChange={setPage}
+      onPageSizeChange={(size) => {
+        setPageSize(size);
+        setPage(1);
+      }}
+    />
+  );
+
   return (
     <Stack gap="xs" style={{ height: '100%', minHeight: 0 }}>
       <Flex gap="xs" align="center" wrap="wrap">
@@ -928,9 +946,11 @@ const LiveGroupFilter = ({
                 />
               </TableTh>
               <TableTh>Category</TableTh>
-              <TableTh w="10%">Enabled</TableTh>
+              <TableTh w="10%" ta="center">
+                Status
+              </TableTh>
               <TableTh w="12%">
-                <Group gap={4} wrap="nowrap">
+                <Group gap={4} wrap="nowrap" justify="center">
                   Auto sync
                   <Tooltip
                     label="Auto sync creates and maintains channels for imported streams in each enabled category. Number ranges and advanced options can be configured per category."
@@ -976,16 +996,10 @@ const LiveGroupFilter = ({
           </TableTbody>
         </Table>
       </ScrollArea>
-      <ListPagination
-        page={page}
-        pageSize={pageSize}
-        total={visibleGroups.length}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(1);
-        }}
-      />
+      {paginationVisible &&
+        (paginationContainer
+          ? createPortal(pagination, paginationContainer)
+          : pagination)}
       <M3UGroupContentPreview
         accountId={playlist.id}
         scope="live"
