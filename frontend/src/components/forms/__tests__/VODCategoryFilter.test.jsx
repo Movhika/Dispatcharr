@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
@@ -9,6 +10,7 @@ vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   Eye: () => <svg />,
+  Settings: () => <svg />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
 }));
@@ -647,29 +649,61 @@ describe('VODCategoryFilter', () => {
   // ── Language / quality ────────────────────────────────────────────────────
 
   describe('language and quality selects', () => {
-    it('renders language and quality selects for each visible category', () => {
+    it('cancel restores only the edited category and Done keeps the draft', () => {
+      const StatefulFilter = () => {
+        const [categoryStates, setCategoryStates] = useState(
+          defaultProps().categoryStates
+        );
+        return (
+          <VODCategoryFilter
+            {...defaultProps({ categoryStates, setCategoryStates })}
+          />
+        );
+      };
+      render(<StatefulFilter />);
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      fireEvent.change(screen.getByLabelText('Language'), {
+        target: { value: 'es' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.getByText('English (en)')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      fireEvent.change(screen.getByLabelText('Quality'), {
+        target: { value: '4K' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      expect(screen.getByText('4K')).toBeInTheDocument();
+      expect(screen.getByText('English (en)')).toBeInTheDocument();
+    });
+    it('keeps selects out of rows and opens settings before preview', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      expect(screen.getAllByLabelText('Language')).toHaveLength(3);
-      expect(screen.getAllByLabelText('Quality')).toHaveLength(3);
+      expect(screen.queryByLabelText('Language')).not.toBeInTheDocument();
+      const row = screen.getByText('Action').closest('tr');
+      expect(
+        within(row)
+          .getAllByRole('button')
+          .map((button) => button.getAttribute('aria-label'))
+      ).toEqual([null, 'Configure Action', 'Preview category']);
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      expect(screen.getByLabelText('Language')).toBeInTheDocument();
+      expect(screen.getByLabelText('Quality')).toBeInTheDocument();
     });
 
     it('loads existing language and quality from category state', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      const languageSelects = screen.getAllByLabelText('Language');
-      const qualitySelects = screen.getAllByLabelText('Quality');
-      // Categories render sorted by name: Action, Comedy, Drama
-      expect(languageSelects[0]).toHaveValue('en');
-      expect(qualitySelects[0]).toHaveValue('1080p');
-      expect(languageSelects[1]).toHaveValue('');
-      expect(qualitySelects[1]).toHaveValue('');
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      expect(screen.getByLabelText('Language')).toHaveValue('en');
+      expect(screen.getByLabelText('Quality')).toHaveValue('1080p');
     });
 
     it('updates custom_properties.language when language changes', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      const languageSelects = screen.getAllByLabelText('Language');
-      fireEvent.change(languageSelects[0], { target: { value: 'es' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      fireEvent.change(screen.getByLabelText('Language'), {
+        target: { value: 'es' },
+      });
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
@@ -686,8 +720,10 @@ describe('VODCategoryFilter', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      const qualitySelects = screen.getAllByLabelText('Quality');
-      fireEvent.change(qualitySelects[0], { target: { value: '4K' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      fireEvent.change(screen.getByLabelText('Quality'), {
+        target: { value: '4K' },
+      });
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
@@ -701,8 +737,11 @@ describe('VODCategoryFilter', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      const languageSelects = screen.getAllByLabelText('Language');
-      fireEvent.change(languageSelects[0], { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
+      fireEvent.change(screen.getByLabelText('Language'), {
+        target: { value: '' },
+      });
+
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates

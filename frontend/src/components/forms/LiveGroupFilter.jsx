@@ -12,7 +12,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Divider,
   Flex,
   Loader,
   Group,
@@ -31,7 +30,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Eye, Info, Settings as Cog } from 'lucide-react';
+import { AlertTriangle, Eye, Info, Settings as Cog } from 'lucide-react';
 import ListPagination from '../ListPagination.jsx';
 import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
 import M3UFilters from './M3UFilters.jsx';
@@ -59,7 +58,6 @@ import {
 } from '../../utils/forms/LiveGroupFilterUtils.js';
 
 const EMPTY_OVERLAPS = Object.freeze([]);
-const EMPTY_CONFLICTS = Object.freeze({});
 const EMPTY_BULK_SETTINGS = Object.freeze({
   enabled: 'keep',
   autoSync: 'keep',
@@ -79,9 +77,7 @@ const LiveGroupCard = memo(function LiveGroupCard({
   overlaps,
   onToggle,
   onToggleAutoSync,
-  onNumberingModeChange,
   onConfigure,
-  onApplyGroupChange,
   onPreview,
   selected,
   onSelect,
@@ -89,6 +85,21 @@ const LiveGroupCard = memo(function LiveGroupCard({
   const numberingMode =
     group.custom_properties?.channel_numbering_mode || 'fixed';
   const showAutoSyncControls = group.auto_channel_sync && group.enabled;
+  const rangeStart =
+    numberingMode === 'provider'
+      ? (group.custom_properties?.channel_numbering_fallback ?? 1)
+      : (group.auto_sync_channel_start ?? 1);
+  const rangeWarning = [
+    ...(hasChannelConflict
+      ? [
+          'Range conflicts with configured channels. View the Channels page to inspect.',
+        ]
+      : []),
+    ...overlaps.map(
+      (overlap) =>
+        `Overlaps with ${overlap.name} (${overlap.start}-${overlap.end})`
+    ),
+  ].join('\n');
   return (
     <TableTr data-testid="group-card">
       <TableTd>
@@ -114,6 +125,8 @@ const LiveGroupCard = memo(function LiveGroupCard({
             variant="subtle"
             onClick={() => onToggle(group.channel_group)}
             size="xs"
+            maw="100%"
+            styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}
           >
             {group.name}
           </Button>
@@ -134,36 +147,36 @@ const LiveGroupCard = memo(function LiveGroupCard({
         />
       </TableTd>
       <TableTd>
-        <Select
-          aria-label={`Numbering for ${group.name}`}
-          size="xs"
-          w={145}
-          value={numberingMode}
-          data={NUMBERING_MODE_OPTIONS}
-          disabled={!showAutoSyncControls}
-          allowDeselect={false}
-          onChange={(value) =>
-            onNumberingModeChange(group.channel_group, value)
-          }
-        />
+        <Text size="xs" c={showAutoSyncControls ? undefined : 'dimmed'}>
+          {NUMBERING_MODE_OPTIONS.find(
+            (option) => option.value === numberingMode
+          )?.label || 'Fixed'}
+        </Text>
       </TableTd>
       <TableTd>
-        {showAutoSyncControls ? (
-          <AutoSyncBasic
-            group={group}
-            overlaps={overlaps}
-            groupConflicts={
-              hasChannelConflict
-                ? { [group.channel_group]: { hasChannelConflict: true } }
-                : EMPTY_CONFLICTS
-            }
-            onApplyGroupChange={onApplyGroupChange}
-          />
-        ) : (
-          <Text size="xs" c="dimmed">
-            Auto sync disabled
+        <Group gap={4} wrap="nowrap">
+          <Text size="xs" c={showAutoSyncControls ? undefined : 'dimmed'}>
+            {!showAutoSyncControls
+              ? 'Auto sync disabled'
+              : numberingMode === 'next_available'
+                ? 'Next available'
+                : `${rangeStart}–${group.auto_sync_channel_end ?? '∞'}`}
           </Text>
-        )}
+          {showAutoSyncControls && rangeWarning && (
+            <Tooltip
+              label={rangeWarning}
+              multiline
+              w={280}
+              styles={{ tooltip: { whiteSpace: 'pre-line' } }}
+            >
+              <AlertTriangle
+                size={14}
+                color="var(--mantine-color-yellow-6)"
+                aria-label="Range conflict warning"
+              />
+            </Tooltip>
+          )}
+        </Group>
       </TableTd>
       <TableTd>
         <Flex gap={4} align="center">
@@ -171,7 +184,7 @@ const LiveGroupCard = memo(function LiveGroupCard({
             <ActionIcon
               aria-label="Configure group"
               variant="subtle"
-              disabled={!showAutoSyncControls}
+              disabled={!group.enabled}
               onClick={() => onConfigure(group)}
             >
               <Cog size={16} />
@@ -831,7 +844,7 @@ const LiveGroupFilter = ({
   };
 
   return (
-    <Stack style={{ height: '100%', minHeight: 0 }}>
+    <Stack gap="xs" style={{ height: '100%', minHeight: 0 }}>
       <Flex gap="xs" align="center" wrap="wrap">
         <Button size="xs" variant="default" onClick={onOpenRules}>
           Import rules
@@ -853,22 +866,22 @@ const LiveGroupFilter = ({
             <Info size={16} />
           </ActionIcon>
         </Tooltip>
+        <Tooltip
+          label="Fallback for new groups not matched by an import rule. Existing selections are unchanged."
+          multiline
+          maw={360}
+          withArrow
+        >
+          <Checkbox
+            label="Enable unmatched new groups"
+            checked={autoEnableNewGroupsLive}
+            onChange={(event) =>
+              setAutoEnableNewGroupsLive(event.currentTarget.checked)
+            }
+            size="sm"
+          />
+        </Tooltip>
       </Flex>
-      <Tooltip
-        label="Fallback for new groups not matched by an import rule. Existing selections are unchanged."
-        multiline
-        maw={360}
-        withArrow
-      >
-        <Checkbox
-          label="Enable unmatched new groups"
-          checked={autoEnableNewGroupsLive}
-          onChange={(event) =>
-            setAutoEnableNewGroupsLive(event.currentTarget.checked)
-          }
-          size="sm"
-        />
-      </Tooltip>
 
       <OrphanCleanupControl playlist={playlist} />
 
@@ -877,7 +890,7 @@ const LiveGroupFilter = ({
           placeholder="Filter groups..."
           value={groupFilter}
           onChange={(event) => setGroupFilter(event.currentTarget.value)}
-          style={{ flex: 1 }}
+          style={{ flex: '1 1 180px', minWidth: 0 }}
           size="xs"
         />
         <SegmentedControl
@@ -928,10 +941,13 @@ const LiveGroupFilter = ({
         )}
       </Flex>
 
-      <Divider label="Groups & Auto Sync Settings" labelPosition="center" />
-
       <ScrollArea style={{ flex: 1, minHeight: 0 }}>
-        <Table striped withTableBorder stickyHeader miw={1000}>
+        <Table
+          striped
+          withTableBorder
+          stickyHeader
+          style={{ tableLayout: 'fixed' }}
+        >
           <TableThead>
             <TableTr>
               <TableTh w={44}>
@@ -952,11 +968,11 @@ const LiveGroupFilter = ({
                 />
               </TableTh>
               <TableTh>Group</TableTh>
-              <TableTh>Enabled</TableTh>
-              <TableTh>Auto sync</TableTh>
-              <TableTh>Numbering</TableTh>
-              <TableTh>Channel range</TableTh>
-              <TableTh>Actions</TableTh>
+              <TableTh w="10%">Enabled</TableTh>
+              <TableTh w="9%">Auto sync</TableTh>
+              <TableTh w="12%">Numbering</TableTh>
+              <TableTh w="18%">Channel range</TableTh>
+              <TableTh w={76}>Actions</TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -974,9 +990,7 @@ const LiveGroupFilter = ({
                   }
                   onToggle={toggleGroupEnabled}
                   onToggleAutoSync={toggleAutoSync}
-                  onNumberingModeChange={updateNumberingMode}
                   onConfigure={openConfigure}
-                  onApplyGroupChange={applyGroupChange}
                   onPreview={setPreviewGroup}
                   selected={selectedGroupIds.has(group.channel_group)}
                   onSelect={toggleSelectedGroup}
@@ -1091,10 +1105,7 @@ const LiveGroupFilter = ({
         </Stack>
       </Modal>
 
-      {/* Per-group Configure modal. Holds the Advanced Options MultiSelect
-          and all its conditional fields so the inline row only renders the
-          core Sync toggle, Numbering Mode, and Start/End inputs regardless
-          of how many advanced options are active. */}
+      {/* Settings stay in the per-group dialog; rows show compact summaries. */}
       <GroupConfigureModal
         opened={!!configuringGroup}
         onDone={() => {
@@ -1114,27 +1125,84 @@ const LiveGroupFilter = ({
         group={configuringGroup}
       >
         {configuringGroup && (
-          <ErrorBoundary inline>
-            <Suspense fallback={<Loader />}>
-              <AutoSyncAdvanced
+          <Stack>
+            <Checkbox
+              label="Auto sync"
+              checked={!!configuringGroup.auto_channel_sync}
+              onChange={() => toggleAutoSync(configuringGroup.channel_group)}
+            />
+            <Select
+              label="Numbering mode"
+              value={
+                configuringGroup.custom_properties?.channel_numbering_mode ||
+                'fixed'
+              }
+              data={NUMBERING_MODE_OPTIONS}
+              disabled={!configuringGroup.auto_channel_sync}
+              allowDeselect={false}
+              onChange={(value) =>
+                updateNumberingMode(configuringGroup.channel_group, value)
+              }
+            />
+            {configuringGroup.auto_channel_sync && (
+              <AutoSyncBasic
                 group={configuringGroup}
-                epgSources={epgSources}
-                channelGroups={channelGroups}
-                streamProfiles={streamProfiles}
-                regexPreviewState={regexPreviewState}
+                overlaps={
+                  overlapsByGroup.get(configuringGroup.channel_group) ||
+                  EMPTY_OVERLAPS
+                }
+                groupConflicts={groupConflicts}
                 onApplyGroupChange={applyGroupChange}
-                onScheduleRegexPreview={scheduleRegexPreview}
-                onOpenLogoUpload={(groupId) => {
-                  setCurrentEditingGroupId(groupId);
-                  setLogoModalOpen(true);
-                }}
-                channelLogos={channelLogos}
-                playlist={playlist}
-                logosLoading={logosLoading}
-                ensureLogosLoaded={ensureLogosLoaded}
               />
-            </Suspense>
-          </ErrorBoundary>
+            )}
+            <Select
+              label="Orphan cleanup"
+              value={
+                configuringGroup.custom_properties?.orphan_channel_cleanup ||
+                'inherit'
+              }
+              disabled={!configuringGroup.auto_channel_sync}
+              allowDeselect={false}
+              data={[
+                { value: 'inherit', label: 'Use account default' },
+                { value: 'always', label: 'Always remove' },
+                { value: 'preserve_customized', label: 'Preserve customized' },
+                { value: 'never', label: 'Never remove' },
+              ]}
+              onChange={(value) =>
+                applyGroupChange({
+                  ...configuringGroup,
+                  custom_properties: {
+                    ...configuringGroup.custom_properties,
+                    orphan_channel_cleanup: value === 'inherit' ? null : value,
+                  },
+                })
+              }
+            />
+            {configuringGroup.auto_channel_sync && (
+              <ErrorBoundary inline>
+                <Suspense fallback={<Loader />}>
+                  <AutoSyncAdvanced
+                    group={configuringGroup}
+                    epgSources={epgSources}
+                    channelGroups={channelGroups}
+                    streamProfiles={streamProfiles}
+                    regexPreviewState={regexPreviewState}
+                    onApplyGroupChange={applyGroupChange}
+                    onScheduleRegexPreview={scheduleRegexPreview}
+                    onOpenLogoUpload={(groupId) => {
+                      setCurrentEditingGroupId(groupId);
+                      setLogoModalOpen(true);
+                    }}
+                    channelLogos={channelLogos}
+                    playlist={playlist}
+                    logosLoading={logosLoading}
+                    ensureLogosLoaded={ensureLogosLoaded}
+                  />
+                </Suspense>
+              </ErrorBoundary>
+            )}
+          </Stack>
         )}
       </GroupConfigureModal>
 

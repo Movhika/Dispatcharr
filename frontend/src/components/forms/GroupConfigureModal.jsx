@@ -1,9 +1,5 @@
-// Per-group "advanced config" modal opened from the gear icon on each row
-// in LiveGroupFilter / M3UGroupFilter. The inline row keeps only the core
-// Sync toggle, Numbering Mode, and Start/End inputs. This modal renders
-// the full Advanced Options MultiSelect plus its conditional fields,
-// passed in as children by the parent so it continues to own the group
-// list and field logic.
+// Per-group settings opened from the gear icon. The parent owns the draft
+// and restores its open-time snapshot when the user cancels.
 
 import React from 'react';
 import { Button, Modal, Stack, Group, Text } from '@mantine/core';
@@ -33,7 +29,7 @@ const GroupConfigureModal = ({ opened, onDone, onCancel, group, children }) => {
     >
       <Stack gap="md">{children}</Stack>
       {/* Done keeps in-memory edits routed into the parent's groupStates
-          (parent's Save and Refresh persists them). Cancel reverts to
+          (parent's Save persists them). Cancel reverts to
           the open-time snapshot. */}
       <Group justify="flex-end" gap="xs" mt="md">
         <Button variant="default" onClick={onCancel} size="xs">

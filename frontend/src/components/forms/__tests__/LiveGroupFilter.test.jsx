@@ -259,6 +259,7 @@ vi.mock('lucide-react', () => ({
   CircleX: () => <svg data-testid="icon-circle-x" />,
   Info: () => <svg data-testid="icon-info" />,
   Settings: () => <svg data-testid="icon-cog" />,
+  AlertTriangle: () => <svg data-testid="icon-range-warning" />,
 }));
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
@@ -789,11 +790,11 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
       expect(
-        screen.getByRole('combobox', { name: 'Numbering for Sports' })
-      ).toHaveValue('provider');
+        within(screen.getByText('Sports').closest('tr')).getByText('Provider')
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('combobox', { name: 'Numbering for News' })
-      ).toHaveValue('fixed');
+        within(screen.getByText('News').closest('tr')).getByText('Fixed')
+      ).toBeInTheDocument();
       expect(
         screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
       ).toBeChecked();
@@ -811,14 +812,41 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
       expect(
-        screen.getByRole('combobox', { name: 'Numbering for Sports' })
-      ).toHaveValue('fixed');
+        within(screen.getByText('Sports').closest('tr')).getByText('Fixed')
+      ).toBeInTheDocument();
     });
   });
 
   // ── Configure modal ────────────────────────────────────────────────────────
 
   describe('configure modal', () => {
+    it('shows compact summaries and enables configuration before auto sync is enabled', () => {
+      renderWith({ initialGroups: [makeGroup({ auto_channel_sync: false })] });
+      expect(screen.queryByTestId('auto-sync-basic')).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      const gear = screen.getByTestId('icon-cog').closest('button');
+      expect(gear).toBeEnabled();
+      fireEvent.click(gear);
+      fireEvent.click(
+        within(screen.getByTestId('configure-modal')).getByRole('checkbox', {
+          name: 'Auto sync',
+        })
+      );
+      expect(screen.getByTestId('auto-sync-basic')).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText('Numbering mode'), {
+        target: { value: 'provider' },
+      });
+      fireEvent.change(screen.getByLabelText('Orphan cleanup'), {
+        target: { value: 'never' },
+      });
+      fireEvent.click(screen.getByTestId('modal-cancel'));
+      expect(
+        screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
+      ).not.toBeChecked();
+      expect(
+        within(screen.getByText('Sports').closest('tr')).getByText('Fixed')
+      ).toBeInTheDocument();
+    });
     it('opens when the Cog ActionIcon is clicked', () => {
       renderWith({ initialGroups: [makeGroup({ channel_group: 1 })] });
       fireEvent.click(screen.getByTestId('icon-cog').closest('button'));

@@ -1,11 +1,4 @@
-import React, {
-  memo,
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   TextInput,
   Button,
@@ -27,7 +20,7 @@ import {
   SegmentedControl,
   Select,
 } from '@mantine/core';
-import { Eye } from 'lucide-react';
+import { Eye, Settings as Cog } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import ListPagination from '../ListPagination.jsx';
 import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
@@ -89,7 +82,7 @@ const parseCustomProperties = (raw) => {
 const CategoryCard = memo(function CategoryCard({
   category,
   onToggle,
-  onCustomPropertyChange,
+  onConfigure,
   onPreview,
   selected,
   onSelect,
@@ -112,6 +105,8 @@ const CategoryCard = memo(function CategoryCard({
           variant="subtle"
           size="xs"
           onClick={() => onToggle(category.id)}
+          maw="100%"
+          styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}
         >
           {category.name}
         </Button>
@@ -122,44 +117,38 @@ const CategoryCard = memo(function CategoryCard({
         </Text>
       </TableTd>
       <TableTd>
-        <Select
-          size="xs"
-          aria-label="Language"
-          placeholder="Language"
-          data={VOD_CATEGORY_LANGUAGES}
-          value={props.language || null}
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'language', value)
-          }
-          searchable
-          clearable
-          allowDeselect
-        />
+        <Text size="xs">
+          {VOD_CATEGORY_LANGUAGES.find(
+            (option) => option.value === props.language
+          )?.label ||
+            props.language ||
+            '—'}
+        </Text>
       </TableTd>
       <TableTd>
-        <Select
-          size="xs"
-          aria-label="Quality"
-          placeholder="Quality"
-          data={QUALITY_OPTIONS}
-          value={props.quality || null}
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'quality', value)
-          }
-          clearable
-          allowDeselect
-        />
+        <Text size="xs">{props.quality || '—'}</Text>
       </TableTd>
       <TableTd>
-        <Tooltip label="Preview category">
-          <ActionIcon
-            variant="subtle"
-            aria-label="Preview category"
-            onClick={() => onPreview(category)}
-          >
-            <Eye size={16} />
-          </ActionIcon>
-        </Tooltip>
+        <Flex gap={4} align="center">
+          <Tooltip label="Configure category">
+            <ActionIcon
+              aria-label={`Configure ${category.name}`}
+              variant="subtle"
+              onClick={() => onConfigure(category)}
+            >
+              <Cog size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Preview category">
+            <ActionIcon
+              variant="subtle"
+              aria-label="Preview category"
+              onClick={() => onPreview(category)}
+            >
+              <Eye size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </Flex>
       </TableTd>
     </TableTr>
   );
@@ -184,6 +173,11 @@ const VODCategoryFilter = ({
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(new Set());
   const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
   const [bulkSettings, setBulkSettings] = useState(EMPTY_BULK_SETTINGS);
+  const [configuringCategoryId, setConfiguringCategoryId] = useState(null);
+  const configureSnapshotRef = useRef(null);
+  const configuringCategory = categoryStates.find(
+    (category) => category.id === configuringCategoryId
+  );
   useEffect(() => {
     const ids = new Set(categoryStates.map((category) => category.id));
     setSelectedCategoryIds((current) => {
@@ -192,9 +186,11 @@ const VODCategoryFilter = ({
     });
   }, [categoryStates]);
   useEffect(() => {
-    onOverlayChange?.(bulkEditorOpen || !!previewCategory);
+    onOverlayChange?.(
+      bulkEditorOpen || !!previewCategory || !!configuringCategory
+    );
     return () => onOverlayChange?.(false);
-  }, [bulkEditorOpen, previewCategory, onOverlayChange]);
+  }, [bulkEditorOpen, previewCategory, configuringCategory, onOverlayChange]);
   const initializedScope = useRef(null);
   useEffect(() => {
     setPage(1);
@@ -202,6 +198,8 @@ const VODCategoryFilter = ({
   useEffect(() => {
     setSelectedCategoryIds(new Set());
     setBulkEditorOpen(false);
+    setConfiguringCategoryId(null);
+    configureSnapshotRef.current = null;
   }, [playlist.id, type]);
 
   useEffect(() => {
@@ -257,25 +255,44 @@ const VODCategoryFilter = ({
   const updateCustomProperty = useCallback(
     (id, key, value) => {
       const nextValue = value === '' || value == null ? null : value;
-      // Keep the Select close/selection responsive; list paint can wait a frame.
-      startTransition(() => {
-        setCategoryStates((prev) =>
-          prev.map((state) => {
-            if (state.id !== id) return state;
-            return {
-              ...state,
-              custom_properties: {
-                ...(state.custom_properties || {}),
-                // null clears the key on the API merge path
-                [key]: nextValue,
-              },
-            };
-          })
-        );
-      });
+      setCategoryStates((prev) =>
+        prev.map((state) => {
+          if (state.id !== id) return state;
+          return {
+            ...state,
+            custom_properties: {
+              ...(state.custom_properties || {}),
+              // null clears the key on the API merge path
+              [key]: nextValue,
+            },
+          };
+        })
+      );
     },
     [setCategoryStates]
   );
+
+  const openConfigure = useCallback((category) => {
+    configureSnapshotRef.current = {
+      ...category,
+      custom_properties: { ...category.custom_properties },
+    };
+    setConfiguringCategoryId(category.id);
+  }, []);
+  const closeConfigure = () => {
+    configureSnapshotRef.current = null;
+    setConfiguringCategoryId(null);
+  };
+  const cancelConfigure = () => {
+    const snapshot = configureSnapshotRef.current;
+    if (snapshot)
+      setCategoryStates((current) =>
+        current.map((category) =>
+          category.id === snapshot.id ? snapshot : category
+        )
+      );
+    closeConfigure();
+  };
 
   const isVisible = useCallback(
     (category) => {
@@ -350,7 +367,7 @@ const VODCategoryFilter = ({
   };
 
   return (
-    <Stack style={{ height: '100%', minHeight: 0 }}>
+    <Stack gap="xs" style={{ height: '100%', minHeight: 0 }}>
       <Flex gap="xs" align="center" wrap="wrap">
         <Button variant="default" size="xs" onClick={onOpenRules}>
           Import rules
@@ -377,7 +394,7 @@ const VODCategoryFilter = ({
           placeholder="Filter categories..."
           value={filter}
           onChange={(event) => setFilter(event.currentTarget.value)}
-          style={{ flex: 1 }}
+          style={{ flex: '1 1 180px', minWidth: 0 }}
           size="xs"
         />
         <SegmentedControl
@@ -429,7 +446,12 @@ const VODCategoryFilter = ({
       </Flex>
 
       <ScrollArea style={{ flex: 1, minHeight: 0 }}>
-        <Table striped withTableBorder stickyHeader miw={700}>
+        <Table
+          striped
+          withTableBorder
+          stickyHeader
+          style={{ tableLayout: 'fixed' }}
+        >
           <TableThead>
             <TableTr>
               <TableTh w={44}>
@@ -450,10 +472,10 @@ const VODCategoryFilter = ({
                 />
               </TableTh>
               <TableTh>Category</TableTh>
-              <TableTh>Enabled</TableTh>
-              <TableTh>Language</TableTh>
-              <TableTh>Quality</TableTh>
-              <TableTh>Actions</TableTh>
+              <TableTh w="12%">Enabled</TableTh>
+              <TableTh w="20%">Language</TableTh>
+              <TableTh w="12%">Quality</TableTh>
+              <TableTh w={76}>Actions</TableTh>
             </TableTr>
           </TableThead>
           <TableTbody>
@@ -464,7 +486,7 @@ const VODCategoryFilter = ({
                   key={category.id}
                   category={category}
                   onToggle={toggleEnabled}
-                  onCustomPropertyChange={updateCustomProperty}
+                  onConfigure={openConfigure}
                   onPreview={setPreviewCategory}
                   selected={selectedCategoryIds.has(category.id)}
                   onSelect={toggleSelectedCategory}
@@ -489,6 +511,42 @@ const VODCategoryFilter = ({
         group={previewCategory}
         onClose={() => setPreviewCategory(null)}
       />
+      <Modal
+        opened={!!configuringCategory}
+        onClose={cancelConfigure}
+        size="lg"
+        title={`Configure: ${configuringCategory?.name || ''}`}
+      >
+        {configuringCategory && (
+          <Stack>
+            <Select
+              label="Language"
+              data={VOD_CATEGORY_LANGUAGES}
+              value={configuringCategory.custom_properties?.language || null}
+              onChange={(value) =>
+                updateCustomProperty(configuringCategory.id, 'language', value)
+              }
+              searchable
+              clearable
+            />
+            <Select
+              label="Quality"
+              data={QUALITY_OPTIONS}
+              value={configuringCategory.custom_properties?.quality || null}
+              onChange={(value) =>
+                updateCustomProperty(configuringCategory.id, 'quality', value)
+              }
+              clearable
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={cancelConfigure}>
+                Cancel
+              </Button>
+              <Button onClick={closeConfigure}>Done</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
       <Modal
         opened={bulkEditorOpen}
         onClose={closeBulkEditor}
