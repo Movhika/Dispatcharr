@@ -3,6 +3,7 @@ import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3UGroupContentPreview from '../M3UGroupContentPreview.jsx';
 import API from '../../../api.js';
+import editorClasses from '../AccountEditor.module.css';
 
 vi.mock('../../../api.js', () => ({
   default: { getM3UGroupContent: vi.fn() },
@@ -38,6 +39,12 @@ describe('M3UGroupContentPreview', () => {
       1,
       50,
       ''
+    );
+  });
+  it('uses a narrower responsive preview layout', () => {
+    renderPreview();
+    expect(screen.getByRole('dialog')).toHaveClass(
+      editorClasses.previewContent
     );
   });
   it('paginates all content', async () => {

@@ -69,10 +69,10 @@ const M3UGroupContentPreview = ({ accountId, scope, group, onClose }) => {
       opened={!!group}
       onClose={onClose}
       title={`${group?.name || 'Category'} preview`}
-      size="94vw"
+      size="60vw"
       yOffset="2vh"
       classNames={{
-        content: editorClasses.content,
+        content: `${editorClasses.content} ${editorClasses.previewContent}`,
         body: editorClasses.body,
         header: editorClasses.header,
       }}

@@ -114,6 +114,10 @@
   min-height: 0;
 }
 
+.previewContent {
+  --modal-size: 60vw;
+}
+
 .sourceContent {
   --modal-size: 68vw;
 }
@@ -125,7 +129,8 @@
 
 @media (max-width: 50em) {
   .accountContent,
-  .sourceContent {
+  .sourceContent,
+  .previewContent {
     --modal-size: 94vw;
   }
 }

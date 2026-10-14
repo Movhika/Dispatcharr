@@ -884,20 +884,12 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                       />
                     </>
                   )}
-
-                  {savedEpgId && (
-                    <AutoApplyEpgLogosSwitch
-                      sourceId={savedEpgId}
-                      customProperties={sdCustomProps}
-                      description="When enabled, matched channels are updated from EPG channel icons on each refresh. When disabled, icons are still stored in EPG data and can be applied manually via Set Logo from EPG."
-                    />
-                  )}
                 </Stack>
               </Paper>
 
               <Paper withBorder p="sm">
-                <Stack gap="xs" role="group" aria-label="EPG refresh settings">
-                  <Text fw={600}>Refresh</Text>
+                <Stack gap="xs" role="group" aria-label="EPG settings">
+                  <Text fw={600}>Settings</Text>
                   {isSD && (
                     <Alert
                       icon={<TriangleAlert size={16} />}
@@ -936,6 +928,14 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                     {...form.getInputProps('priority')}
                     key={form.key('priority')}
                   />
+
+                  {savedEpgId && (
+                    <AutoApplyEpgLogosSwitch
+                      sourceId={savedEpgId}
+                      customProperties={sdCustomProps}
+                      description="When enabled, matched channels are updated from EPG channel icons on each refresh. When disabled, icons are still stored in EPG data and can be applied manually via Set Logo from EPG."
+                    />
+                  )}
 
                   {isSD && scheduleType === 'cron' && (
                     <Alert

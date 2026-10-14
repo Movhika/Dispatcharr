@@ -701,20 +701,37 @@ describe('EPG', () => {
         ).not.toBeInTheDocument();
       }
     );
-    it('keeps URL with the source and the schedule in the refresh section', () => {
+    it('keeps URL with the source and the schedule in Settings', () => {
       render(<EPG {...defaultProps()} />);
       expect(
         screen.getByRole('group', { name: 'EPG source settings' })
       ).toContainElement(screen.getByTestId('input-url'));
       expect(
-        screen.getByRole('group', { name: 'EPG refresh settings' })
+        screen.getByRole('group', { name: 'EPG settings' })
       ).toContainElement(screen.getByTestId('schedule-input'));
       expect(
-        screen.getByRole('group', { name: 'EPG refresh settings' })
+        screen.getByRole('group', { name: 'EPG settings' })
       ).toContainElement(screen.getByTestId('number-priority'));
       expect(
         screen.getByRole('group', { name: 'EPG source settings' })
       ).not.toContainElement(screen.getByTestId('number-priority'));
+      expect(screen.getByText('Settings')).toBeInTheDocument();
+      expect(
+        screen.queryByText('Refresh', { exact: true })
+      ).not.toBeInTheDocument();
     });
+    it.each(['xmltv', 'schedules_direct'])(
+      'keeps auto-apply logos with Settings for an existing %s source',
+      (source_type) => {
+        render(<EPG {...defaultProps({ epg: makeEPG({ source_type }) })} />);
+        const logos = screen.getByText('Auto-Apply EPG Logos to Channels');
+        expect(
+          screen.getByRole('group', { name: 'EPG settings' })
+        ).toContainElement(logos);
+        expect(
+          screen.getByRole('group', { name: 'EPG source settings' })
+        ).not.toContainElement(logos);
+      }
+    );
   });
 });
