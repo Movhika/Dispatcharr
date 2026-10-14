@@ -1,33 +1,13 @@
-.table :global(.th .mantine-Group-root) {
-  width: 100%;
+.card {
   min-width: 0;
-  gap: 4px;
-}
-
-.table :global(.th .mantine-Text-root) {
-  font-size: var(--mantine-font-size-xs);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.table :global(.th .mantine-Center-root) {
-  flex-shrink: 0;
-}
-
-.header {
-  width: 100%;
-  min-width: 0;
-}
-
-.table :global(.td) {
-  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
 .controls {
+  height: 40px;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
   overflow-wrap: normal;
+  flex-shrink: 0;
 }

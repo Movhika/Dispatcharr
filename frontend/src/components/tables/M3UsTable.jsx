@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import usePlaylistsStore from '../../store/playlists';
 import M3UForm from '../forms/M3U';
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
-import { TableHelper } from '../../helpers';
 import {
   useMantineTheme,
   Paper,
@@ -18,6 +17,13 @@ import {
   MenuDropdown,
   MenuItem,
   MenuTarget,
+  Badge,
+  Group,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Stack,
+  TextInput,
 } from '@mantine/core';
 import {
   SquareMinus,
@@ -39,13 +45,11 @@ import {
 } from '../../utils/dateTimeUtils.js';
 import ConfirmationDialog from '../../components/ConfirmationDialog';
 import useWarningsStore from '../../store/warnings';
-import { CustomTable, useTable } from './CustomTable';
 import {
   deletePlaylist,
   getExpirationInfo,
   getExpirationTooltip,
   getPlaylistAutoCreatedChannelsCount,
-  getSortedPlaylists,
   getStatusColor,
   getStatusContent,
   formatStatusText,
@@ -53,23 +57,28 @@ import {
   refreshVODContent,
   updatePlaylist,
 } from '../../utils/tables/M3UsTableUtils.js';
-import {
-  makeHeaderCellRenderer,
-  makeSortingChangeHandler,
-} from './tableSortingUtils.jsx';
 import tableClasses from './M3UsTable.module.css';
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
-const resizableColumns = [
-  { id: 'name', size: 260, minRatio: 0.15 },
-  { id: 'server_url', size: 220, minRatio: 0.1 },
-  { id: 'status', size: 90, minRatio: 0.055 },
-  { id: 'last_message', size: 160, minRatio: 0.1 },
-  { id: 'max_streams', size: 100, minRatio: 0.045 },
-  { id: 'earliest_expiration', size: 110, minRatio: 0.06 },
-  { id: 'updated_at', size: 220, minRatio: 0.14 },
+const SORT_OPTIONS = [
+  { value: 'name', label: 'Name (A–Z)' },
+  { value: '-name', label: 'Name (Z–A)' },
+  { value: 'earliest_expiration', label: 'Expiring first' },
+  { value: '-updated_at', label: 'Latest Live TV refresh' },
+  { value: '-max_streams', label: 'Most connections' },
+  { value: 'status', label: 'Status' },
 ];
+
+const accountCapacity = (account) => {
+  const active = (account.profiles || []).filter(
+    (profile) => profile.is_active
+  );
+  if (!active.length)
+    return account.max_streams === 0 ? Infinity : account.max_streams;
+  if (active.some((profile) => profile.max_streams === 0)) return Infinity;
+  return active.reduce((total, profile) => total + profile.max_streams, 0);
+};
 
 const formatRefreshDuration = (seconds) => {
   if (
@@ -205,8 +214,8 @@ const M3UTable = () => {
     count: 0,
     sample_names: [],
   });
-  const [data, setData] = useState([]);
-  const [sorting, setSorting] = useState([{ id: 'name', desc: '' }]);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useBrowserStorage('m3u-accounts-sort', 'name');
   const [deleting, setDeleting] = useState(false);
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
 
@@ -239,19 +248,6 @@ const M3UTable = () => {
     'm3u-table-type-filter',
     ALL_ACCOUNT_TYPES,
     { storage: 'session' }
-  );
-  const [columnSizing, setColumnSizing] = useBrowserStorage(
-    'm3u-table-column-sizing',
-    {}
-  );
-  const responsiveColumnSizing = useMemo(
-    () =>
-      Object.fromEntries(
-        resizableColumns
-          .filter(({ id }) => columnSizing[id] != null)
-          .map(({ id }) => [id, columnSizing[id]])
-      ),
-    [columnSizing]
   );
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
 
@@ -414,7 +410,6 @@ const M3UTable = () => {
   };
 
   const executeDeletePlaylist = async (id) => {
-    setIsLoading(true);
     setDeleting(true);
     try {
       await deletePlaylist(id);
@@ -422,13 +417,12 @@ const M3UTable = () => {
       console.error('Error deleting playlist:', error);
     } finally {
       setDeleting(false);
-      setIsLoading(false);
       setConfirmDeleteOpen(false);
       setAutoChannelsInfo({ count: 0, sample_names: [] });
     }
   };
 
-  const toggleActive = async (playlist) => {
+  const toggleActive = useCallback(async (playlist) => {
     try {
       // Send only the is_active field to trigger our special handling
       await updatePlaylist(
@@ -441,16 +435,14 @@ const M3UTable = () => {
     } catch (error) {
       console.error('Error toggling active state:', error);
     }
-  };
+  }, []);
 
-  const columns = useMemo(
+  const details = useMemo(
     () => [
       {
         header: 'Name',
         accessorKey: 'name',
-        size: 300,
-        sortable: true,
-        cell: ({ cell, row }) => {
+        cell: ({ row }) => {
           const custom = row.original.custom_properties || {};
           const live = custom.live_catalog_counts;
           const vod = custom.vod_catalog_counts || {};
@@ -464,9 +456,6 @@ const M3UTable = () => {
               : [['Live TV', live]];
           return (
             <Box>
-              <Text size="sm" fw={600} title={cell.getValue()}>
-                {cell.getValue()}
-              </Text>
               <Tooltip label="Provider entries / imported entries from the last successful refresh">
                 <Box style={{ cursor: 'help' }}>
                   {summaries.map(([label, counts]) => (
@@ -484,20 +473,8 @@ const M3UTable = () => {
         },
       },
       {
-        header: 'Type',
-        accessorKey: 'account_type',
-        sortable: true,
-        size: 55,
-        enableResizing: false,
-        cell: ({ cell }) => {
-          const value = cell.getValue();
-          return value === 'XC' ? 'XC' : 'M3U';
-        },
-      },
-      {
         header: 'URL / File',
         accessorKey: 'server_url',
-        size: 250,
         cell: ({ cell, row }) => {
           const value = cell.getValue() || row.original.file_path || '';
           return (
@@ -517,26 +494,8 @@ const M3UTable = () => {
         },
       },
       {
-        header: 'Status',
-        accessorKey: 'status',
-        size: 100,
-        cell: ({ cell }) => {
-          const value = cell.getValue();
-          if (!value) return null;
-
-          // Match EPG table styling with Text component - always use xs size
-          return (
-            <Text size="xs" c={getStatusColor(value)}>
-              {formatStatusText(value)}
-            </Text>
-          );
-        },
-      },
-      {
         header: 'Refresh details',
         accessorKey: 'last_message',
-        grow: true,
-        minSize: 350,
         cell: ({ cell, row }) => {
           const value = cell
             .getValue()
@@ -675,22 +634,13 @@ const M3UTable = () => {
       {
         header: 'Max Streams',
         id: 'max_streams',
-        accessorFn: (row) => {
-          const activeProfiles = (row.profiles || []).filter(
-            (p) => p.is_active
-          );
-          if (activeProfiles.length === 0) return row.max_streams;
-          if (activeProfiles.some((p) => p.max_streams === 0)) return Infinity;
-          return activeProfiles.reduce((sum, p) => sum + p.max_streams, 0);
-        },
-        sortable: true,
-        size: 125,
         cell: ({ row }) => {
           const profiles = row.original.profiles || [];
           const activeProfiles = profiles.filter((p) => p.is_active);
 
           if (activeProfiles.length <= 1) {
-            const val = row.original.max_streams;
+            const val =
+              activeProfiles[0]?.max_streams ?? row.original.max_streams;
             return <Text size="xs">{val === 0 ? '∞' : val}</Text>;
           }
 
@@ -729,22 +679,31 @@ const M3UTable = () => {
       {
         header: 'Expiration',
         accessorKey: 'earliest_expiration',
-        sortable: true,
-        size: 110,
         cell: ({ cell, row }) => {
           const data = row.original;
 
           const earliest = cell.getValue();
-          if (!earliest) {
-            return null;
-          }
+          if (!earliest)
+            return (
+              <Text size="xs" c="dimmed">
+                —
+              </Text>
+            );
 
           const now = getNow();
           const daysLeft = diff(earliest, now, 'day');
-          const { color, label } = getExpirationInfo(daysLeft, earliest, fullDateFormat);
+          const { color, label } = getExpirationInfo(
+            daysLeft,
+            earliest,
+            fullDateFormat
+          );
 
           const allExpirations = data.all_expirations || [];
-          const tooltipContent = getExpirationTooltip(allExpirations, fullDateTimeFormat, label);
+          const tooltipContent = getExpirationTooltip(
+            allExpirations,
+            fullDateTimeFormat,
+            label
+          );
 
           return (
             <Tooltip
@@ -763,7 +722,6 @@ const M3UTable = () => {
       {
         header: 'Last refresh',
         accessorKey: 'updated_at',
-        size: 230,
         cell: ({ cell, row }) => {
           const data = row.original;
           const timings = data.custom_properties?.refresh_timings || {};
@@ -789,8 +747,6 @@ const M3UTable = () => {
       {
         header: 'Enabled',
         accessorKey: 'is_active',
-        size: tableSize === 'compact' ? 100 : 110,
-        enableResizing: false,
         cell: ({ cell, row }) => {
           return (
             <Paper
@@ -814,49 +770,16 @@ const M3UTable = () => {
           );
         },
       },
-      {
-        id: 'actions',
-        header: 'Actions',
-        size:
-          tableSize === 'compact' ? 110 : tableSize === 'default' ? 130 : 160,
-        enableResizing: false,
-      },
     ],
     [
-      handleRefreshPlaylist,
-      editPlaylist,
-      handleDeletePlaylist,
       toggleActive,
       fullDateFormat,
       fullDateTimeFormat,
       refreshProgress,
+      theme.colors.green,
+      theme.colors.red,
     ]
   );
-
-  const responsiveColumns = useMemo(
-    () =>
-      columns.map((column) => {
-        const sizing = resizableColumns.find(
-          ({ id }) => id === (column.id || column.accessorKey)
-        );
-        return sizing
-          ? {
-              ...column,
-              grow: true,
-              flexRatio: true,
-              size: sizing.size,
-              minSize: 0,
-              enableResizing: sizing.id !== 'updated_at',
-            }
-          : column;
-      }),
-    [columns]
-  );
-
-  //optionally access the underlying virtualizer instance
-  const rowVirtualizerInstanceRef = useRef(null);
-
-  const [_isLoading, setIsLoading] = useState(true);
 
   const closeModal = (newPlaylist = null) => {
     if (newPlaylist) {
@@ -869,19 +792,8 @@ const M3UTable = () => {
     }
   };
 
-  useEffect(() => {
-    //scroll to the top of the table when the sorting changes
-    try {
-      rowVirtualizerInstanceRef.current?.scrollToIndex?.(0);
-    } catch (error) {
-      console.error(error);
-    }
-  }, [sorting]);
-
   // Listen for edit playlist requests from notifications
   useEffect(() => {
-    setData(processedData);
-
     if (editPlaylistId) {
       const playlistToEdit = playlists.find((p) => p.id === editPlaylistId);
       if (playlistToEdit) {
@@ -892,43 +804,41 @@ const M3UTable = () => {
     }
   }, [editPlaylistId, processedData, playlists, setEditPlaylistId]);
 
-  const onSortingChange = makeSortingChangeHandler(
-    sorting,
-    setSorting,
-    (col, desc) => setData(getSortedPlaylists(playlists, col, desc))
-  );
-
-  const renderSortedHeader = makeHeaderCellRenderer(sorting, onSortingChange);
-  const renderHeaderCell = (header) => (
-    <Box className={tableClasses.header} title={header.column.columnDef.header}>
-      {renderSortedHeader(header)}
-    </Box>
-  );
-
-  const renderBodyCell = ({ cell, row }) => {
-    switch (cell.column.id) {
-      case 'actions':
-        return (
-          <RowActions
-            tableSize={tableSize}
-            editPlaylist={editPlaylist}
-            handleDeletePlaylist={handleDeletePlaylist}
-            row={row}
-            handleRefreshPlaylist={handleRefreshPlaylist}
-            handleRefreshVOD={handleRefreshVOD}
-          />
-        );
-    }
-  };
-
-  // Mirrors the Type column's own STD-vs-XC display logic so the filter labels
-  // and the rendered values can't drift apart.
+  // Keep active accounts first, as in the previous account overview.
   const filteredData = useMemo(
     () =>
-      data.filter((p) =>
-        typeFilter.includes(p.account_type === 'XC' ? 'XC' : 'STD')
-      ),
-    [data, typeFilter]
+      processedData
+        .filter(
+          (account) =>
+            typeFilter.includes(account.account_type === 'XC' ? 'XC' : 'STD') &&
+            account.name
+              .toLocaleLowerCase()
+              .includes(search.trim().toLocaleLowerCase())
+        )
+        .sort((a, b) => {
+          if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+          const descending = sortBy.startsWith('-');
+          const key = descending ? sortBy.slice(1) : sortBy;
+          const aValue = key === 'max_streams' ? accountCapacity(a) : a[key];
+          const bValue = key === 'max_streams' ? accountCapacity(b) : b[key];
+          if (aValue == null && bValue == null)
+            return a.name.localeCompare(b.name);
+          if (aValue == null) return 1;
+          if (bValue == null) return -1;
+          const comparison =
+            typeof aValue === 'string'
+              ? aValue.localeCompare(bValue, undefined, { sensitivity: 'base' })
+              : aValue < bValue
+                ? -1
+                : aValue > bValue
+                  ? 1
+                  : 0;
+          return (
+            (descending ? -comparison : comparison) ||
+            a.name.localeCompare(b.name)
+          );
+        }),
+    [processedData, typeFilter, search, sortBy]
   );
 
   const isTypeFiltered = typeFilter.length !== ALL_ACCOUNT_TYPES.length;
@@ -941,66 +851,18 @@ const M3UTable = () => {
     );
   };
 
-  const table = useTable({
-    columns: responsiveColumns,
-    // Sort data before passing to table: active first, then by name
-    data: filteredData,
-    allRowIds: filteredData.map((playlist) => playlist.id),
-    enablePagination: false,
-    enableRowVirtualization: true,
-    enableRowSelection: false,
-    renderTopToolbar: false,
-    sorting,
-    columnSizing: responsiveColumnSizing,
-    setColumnSizing,
-    pairedColumnSizing: resizableColumns,
-    tableId: 'm3u-accounts',
-    getRowStyles: (row) => (row.original.is_active ? {} : { opacity: 0.65 }),
-    onResetColumnSizing: () => setColumnSizing({}),
-    manualSorting: true,
-    rowVirtualizerInstanceRef, //optional
-    rowVirtualizerOptions: { overscan: 5 }, //optionally customize the row virtualizer
-    bodyCellRenderFns: {
-      actions: renderBodyCell,
-    },
-    headerCellRenderFns: {
-      name: renderHeaderCell,
-      account_type: renderHeaderCell,
-      server_url: renderHeaderCell,
-      max_streams: renderHeaderCell,
-      status: renderHeaderCell,
-      last_message: renderHeaderCell,
-      updated_at: renderHeaderCell,
-      earliest_expiration: renderHeaderCell,
-      is_active: renderHeaderCell,
-      actions: renderHeaderCell,
-    },
-    mantineTableProps: {
-      ...TableHelper.defaultProperties.mantineTableProps,
-      className: `table-size-${tableSize}`,
-    },
-    // Add custom cell styles to match CustomTable's sizing
-    tableCellProps: () => {
-      return {
-        fontSize:
-          tableSize === 'compact'
-            ? 'var(--mantine-font-size-xs)'
-            : 'var(--mantine-font-size-sm)',
-        padding: tableSize === 'compact' ? '2px 8px' : '4px 10px',
-      };
-    },
-    // Additional text styling to match ChannelsTable
-    tableBodyProps: () => ({
-      fontSize:
-        tableSize === 'compact'
-          ? 'var(--mantine-font-size-xs)'
-          : 'var(--mantine-font-size-sm)',
-    }),
-  });
+  const renderDetail = (account, id) => {
+    const detail = details.find(
+      (column) => (column.id || column.accessorKey) === id
+    );
+    return detail.cell({
+      cell: { getValue: () => account[detail.accessorKey] },
+      row: { original: account },
+    });
+  };
 
   return (
     <Box
-      className={tableClasses.table}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1017,6 +879,7 @@ const M3UTable = () => {
           flexShrink: 0,
         }}
         gap={15}
+        wrap="wrap"
       >
         <Text
           h={24}
@@ -1036,6 +899,7 @@ const M3UTable = () => {
           <Menu shadow="md" width={200} closeOnItemClick={false}>
             <MenuTarget>
               <Button
+                aria-label="Filter account types"
                 size="xs"
                 variant={isTypeFiltered ? 'filled' : 'default'}
                 color={isTypeFiltered ? 'blue' : undefined}
@@ -1105,44 +969,113 @@ const M3UTable = () => {
         </Flex>
       </Flex>
 
-      <Paper
-        style={{
-          bgcolor: theme.palette.background.paper,
-          borderRadius: 2,
-        }}
-      >
-        {/* Top toolbar with Remove, Assign, Auto-match, and Add buttons */}
-        <Box
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            padding: 0,
-          }}
-        ></Box>
-      </Paper>
+      <Group gap="sm" mb="sm" align="end">
+        <TextInput
+          label="Search accounts"
+          placeholder="Search by name..."
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          style={{ flex: '1 1 180px', minWidth: 0 }}
+          size="xs"
+        />
+        <Select
+          label="Sort accounts"
+          aria-label="Sort accounts"
+          data={SORT_OPTIONS}
+          value={sortBy}
+          onChange={(value) => setSortBy(value || 'name')}
+          allowDeselect={false}
+          size="xs"
+        />
+      </Group>
 
-      <Box
-        style={{
-          // Fill whatever space the page layout gives this table and scroll
-          // internally, instead of sizing to content and pushing the page taller.
-          flex: '1 1 auto',
-          minHeight: 0,
-          overflowX: 'auto',
-          overflowY: 'auto',
-          border: 'solid 1px rgb(68,68,68)',
-          borderRadius: 'var(--mantine-radius-default)',
-        }}
-      >
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
         {filteredData.length === 0 ? (
           <Text size="xl" c="dimmed" ta="center" py="xl">
-            {data.length === 0
+            {processedData.length === 0
               ? 'No M3U accounts yet.'
               : 'No M3U accounts match this filter.'}
           </Text>
         ) : (
-          <CustomTable table={table} />
+          <Stack gap="md">
+            {filteredData.map((account) => (
+              <Paper
+                key={account.id}
+                component="article"
+                aria-label={`M3U account ${account.name}`}
+                className={tableClasses.card}
+                withBorder
+                p="md"
+                radius="md"
+                style={
+                  account.is_active
+                    ? undefined
+                    : { opacity: 0.65, filter: 'grayscale(0.75)' }
+                }
+              >
+                <Stack gap="sm">
+                  <Group justify="space-between" align="flex-start">
+                    <Box style={{ minWidth: 0, flex: '1 1 200px' }}>
+                      <Group gap="xs">
+                        <Text fw={700} size="lg">
+                          {account.name}
+                        </Text>
+                        <Badge variant="light">
+                          {account.account_type === 'XC' ? 'XC' : 'M3U'}
+                        </Badge>
+                        <Badge
+                          variant="light"
+                          color={getStatusColor(account.status)}
+                        >
+                          {formatStatusText(account.status)}
+                        </Badge>
+                      </Group>
+                      {renderDetail(account, 'server_url')}
+                    </Box>
+                    <Group gap="xs" align="stretch" wrap="nowrap">
+                      {renderDetail(account, 'is_active')}
+                      <RowActions
+                        tableSize={tableSize}
+                        editPlaylist={editPlaylist}
+                        handleDeletePlaylist={handleDeletePlaylist}
+                        row={{ original: account }}
+                        handleRefreshPlaylist={handleRefreshPlaylist}
+                        handleRefreshVOD={handleRefreshVOD}
+                      />
+                    </Group>
+                  </Group>
+                  <SimpleGrid cols={{ base: 1, xs: 2, lg: 5 }} spacing="md">
+                    <Box>
+                      <Text size="xs" fw={600} mb={4}>
+                        Provider / imported entries
+                      </Text>
+                      {renderDetail(account, 'name')}
+                    </Box>
+                    {[
+                      'last_message',
+                      'updated_at',
+                      'max_streams',
+                      'earliest_expiration',
+                    ].map((id) => (
+                      <Box key={id} style={{ minWidth: 0 }}>
+                        <Text size="xs" fw={600} mb={4}>
+                          {
+                            details.find(
+                              (column) =>
+                                (column.id || column.accessorKey) === id
+                            ).header
+                          }
+                        </Text>
+                        {renderDetail(account, id)}
+                      </Box>
+                    ))}
+                  </SimpleGrid>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
         )}
-      </Box>
+      </ScrollArea>
 
       <M3UForm
         m3uAccount={playlist}
