@@ -264,6 +264,7 @@ const M3U = ({
     }
 
     const updatedPlaylist = await getPlaylist(newPlaylist);
+    if (!updatedPlaylist?.id) throw new Error('Account details unavailable');
     await Promise.all([fetchChannelGroups(), fetchEPGs()]);
 
     if (values.enable_vod) {
@@ -290,6 +291,7 @@ const M3U = ({
     }
 
     const newPlaylist = await addPlaylist(values, file);
+    if (!newPlaylist?.id) return;
     if (values.account_type === 'XC') {
       // The account already exists before asking about its optional EPG source.
       setPlaylist(newPlaylist);
@@ -309,7 +311,7 @@ const M3U = ({
         const url = new URL('/xmltv.php', values.server_url);
         url.searchParams.set('username', values.username || '');
         url.searchParams.set('password', values.password || '');
-        await addEPG({
+        const epg = await addEPG({
           name: values.name,
           source_type: 'xmltv',
           url: url.toString(),
@@ -317,6 +319,8 @@ const M3U = ({
           is_active: true,
           refresh_interval: 24,
         });
+        // The API already reports failures and returns no source in that case.
+        if (!epg?.id) return;
         setPendingCreation((current) => ({ ...current, epgCreated: true }));
         creatingEpg = false;
       }

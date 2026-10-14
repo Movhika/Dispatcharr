@@ -819,6 +819,22 @@ describe('M3U', () => {
       expect(M3uUtils.addPlaylist.mock.calls[0][0].is_active).toBe(true);
     });
 
+    it('does not offer an EPG when account creation returns no account', async () => {
+      setupStores();
+      vi.mocked(M3uUtils.addPlaylist).mockResolvedValueOnce(undefined);
+      render(<M3U {...defaultProps()} />);
+      fillRequiredFields();
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      await waitFor(() =>
+        expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1)
+      );
+      expect(
+        screen.queryByText('Create matching EPG source?')
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled();
+      expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
+    });
+
     it('marks the new account group save as the initial refresh', async () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
@@ -1394,21 +1410,49 @@ describe('M3U', () => {
       expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
     });
 
-    it('does not create a duplicate EPG when category loading needs a retry', async () => {
+    it('keeps the question open when the EPG API has reported an error and returns no source', async () => {
       await createAccount();
-      vi.mocked(M3uUtils.getPlaylist).mockRejectedValueOnce(
-        new Error('Unavailable')
-      );
+      vi.mocked(DummyEpgUtils.addEPG).mockResolvedValueOnce(undefined);
       fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Skip' })).toBeEnabled()
+      );
+      expect(
+        screen.getByText('Create matching EPG source?')
+      ).toBeInTheDocument();
+      expect(M3uUtils.getPlaylist).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
       await waitFor(() =>
         expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
           'data-open',
           'true'
         )
       );
-      expect(DummyEpgUtils.addEPG).toHaveBeenCalledTimes(1);
       expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
     });
+
+    it.each(['rejected', 'empty'])(
+      'does not create a duplicate EPG when category loading needs a retry (%s)',
+      async (response) => {
+        await createAccount();
+        if (response === 'rejected')
+          vi.mocked(M3uUtils.getPlaylist).mockRejectedValueOnce(
+            new Error('Unavailable')
+          );
+        else vi.mocked(M3uUtils.getPlaylist).mockResolvedValueOnce(undefined);
+        fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
+        fireEvent.click(
+          await screen.findByRole('button', { name: 'Continue' })
+        );
+        await waitFor(() =>
+          expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
+            'data-open',
+            'true'
+          )
+        );
+        expect(DummyEpgUtils.addEPG).toHaveBeenCalledTimes(1);
+        expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
+      }
+    );
   });
 });
