@@ -314,9 +314,14 @@ const User = ({ user = null, isOpen, onClose }) => {
       opened={isOpen}
       onClose={onClose}
       title={user?.id ? 'Edit user' : 'Create user'}
-      size="min(1120px, 94vw)"
-      classNames={{ content: editorClasses.content, body: editorClasses.body }}
+      size="94vw"
+      classNames={{
+        content: editorClasses.content,
+        body: editorClasses.body,
+        header: editorClasses.header,
+      }}
       yOffset="2vh"
+      xOffset="3vw"
     >
       <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
         <Tabs defaultValue="account" className={editorClasses.tabs}>

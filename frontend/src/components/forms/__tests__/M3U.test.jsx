@@ -997,6 +997,7 @@ describe('M3U', () => {
       }
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'Profiles' })).toBeInTheDocument();
     });
 
     it('keeps Live and VOD refresh controls in their own two-column content groups', () => {
@@ -1011,10 +1012,7 @@ describe('M3U', () => {
           })}
         />
       );
-      expect(screen.getByTestId('modal')).toHaveAttribute(
-        'data-size',
-        'min(1120px, 94vw)'
-      );
+      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '94vw');
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-content-class',
         editorClasses.content

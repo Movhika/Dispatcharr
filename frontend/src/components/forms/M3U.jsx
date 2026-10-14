@@ -332,13 +332,14 @@ const M3U = ({
   return (
     <>
       <Modal
-        size="min(1120px, 94vw)"
+        size="94vw"
         opened={isOpen}
         onClose={close}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         classNames={{
           content: editorClasses.content,
           body: editorClasses.body,
+          header: editorClasses.header,
         }}
         lockScroll={false}
         withinPortal={true}
@@ -348,6 +349,7 @@ const M3U = ({
           !profileOverlayOpen
         }
         yOffset="2vh"
+        xOffset="3vw"
       >
         <LoadingOverlay visible={form.submitting} overlayBlur={2} />
 
@@ -357,7 +359,7 @@ const M3U = ({
               <TabsTab value="account">Account</TabsTab>
               <TabsTab value="content">Content</TabsTab>
               <TabsTab value="profiles" disabled={!playlist?.id}>
-                Connection Profiles
+                Profiles
               </TabsTab>
             </TabsList>
             <TabsPanel value="account" className={editorClasses.panel}>

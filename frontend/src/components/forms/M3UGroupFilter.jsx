@@ -234,15 +234,20 @@ const M3UGroupFilter = ({
       opened={isOpen}
       onClose={onClose}
       title="Source import"
-      size="min(1500px, 94vw)"
-      classNames={{ content: editorClasses.content, body: editorClasses.body }}
+      size="94vw"
+      classNames={{
+        content: editorClasses.content,
+        body: editorClasses.body,
+        header: editorClasses.header,
+      }}
       styles={{
-        content: { '--mantine-color-body': '#27272A', height: '92vh' },
+        content: { '--mantine-color-body': '#27272A' },
       }}
       lockScroll={false}
       withinPortal={true}
       trapFocus={!rulesScope && !childOverlayOpen}
       yOffset="2vh"
+      xOffset="3vw"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
       <Stack className={editorClasses.form}>

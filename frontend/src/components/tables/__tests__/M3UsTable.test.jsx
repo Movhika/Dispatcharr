@@ -1467,6 +1467,25 @@ describe('M3UTable', () => {
   // ── Table structure (useTable options) ────────────────────────────────────
 
   describe('table structure', () => {
+    it('fits the container with paired ratios and ignores legacy widths for fixed controls', () => {
+      setupMocks({
+        columnSizing: { name: 400, actions: 800, account_type: 700 },
+      });
+      render(<M3UTable />);
+      expect(capturedTableOptions.columnSizing).toEqual({ name: 400 });
+      expect(capturedTableOptions.tableId).toBe('m3u-accounts');
+      for (const { id } of capturedTableOptions.pairedColumnSizing) {
+        expect(
+          capturedTableOptions.columns.find(
+            (column) => (column.id || column.accessorKey) === id
+          )
+        ).toMatchObject({ grow: true, flexRatio: true, minSize: 0 });
+      }
+      expect(
+        capturedTableOptions.columns.find((column) => column.id === 'actions')
+          .enableResizing
+      ).toBe(false);
+    });
     it('restores column widths and passes the persistence setter to the table', () => {
       const columnSizing = { name: 360 };
       const { mockSetColumnSizing } = setupMocks({ columnSizing });

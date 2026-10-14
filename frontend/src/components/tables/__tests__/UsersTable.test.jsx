@@ -257,6 +257,19 @@ describe('UsersTable', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
+    it('uses paired ratios without carrying over a fixed action-column width', () => {
+      setupMocks({ columnSizing: { username: 400, actions: 700 } });
+      render(<UsersTable />);
+      expect(capturedTableOptions.columnSizing).toEqual({ username: 400 });
+      expect(capturedTableOptions.tableId).toBe('users');
+      for (const { id } of capturedTableOptions.pairedColumnSizing) {
+        expect(
+          capturedTableOptions.columns.find(
+            (column) => (column.id || column.accessorKey) === id
+          )
+        ).toMatchObject({ grow: true, flexRatio: true, minSize: 0 });
+      }
+    });
     it('restores and persists user-table column widths', () => {
       const columnSizing = { username: 260 };
       const { setColumnSizing } = setupMocks({ columnSizing });

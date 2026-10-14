@@ -60,6 +60,16 @@ import {
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
+const resizableColumns = [
+  { id: 'name', size: 260, minRatio: 0.15 },
+  { id: 'server_url', size: 220, minRatio: 0.1 },
+  { id: 'status', size: 90, minRatio: 0.055 },
+  { id: 'last_message', size: 160, minRatio: 0.1 },
+  { id: 'max_streams', size: 75, minRatio: 0.045 },
+  { id: 'earliest_expiration', size: 95, minRatio: 0.06 },
+  { id: 'updated_at', size: 220, minRatio: 0.14 },
+];
+
 const formatRefreshDuration = (seconds) => {
   if (
     seconds == null ||
@@ -116,7 +126,7 @@ const RowActions = ({
     tableSize == 'default' ? 'sm' : tableSize == 'compact' ? 'xs' : 'md';
 
   return (
-    <>
+    <Flex gap={2} wrap="nowrap">
       <ActionIcon
         variant="transparent"
         size={iconSize}
@@ -159,7 +169,7 @@ const RowActions = ({
           </ActionIcon>
         </Tooltip>
       )}
-    </>
+    </Flex>
   );
 };
 
@@ -214,6 +224,15 @@ const M3UTable = () => {
   const [columnSizing, setColumnSizing] = useBrowserStorage(
     'm3u-table-column-sizing',
     {}
+  );
+  const responsiveColumnSizing = useMemo(
+    () =>
+      Object.fromEntries(
+        resizableColumns
+          .filter(({ id }) => columnSizing[id] != null)
+          .map(({ id }) => [id, columnSizing[id]])
+      ),
+    [columnSizing]
   );
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
 
@@ -426,16 +445,13 @@ const M3UTable = () => {
               : [['Live TV', live]];
           return (
             <Box>
-              <Text size="sm">{cell.getValue()}</Text>
+              <Text size="sm" title={cell.getValue()}>
+                {cell.getValue()}
+              </Text>
               <Tooltip label="Provider entries / imported entries from the last successful refresh">
                 <Box style={{ cursor: 'help' }}>
                   {summaries.map(([label, counts]) => (
-                    <Text
-                      key={label}
-                      size="xs"
-                      c="dimmed"
-                      style={{ whiteSpace: 'nowrap' }}
-                    >
+                    <Text key={label} size="xs" c="dimmed">
                       {label}:{' '}
                       {counts
                         ? `${counts.provider_total} / ${counts.selected_total}`
@@ -452,7 +468,8 @@ const M3UTable = () => {
         header: 'Type',
         accessorKey: 'account_type',
         sortable: true,
-        size: 100,
+        size: 55,
+        enableResizing: false,
         cell: ({ cell }) => {
           const value = cell.getValue();
           return value === 'XC' ? 'XC' : 'M3U';
@@ -743,7 +760,7 @@ const M3UTable = () => {
                   timings[`${kind}_completed_at`] ||
                   (kind === 'live' ? cell.getValue() : null);
                 return (
-                  <Text key={kind} size="xs" style={{ whiteSpace: 'nowrap' }}>
+                  <Text key={kind} size="xs">
                     {label}:{' '}
                     {completedAt
                       ? format(completedAt, fullDateTimeFormat)
@@ -759,6 +776,7 @@ const M3UTable = () => {
         header: 'Active',
         accessorKey: 'is_active',
         size: 50,
+        enableResizing: false,
         cell: ({ cell, row }) => {
           return (
             <Box sx={{ display: 'flex', justifyContent: 'center' }}>
@@ -774,7 +792,9 @@ const M3UTable = () => {
       {
         id: 'actions',
         header: 'Actions',
-        size: tableSize == 'compact' ? 75 : 100,
+        size:
+          tableSize === 'compact' ? 100 : tableSize === 'default' ? 120 : 150,
+        enableResizing: false,
       },
     ],
     [
@@ -786,6 +806,26 @@ const M3UTable = () => {
       fullDateTimeFormat,
       refreshProgress,
     ]
+  );
+
+  const responsiveColumns = useMemo(
+    () =>
+      columns.map((column) => {
+        const sizing = resizableColumns.find(
+          ({ id }) => id === (column.id || column.accessorKey)
+        );
+        return sizing
+          ? {
+              ...column,
+              grow: true,
+              flexRatio: true,
+              size: sizing.size,
+              minSize: 0,
+              enableResizing: sizing.id !== 'updated_at',
+            }
+          : column;
+      }),
+    [columns]
   );
 
   //optionally access the underlying virtualizer instance
@@ -870,7 +910,7 @@ const M3UTable = () => {
   };
 
   const table = useTable({
-    columns,
+    columns: responsiveColumns,
     // Sort data before passing to table: active first, then by name
     data: filteredData,
     allRowIds: filteredData.map((playlist) => playlist.id),
@@ -879,8 +919,11 @@ const M3UTable = () => {
     enableRowSelection: false,
     renderTopToolbar: false,
     sorting,
-    columnSizing,
+    columnSizing: responsiveColumnSizing,
     setColumnSizing,
+    pairedColumnSizing: resizableColumns,
+    tableId: 'm3u-accounts',
+    onResetColumnSizing: () => setColumnSizing({}),
     manualSorting: true,
     rowVirtualizerInstanceRef, //optional
     rowVirtualizerOptions: { overscan: 5 }, //optionally customize the row virtualizer

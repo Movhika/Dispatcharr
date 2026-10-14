@@ -1,5 +1,6 @@
 .content {
-  height: min(760px, 92vh);
+  --modal-content-height: 92dvh;
+  height: var(--modal-content-height);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -11,6 +12,10 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.header {
+  flex-shrink: 0;
 }
 
 .form,
@@ -31,6 +36,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--mantine-spacing-md) 2px;
 }
 

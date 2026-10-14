@@ -45,6 +45,17 @@ import {
   getUserFullName,
 } from '../../utils/tables/UsersTableUtils.js';
 
+const resizableColumns = [
+  { id: 'user_level', size: 120, minRatio: 0.07 },
+  { id: 'username', size: 120, minRatio: 0.08 },
+  { id: 'name', size: 125, minRatio: 0.07 },
+  { id: 'email', size: 150, minRatio: 0.09 },
+  { id: 'date_joined', size: 120, minRatio: 0.08 },
+  { id: 'last_login', size: 175, minRatio: 0.1 },
+  { id: 'custom_properties', size: 125, minRatio: 0.08 },
+  { id: 'channel_profiles', size: 180, minRatio: 0.1 },
+];
+
 const deleteUser = (id) => {
   return API.deleteUser(id);
 };
@@ -162,6 +173,15 @@ const UsersTable = () => {
   const [columnSizing, setColumnSizing] = useBrowserStorage(
     'users-table-column-sizing',
     {}
+  );
+  const responsiveColumnSizing = useMemo(
+    () =>
+      Object.fromEntries(
+        resizableColumns
+          .filter(({ id }) => columnSizing[id] != null)
+          .map(({ id }) => [id, columnSizing[id]])
+      ),
+    [columnSizing]
   );
 
   const executeDeleteUser = useCallback(async (id) => {
@@ -360,6 +380,26 @@ const UsersTable = () => {
     [theme, editUser, handleDeleteUser, fullDateFormat, fullDateTimeFormat]
   );
 
+  const responsiveColumns = useMemo(
+    () =>
+      columns.map((column) => {
+        const sizing = resizableColumns.find(
+          ({ id }) => id === (column.id || column.accessorKey)
+        );
+        return sizing
+          ? {
+              ...column,
+              grow: true,
+              flexRatio: true,
+              size: sizing.size,
+              minSize: 0,
+              enableResizing: sizing.id !== 'channel_profiles',
+            }
+          : column;
+      }),
+    [columns]
+  );
+
   const closeUserForm = () => {
     setSelectedUser(null);
     setUserModalOpen(false);
@@ -379,7 +419,7 @@ const UsersTable = () => {
   const renderHeaderCell = makeHeaderCellRenderer(sorting, onSortingChange);
 
   const table = useTable({
-    columns,
+    columns: responsiveColumns,
     data,
     allRowIds: data.map((user) => user.id),
     enablePagination: false,
@@ -387,8 +427,11 @@ const UsersTable = () => {
     enableRowVirtualization: false,
     renderTopToolbar: false,
     sorting,
-    columnSizing,
+    columnSizing: responsiveColumnSizing,
     setColumnSizing,
+    pairedColumnSizing: resizableColumns,
+    tableId: 'users',
+    onResetColumnSizing: () => setColumnSizing({}),
     manualSorting: true,
     manualFiltering: true,
     manualPagination: false,
@@ -415,7 +458,7 @@ const UsersTable = () => {
           minHeight: '100vh',
         }}
       >
-        <Stack gap="md" style={{ maxWidth: '1200px', width: '100%' }}>
+        <Stack gap="md" style={{ minWidth: 0, width: '100%' }}>
           <Flex style={{ alignItems: 'center', paddingBottom: 10 }} gap={15}>
             <Text
               style={{
