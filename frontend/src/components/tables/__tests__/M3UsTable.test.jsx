@@ -1541,18 +1541,22 @@ describe('M3UTable', () => {
       );
     });
 
-    it('actions column size is 75 in compact mode', () => {
+    it('actions column leaves room for all four buttons in compact mode', () => {
       setupMocks({ tableSize: 'compact' });
       render(<M3UTable />);
-      const actionsCol = capturedTableOptions.columns.find((c) => c.id === 'actions');
-      expect(actionsCol.size).toBe(75);
+      const actionsCol = capturedTableOptions.columns.find(
+        (c) => c.id === 'actions'
+      );
+      expect(actionsCol.size).toBe(100);
     });
 
-    it('actions column size is 100 in default mode', () => {
+    it('actions column leaves room for all four buttons in default mode', () => {
       setupMocks({ tableSize: 'default' });
       render(<M3UTable />);
-      const actionsCol = capturedTableOptions.columns.find((c) => c.id === 'actions');
-      expect(actionsCol.size).toBe(100);
+      const actionsCol = capturedTableOptions.columns.find(
+        (c) => c.id === 'actions'
+      );
+      expect(actionsCol.size).toBe(120);
     });
   });
 
