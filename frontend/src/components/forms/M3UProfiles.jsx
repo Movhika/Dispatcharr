@@ -144,7 +144,7 @@ const M3uProfileCard = ({
                 <ActionIcon
                   color={theme.tailwind.red[6]}
                   onClick={onClickDelete}
-                  size="small"
+                  size="sm"
                   variant="transparent"
                   title="Delete profile"
                 >
@@ -165,6 +165,7 @@ const M3UProfiles = ({
   onClose,
   pendingExpDate,
   embedded = false,
+  onOverlayChange,
 }) => {
   const allProfiles = usePlaylistsStore((s) => s.profiles);
   const fetchPlaylist = usePlaylistsStore((s) => s.fetchPlaylist);
@@ -179,6 +180,12 @@ const M3UProfiles = ({
   const [profileToDelete, setProfileToDelete] = useState(null);
   const [deletingProfile, setDeletingProfile] = useState(false);
   const [accountInfoOpen, setAccountInfoOpen] = useState(false);
+  useEffect(() => {
+    onOverlayChange?.(
+      profileEditorOpen || confirmDeleteOpen || accountInfoOpen
+    );
+    return () => onOverlayChange?.(false);
+  }, [profileEditorOpen, confirmDeleteOpen, accountInfoOpen, onOverlayChange]);
   const [selectedProfileForInfo, setSelectedProfileForInfo] = useState(null);
   // Snapshot at editor open so live main-form Date changes do not reset the form.
   const [editorPendingExpDate, setEditorPendingExpDate] = useState(undefined);
@@ -309,15 +316,9 @@ const M3UProfiles = ({
         );
       })}
 
-      <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={() => editProfile()}
-          style={{ width: '100%' }}
-        >
-          New
+      <Flex justify="flex-end">
+        <Button variant="light" size="sm" onClick={() => editProfile()}>
+          Add connection profile
         </Button>
       </Flex>
     </Stack>

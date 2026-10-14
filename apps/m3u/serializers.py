@@ -1,6 +1,7 @@
 from core.utils import validate_flexible_url, ensure_custom_properties_dict
 from rest_framework import serializers, status
 from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema_field
 from .models import M3UAccount, M3UFilter, M3UGroupRule, ServerGroup, M3UAccountProfile
 from .utils import parse_m3u_hash_keys
 from core.models import UserAgent
@@ -225,12 +226,20 @@ class M3UAccountProfileSerializer(serializers.ModelSerializer):
         return super().destroy(request, *args, **kwargs)
 
 
+class M3URefreshScheduleSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    last_run_at = serializers.DateTimeField(allow_null=True)
+    next_run_at = serializers.DateTimeField(allow_null=True)
+
+
 class M3UAccountSerializer(serializers.ModelSerializer):
     """Serializer for M3U Account"""
 
     filters = serializers.SerializerMethodField()
     earliest_expiration = serializers.SerializerMethodField()
     all_expirations = serializers.SerializerMethodField()
+    live_refresh_schedule = serializers.SerializerMethodField()
+    vod_refresh_schedule = serializers.SerializerMethodField()
     exp_date = serializers.DateTimeField(
         required=False, allow_null=True, write_only=True,
         help_text="Expiration date for the default profile (write-through)",
@@ -308,6 +317,8 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "vod_refresh_interval",
             "vod_cron_expression",
             "vod_refresh_after_live",
+            "live_refresh_schedule",
+            "vod_refresh_schedule",
             "custom_properties",
             "account_type",
             "username",
@@ -587,6 +598,14 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # per account (viewset prefetches "filters").
         filters = sorted(obj.filters.all(), key=lambda f: (f.order, f.id))
         return M3UFilterSerializer(filters, many=True).data
+
+    @extend_schema_field(M3URefreshScheduleSerializer)
+    def get_live_refresh_schedule(self, obj):
+        return M3URefreshScheduleSerializer(obj.get_refresh_schedule()).data
+
+    @extend_schema_field(M3URefreshScheduleSerializer)
+    def get_vod_refresh_schedule(self, obj):
+        return M3URefreshScheduleSerializer(obj.get_refresh_schedule(vod=True)).data
 
     def get_earliest_expiration(self, obj):
         """Return the soonest exp_date across all active profiles for this account."""

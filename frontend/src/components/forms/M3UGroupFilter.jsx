@@ -24,6 +24,7 @@ import {
 import { detectGroupReservationOverlaps } from '../../utils/forms/GroupSyncUtils';
 import API from '../../api.js';
 import M3URulesEditor from './M3URulesEditor.jsx';
+import editorClasses from './AccountEditor.module.css';
 
 const M3UGroupFilter = ({
   playlist = null,
@@ -40,6 +41,7 @@ const M3UGroupFilter = ({
   const [seriesCategoryStates, setSeriesCategoryStates] = useState([]);
   const [activeTab, setActiveTab] = useState('live');
   const [rulesScope, setRulesScope] = useState(null);
+  const [childOverlayOpen, setChildOverlayOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
   const settingsAccount = useRef(null);
   const groupsAccount = useRef(null);
@@ -233,27 +235,31 @@ const M3UGroupFilter = ({
       onClose={onClose}
       title="Source import"
       size="min(1500px, 94vw)"
-      styles={{ content: { '--mantine-color-body': '#27272A' } }}
-      scrollAreaComponent={Modal.NativeScrollArea}
+      classNames={{ content: editorClasses.content, body: editorClasses.body }}
+      styles={{
+        content: { '--mantine-color-body': '#27272A', height: '92vh' },
+      }}
       lockScroll={false}
       withinPortal={true}
+      trapFocus={!rulesScope && !childOverlayOpen}
       yOffset="2vh"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
-      <Stack>
+      <Stack className={editorClasses.form}>
         <Tabs
+          className={editorClasses.tabs}
           value={activeTab}
           onChange={(value) => {
             if (!isLoading) setActiveTab(value);
           }}
         >
-          <TabsList>
+          <TabsList className={editorClasses.tabList}>
             <TabsTab value="live">Live</TabsTab>
             <TabsTab value="vod-movie">VOD - Movies</TabsTab>
             <TabsTab value="vod-series">VOD - Series</TabsTab>
           </TabsList>
 
-          <TabsPanel value="live">
+          <TabsPanel value="live" className={editorClasses.panel}>
             <LiveGroupFilter
               playlist={playlist}
               groupStates={groupStates}
@@ -261,10 +267,11 @@ const M3UGroupFilter = ({
               autoEnableNewGroupsLive={autoEnableNewGroupsLive}
               setAutoEnableNewGroupsLive={setAutoEnableNewGroupsLive}
               onOpenRules={() => setRulesScope('live')}
+              onOverlayChange={setChildOverlayOpen}
             />
           </TabsPanel>
 
-          <TabsPanel value="vod-movie">
+          <TabsPanel value="vod-movie" className={editorClasses.panel}>
             <VODCategoryFilter
               playlist={playlist}
               categoryStates={movieCategoryStates}
@@ -273,10 +280,11 @@ const M3UGroupFilter = ({
               autoEnableNewGroups={autoEnableNewGroupsVod}
               setAutoEnableNewGroups={setAutoEnableNewGroupsVod}
               onOpenRules={() => setRulesScope('movie')}
+              onOverlayChange={setChildOverlayOpen}
             />
           </TabsPanel>
 
-          <TabsPanel value="vod-series">
+          <TabsPanel value="vod-series" className={editorClasses.panel}>
             <VODCategoryFilter
               playlist={playlist}
               categoryStates={seriesCategoryStates}
@@ -285,14 +293,18 @@ const M3UGroupFilter = ({
               autoEnableNewGroups={autoEnableNewGroupsSeries}
               setAutoEnableNewGroups={setAutoEnableNewGroupsSeries}
               onOpenRules={() => setRulesScope('series')}
+              onOverlayChange={setChildOverlayOpen}
             />
           </TabsPanel>
         </Tabs>
 
-        <Flex mih={50} gap="xs" justify="flex-end" align="flex-end">
-          <Button variant="default" onClick={onClose} size="xs">
-            Close
-          </Button>
+        <Flex
+          className={editorClasses.footer}
+          mih={50}
+          gap="xs"
+          justify="flex-end"
+          align="center"
+        >
           {!isInitialSetup && (
             <Button
               variant="default"

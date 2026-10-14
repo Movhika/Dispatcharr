@@ -1,0 +1,42 @@
+.content {
+  height: min(760px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.form,
+.tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabList {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--mantine-spacing-md) 2px;
+}
+
+.footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  padding-top: var(--mantine-spacing-md);
+  margin-top: var(--mantine-spacing-md);
+}

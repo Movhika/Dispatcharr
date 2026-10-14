@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import editorClasses from '../AccountEditor.module.css';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 vi.mock('../../../constants', () => ({
@@ -73,9 +74,15 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Group: ({ children }) => <div>{children}</div>,
-  Modal: ({ children, opened, onClose, title }) =>
+  SimpleGrid: ({ children }) => <div data-testid="simple-grid">{children}</div>,
+  Tooltip: ({ children, label }) => <span data-help={label}>{children}</span>,
+  Modal: ({ children, opened, onClose, title, size, classNames }) =>
     opened ? (
-      <div data-testid="modal">
+      <div
+        data-testid="modal"
+        data-size={size}
+        data-content-class={classNames?.content}
+      >
         <div data-testid="modal-title">{title}</div>
         <button data-testid="modal-close" onClick={onClose}>
           ×
@@ -83,14 +90,16 @@ vi.mock('@mantine/core', () => ({
         {children}
       </div>
     ) : null,
-  MultiSelect: ({ label, onChange, data = [] }) => (
+  MultiSelect: ({ label, onChange, data = [], 'aria-label': ariaLabel }) => (
     <div>
       <label>{label}</label>
       {data.map((option) => (
-        <span key={option.value}>{option.label}</span>
+        <span key={option.value} data-testid="provider-profile-option">
+          {option.label}
+        </span>
       ))}
       <input
-        data-testid={`multiselect-${label}`}
+        data-testid={`multiselect-${ariaLabel || label}`}
         onChange={(e) =>
           onChange?.(e.target.value ? e.target.value.split(',') : [])
         }
@@ -109,10 +118,10 @@ vi.mock('@mantine/core', () => ({
       <input type="password" disabled={disabled} />
     </div>
   ),
-  Select: ({ label, disabled }) => (
+  Select: ({ label, disabled, 'aria-label': ariaLabel }) => (
     <div>
       <label>{label}</label>
-      <select disabled={disabled} />
+      <select disabled={disabled} aria-label={ariaLabel || label} />
     </div>
   ),
   Stack: ({ children }) => <div>{children}</div>,
@@ -125,8 +134,10 @@ vi.mock('@mantine/core', () => ({
   ),
   Tabs: ({ children }) => <div>{children}</div>,
   TabsList: ({ children }) => <div>{children}</div>,
-  TabsPanel: ({ children, value }) => (
-    <div data-testid={`panel-${value}`}>{children}</div>
+  TabsPanel: ({ children, value, className }) => (
+    <div data-testid={`panel-${value}`} className={className}>
+      {children}
+    </div>
   ),
   TabsTab: ({ children, value }) => (
     <button data-testid={`tab-${value}`}>{children}</button>
@@ -212,6 +223,22 @@ const setupMocks = ({
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('User', () => {
+  it('uses the shared responsive editor size and scrollable panels', () => {
+    setupMocks();
+    render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
+    expect(screen.getByTestId('modal')).toHaveAttribute(
+      'data-size',
+      'min(1120px, 94vw)'
+    );
+    expect(screen.getByTestId('modal')).toHaveAttribute(
+      'data-content-class',
+      editorClasses.content
+    );
+    expect(screen.getByTestId('panel-account')).toHaveClass(
+      editorClasses.panel
+    );
+    expect(screen.getByTestId('panel-api')).toHaveClass(editorClasses.panel);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(UserUtils.createUser).mockResolvedValue({});
@@ -308,14 +335,14 @@ describe('User', () => {
           ],
         },
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       const multiSelect = screen.getByTestId(
         'multiselect-Allowed Provider Profiles'
       );
       const labels = Array.from(
-        multiSelect.parentElement.querySelectorAll('span')
+        multiSelect.parentElement.querySelectorAll(
+          '[data-testid="provider-profile-option"]'
+        )
       ).map((el) => el.textContent);
       expect(labels).toEqual([
         'Alpha IPTV: Alpha Backup',

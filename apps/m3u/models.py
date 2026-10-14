@@ -1,7 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator
+from django.utils import timezone as django_timezone
 from core.models import CoreSettings, UserAgent
 import re
 from django.dispatch import receiver
@@ -11,6 +13,7 @@ from core.utils import custom_properties_as_dict
 from .utils import parse_m3u_hash_keys
 
 CUSTOM_M3U_ACCOUNT_NAME = "custom"
+logger = logging.getLogger(__name__)
 
 
 class M3UAccount(models.Model):
@@ -133,6 +136,32 @@ class M3UAccount(models.Model):
             if keys:
                 return keys
         return parse_m3u_hash_keys(CoreSettings.get_m3u_hash_key())
+
+    def get_refresh_schedule(self, *, vod=False):
+        """Describe the existing Beat schedule without changing or running it."""
+        task = self.vod_refresh_task if vod else self.refresh_task
+        if task is None:
+            return {"enabled": False, "last_run_at": None, "next_run_at": None}
+
+        next_run = None
+        if task.enabled:
+            try:
+                now = django_timezone.now()
+                reference = task.last_run_at or task.date_changed or now
+                due = task.schedule.is_due(reference)
+                seconds = 0 if due.is_due else max(0, float(due.next))
+                next_run = now + timedelta(seconds=seconds)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                logger.warning(
+                    "Could not calculate next refresh for task %s",
+                    task.name,
+                    exc_info=True,
+                )
+        return {
+            "enabled": bool(task.enabled),
+            "last_run_at": task.last_run_at,
+            "next_run_at": next_run,
+        }
 
     def clean(self):
         if self.max_streams < 0:

@@ -9,7 +9,7 @@ import {
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import M3U from '../M3U';
 import { useDateTimeFormat } from '../../../utils/dateTimeUtils.js';
-import classes from '../M3U.module.css';
+import editorClasses from '../AccountEditor.module.css';
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/userAgents', () => ({ default: vi.fn() }));
@@ -50,6 +50,9 @@ vi.mock('../../../utils/notificationUtils.js', () => ({
 
 vi.mock('../../../utils/dateTimeUtils.js', () => ({
   useDateTimeFormat: vi.fn(),
+  useTimeHelpers: () => ({
+    toUserTime: (value) => ({ format: (pattern) => `${pattern}: ${value}` }),
+  }),
 }));
 
 // ── Sub-component mocks ────────────────────────────────────────────────────────
@@ -95,12 +98,20 @@ vi.mock('../ScheduleInput', () => ({
 
 // ── Mantine dates ──────────────────────────────────────────────────────────────
 vi.mock('@mantine/dates', () => ({
-  DateTimePicker: ({ label, value, onChange, placeholder, valueFormat }) => (
+  DateTimePicker: ({
+    label,
+    value,
+    onChange,
+    placeholder,
+    valueFormat,
+    'aria-label': ariaLabel,
+  }) => (
     <div>
       <label>
         {label}
         <input
           data-testid="date-time-picker"
+          aria-label={ariaLabel || label}
           data-value-format={valueFormat}
           placeholder={placeholder}
           value={value ? value.toISOString() : ''}
@@ -166,7 +177,9 @@ vi.mock('@mantine/core', () => ({
       {children}
     </button>
   ),
-  TabsPanel: ({ children }) => <div>{children}</div>,
+  TabsPanel: ({ children, className }) => (
+    <div className={className}>{children}</div>
+  ),
   Box: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, type, loading, disabled, variant, color }) => (
     <button
@@ -209,11 +222,17 @@ vi.mock('@mantine/core', () => ({
   ),
   Flex: ({ children }) => <div>{children}</div>,
   Group: ({ children }) => <div>{children}</div>,
+  Paper: ({ children }) => <div data-testid="settings-box">{children}</div>,
+  Tooltip: ({ children, label }) => <span data-help={label}>{children}</span>,
   LoadingOverlay: ({ visible }) =>
     visible ? <div data-testid="loading-overlay" /> : null,
-  Modal: ({ children, opened, onClose, title, size }) =>
+  Modal: ({ children, opened, onClose, title, size, classNames }) =>
     opened ? (
-      <div data-testid="modal" data-size={size}>
+      <div
+        data-testid="modal"
+        data-size={size}
+        data-content-class={classNames?.content}
+      >
         <div data-testid="modal-title">{title}</div>
         <button data-testid="modal-close" onClick={onClose}>
           ×
@@ -229,13 +248,14 @@ vi.mock('@mantine/core', () => ({
     onChange,
     data,
     clearable,
+    'aria-label': ariaLabel,
   }) => (
     <div>
       <label>
         {label}
         <select
           multiple
-          aria-label={label}
+          aria-label={ariaLabel || label}
           data-testid={id ? `multiselect-${id}` : undefined}
           value={value || []}
           onChange={(e) => {
@@ -258,7 +278,10 @@ vi.mock('@mantine/core', () => ({
         </span>
       )}
       {clearable && value?.length > 0 && (
-        <button aria-label={`clear-${label}`} onClick={() => onChange?.([])}>
+        <button
+          aria-label={`clear-${ariaLabel || label}`}
+          onClick={() => onChange?.([])}
+        >
           clear
         </button>
       )}
@@ -273,13 +296,14 @@ vi.mock('@mantine/core', () => ({
     max,
     disabled,
     error,
+    'aria-label': ariaLabel,
   }) => (
     <div>
       <label>
         {label}
         <input
           type="number"
-          aria-label={label || placeholder}
+          aria-label={ariaLabel || label || placeholder}
           placeholder={placeholder}
           value={value ?? ''}
           min={min}
@@ -316,12 +340,21 @@ vi.mock('@mantine/core', () => ({
       {error && <span data-testid={`error-${label}`}>{error}</span>}
     </div>
   ),
-  Select: ({ label, placeholder, value, onChange, data, disabled, error }) => (
+  Select: ({
+    label,
+    placeholder,
+    value,
+    onChange,
+    data,
+    disabled,
+    error,
+    'aria-label': ariaLabel,
+  }) => (
     <div>
       <label>
         {label}
         <select
-          aria-label={label || placeholder}
+          aria-label={ariaLabel || label || placeholder}
           value={value || ''}
           disabled={disabled}
           onChange={(e) => onChange?.(e.target.value || null)}
@@ -342,16 +375,22 @@ vi.mock('@mantine/core', () => ({
     </div>
   ),
   SimpleGrid: ({ children, cols }) => (
-    <div data-testid="account-columns" data-cols={JSON.stringify(cols)}>{children}</div>
+    <div data-testid="account-columns" data-cols={JSON.stringify(cols)}>
+      {children}
+    </div>
   ),
-  Stack: ({ children, role, className, 'aria-label': label }) => <div role={role} className={className} aria-label={label}>{children}</div>,
+  Stack: ({ children, role, className, 'aria-label': label }) => (
+    <div role={role} className={className} aria-label={label}>
+      {children}
+    </div>
+  ),
   Text: ({ children }) => <span>{children}</span>,
-  Switch: ({ label, checked, onChange, disabled }) => (
+  Switch: ({ label, checked, onChange, disabled, 'aria-label': ariaLabel }) => (
     <label>
       <input
         type="checkbox"
         role="switch"
-        aria-label={label}
+        aria-label={ariaLabel || label}
         checked={!!checked}
         disabled={disabled}
         onChange={(e) => onChange?.(e)}
@@ -488,6 +527,7 @@ describe('M3U', () => {
     vi.mocked(useDateTimeFormat).mockReturnValue({
       timeFormat: 'HH:mm',
       dateYearFormat: 'MMM D, YYYY',
+      fullDateTimeFormat: 'DD/MM/YYYY, HH:mm:ss',
     });
     vi.mocked(M3uUtils.addPlaylist).mockResolvedValue(
       makeM3uAccount({ id: 2 })
@@ -593,10 +633,16 @@ describe('M3U', () => {
       expect(screen.getByTestId('m3u-group-filter')).toBeInTheDocument();
     });
 
-    it('renders M3UFilters sub-component', () => {
+    it('does not duplicate Stream filters in the account editor', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(screen.getByTestId('m3u-filters')).toBeInTheDocument();
+      expect(screen.queryByTestId('m3u-filters')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'Filters' })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Source import' })
+      ).toBeInTheDocument();
     });
 
     it('renders ScheduleInput sub-component', () => {
@@ -848,6 +894,69 @@ describe('M3U', () => {
   // ── Refresh / schedule behaviour ───────────────────────────────────────────
 
   describe('schedule and refresh', () => {
+    it('shows saved Live and VOD completion times separately using the selected date format', () => {
+      const account = makeM3uAccount({
+        enable_vod: true,
+        vod_refresh_after_live: false,
+        updated_at: '2026-10-14T08:00:00Z',
+        live_refresh_schedule: {
+          enabled: true,
+          next_run_at: '2026-10-14T14:00:00Z',
+        },
+        vod_refresh_schedule: {
+          enabled: true,
+          next_run_at: '2026-10-15T03:00:00Z',
+        },
+        custom_properties: {
+          refresh_timings: { vod_completed_at: '2026-10-14T03:05:00Z' },
+        },
+      });
+      setupStores({ playlists: [account] });
+      render(<M3U {...defaultProps({ m3uAccount: account })} />);
+      expect(
+        screen.getByRole('group', { name: 'Live TV refresh schedule' })
+      ).toHaveTextContent('Last: DD/MM/YYYY, HH:mm:ss: 2026-10-14T08:00:00Z');
+      expect(
+        screen.getByRole('group', { name: 'VOD refresh schedule' })
+      ).toHaveTextContent('Last: DD/MM/YYYY, HH:mm:ss: 2026-10-14T03:05:00Z');
+      expect(
+        screen.getByRole('group', { name: 'VOD refresh schedule' })
+      ).toHaveTextContent('Next: DD/MM/YYYY, HH:mm:ss: 2026-10-15T03:00:00Z');
+    });
+
+    it('shows VOD following the saved Live schedule without a fake separate next run', () => {
+      const account = makeM3uAccount({
+        enable_vod: true,
+        vod_refresh_after_live: true,
+        live_refresh_schedule: { enabled: true },
+        vod_refresh_schedule: { enabled: false },
+      });
+      setupStores({ playlists: [account] });
+      render(<M3U {...defaultProps({ m3uAccount: account })} />);
+      expect(
+        screen.getByRole('group', { name: 'VOD refresh schedule' })
+      ).toHaveTextContent('Next: After Live TV refresh');
+    });
+
+    it('disables VOD settings until scanning is enabled without discarding its priority', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ enable_vod: false, priority: 15 }),
+          })}
+        />
+      );
+      expect(
+        screen.getByRole('spinbutton', { name: 'VOD Priority' })
+      ).toBeDisabled();
+      expect(
+        screen.getByRole('spinbutton', { name: 'VOD Priority' })
+      ).toHaveValue(15);
+      expect(
+        screen.getByRole('switch', { name: 'Separate VOD refresh schedule' })
+      ).toBeDisabled();
+    });
     it('renders the ScheduleInput', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
@@ -871,7 +980,7 @@ describe('M3U', () => {
   });
 
   describe('account and content tabs', () => {
-    it('keeps responsive separators for account, connection and content settings', () => {
+    it('groups account, connection and content settings into bordered boxes', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       for (const name of [
@@ -880,7 +989,11 @@ describe('M3U', () => {
         'Live TV settings',
         'VOD settings',
       ]) {
-        expect(screen.getByRole('group', { name })).toHaveClass(classes.column);
+        expect(
+          screen
+            .getByRole('group', { name })
+            .closest('[data-testid="settings-box"]')
+        ).toBeInTheDocument();
       }
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
@@ -898,14 +1011,27 @@ describe('M3U', () => {
           })}
         />
       );
-      expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '1040');
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-size',
+        'min(1120px, 94vw)'
+      );
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-content-class',
+        editorClasses.content
+      );
       expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
       const live = within(
         screen.getByRole('group', { name: 'Live TV settings' })
       );
       const vod = within(screen.getByRole('group', { name: 'VOD settings' }));
+      const liveSchedule = within(
+        screen.getByRole('group', { name: 'Live TV refresh schedule' })
+      );
+      const vodSchedule = within(
+        screen.getByRole('group', { name: 'VOD refresh schedule' })
+      );
       expect(
-        live.getByLabelText('Live TV refresh interval (hours)')
+        liveSchedule.getByLabelText('Live TV refresh interval (hours)')
       ).toBeInTheDocument();
       expect(
         live.getByRole('spinbutton', {
@@ -916,7 +1042,7 @@ describe('M3U', () => {
         live.queryByRole('spinbutton', { name: 'VOD Priority' })
       ).not.toBeInTheDocument();
       expect(
-        vod.getByLabelText('VOD refresh interval (hours)')
+        vodSchedule.getByLabelText('VOD refresh interval (hours)')
       ).toBeInTheDocument();
       expect(
         vod.getByRole('switch', { name: 'Enable VOD Scanning' })
@@ -941,7 +1067,7 @@ describe('M3U', () => {
       ).not.toBeInTheDocument();
     });
 
-    it('hides VOD controls for standard accounts', () => {
+    it('explains why VOD is unavailable for standard accounts', () => {
       setupStores();
       render(
         <M3U
@@ -951,8 +1077,13 @@ describe('M3U', () => {
         />
       );
       expect(
-        screen.queryByRole('group', { name: 'VOD settings' })
-      ).not.toBeInTheDocument();
+        screen.getByRole('switch', { name: 'Enable VOD Scanning' })
+      ).toBeDisabled();
+      expect(
+        screen.getByText(
+          'VOD scanning is available for Xtream Codes accounts only.'
+        )
+      ).toBeInTheDocument();
     });
 
     it('updates content controls when the account type changes', () => {
@@ -962,8 +1093,8 @@ describe('M3U', () => {
         target: { value: 'STD' },
       });
       expect(
-        screen.queryByRole('group', { name: 'VOD settings' })
-      ).not.toBeInTheDocument();
+        screen.getByRole('switch', { name: 'Enable VOD Scanning' })
+      ).toBeDisabled();
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
         target: { value: 'XC' },
       });

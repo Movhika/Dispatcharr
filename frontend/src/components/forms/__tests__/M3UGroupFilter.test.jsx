@@ -227,12 +227,12 @@ describe('M3UGroupFilter', () => {
       expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
     });
 
-    it('renders a Cancel button', () => {
+    it('does not duplicate the modal close action in its footer', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       expect(
-        screen.getByRole('button', { name: /close/i })
-      ).toBeInTheDocument();
+        screen.queryByRole('button', { name: /close/i })
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -289,12 +289,16 @@ describe('M3UGroupFilter', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('calls onClose when Cancel button is clicked', () => {
+    it('closing does not save or refresh', () => {
       const onClose = vi.fn();
       setupStores();
       render(<M3UGroupFilter {...defaultProps({ onClose })} />);
-      fireEvent.click(screen.getByRole('button', { name: /close/i }));
+      fireEvent.click(screen.getByTestId('modal-close'));
       expect(onClose).toHaveBeenCalled();
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).not.toHaveBeenCalled();
+      expect(M3uGroupFilterUtils.saveAndRefreshPlaylist).not.toHaveBeenCalled();
     });
   });
 
