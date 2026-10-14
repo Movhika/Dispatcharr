@@ -123,11 +123,6 @@ const show = () =>
   );
 const card = (name = 'Provider One') =>
   within(screen.getByRole('article', { name: 'M3U account ' + name }));
-const sort = (label) => {
-  fireEvent.click(screen.getByRole('textbox', { name: 'Sort accounts' }));
-  fireEvent.click(screen.getByRole('option', { name: label }));
-};
-
 describe('M3U account cards', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -189,63 +184,9 @@ describe('M3U account cards', () => {
     ).toEqual(['M3U account Bravo', 'M3U account zulu', 'M3U account Alpha']);
   });
 
-  it('searches by name without changing account data', () => {
-    setup({ playlists: [account(), account({ id: 2, name: 'Other' })] });
+  it('does not add search or sort controls', () => {
     show();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search accounts' }), {
-      target: { value: ' provider ' },
-    });
-    expect(screen.getAllByRole('article')).toHaveLength(1);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search accounts' }), {
-      target: { value: 'missing' },
-    });
-    expect(
-      screen.getByText('No M3U accounts match this filter.')
-    ).toBeInTheDocument();
-  });
-
-  it('persists sort order and keeps disabled accounts last', () => {
-    setup({
-      playlists: [
-        account({ name: 'Alpha' }),
-        account({ id: 2, name: 'Zulu' }),
-        account({ id: 3, name: 'Zzz', is_active: false }),
-      ],
-    });
-    show();
-    sort('Name (Z–A)');
-    expect(
-      screen
-        .getAllByRole('article')
-        .map((node) => node.getAttribute('aria-label'))
-    ).toEqual(['M3U account Zulu', 'M3U account Alpha', 'M3U account Zzz']);
-    expect(JSON.parse(localStorage.getItem('m3u-accounts-sort'))).toBe('-name');
-  });
-
-  it('sorts effective profile capacity and puts missing expiration last', () => {
-    setup({
-      playlists: [
-        account({
-          name: 'Limited',
-          earliest_expiration: '2026-11-01',
-          max_streams: 2,
-        }),
-        account({
-          id: 2,
-          name: 'Unlimited',
-          profiles: [{ is_active: true, max_streams: 0 }],
-        }),
-      ],
-    });
-    show();
-    sort('Most connections');
-    expect(screen.getAllByRole('article')[0]).toHaveAccessibleName(
-      'M3U account Unlimited'
-    );
-    sort('Expiring first');
-    expect(screen.getAllByRole('article')[0]).toHaveAccessibleName(
-      'M3U account Limited'
-    );
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
   it('retains M3U/XC type filters', async () => {
@@ -397,7 +338,10 @@ describe('M3U account cards', () => {
       await waitFor(() =>
         expect(state.setRefreshProgress).toHaveBeenLastCalledWith(
           1,
-          expect.objectContaining({ action: 'error', status: 'error' })
+          expect.objectContaining({
+            action: kind === 'vod' ? 'vod_refresh' : 'error',
+            status: 'error',
+          })
         )
       );
     }
@@ -428,10 +372,8 @@ describe('M3U account cards', () => {
       'Live TV: 100 / 20',
       'Movies: 300 / 50',
       'Series: 200 / 30',
-      'Live TV: 5.5s',
-      'VOD: 1m 21s',
-      'Live TV: formatted:live-date',
-      'VOD: formatted:vod-date',
+      'Live TV: formatted:live-date · 5.5s',
+      'VOD: formatted:vod-date · 1m 21s',
     ]) {
       expect(card().getByText(line)).toBeInTheDocument();
     }
@@ -449,8 +391,9 @@ describe('M3U account cards', () => {
       ],
     });
     show();
-    expect(card().getByText('VOD: 1m 0s')).toBeInTheDocument();
-    expect(card().getByText('VOD: formatted:last-vod')).toBeInTheDocument();
+    expect(
+      card().getByText('VOD: formatted:last-vod · 1m 0s')
+    ).toBeInTheDocument();
   });
 
   it.each([
@@ -468,7 +411,13 @@ describe('M3U account cards', () => {
       ],
     });
     show();
-    expect(card().getByText('Live TV: ' + expected)).toBeInTheDocument();
+    expect(
+      card().getByText(
+        seconds == null
+          ? 'Live TV: formatted:2026-10-14T12:00:00Z'
+          : 'Live TV: formatted:2026-10-14T12:00:00Z · ' + expected
+      )
+    ).toBeInTheDocument();
   });
 
   it('displays progress while retaining completed refresh summaries', () => {
@@ -478,8 +427,8 @@ describe('M3U account cards', () => {
       },
     });
     show();
-    expect(card().getByText('Downloading:')).toBeInTheDocument();
-    expect(card().getByText('50%')).toBeInTheDocument();
+    expect(card().getByText('Refreshing Live TV…')).toBeInTheDocument();
+    expect(card().queryByText('50%')).not.toBeInTheDocument();
   });
 
   it('shows upstream errors and auto-sync warnings', () => {

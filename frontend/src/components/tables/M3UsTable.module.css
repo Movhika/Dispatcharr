@@ -3,10 +3,11 @@
   overflow-wrap: anywhere;
 }
 
-.controls {
-  height: 40px;
+.controls.controls {
+  height: 38px;
   display: flex;
   align-items: center;
+  justify-content: center;
   white-space: nowrap;
   overflow-wrap: normal;
   flex-shrink: 0;

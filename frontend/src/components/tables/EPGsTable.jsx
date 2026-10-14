@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import useEPGsStore from '../../store/epgs';
 import EPGForm from '../forms/EPG';
 import DummyEPGForm from '../forms/DummyEPG';
 import {
   ActionIcon,
+  Badge,
+  Group,
+  ScrollArea,
   Box,
   Button,
   Flex,
@@ -23,33 +26,28 @@ import {
 import {
   ChevronDown,
   Filter,
-  RefreshCcw,
+  RefreshCw,
   RotateCcw,
   Square,
   SquareCheck,
-  SquareMinus,
-  SquarePen,
+  Trash2,
+  Pencil,
   SquarePlus,
 } from 'lucide-react';
 import { format, useDateTimeFormat } from '../../utils/dateTimeUtils.js';
 import useBrowserStorage from '../../hooks/useBrowserStorage';
 import ConfirmationDialog from '../../components/ConfirmationDialog';
 import useWarningsStore from '../../store/warnings';
-import { CustomTable, useTable } from './CustomTable';
 import { showNotification } from '../../utils/notificationUtils.js';
 import {
   deleteEpg,
   formatStatusText,
   getProgressInfo,
   getProgressLabel,
-  getSortedEpgs,
   refreshEpg,
   updateEpg,
 } from '../../utils/tables/EPGsTableUtils.js';
-import {
-  makeHeaderCellRenderer,
-  makeSortingChangeHandler,
-} from './tableSortingUtils.jsx';
+import cardClasses from './M3UsTable.module.css';
 
 // Helper function to get status text color
 const getStatusColor = (status) => {
@@ -69,42 +67,53 @@ const getStatusColor = (status) => {
   }
 };
 
-const RowActions = ({ tableSize, row, editEPG, deleteEPG, refreshEPG }) => {
-  const iconSize =
-    tableSize == 'default' ? 'sm' : tableSize == 'compact' ? 'xs' : 'md';
-  const isDummyEPG = row.original.source_type === 'dummy';
-
+const RowActions = ({ row, editEPG, deleteEPG, refreshEPG }) => {
+  const epg = row.original;
   return (
-    <>
-      <ActionIcon
-        variant="transparent"
-        size={iconSize} // Use standardized icon size
-        color="yellow.5" // Red color for delete actions
-        onClick={() => editEPG(row.original)}
-      >
-        <SquarePen size={tableSize === 'compact' ? 16 : 18} />{' '}
-        {/* Small icon size */}
-      </ActionIcon>
-      <ActionIcon
-        variant="transparent"
-        size={iconSize} // Use standardized icon size
-        color="red.9" // Red color for delete actions
-        onClick={() => deleteEPG(row.original.id)}
-      >
-        <SquareMinus size={tableSize === 'compact' ? 16 : 18} />{' '}
-        {/* Small icon size */}
-      </ActionIcon>
-      <ActionIcon
-        variant="transparent"
-        size={iconSize} // Use standardized icon size
-        color="blue.5" // Red color for delete actions
-        onClick={() => refreshEPG(row.original.id)}
-        disabled={!row.original.is_active || isDummyEPG}
-      >
-        <RefreshCcw size={tableSize === 'compact' ? 16 : 18} />{' '}
-        {/* Small icon size */}
-      </ActionIcon>
-    </>
+    <Paper
+      className={cardClasses.controls}
+      withBorder
+      px={6}
+      py={4}
+      radius="md"
+      role="group"
+      aria-label={`Actions for ${epg.name}`}
+    >
+      <Group gap={4} wrap="nowrap">
+        <Tooltip label="Refresh EPG">
+          <ActionIcon
+            variant="subtle"
+            size="md"
+            aria-label={`Refresh ${epg.name}`}
+            onClick={() => refreshEPG(epg.id)}
+            disabled={!epg.is_active || epg.source_type === 'dummy'}
+          >
+            <RefreshCw size={17} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Edit EPG">
+          <ActionIcon
+            variant="subtle"
+            size="md"
+            aria-label={`Edit ${epg.name}`}
+            onClick={() => editEPG(epg)}
+          >
+            <Pencil size={17} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Delete EPG">
+          <ActionIcon
+            variant="subtle"
+            size="md"
+            color="red"
+            aria-label={`Delete ${epg.name}`}
+            onClick={() => deleteEPG(epg.id)}
+          >
+            <Trash2 size={17} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+    </Paper>
   );
 };
 
@@ -218,22 +227,16 @@ const EPGsTable = () => {
 
   const epgs = useEPGsStore((s) => s.epgs);
 
-  const theme = useMantineTheme();
   const { fullDateTimeFormat } = useDateTimeFormat();
-  const [tableSize] = useBrowserStorage('table-size', 'default');
   const [typeFilter, setTypeFilter] = useBrowserStorage(
     'epg-table-type-filter',
     ALL_SOURCE_TYPES,
     { storage: 'session' }
   );
-  const [columnSizing, setColumnSizing] = useBrowserStorage(
-    'epg-table-column-sizing',
-    {}
-  );
   const isWarningSuppressed = useWarningsStore((s) => s.isWarningSuppressed);
   const suppressWarning = useWarningsStore((s) => s.suppressWarning);
 
-  const toggleActive = async (epg) => {
+  const toggleActive = useCallback(async (epg) => {
     try {
       // Validate that epg is a valid object with an id
       if (!epg || typeof epg !== 'object' || !epg.id) {
@@ -252,7 +255,7 @@ const EPGsTable = () => {
     } catch (error) {
       console.error('Error toggling active state:', error);
     }
-  };
+  }, []);
 
   const columns = useMemo(
     //column definitions...
@@ -291,17 +294,16 @@ const EPGsTable = () => {
             value = username ? `User: ${username}` : '(credentials set)';
             tooltip = value;
           } else {
-            value =
-              cell.getValue() ||
-              row.original.password ||
-              row.original.file_path ||
-              '';
+            value = cell.getValue() || row.original.file_path || '';
             tooltip = value;
           }
 
           return (
             <Tooltip label={tooltip} disabled={!tooltip}>
-              <div
+              <Text
+                size="sm"
+                c="dimmed"
+                mt={4}
                 style={{
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -310,7 +312,7 @@ const EPGsTable = () => {
                 }}
               >
                 {value}
-              </div>
+              </Text>
             </Tooltip>
           );
         },
@@ -366,27 +368,30 @@ const EPGsTable = () => {
         cell: ({ row, cell }) => {
           const isDummyEPG = row.original.source_type === 'dummy';
           return (
-            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Paper
+              className={cardClasses.controls}
+              withBorder
+              px={6}
+              py={4}
+              radius="md"
+              role="group"
+              aria-label={`Enabled state for ${row.original.name}`}
+            >
               <Switch
-                size="xs"
+                size="sm"
+                label="Enabled"
+                aria-label={`Enable ${row.original.name}`}
                 checked={cell.getValue()}
                 onChange={() => toggleActive(row.original)}
                 disabled={isDummyEPG}
               />
-            </Box>
+            </Paper>
           );
         },
       },
-      {
-        id: 'actions',
-        header: 'Actions',
-        size: tableSize == 'compact' ? 75 : 100,
-      },
     ],
-    [fullDateTimeFormat]
+    [fullDateTimeFormat, toggleActive]
   );
-
-  const [sorting, setSorting] = useState([]);
 
   const editEPG = async (epg = null) => {
     const freshEpg = epg?.id ? epgs[epg.id] || epg : epg;
@@ -477,27 +482,6 @@ const EPGsTable = () => {
     );
   }, [epgs]);
 
-  const renderBodyCell = ({ cell, row }) => {
-    switch (cell.column.id) {
-      case 'actions':
-        return (
-          <RowActions
-            tableSize={tableSize}
-            row={row}
-            editEPG={editEPG}
-            deleteEPG={deleteEPG}
-            refreshEPG={handleRefreshEPG}
-          />
-        );
-    }
-  };
-
-  const onSortingChange = makeSortingChangeHandler(sorting, setSorting, (col, desc) =>
-    setData(getSortedEpgs(epgs, col, desc))
-  );
-
-  const renderHeaderCell = makeHeaderCellRenderer(sorting, onSortingChange);
-
   const filteredData = useMemo(
     () => data.filter((e) => typeFilter.includes(e.source_type)),
     [data, typeFilter]
@@ -513,45 +497,22 @@ const EPGsTable = () => {
     );
   };
 
-  const table = useTable({
-    columns,
-    data: filteredData,
-    allRowIds: filteredData.map((epg) => epg.id),
-    enablePagination: false,
-    enableRowSelection: false,
-    renderTopToolbar: false,
-    columnSizing,
-    setColumnSizing,
-    manualSorting: true,
-    bodyCellRenderFns: {
-      actions: renderBodyCell,
-    },
-    headerCellRenderFns: {
-      name: renderHeaderCell,
-      source_type: renderHeaderCell,
-      url: renderHeaderCell,
-      status: renderHeaderCell,
-      last_message: renderHeaderCell,
-      updated_at: renderHeaderCell,
-      is_active: renderHeaderCell,
-      actions: renderHeaderCell,
-    },
-    // Add custom cell styles to match CustomTable's sizing
-    tableCellProps: ({ cell }) => {
-      return {
-        // Apply taller height for progress cells (except initializing), otherwise use standard height
-        fontSize:
-          tableSize === 'compact'
-            ? 'var(--mantine-font-size-xs)'
-            : 'var(--mantine-font-size-sm)',
-        padding: tableSize === 'compact' ? '2px 8px' : '4px 10px',
-      };
-    },
-  });
+  const renderDetail = (epg, id) => {
+    const column = columns.find((column) => column.accessorKey === id);
+    return column.cell({
+      cell: { getValue: () => epg[id] },
+      row: { original: epg },
+    });
+  };
 
   return (
     <Box
-      style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        height: '100%',
+      }}
     >
       <Flex
         style={{
@@ -562,6 +523,7 @@ const EPGsTable = () => {
           flexShrink: 0,
         }}
         gap={15}
+        wrap="wrap"
       >
         <Text
           h={24}
@@ -581,6 +543,7 @@ const EPGsTable = () => {
           <Menu shadow="md" width={200} closeOnItemClick={false}>
             <MenuTarget>
               <Button
+                aria-label="Filter EPG types"
                 size="xs"
                 variant={isTypeFiltered ? 'filled' : 'default'}
                 color={isTypeFiltered ? 'blue' : undefined}
@@ -662,34 +625,7 @@ const EPGsTable = () => {
         </Flex>
       </Flex>
 
-      <Paper
-        style={{
-          bgcolor: theme.palette.background.paper,
-          borderRadius: 2,
-        }}
-      >
-        {/* Top toolbar with Remove, Assign, Auto-match, and Add buttons */}
-        <Box
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            padding: 0,
-          }}
-        ></Box>
-      </Paper>
-
-      <Box
-        style={{
-          // Fill whatever space the page layout gives this table and scroll
-          // internally, instead of sizing to content and pushing the page taller.
-          flex: '1 1 auto',
-          minHeight: 0,
-          overflowX: 'auto',
-          overflowY: 'auto',
-          border: 'solid 1px rgb(68,68,68)',
-          borderRadius: 'var(--mantine-radius-default)',
-        }}
-      >
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
         {filteredData.length === 0 ? (
           <Text size="xl" c="dimmed" ta="center" py="xl">
             {data.length === 0
@@ -697,9 +633,74 @@ const EPGsTable = () => {
               : 'No EPG sources match this filter.'}
           </Text>
         ) : (
-          <CustomTable table={table} />
+          <Stack gap="md">
+            {filteredData.map((source) => (
+              <Paper
+                key={source.id}
+                component="article"
+                aria-label={`EPG source ${source.name}`}
+                className={cardClasses.card}
+                withBorder
+                p="md"
+                radius="md"
+                style={
+                  source.is_active
+                    ? undefined
+                    : { opacity: 0.65, filter: 'grayscale(0.75)' }
+                }
+              >
+                <Stack gap="sm">
+                  <Group justify="space-between" align="flex-start">
+                    <Box style={{ minWidth: 0, flex: '1 1 200px' }}>
+                      <Group gap="xs">
+                        <Text fw={700} size="lg">
+                          {source.name}
+                        </Text>
+                        <Badge variant="light">
+                          {renderDetail(source, 'source_type')}
+                        </Badge>
+                        <Badge
+                          variant="light"
+                          color={getStatusColor(
+                            source.source_type === 'dummy'
+                              ? 'idle'
+                              : source.status
+                          )}
+                        >
+                          {formatStatusText(
+                            source.source_type === 'dummy'
+                              ? 'idle'
+                              : source.status
+                          )}
+                        </Badge>
+                      </Group>
+                      {renderDetail(source, 'url')}
+                    </Box>
+                    <Group gap="xs" align="stretch" wrap="nowrap">
+                      {renderDetail(source, 'is_active')}
+                      <RowActions
+                        row={{ original: source }}
+                        editEPG={editEPG}
+                        deleteEPG={deleteEPG}
+                        refreshEPG={handleRefreshEPG}
+                      />
+                    </Group>
+                  </Group>
+                  <Box>
+                    <Text size="xs" fw={600} mb={4}>
+                      Last refresh
+                    </Text>
+                    <Stack gap={4}>
+                      {renderDetail(source, 'updated_at')}
+                      <EPGStatusCell epg={source} />
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
         )}
-      </Box>
+      </ScrollArea>
 
       <EPGForm epg={epg} isOpen={epgModalOpen} onClose={closeEPGForm} />
       <DummyEPGForm
