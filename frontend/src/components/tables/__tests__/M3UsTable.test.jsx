@@ -420,16 +420,32 @@ describe('M3U account cards', () => {
     ).toBeInTheDocument();
   });
 
-  it('displays progress while retaining completed refresh summaries', () => {
-    setup({
-      refreshProgress: {
-        1: { action: 'downloading', progress: 50, speed: 1024 },
-      },
-    });
-    show();
-    expect(card().getByText('Refreshing Live TV…')).toBeInTheDocument();
-    expect(card().queryByText('50%')).not.toBeInTheDocument();
-  });
+  it.each(['downloading', 'vod_refresh'])(
+    'replaces only the refreshing kind’s completed summary (%s)',
+    (action) => {
+      setup({
+        refreshProgress: {
+          1: { action, progress: 50, speed: 1024 },
+        },
+      });
+      show();
+      const vod = action === 'vod_refresh';
+      expect(
+        card().getByText(vod ? 'Refreshing VOD…' : 'Refreshing Live TV…')
+      ).toBeInTheDocument();
+      expect(
+        card().queryByText(
+          vod ? 'VOD: Never' : 'Live TV: formatted:2026-10-14T12:00:00Z'
+        )
+      ).not.toBeInTheDocument();
+      expect(
+        card().getByText(
+          vod ? 'Live TV: formatted:2026-10-14T12:00:00Z' : 'VOD: Never'
+        )
+      ).toBeInTheDocument();
+      expect(card().queryByText('50%')).not.toBeInTheDocument();
+    }
+  );
 
   it('shows upstream errors and auto-sync warnings', () => {
     setup({
@@ -453,6 +469,15 @@ describe('M3U account cards', () => {
     ).toBeInTheDocument();
   });
 
+  it('still shows Live refresh running when only its download phase is complete', () => {
+    setup({ refreshProgress: { 1: { action: 'downloading', progress: 100 } } });
+    show();
+    expect(card().getByText('Refreshing Live TV…')).toBeInTheDocument();
+    expect(
+      card().queryByText('Live TV: formatted:2026-10-14T12:00:00Z')
+    ).not.toBeInTheDocument();
+  });
+
   it('shows capacity across active profiles and expiry', () => {
     setup({
       playlists: [
@@ -469,6 +494,10 @@ describe('M3U account cards', () => {
     show();
     expect(card().getByText('5')).toBeInTheDocument();
     expect(card().getByText('30d left')).toBeInTheDocument();
+    expect(card().getByText('5').closest('.mantine-Badge-root')).not.toBeNull();
+    expect(
+      card().getByText('30d left').closest('.mantine-Badge-root')
+    ).not.toBeNull();
   });
 
   it('warns about auto-created channels before deleting an account', async () => {

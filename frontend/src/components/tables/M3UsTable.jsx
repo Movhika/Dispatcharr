@@ -405,27 +405,31 @@ const M3UTable = () => {
                     : null;
                 const running =
                   progress &&
-                  progress.progress < 100 &&
+                  !(
+                    progress.progress === 100 &&
+                    ['parsing', 'processing_groups', 'vod_refresh'].includes(
+                      progress.action
+                    )
+                  ) &&
                   progress.status !== 'error';
                 const completedAt =
                   timings[`${kind}_completed_at`] ||
                   (kind === 'live' ? data.updated_at : null);
                 return (
-                  <Box key={kind}>
-                    <Text size="xs">
-                      {label}:{' '}
-                      {completedAt
-                        ? format(completedAt, fullDateTimeFormat)
-                        : 'Never'}
-                      {timings[`${kind}_seconds`] != null &&
-                        ` · ${formatRefreshDuration(timings[`${kind}_seconds`])}`}
-                    </Text>
-                    {running && (
-                      <Text size="xs" c="blue">
-                        Refreshing {label}…
-                      </Text>
+                  <Text key={kind} size="xs" c={running ? 'blue' : 'dimmed'}>
+                    {running ? (
+                      `Refreshing ${label}…`
+                    ) : (
+                      <>
+                        {label}:{' '}
+                        {completedAt
+                          ? format(completedAt, fullDateTimeFormat)
+                          : 'Never'}
+                        {timings[`${kind}_seconds`] != null &&
+                          ` · ${formatRefreshDuration(timings[`${kind}_seconds`])}`}
+                      </>
                     )}
-                  </Box>
+                  </Text>
                 );
               })}
               {data.status === 'error' && data.last_message && (
@@ -452,7 +456,11 @@ const M3UTable = () => {
           if (activeProfiles.length <= 1) {
             const val =
               activeProfiles[0]?.max_streams ?? row.original.max_streams;
-            return <Text size="xs">{val === 0 ? '∞' : val}</Text>;
+            return (
+              <Badge variant="light" color="gray" radius="xl">
+                {val === 0 ? '∞' : val}
+              </Badge>
+            );
           }
 
           const hasUnlimited = activeProfiles.some((p) => p.max_streams === 0);
@@ -474,15 +482,9 @@ const M3UTable = () => {
               width={220}
               style={{ whiteSpace: 'pre-line' }}
             >
-              <Text
-                size="xs"
-                style={{
-                  cursor: 'default',
-                  textDecoration: 'underline dotted',
-                }}
-              >
+              <Badge variant="light" color="gray" radius="xl">
                 {hasUnlimited ? '∞' : total}
-              </Text>
+              </Badge>
             </Tooltip>
           );
         },
@@ -496,9 +498,9 @@ const M3UTable = () => {
           const earliest = cell.getValue();
           if (!earliest)
             return (
-              <Text size="xs" c="dimmed">
+              <Badge variant="light" color="gray" radius="xl">
                 —
-              </Text>
+              </Badge>
             );
 
           const now = getNow();
@@ -523,9 +525,9 @@ const M3UTable = () => {
               width={300}
               style={{ whiteSpace: 'pre-line' }}
             >
-              <Text size="xs" c={color} fw={daysLeft <= 7 ? 600 : 400}>
+              <Badge variant="light" color={color || 'gray'} radius="xl">
                 {label}
-              </Text>
+              </Badge>
             </Tooltip>
           );
         },
@@ -782,7 +784,14 @@ const M3UTable = () => {
                     </Box>
                     {['last_message', 'max_streams', 'earliest_expiration'].map(
                       (id) => (
-                        <Box key={id} style={{ minWidth: 0 }}>
+                        <Box
+                          key={id}
+                          style={{
+                            minWidth: 0,
+                            textAlign:
+                              id === 'last_message' ? undefined : 'center',
+                          }}
+                        >
                           <Text size="xs" fw={600} mb={4}>
                             {
                               details.find(
