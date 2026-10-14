@@ -2115,6 +2115,12 @@ export default class API {
     );
   }
 
+  static async getM3UGroupContentAvailability(accountId) {
+    return await request(
+      `${host}/api/m3u/accounts/${accountId}/group-rules/content-availability/`
+    );
+  }
+
   static async saveM3URule(accountId, kind, ruleId, values) {
     try {
       return await request(

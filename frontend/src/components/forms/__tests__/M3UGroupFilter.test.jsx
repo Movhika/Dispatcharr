@@ -5,6 +5,12 @@ import M3UGroupFilter from '../M3UGroupFilter';
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
+vi.mock('../../../hooks/useCategoryPreviewAvailability.jsx', () => ({
+  default: () => ({
+    availability: { live: new Set(), movie: new Set(), series: new Set() },
+    hint: 'No imported entries.',
+  }),
+}));
 
 // ── Utility mocks ──────────────────────────────────────────────────────────────
 vi.mock('../../../utils/notificationUtils.js', () => ({

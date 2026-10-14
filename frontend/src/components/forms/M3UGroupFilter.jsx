@@ -25,6 +25,7 @@ import { detectGroupReservationOverlaps } from '../../utils/forms/GroupSyncUtils
 import API from '../../api.js';
 import M3URulesEditor from './M3URulesEditor.jsx';
 import editorClasses from './AccountEditor.module.css';
+import useCategoryPreviewAvailability from '../../hooks/useCategoryPreviewAvailability.jsx';
 
 const M3UGroupFilter = ({
   playlist = null,
@@ -45,6 +46,10 @@ const M3UGroupFilter = ({
   const [activeAction, setActiveAction] = useState(null);
   const [paginationContainer, setPaginationContainer] = useState(null);
   const groupsAccount = useRef(null);
+  const { availability, hint: previewHint } = useCategoryPreviewAvailability(
+    playlist?.id,
+    isOpen
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -230,7 +235,7 @@ const M3UGroupFilter = ({
       xOffset="3vw"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
-      <Stack className={editorClasses.form}>
+      <Stack className={editorClasses.form} gap={0}>
         <Tabs
           className={editorClasses.tabs}
           value={activeTab}
@@ -256,6 +261,8 @@ const M3UGroupFilter = ({
               onOverlayChange={setChildOverlayOpen}
               paginationContainer={paginationContainer}
               paginationVisible={activeTab === 'live'}
+              previewAvailableIds={availability?.live ?? null}
+              previewUnavailableHint={previewHint}
             />
           </TabsPanel>
 
@@ -272,6 +279,8 @@ const M3UGroupFilter = ({
               onOverlayChange={setChildOverlayOpen}
               paginationContainer={paginationContainer}
               paginationVisible={activeTab === 'vod-movie'}
+              previewAvailableIds={availability?.movie ?? null}
+              previewUnavailableHint={previewHint}
             />
           </TabsPanel>
 
@@ -288,6 +297,8 @@ const M3UGroupFilter = ({
               onOverlayChange={setChildOverlayOpen}
               paginationContainer={paginationContainer}
               paginationVisible={activeTab === 'vod-series'}
+              previewAvailableIds={availability?.series ?? null}
+              previewUnavailableHint={previewHint}
             />
           </TabsPanel>
         </Tabs>
@@ -295,7 +306,7 @@ const M3UGroupFilter = ({
         <Flex
           component="footer"
           aria-label="Category actions"
-          className={editorClasses.footer}
+          className={`${editorClasses.footer} ${editorClasses.categoryFooter}`}
           mih={50}
           gap="xs"
           justify="flex-end"
@@ -306,30 +317,32 @@ const M3UGroupFilter = ({
             ref={setPaginationContainer}
             className={editorClasses.paginationSlot}
           />
-          {!isInitialSetup && (
+          <div className={editorClasses.categoryFooterActions}>
+            {!isInitialSetup && (
+              <Button
+                variant="default"
+                onClick={refresh}
+                disabled={
+                  isLoading ||
+                  (activeTab !== 'live' &&
+                    (!playlist.enable_vod || playlist.account_type !== 'XC'))
+                }
+                loading={activeAction === 'refresh'}
+              >
+                {activeTab === 'live' ? 'Refresh Live TV' : 'Refresh VOD'}
+              </Button>
+            )}
             <Button
-              variant="default"
-              onClick={refresh}
-              disabled={
-                isLoading ||
-                (activeTab !== 'live' &&
-                  (!playlist.enable_vod || playlist.account_type !== 'XC'))
-              }
-              loading={activeAction === 'refresh'}
+              type="submit"
+              variant="filled"
+              color="blue"
+              disabled={isLoading}
+              loading={activeAction === 'save'}
+              onClick={submit}
             >
-              {activeTab === 'live' ? 'Refresh Live TV' : 'Refresh VOD'}
+              {isInitialSetup ? 'Save and Refresh' : 'Save'}
             </Button>
-          )}
-          <Button
-            type="submit"
-            variant="filled"
-            color="blue"
-            disabled={isLoading}
-            loading={activeAction === 'save'}
-            onClick={submit}
-          >
-            {isInitialSetup ? 'Save and Refresh' : 'Save'}
-          </Button>
+          </div>
         </Flex>
       </Stack>
       <Modal

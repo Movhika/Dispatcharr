@@ -709,6 +709,12 @@ describe('EPG', () => {
       expect(
         screen.getByRole('group', { name: 'EPG refresh settings' })
       ).toContainElement(screen.getByTestId('schedule-input'));
+      expect(
+        screen.getByRole('group', { name: 'EPG refresh settings' })
+      ).toContainElement(screen.getByTestId('number-priority'));
+      expect(
+        screen.getByRole('group', { name: 'EPG source settings' })
+      ).not.toContainElement(screen.getByTestId('number-priority'));
     });
   });
 });

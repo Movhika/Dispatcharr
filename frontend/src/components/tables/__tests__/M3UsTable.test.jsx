@@ -158,7 +158,13 @@ describe('M3U account cards', () => {
     });
     expect(enabled.className).toBe(actionsBlock.className);
     expect(within(enabled).getByRole('switch')).toBeChecked();
+    expect(enabled.textContent.trim()).toBe('');
     expect(within(actionsBlock).getAllByRole('button')).toHaveLength(4);
+    const edit = within(actionsBlock).getByRole('button', {
+      name: 'Edit Provider One',
+    });
+    expect(edit.querySelector('.lucide-square-pen')).not.toBeNull();
+    expect(edit.getAttribute('style')).toContain('yellow');
   });
 
   it('excludes locked system accounts', () => {

@@ -124,6 +124,14 @@ describe('EPG source cards', () => {
         .getAllByRole('button')
         .map((button) => button.getAttribute('aria-label'))
     ).toEqual(['Refresh Guide One', 'Edit Guide One', 'Delete Guide One']);
+    expect(
+      card()
+        .getByRole('group', { name: 'Enabled state for Guide One' })
+        .textContent.trim()
+    ).toBe('');
+    const edit = card().getByRole('button', { name: 'Edit Guide One' });
+    expect(edit.querySelector('.lucide-square-pen')).not.toBeNull();
+    expect(edit.getAttribute('style')).toContain('yellow');
   });
   it('puts disabled sources last, dims them, and sorts names case-insensitively', () => {
     setup([

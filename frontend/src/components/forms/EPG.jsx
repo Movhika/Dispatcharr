@@ -885,15 +885,6 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                     </>
                   )}
 
-                  <NumberInput
-                    min={0}
-                    max={999}
-                    label="Priority"
-                    description="Priority for EPG matching (higher numbers = higher priority). Used when multiple EPG sources have matching entries for a channel."
-                    {...form.getInputProps('priority')}
-                    key={form.key('priority')}
-                  />
-
                   {savedEpgId && (
                     <AutoApplyEpgLogosSwitch
                       sourceId={savedEpgId}
@@ -935,6 +926,15 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                     }
                     intervalLabel="Refresh Interval (hours)"
                     intervalDescription="How often to refresh EPG data (0 to disable)"
+                  />
+
+                  <NumberInput
+                    min={0}
+                    max={999}
+                    label="Priority"
+                    description="Priority for EPG matching (higher numbers = higher priority). Used when multiple EPG sources have matching entries for a channel."
+                    {...form.getInputProps('priority')}
+                    key={form.key('priority')}
                   />
 
                   {isSD && scheduleType === 'cron' && (
@@ -1001,7 +1001,9 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
           </div>
 
           {/* Full Width Section */}
-          <Box className={editorClasses.footer}>
+          <Box
+            className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
+          >
             {isSD && !savedEpgId && (
               <Text size="xs" c="dimmed" mb="sm">
                 Save this source first to manage Schedules Direct settings and

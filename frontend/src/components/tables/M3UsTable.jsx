@@ -24,7 +24,7 @@ import {
 } from '@mantine/core';
 import {
   Trash2,
-  Pencil,
+  SquarePen,
   RefreshCw,
   Film,
   RotateCcw,
@@ -132,12 +132,12 @@ const RowActions = ({
             aria-label={`Edit ${row.original.name}`}
             variant="subtle"
             size="md"
-            color="blue"
+            color="yellow"
             onClick={() => {
               editPlaylist(row.original);
             }}
           >
-            <Pencil size={17} />
+            <SquarePen size={17} />
           </ActionIcon>
         </Tooltip>
         <Tooltip label="Delete account">
@@ -537,24 +537,28 @@ const M3UTable = () => {
         accessorKey: 'is_active',
         cell: ({ cell, row }) => {
           return (
-            <Paper
-              className={tableClasses.controls}
-              withBorder
-              px={6}
-              py={4}
-              radius="md"
-              role="group"
-              aria-label={`Enabled state for ${row.original.name}`}
+            <Tooltip
+              label="Enable or disable this M3U account"
+              withArrow
+              events={{ hover: true, focus: true, touch: true }}
             >
-              <Switch
-                size="sm"
-                label="Enabled"
-                aria-label={`Enable ${row.original.name}`}
-                styles={{ label: { fontSize: 'var(--mantine-font-size-sm)' } }}
-                checked={cell.getValue()}
-                onChange={() => toggleActive(row.original)}
-              />
-            </Paper>
+              <Paper
+                className={tableClasses.controls}
+                withBorder
+                px={6}
+                py={4}
+                radius="md"
+                role="group"
+                aria-label={`Enabled state for ${row.original.name}`}
+              >
+                <Switch
+                  size="sm"
+                  aria-label={`Enable ${row.original.name}`}
+                  checked={cell.getValue()}
+                  onChange={() => toggleActive(row.original)}
+                />
+              </Paper>
+            </Tooltip>
           );
         },
       },

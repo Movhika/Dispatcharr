@@ -389,8 +389,11 @@ describe('LiveGroupFilter', () => {
       renderWith();
       expect(screen.queryByTestId('alert')).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Auto channel sync help' })
+        screen.getByLabelText('Auto channel sync help')
       ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'Auto channel sync help' })
+      ).not.toBeInTheDocument();
     });
 
     it('explains the opt-in default for newly discovered categories', () => {

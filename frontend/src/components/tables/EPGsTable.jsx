@@ -31,7 +31,7 @@ import {
   Square,
   SquareCheck,
   Trash2,
-  Pencil,
+  SquarePen,
   SquarePlus,
 } from 'lucide-react';
 import { format, useDateTimeFormat } from '../../utils/dateTimeUtils.js';
@@ -96,9 +96,10 @@ const RowActions = ({ row, editEPG, deleteEPG, refreshEPG }) => {
             variant="subtle"
             size="md"
             aria-label={`Edit ${epg.name}`}
+            color="yellow"
             onClick={() => editEPG(epg)}
           >
-            <Pencil size={17} />
+            <SquarePen size={17} />
           </ActionIcon>
         </Tooltip>
         <Tooltip label="Delete EPG">
@@ -368,24 +369,33 @@ const EPGsTable = () => {
         cell: ({ row, cell }) => {
           const isDummyEPG = row.original.source_type === 'dummy';
           return (
-            <Paper
-              className={cardClasses.controls}
-              withBorder
-              px={6}
-              py={4}
-              radius="md"
-              role="group"
-              aria-label={`Enabled state for ${row.original.name}`}
+            <Tooltip
+              label={
+                isDummyEPG
+                  ? 'Dummy EPG sources are always enabled'
+                  : 'Enable or disable this EPG source'
+              }
+              withArrow
+              events={{ hover: true, focus: true, touch: true }}
             >
-              <Switch
-                size="sm"
-                label="Enabled"
-                aria-label={`Enable ${row.original.name}`}
-                checked={cell.getValue()}
-                onChange={() => toggleActive(row.original)}
-                disabled={isDummyEPG}
-              />
-            </Paper>
+              <Paper
+                className={cardClasses.controls}
+                withBorder
+                px={6}
+                py={4}
+                radius="md"
+                role="group"
+                aria-label={`Enabled state for ${row.original.name}`}
+              >
+                <Switch
+                  size="sm"
+                  aria-label={`Enable ${row.original.name}`}
+                  checked={cell.getValue()}
+                  onChange={() => toggleActive(row.original)}
+                  disabled={isDummyEPG}
+                />
+              </Paper>
+            </Tooltip>
           );
         },
       },

@@ -87,6 +87,8 @@ const CategoryCard = memo(function CategoryCard({
   onPreview,
   selected,
   onSelect,
+  previewAvailable,
+  previewUnavailableHint,
 }) {
   const props = category.custom_properties || {};
   return (
@@ -141,14 +143,29 @@ const CategoryCard = memo(function CategoryCard({
               <Cog size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Preview category">
-            <ActionIcon
-              variant="subtle"
-              aria-label="Preview category"
-              onClick={() => onPreview(category)}
+          <Tooltip
+            label={
+              previewAvailable ? 'Preview category' : previewUnavailableHint
+            }
+            multiline
+            maw={300}
+            withArrow
+            events={{ hover: true, focus: true, touch: true }}
+          >
+            <span
+              style={{ display: 'inline-flex' }}
+              tabIndex={previewAvailable ? undefined : 0}
+              aria-label={previewAvailable ? undefined : previewUnavailableHint}
             >
-              <Eye size={16} />
-            </ActionIcon>
+              <ActionIcon
+                variant="subtle"
+                aria-label="Preview category"
+                onClick={() => onPreview(category)}
+                disabled={!previewAvailable}
+              >
+                <Eye size={16} />
+              </ActionIcon>
+            </span>
           </Tooltip>
         </Flex>
       </TableTd>
@@ -165,6 +182,8 @@ const VODCategoryFilter = ({
   onOverlayChange,
   paginationContainer = null,
   paginationVisible = true,
+  previewAvailableIds,
+  previewUnavailableHint,
 }) => {
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
@@ -483,6 +502,11 @@ const VODCategoryFilter = ({
                   onPreview={setPreviewCategory}
                   selected={selectedCategoryIds.has(category.id)}
                   onSelect={toggleSelectedCategory}
+                  previewAvailable={
+                    previewAvailableIds === undefined ||
+                    !!previewAvailableIds?.has(category.id)
+                  }
+                  previewUnavailableHint={previewUnavailableHint}
                 />
               ))}
           </TableTbody>

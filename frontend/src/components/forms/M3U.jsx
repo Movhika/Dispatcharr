@@ -689,21 +689,19 @@ const M3U = ({
                         maw={320}
                         withArrow
                       >
-                        <Paper withBorder px="xs" py={6} radius="md">
-                          <Switch
-                            id="enable_vod"
-                            name="enable_vod"
-                            label="Enabled"
-                            aria-label="Enable VOD"
-                            disabled={accountType !== 'XC'}
-                            checked={accountType === 'XC' && vodEnabled}
-                            onChange={(event) => {
-                              const enabled = event.currentTarget.checked;
-                              setVodEnabled(enabled);
-                              form.setFieldValue('enable_vod', enabled);
-                            }}
-                          />
-                        </Paper>
+                        <Switch
+                          id="enable_vod"
+                          name="enable_vod"
+                          size="sm"
+                          aria-label="Enable VOD"
+                          disabled={accountType !== 'XC'}
+                          checked={accountType === 'XC' && vodEnabled}
+                          onChange={(event) => {
+                            const enabled = event.currentTarget.checked;
+                            setVodEnabled(enabled);
+                            form.setFieldValue('enable_vod', enabled);
+                          }}
+                        />
                       </Tooltip>
                     </Group>
                     {accountType === 'XC' ? (
@@ -774,24 +772,20 @@ const M3U = ({
                         maw={320}
                         withArrow
                       >
-                        <Paper withBorder px="xs" py={6} radius="md">
-                          <Switch
-                            label="Enabled"
-                            aria-label="Enable separate VOD refresh schedule"
-                            disabled={accountType !== 'XC' || !vodEnabled}
-                            checked={
-                              accountType === 'XC' && !vodRefreshAfterLive
-                            }
-                            onChange={(event) => {
-                              const afterLive = !event.currentTarget.checked;
-                              setVodRefreshAfterLive(afterLive);
-                              form.setFieldValue(
-                                'vod_refresh_after_live',
-                                afterLive
-                              );
-                            }}
-                          />
-                        </Paper>
+                        <Switch
+                          size="sm"
+                          aria-label="Enable separate VOD refresh schedule"
+                          disabled={accountType !== 'XC' || !vodEnabled}
+                          checked={accountType === 'XC' && !vodRefreshAfterLive}
+                          onChange={(event) => {
+                            const afterLive = !event.currentTarget.checked;
+                            setVodRefreshAfterLive(afterLive);
+                            form.setFieldValue(
+                              'vod_refresh_after_live',
+                              afterLive
+                            );
+                          }}
+                        />
                       </Tooltip>
                     </Group>
                     {accountType === 'XC' && vodEnabled ? (
@@ -867,7 +861,7 @@ const M3U = ({
           <Flex
             component="footer"
             aria-label="M3U account actions"
-            className={editorClasses.footer}
+            className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
             gap="md"
             justify="flex-end"
             align="center"

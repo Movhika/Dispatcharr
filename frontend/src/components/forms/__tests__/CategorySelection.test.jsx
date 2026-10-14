@@ -48,7 +48,7 @@ vi.mock('../M3UFilters.jsx', () => ({ default: () => null }));
 vi.mock('../AutoSyncBasic.jsx', () => ({ default: () => null }));
 vi.mock('../AutoSyncAdvanced.jsx', () => ({ default: () => null }));
 
-function Categories({ vod = false }) {
+function Categories({ vod = false, previewAvailableIds }) {
   const [paginationContainer, setPaginationContainer] = useState(null);
   const [rows, setRows] = useState(
     vod ? groups.map((group) => ({ ...group, id: group.channel_group })) : []
@@ -61,6 +61,8 @@ function Categories({ vod = false }) {
       setCategoryStates={setRows}
       type="movie"
       paginationContainer={paginationContainer}
+      previewAvailableIds={previewAvailableIds}
+      previewUnavailableHint="Enable this category and refresh to load content."
     />
   ) : (
     <LiveGroupFilter
@@ -68,6 +70,8 @@ function Categories({ vod = false }) {
       groupStates={rows}
       setGroupStates={setRows}
       paginationContainer={paginationContainer}
+      previewAvailableIds={previewAvailableIds}
+      previewUnavailableHint="Enable this category and refresh to load content."
     />
   );
   return (
@@ -79,6 +83,29 @@ function Categories({ vod = false }) {
 }
 
 describe('Category selection with Mantine controls', () => {
+  it.each([false, true])(
+    'disables preview only for categories without imported content (VOD=%s)',
+    async (vod) => {
+      render(
+        <MantineProvider>
+          <Categories vod={vod} previewAvailableIds={new Set([1])} />
+        </MantineProvider>
+      );
+      await screen.findByRole('checkbox', { name: 'Select Category 01' });
+      const imported = screen
+        .getByRole('checkbox', { name: 'Select Category 01' })
+        .closest('tr');
+      const empty = screen
+        .getByRole('checkbox', { name: 'Select Category 02' })
+        .closest('tr');
+      expect(
+        within(imported).getByRole('button', { name: 'Preview category' })
+      ).toBeEnabled();
+      expect(
+        within(empty).getByRole('button', { name: 'Preview category' })
+      ).toBeDisabled();
+    }
+  );
   it.each([false, true])(
     'selects matching Live/VOD rows across pages (VOD=%s)',
     async (vod) => {

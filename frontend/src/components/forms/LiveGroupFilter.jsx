@@ -81,6 +81,8 @@ const LiveGroupCard = memo(function LiveGroupCard({
   onPreview,
   selected,
   onSelect,
+  previewAvailable,
+  previewUnavailableHint,
 }) {
   const numberingMode =
     group.custom_properties?.channel_numbering_mode || 'fixed';
@@ -192,14 +194,29 @@ const LiveGroupCard = memo(function LiveGroupCard({
               <Cog size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Preview category">
-            <ActionIcon
-              aria-label="Preview category"
-              variant="subtle"
-              onClick={() => onPreview(group)}
+          <Tooltip
+            label={
+              previewAvailable ? 'Preview category' : previewUnavailableHint
+            }
+            multiline
+            maw={300}
+            withArrow
+            events={{ hover: true, focus: true, touch: true }}
+          >
+            <span
+              style={{ display: 'inline-flex' }}
+              tabIndex={previewAvailable ? undefined : 0}
+              aria-label={previewAvailable ? undefined : previewUnavailableHint}
             >
-              <Eye size={16} />
-            </ActionIcon>
+              <ActionIcon
+                aria-label="Preview category"
+                variant="subtle"
+                onClick={() => onPreview(group)}
+                disabled={!previewAvailable}
+              >
+                <Eye size={16} />
+              </ActionIcon>
+            </span>
           </Tooltip>
         </Flex>
       </TableTd>
@@ -215,6 +232,8 @@ const LiveGroupFilter = ({
   onOverlayChange,
   paginationContainer = null,
   paginationVisible = true,
+  previewAvailableIds,
+  previewUnavailableHint,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const streamProfiles = useStreamProfilesStore((s) => s.profiles);
@@ -957,14 +976,15 @@ const LiveGroupFilter = ({
                     multiline
                     maw={360}
                     withArrow
+                    events={{ hover: true, focus: true, touch: true }}
                   >
-                    <ActionIcon
-                      size="xs"
-                      variant="subtle"
+                    <span
                       aria-label="Auto channel sync help"
+                      tabIndex={0}
+                      style={{ display: 'inline-flex', cursor: 'help' }}
                     >
-                      <Info size={14} />
-                    </ActionIcon>
+                      <Info size={14} aria-hidden="true" />
+                    </span>
                   </Tooltip>
                 </Group>
               </TableTh>
@@ -991,6 +1011,11 @@ const LiveGroupFilter = ({
                   onPreview={setPreviewGroup}
                   selected={selectedGroupIds.has(group.channel_group)}
                   onSelect={toggleSelectedGroup}
+                  previewAvailable={
+                    previewAvailableIds === undefined ||
+                    !!previewAvailableIds?.has(group.channel_group)
+                  }
+                  previewUnavailableHint={previewUnavailableHint}
                 />
               ))}
           </TableTbody>
