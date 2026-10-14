@@ -38,7 +38,6 @@ import GroupConfigureModal from './GroupConfigureModal';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
 import { useChannelLogoSelection } from '../../hooks/useSmartLogos';
-import OrphanCleanupControl from './AutoSyncOrphanCleanup.jsx';
 import AutoSyncBasic from './AutoSyncBasic.jsx';
 import ErrorBoundary from '../ErrorBoundary.jsx';
 import { computeRangeOverlapsFor } from '../../utils/forms/AutoSyncBasicUtils.js';
@@ -209,8 +208,6 @@ const LiveGroupFilter = ({
   playlist,
   groupStates,
   setGroupStates,
-  autoEnableNewGroupsLive,
-  setAutoEnableNewGroupsLive,
   onOpenRules,
   onOverlayChange,
 }) => {
@@ -866,24 +863,10 @@ const LiveGroupFilter = ({
             <Info size={16} />
           </ActionIcon>
         </Tooltip>
-        <Tooltip
-          label="Fallback for new groups not matched by an import rule. Existing selections are unchanged."
-          multiline
-          maw={360}
-          withArrow
-        >
-          <Checkbox
-            label="Enable unmatched new groups"
-            checked={autoEnableNewGroupsLive}
-            onChange={(event) =>
-              setAutoEnableNewGroupsLive(event.currentTarget.checked)
-            }
-            size="sm"
-          />
-        </Tooltip>
+        <Text size="xs" c="dimmed">
+          New unmatched categories are imported disabled.
+        </Text>
       </Flex>
-
-      <OrphanCleanupControl playlist={playlist} />
 
       <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
@@ -1156,15 +1139,15 @@ const LiveGroupFilter = ({
               />
             )}
             <Select
-              label="Orphan cleanup"
+              label="Auto-sync orphan cleanup"
+              description="What to do with this group's auto-created channels when their source stream disappears. Manual and hidden channels are preserved."
               value={
                 configuringGroup.custom_properties?.orphan_channel_cleanup ||
-                'inherit'
+                'always'
               }
               disabled={!configuringGroup.auto_channel_sync}
               allowDeselect={false}
               data={[
-                { value: 'inherit', label: 'Use account default' },
                 { value: 'always', label: 'Always remove' },
                 { value: 'preserve_customized', label: 'Preserve customized' },
                 { value: 'never', label: 'Never remove' },
@@ -1174,7 +1157,7 @@ const LiveGroupFilter = ({
                   ...configuringGroup,
                   custom_properties: {
                     ...configuringGroup.custom_properties,
-                    orphan_channel_cleanup: value === 'inherit' ? null : value,
+                    orphan_channel_cleanup: value || 'always',
                   },
                 })
               }

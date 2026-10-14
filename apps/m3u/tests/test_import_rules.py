@@ -462,3 +462,38 @@ class ImportRuleApiTests(TestCase):
             ).enabled
         )
         self.assertFalse(ChannelGroup.objects.filter(name="Ignored").exists())
+
+    def test_unmatched_new_live_groups_are_disabled_without_changing_known_selections(
+        self,
+    ):
+        self.account.custom_properties = {"auto_enable_new_groups_live": True}
+        self.account.save()
+        known = self.group("Known", enabled=True)
+        with patch("apps.m3u.tasks.send_m3u_update"):
+            process_groups(self.account, {"Known": {}, "New": {}})
+        known.refresh_from_db()
+        self.assertTrue(known.enabled)
+        self.assertFalse(
+            ChannelGroupM3UAccount.objects.get(
+                m3u_account=self.account, channel_group__name="New"
+            ).enabled
+        )
+
+    def test_group_settings_reject_invalid_cleanup_mode_before_writing(self):
+        relation = self.group("Keep", enabled=True)
+        response = self.client.patch(
+            f"/api/m3u/accounts/{self.account.id}/group-settings/",
+            {
+                "group_settings": [
+                    {
+                        "channel_group": relation.channel_group_id,
+                        "enabled": False,
+                        "custom_properties": {"orphan_channel_cleanup": "invalid"},
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        relation.refresh_from_db()
+        self.assertTrue(relation.enabled)

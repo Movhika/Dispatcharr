@@ -253,10 +253,10 @@ describe('VODCategoryFilter', () => {
       expect(screen.getByText('Disable selected')).toBeDisabled();
     });
 
-    it('renders the Auto-enable new groups checkbox', () => {
+    it('explains that new categories require an import rule or manual selection', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
       expect(
-        screen.getByLabelText(/enable unmatched new/i)
+        screen.getByText('New unmatched categories are imported disabled.')
       ).toBeInTheDocument();
     });
   });
@@ -579,8 +579,8 @@ describe('VODCategoryFilter', () => {
     });
   });
 
-  describe('autoEnableNewGroups checkbox', () => {
-    it('calls setAutoEnableNewGroups(true) when checked', () => {
+  describe('new category defaults', () => {
+    it('does not expose the legacy fallback when previously disabled', () => {
       const setAutoEnableNewGroups = vi.fn();
       render(
         <VODCategoryFilter
@@ -590,11 +590,13 @@ describe('VODCategoryFilter', () => {
           })}
         />
       );
-      fireEvent.click(screen.getByLabelText(/enable unmatched new/i));
-      expect(setAutoEnableNewGroups).toHaveBeenCalledWith(true);
+      expect(
+        screen.queryByLabelText(/enable unmatched new/i)
+      ).not.toBeInTheDocument();
+      expect(setAutoEnableNewGroups).not.toHaveBeenCalled();
     });
 
-    it('calls setAutoEnableNewGroups(false) when unchecked', () => {
+    it('does not expose the legacy fallback when previously enabled', () => {
       const setAutoEnableNewGroups = vi.fn();
       render(
         <VODCategoryFilter
@@ -604,8 +606,10 @@ describe('VODCategoryFilter', () => {
           })}
         />
       );
-      fireEvent.click(screen.getByLabelText(/enable unmatched new/i));
-      expect(setAutoEnableNewGroups).toHaveBeenCalledWith(false);
+      expect(
+        screen.queryByLabelText(/enable unmatched new/i)
+      ).not.toBeInTheDocument();
+      expect(setAutoEnableNewGroups).not.toHaveBeenCalled();
     });
   });
 

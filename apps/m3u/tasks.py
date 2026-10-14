@@ -763,10 +763,9 @@ def process_groups(account, groups, scan_start_time=None):
             m3u_account=account, channel_group__name__in=groups
         ).values_list("channel_group__name", flat=True)
     )
-    account_custom_props = ensure_custom_properties_dict(account.custom_properties)
-    auto_enable_new_groups_live = account_custom_props.get(
-        "auto_enable_new_groups_live", True
-    )
+    # Import rules are opt-in. Keep existing selections; new unmatched groups
+    # remain disabled even if an old account still has auto-enable enabled.
+    auto_enable_new_groups_live = False
     rules = account_group_rules(account, "live")
     decisions = {}
     kept_groups = {}
@@ -911,7 +910,45 @@ def cleanup_stale_group_relationships(account, scan_start_time):
         last_seen__lt=stale_cutoff
     ).select_related('channel_group')
 
-    relations_to_delete = list(stale_relationships)
+    # Keep the creating membership while protected channels still use its
+    # cleanup policy. SET_NULL would otherwise fall back to the account mode.
+    from apps.channels.models import Channel
+
+    legacy_mode = ensure_custom_properties_dict(account.custom_properties).get(
+        "orphan_channel_cleanup", "always"
+    )
+    stale_relations = list(stale_relationships)
+    never_ids = []
+    preserve_ids = []
+    for relationship in stale_relations:
+        mode = (
+            ensure_custom_properties_dict(relationship.custom_properties).get(
+                "orphan_channel_cleanup"
+            )
+            or legacy_mode
+        )
+        if mode == "never":
+            never_ids.append(relationship.id)
+        elif mode == "preserve_customized":
+            preserve_ids.append(relationship.id)
+    protected_ids = set(
+        Channel.objects.filter(auto_created=True, auto_created_by=account)
+        .filter(
+            models.Q(auto_created_from_id__in=never_ids)
+            | models.Q(auto_created_from_id__in=preserve_ids, override__isnull=False)
+            | models.Q(
+                auto_created_from_id__in=[rel.id for rel in stale_relations],
+                hidden_from_output=True,
+            )
+        )
+        .values_list("auto_created_from_id", flat=True)
+    )
+    relations_to_delete = [
+        rel for rel in stale_relations if rel.id not in protected_ids
+    ]
+    stale_relationships = stale_relationships.filter(
+        id__in=[rel.id for rel in relations_to_delete]
+    )
     deleted_count = len(relations_to_delete)
 
     if deleted_count > 0:
@@ -2285,6 +2322,23 @@ def sync_auto_channels(account_id, scan_start_time=None):
             m3u_account=account, enabled=True, auto_channel_sync=True
         ).select_related("channel_group")
 
+        legacy_origin_groups = {
+            row["channel_id"]: row["group_id"]
+            for row in ChannelStream.objects.filter(
+                channel__auto_created=True,
+                channel__auto_created_by=account,
+                channel__auto_created_from_id__isnull=True,
+                stream__m3u_account=account,
+                stream__channel_group_id__isnull=False,
+            )
+            .values("channel_id")
+            .annotate(
+                groups=models.Count("stream__channel_group_id", distinct=True),
+                group_id=models.Min("stream__channel_group_id"),
+            )
+            .filter(groups=1)
+        }
+
         channels_created = 0
         channels_updated = 0
         channels_deleted = 0
@@ -2697,15 +2751,33 @@ def sync_auto_channels(account_id, scan_start_time=None):
 
             if not has_streams:
                 logger.debug(f"No streams found in group {channel_group.name}")
-                # No streams left in the group: drop the visible auto
-                # channels. Hidden channels are preserved so the hide
-                # flag survives temporary provider drops (event/PPV).
-                channels_to_delete = [
-                    ch
+                # Cleanup follows the creating group's policy. Hidden
+                # channels survive temporary provider drops in every mode.
+                cleanup_mode = group_custom_props.get(
+                    "orphan_channel_cleanup"
+                ) or ensure_custom_properties_dict(account.custom_properties).get(
+                    "orphan_channel_cleanup", "always"
+                )
+                channel_ids = {
+                    ch.id
                     for ch in existing_channel_map.values()
                     if not ch.hidden_from_output
-                ]
-                if channels_to_delete:
+                    and (
+                        ch.auto_created_from_id == group_relation.id
+                        or (
+                            ch.auto_created_from_id is None
+                            and legacy_origin_groups.get(ch.id) == channel_group.id
+                        )
+                    )
+                }
+                channels_to_delete = Channel.objects.filter(id__in=channel_ids)
+                if cleanup_mode == "never":
+                    channels_to_delete = channels_to_delete.none()
+                elif cleanup_mode == "preserve_customized":
+                    channels_to_delete = channels_to_delete.filter(
+                        override__isnull=True
+                    )
+                if channel_ids:
                     deleted_count = _delete_channels_stopping_streams(channels_to_delete)
                     channels_deleted += deleted_count
                     logger.debug(
@@ -2935,6 +3007,16 @@ def sync_auto_channels(account_id, scan_start_time=None):
                             existing_channel.channel_group = target_group
                             dirty_fields.append("channel_group")
 
+                        # Keep the original creating group when users attach
+                        # backup streams from other provider groups.
+                        if (
+                            existing_channel.auto_created_from_id is None
+                            and legacy_origin_groups.get(existing_channel.id)
+                            == channel_group.id
+                        ):
+                            existing_channel.auto_created_from = group_relation
+                            dirty_fields.append("auto_created_from")
+
                         # Logo: custom group setting wins; otherwise stream logo
                         current_logo = (
                             custom_logo
@@ -3040,6 +3122,7 @@ def sync_auto_channels(account_id, scan_start_time=None):
                                     user_level=0,
                                     auto_created=True,
                                     auto_created_by=account,
+                                    auto_created_from=group_relation,
                                     logo=new_logo,
                                     epg_data=new_epg_data,
                                     stream_profile=stream_profile_to_assign,
@@ -3213,16 +3296,32 @@ def sync_auto_channels(account_id, scan_start_time=None):
                 channel_streams_in_group.setdefault(channel.id, []).append(
                     (stream_id, channel)
                 )
-            channels_to_delete = []
+            removed_channel_ids = []
             for ch_id, pairs in channel_streams_in_group.items():
                 channel = pairs[0][1]
-                if channel.hidden_from_output:
+                if channel.hidden_from_output or not (
+                    channel.auto_created_from_id == group_relation.id
+                    or (
+                        channel.auto_created_from_id is None
+                        and legacy_origin_groups.get(channel.id) == channel_group.id
+                    )
+                ):
                     continue
                 stream_ids = {sid for sid, _ in pairs}
                 if not (stream_ids & processed_stream_ids):
-                    channels_to_delete.append(channel)
+                    removed_channel_ids.append(ch_id)
 
-            if channels_to_delete:
+            cleanup_mode = group_custom_props.get(
+                "orphan_channel_cleanup"
+            ) or ensure_custom_properties_dict(account.custom_properties).get(
+                "orphan_channel_cleanup", "always"
+            )
+            channels_to_delete = Channel.objects.filter(id__in=removed_channel_ids)
+            if cleanup_mode == "never":
+                channels_to_delete = channels_to_delete.none()
+            elif cleanup_mode == "preserve_customized":
+                channels_to_delete = channels_to_delete.filter(override__isnull=True)
+            if removed_channel_ids:
                 deleted_count = _delete_channels_stopping_streams(channels_to_delete)
                 channels_deleted += deleted_count
                 logger.debug(
@@ -3277,35 +3376,57 @@ def sync_auto_channels(account_id, scan_start_time=None):
                 processed_stream_ids,
             )
 
-        # Cleanup mode read from account.custom_properties.orphan_channel_cleanup:
-        # "always" (default; key absent) removes every orphan auto channel;
-        # "preserve_customized" keeps those with a ChannelOverride row;
-        # "never" disables cleanup. Hidden channels are preserved across all
-        # modes so event/PPV channels that come and go are not silently lost.
-        cleanup_mode = ensure_custom_properties_dict(account.custom_properties).get(
+        legacy_mode = ensure_custom_properties_dict(account.custom_properties).get(
             "orphan_channel_cleanup", "always"
         )
-        if cleanup_mode != "never":
-            orphaned_channels = Channel.objects.filter(
-                auto_created=True,
-                auto_created_by=account,
-                hidden_from_output=False,
-            ).exclude(
-                id__in=ChannelStream.objects.filter(
-                    stream__m3u_account=account,
-                    stream__isnull=False,
-                ).values_list("channel_id", flat=True)
+        group_modes = {
+            membership_id: ensure_custom_properties_dict(properties).get(
+                "orphan_channel_cleanup"
             )
-            if cleanup_mode == "preserve_customized":
-                orphaned_channels = orphaned_channels.filter(override__isnull=True)
-
-            orphan_list = list(orphaned_channels)
-            deleted_channels = _delete_channels_stopping_streams(orphan_list)
-            if deleted_channels:
-                channels_deleted += deleted_channels
-                logger.info(
-                    f"Deleted {deleted_channels} orphaned auto channels with no valid streams (mode={cleanup_mode})"
-                )
+            or legacy_mode
+            for membership_id, properties in ChannelGroupM3UAccount.objects.filter(
+                m3u_account=account
+            ).values_list("id", "custom_properties")
+        }
+        base_orphans = Channel.objects.filter(
+            auto_created=True,
+            auto_created_by=account,
+            hidden_from_output=False,
+        ).exclude(
+            id__in=ChannelStream.objects.filter(
+                stream__m3u_account=account
+            ).values_list("channel_id", flat=True)
+        )
+        removable = base_orphans.filter(
+            models.Q(
+                auto_created_from_id__in=[
+                    key for key, mode in group_modes.items() if mode == "always"
+                ]
+            )
+            | models.Q(
+                auto_created_from_id__in=[
+                    key
+                    for key, mode in group_modes.items()
+                    if mode == "preserve_customized"
+                ],
+                override__isnull=True,
+            )
+        )
+        if legacy_mode == "always":
+            removable = removable | base_orphans.filter(
+                auto_created_from_id__isnull=True
+            )
+        elif legacy_mode == "preserve_customized":
+            removable = removable | base_orphans.filter(
+                auto_created_from_id__isnull=True, override__isnull=True
+            )
+        deleted_channels = _delete_channels_stopping_streams(list(removable.distinct()))
+        channels_deleted += deleted_channels
+        if deleted_channels:
+            logger.info(
+                "Deleted %s orphaned auto channels using per-group cleanup rules",
+                deleted_channels,
+            )
 
         logger.info(
             f"Auto channel sync complete for account {account.name}: "

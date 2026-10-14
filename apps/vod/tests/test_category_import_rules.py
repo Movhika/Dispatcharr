@@ -39,6 +39,7 @@ class CategoryImportRuleTests(TestCase):
     def test_new_categories_follow_first_rule_and_default(self):
         self.rule("Ignored", "ignore")
         self.rule("Disabled", "disable", order=1)
+        self.rule("Enabled", "enable", order=2)
         result = batch_create_categories(
             [
                 {"category_name": "Ignored"},
@@ -71,6 +72,23 @@ class CategoryImportRuleTests(TestCase):
         self.assertFalse(relation.enabled)
         self.assertIn("Known", result)
         self.assertFalse(result.ignored)
+
+    def test_new_unmatched_categories_are_disabled_despite_legacy_auto_enable(self):
+        self.account.custom_properties = {
+            "auto_enable_new_groups_vod": True,
+            "auto_enable_new_groups_series": True,
+        }
+        self.account.save()
+        for scope in ("movie", "series"):
+            with self.subTest(scope=scope):
+                result = batch_create_categories(
+                    [{"category_name": "Unmatched"}], scope, self.account
+                )
+                self.assertFalse(
+                    M3UVODCategoryRelation.objects.get(
+                        m3u_account=self.account, category=result["Unmatched"]
+                    ).enabled
+                )
 
     def test_shared_global_category_is_new_to_this_account(self):
         category = VODCategory.objects.create(name="Shared", category_type="movie")

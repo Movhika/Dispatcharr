@@ -19,20 +19,9 @@ vi.mock('../../../utils/forms/M3uGroupFilterUtils.js', () => ({
 
 // ── Sub-component mocks ────────────────────────────────────────────────────────
 vi.mock('../LiveGroupFilter', () => ({
-  default: ({
-    groupStates,
-    setGroupStates,
-    autoEnableNewGroupsLive,
-    setAutoEnableNewGroupsLive,
-  }) => (
+  default: ({ groupStates, setGroupStates }) => (
     <div data-testid="live-group-filter">
       <span data-testid="live-group-count">{groupStates?.length ?? 0}</span>
-      <button
-        data-testid="live-toggle-auto"
-        onClick={() => setAutoEnableNewGroupsLive?.(!autoEnableNewGroupsLive)}
-      >
-        Toggle Auto Live
-      </button>
       <button
         data-testid="live-change-groups"
         onClick={() => setGroupStates?.([{ id: 99, enabled: true }])}
@@ -44,23 +33,11 @@ vi.mock('../LiveGroupFilter', () => ({
 }));
 
 vi.mock('../VODCategoryFilter', () => ({
-  default: ({
-    categoryStates,
-    setCategoryStates,
-    autoEnableNewGroups,
-    setAutoEnableNewGroups,
-    type,
-  }) => (
+  default: ({ categoryStates, setCategoryStates, type }) => (
     <div data-testid={`vod-category-filter-${type}`}>
       <span data-testid={`${type}-category-count`}>
         {categoryStates?.length ?? 0}
       </span>
-      <button
-        data-testid={`vod-toggle-auto-${type}`}
-        onClick={() => setAutoEnableNewGroups?.(!autoEnableNewGroups)}
-      >
-        Toggle Auto {type}
-      </button>
       <button
         data-testid={`vod-change-${type}`}
         onClick={() => setCategoryStates?.([{ id: 55, enabled: true }])}
@@ -193,9 +170,7 @@ describe('M3UGroupFilter', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);
       expect(screen.getByTestId('modal-title')).toBeInTheDocument();
-      expect(screen.getByTestId('modal-title')).toHaveTextContent(
-        'Groups & filters'
-      );
+      expect(screen.getByTestId('modal-title')).toHaveTextContent('Categories');
     });
 
     it('renders tab list with Live and VOD tabs', () => {
@@ -315,16 +290,6 @@ describe('M3UGroupFilter', () => {
       fireEvent.click(screen.getByTestId('live-change-groups'));
       expect(screen.getByTestId('live-group-count')).toHaveTextContent('1');
     });
-
-    it('toggles autoEnableNewGroupsLive when LiveGroupFilter fires onAutoEnableChange', async () => {
-      setupStores();
-      render(<M3UGroupFilter {...defaultProps()} />);
-      await waitFor(() => screen.getByTestId('live-group-filter'));
-      // Toggle twice to verify it actually flips
-      fireEvent.click(screen.getByTestId('live-toggle-auto'));
-      fireEvent.click(screen.getByTestId('live-toggle-auto'));
-      // No crash = state updated correctly
-    });
   });
 
   // ── VODCategoryFilter interaction ──────────────────────────────────────────
@@ -345,20 +310,6 @@ describe('M3UGroupFilter', () => {
         '1'
       );
     });
-
-    it('toggles autoEnableNewGroupsVod when movie VODCategoryFilter fires setAutoEnableNewGroups', () => {
-      setupStores();
-      render(<M3UGroupFilter {...defaultProps()} />);
-      fireEvent.click(screen.getByTestId('vod-toggle-auto-movie'));
-      fireEvent.click(screen.getByTestId('vod-toggle-auto-movie'));
-    });
-
-    it('toggles autoEnableNewGroupsSeries when series VODCategoryFilter fires setAutoEnableNewGroups', () => {
-      setupStores();
-      render(<M3UGroupFilter {...defaultProps()} />);
-      fireEvent.click(screen.getByTestId('vod-toggle-auto-series'));
-      fireEvent.click(screen.getByTestId('vod-toggle-auto-series'));
-    });
   });
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -377,11 +328,7 @@ describe('M3UGroupFilter', () => {
           expect.any(Array),
           expect.any(Array),
           expect.any(Array),
-          expect.objectContaining({
-            auto_enable_new_groups_live: true,
-            auto_enable_new_groups_vod: true,
-            auto_enable_new_groups_series: true,
-          }),
+          {},
           false
         );
       });

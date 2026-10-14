@@ -292,8 +292,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             )
 
             # Create relations for both categories (disabled by default until first refresh)
-            account_custom_props = instance.custom_properties or {}
-            auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
+            auto_enable_new = False
 
             M3UVODCategoryRelation.objects.get_or_create(
                 category=movie_category,
@@ -596,6 +595,15 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                     )
 
             for setting in group_settings:
+                custom_properties = ensure_custom_properties_dict(
+                    setting.get("custom_properties")
+                )
+                cleanup_mode = custom_properties.get("orphan_channel_cleanup")
+                if cleanup_mode not in (None, "always", "preserve_customized", "never"):
+                    return Response(
+                        {"error": "Invalid auto-sync orphan cleanup mode."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 start = setting.get("auto_sync_channel_start")
                 end = setting.get("auto_sync_channel_end")
                 if (start is not None and start < 1) or (

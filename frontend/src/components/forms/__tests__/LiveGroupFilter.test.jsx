@@ -388,39 +388,34 @@ describe('LiveGroupFilter', () => {
       ).toBeInTheDocument();
     });
 
-    it('renders the auto-enable new groups checkbox', () => {
+    it('explains the opt-in default for newly discovered categories', () => {
       renderWith();
       expect(
-        screen.getByRole('checkbox', {
-          name: /Enable unmatched new groups/i,
-        })
+        screen.getByText('New unmatched categories are imported disabled.')
       ).toBeInTheDocument();
     });
 
-    it('reflects initialAutoEnable=true on the checkbox', () => {
+    it('does not expose the legacy auto-enable fallback', () => {
       renderWith({ initialAutoEnable: true });
       expect(
-        screen.getByRole('checkbox', {
+        screen.queryByRole('checkbox', {
           name: /Enable unmatched new groups/i,
         })
-      ).toBeChecked();
+      ).not.toBeInTheDocument();
     });
 
-    it('reflects initialAutoEnable=false on the checkbox', () => {
+    it('does not expose the fallback for an account that previously disabled it', () => {
       renderWith({ initialAutoEnable: false });
       expect(
-        screen.getByRole('checkbox', {
+        screen.queryByRole('checkbox', {
           name: /Enable unmatched new groups/i,
         })
-      ).not.toBeChecked();
+      ).not.toBeInTheDocument();
     });
 
-    it('renders OrphanCleanupControl with the playlist', () => {
+    it('keeps account-wide cleanup controls out of the categories toolbar', () => {
       renderWith({ playlist: makePlaylist({ id: 7 }) });
-      expect(screen.getByTestId('orphan-cleanup')).toHaveAttribute(
-        'data-playlist-id',
-        '7'
-      );
+      expect(screen.queryByTestId('orphan-cleanup')).not.toBeInTheDocument();
     });
 
     it('renders the group name filter input', () => {
@@ -577,26 +572,6 @@ describe('LiveGroupFilter', () => {
   });
 
   // ── autoEnableNewGroupsLive checkbox ──────────────────────────────────────
-
-  describe('autoEnableNewGroupsLive checkbox', () => {
-    it('toggles off when clicked while checked', () => {
-      renderWith({ initialAutoEnable: true });
-      const cb = screen.getByRole('checkbox', {
-        name: /Enable unmatched new groups/i,
-      });
-      fireEvent.click(cb);
-      expect(cb).not.toBeChecked();
-    });
-
-    it('toggles on when clicked while unchecked', () => {
-      renderWith({ initialAutoEnable: false });
-      const cb = screen.getByRole('checkbox', {
-        name: /Enable unmatched new groups/i,
-      });
-      fireEvent.click(cb);
-      expect(cb).toBeChecked();
-    });
-  });
 
   // ── Group text filter ──────────────────────────────────────────────────────
 
@@ -836,7 +811,7 @@ describe('LiveGroupFilter', () => {
       fireEvent.change(screen.getByLabelText('Numbering mode'), {
         target: { value: 'provider' },
       });
-      fireEvent.change(screen.getByLabelText('Orphan cleanup'), {
+      fireEvent.change(screen.getByLabelText('Auto-sync orphan cleanup'), {
         target: { value: 'never' },
       });
       fireEvent.click(screen.getByTestId('modal-cancel'));

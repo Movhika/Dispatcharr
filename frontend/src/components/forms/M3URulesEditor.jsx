@@ -351,7 +351,7 @@ const M3URulesEditor = ({
         <Text c="dimmed" size="sm">
           {streamFilters
             ? 'No filters configured. Streams from enabled groups are imported unless a matching filter excludes them.'
-            : "No rules configured. Unmatched groups follow the account's automatic-enable setting."}
+            : 'No rules configured. New unmatched categories are imported disabled; existing selections are unchanged.'}
         </Text>
       )}
       <ScrollArea>

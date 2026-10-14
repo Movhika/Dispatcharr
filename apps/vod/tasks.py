@@ -363,8 +363,9 @@ def refresh_movies(client, account, categories_by_provider, relations, scan_star
     )
 
     # Ensure there's a relation for the Uncategorized category
-    account_custom_props = account.custom_properties or {}
-    auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
+    auto_enable_new = evaluate_group_rules(
+        account_group_rules(account, "movie"), group_name="Uncategorized"
+    ).enabled
 
     uncategorized_relation, rel_created = M3UVODCategoryRelation.objects.get_or_create(
         category=uncategorized_category,
@@ -424,8 +425,9 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
     )
 
     # Ensure there's a relation for the Uncategorized category
-    account_custom_props = account.custom_properties or {}
-    auto_enable_new = account_custom_props.get("auto_enable_new_groups_series", True)
+    auto_enable_new = evaluate_group_rules(
+        account_group_rules(account, "series"), group_name="Uncategorized"
+    ).enabled
 
     uncategorized_relation, rel_created = M3UVODCategoryRelation.objects.get_or_create(
         category=uncategorized_category,
@@ -494,12 +496,9 @@ def batch_create_categories(categories_data, category_type, account, item_names=
 
     logger.debug(f"Found {len(existing_categories)} existing categories")
 
-    # Check if we should auto-enable new categories based on account settings
-    account_custom_props = account.custom_properties or {}
-    if category_type == 'movie':
-        auto_enable_new = account_custom_props.get("auto_enable_new_groups_vod", True)
-    else:  # series
-        auto_enable_new = account_custom_props.get("auto_enable_new_groups_series", True)
+    # New categories are opt-in through import rules; existing selections
+    # are not changed by discovery.
+    auto_enable_new = False
 
     known_names = set(
         M3UVODCategoryRelation.objects.filter(

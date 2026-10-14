@@ -159,8 +159,6 @@ const VODCategoryFilter = ({
   categoryStates,
   setCategoryStates,
   type,
-  autoEnableNewGroups,
-  setAutoEnableNewGroups,
   onOpenRules,
   onOverlayChange,
 }) => {
@@ -372,21 +370,9 @@ const VODCategoryFilter = ({
         <Button variant="default" size="xs" onClick={onOpenRules}>
           Import rules
         </Button>
-        <Tooltip
-          label="Fallback for new categories not matched by an import rule. Existing selections are unchanged."
-          multiline
-          maw={360}
-          withArrow
-        >
-          <Checkbox
-            label={`Enable unmatched new ${type === 'movie' ? 'movie' : 'series'} categories`}
-            checked={autoEnableNewGroups}
-            onChange={(event) =>
-              setAutoEnableNewGroups(event.currentTarget.checked)
-            }
-            size="sm"
-          />
-        </Tooltip>
+        <Text size="xs" c="dimmed">
+          New unmatched categories are imported disabled.
+        </Text>
       </Flex>
 
       <Flex gap="sm" align="center" wrap="wrap">

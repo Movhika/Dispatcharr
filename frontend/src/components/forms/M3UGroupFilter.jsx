@@ -43,33 +43,15 @@ const M3UGroupFilter = ({
   const [rulesScope, setRulesScope] = useState(null);
   const [childOverlayOpen, setChildOverlayOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
-  const settingsAccount = useRef(null);
   const groupsAccount = useRef(null);
 
   useEffect(() => {
     if (!isOpen) {
       setActiveTab('live');
       setRulesScope(null);
-      settingsAccount.current = null;
       groupsAccount.current = null;
     }
   }, [isOpen]);
-  const [autoEnableNewGroupsLive, setAutoEnableNewGroupsLive] = useState(true);
-  const [autoEnableNewGroupsVod, setAutoEnableNewGroupsVod] = useState(true);
-  const [autoEnableNewGroupsSeries, setAutoEnableNewGroupsSeries] =
-    useState(true);
-
-  useEffect(() => {
-    if (!isOpen || !playlist || settingsAccount.current === playlist.id) return;
-    settingsAccount.current = playlist.id;
-
-    // Initialize account-level settings
-    setAutoEnableNewGroupsLive(playlist.auto_enable_new_groups_live ?? true);
-    setAutoEnableNewGroupsVod(playlist.auto_enable_new_groups_vod ?? true);
-    setAutoEnableNewGroupsSeries(
-      playlist.auto_enable_new_groups_series ?? true
-    );
-  }, [playlist, isOpen]);
 
   useEffect(() => {
     if (
@@ -128,11 +110,7 @@ const M3UGroupFilter = ({
         groupStates,
         movieCategoryStates,
         seriesCategoryStates,
-        {
-          auto_enable_new_groups_live: autoEnableNewGroupsLive,
-          auto_enable_new_groups_vod: autoEnableNewGroupsVod,
-          auto_enable_new_groups_series: autoEnableNewGroupsSeries,
-        },
+        {},
         isInitialSetup
       );
 
@@ -233,7 +211,7 @@ const M3UGroupFilter = ({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title="Groups & filters"
+      title="Categories"
       size="94vw"
       classNames={{
         content: editorClasses.content,
@@ -270,8 +248,6 @@ const M3UGroupFilter = ({
               playlist={playlist}
               groupStates={groupStates}
               setGroupStates={setGroupStates}
-              autoEnableNewGroupsLive={autoEnableNewGroupsLive}
-              setAutoEnableNewGroupsLive={setAutoEnableNewGroupsLive}
               onOpenRules={() => setRulesScope('live')}
               onOverlayChange={setChildOverlayOpen}
             />
@@ -283,8 +259,6 @@ const M3UGroupFilter = ({
               categoryStates={movieCategoryStates}
               setCategoryStates={setMovieCategoryStates}
               type="movie"
-              autoEnableNewGroups={autoEnableNewGroupsVod}
-              setAutoEnableNewGroups={setAutoEnableNewGroupsVod}
               onOpenRules={() => setRulesScope('movie')}
               onOverlayChange={setChildOverlayOpen}
             />
@@ -296,8 +270,6 @@ const M3UGroupFilter = ({
               categoryStates={seriesCategoryStates}
               setCategoryStates={setSeriesCategoryStates}
               type="series"
-              autoEnableNewGroups={autoEnableNewGroupsSeries}
-              setAutoEnableNewGroups={setAutoEnableNewGroupsSeries}
               onOpenRules={() => setRulesScope('series')}
               onOverlayChange={setChildOverlayOpen}
             />
