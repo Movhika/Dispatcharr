@@ -126,17 +126,26 @@ describe('M3URulesEditor', () => {
     fireEvent.click(screen.getByText('Add rule'));
     fireEvent.click(screen.getByLabelText('Save rule'));
     expect(
-      await screen.findByText(
-        'Enter a regular expression before saving or previewing.'
-      )
+      await screen.findByText('Enter a regular expression before saving.')
     ).toBeInTheDocument();
     expect(API.saveM3URule).not.toHaveBeenCalled();
   });
-  it('previews the complete unsaved ordered draft without saving', async () => {
+  it('blocks every preview until changes in other rows are saved', async () => {
     await load([rule(), rule({ id: 2, order: 1, regex_pattern: 'Sport' })]);
     fireEvent.change(screen.getAllByLabelText('Regular expression')[0], {
       target: { value: '^Changed$' },
     });
+    expect(
+      screen
+        .getAllByLabelText('Preview rule')
+        .every((button) => button.disabled)
+    ).toBe(true);
+    expect(API.previewM3URules).not.toHaveBeenCalled();
+    API.saveM3URule.mockResolvedValue(rule({ regex_pattern: '^Changed$' }));
+    fireEvent.click(screen.getAllByLabelText('Save rule')[0]);
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('Preview rule')[1]).toBeEnabled()
+    );
     fireEvent.click(screen.getAllByLabelText('Preview rule')[1]);
     await screen.findByText('1 matching existing entries');
     expect(API.previewM3URules).toHaveBeenCalledWith(
@@ -153,30 +162,37 @@ describe('M3URulesEditor', () => {
       1,
       50
     );
-    expect(API.saveM3URule).not.toHaveBeenCalled();
+    expect(API.saveM3URule).toHaveBeenCalledTimes(1);
   });
-  it('supports previewing a newly added rule', async () => {
+  it('requires saving a newly added rule before preview', async () => {
     renderEditor();
     await waitFor(() => expect(API.getM3URules).toHaveBeenCalled());
     fireEvent.click(screen.getByText('Add rule'));
+    expect(screen.getByLabelText('Preview rule')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Regular expression'), {
       target: { value: '###' },
     });
+    expect(screen.getByLabelText('Preview rule')).toBeDisabled();
+    API.saveM3URule.mockResolvedValue(rule({ id: 3, regex_pattern: '###' }));
+    fireEvent.click(screen.getByLabelText('Save rule'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Preview rule')).toBeEnabled()
+    );
     fireEvent.click(screen.getByLabelText('Preview rule'));
     await screen.findByText('1 matching existing entries');
     expect(API.previewM3URules.mock.calls[0][2][0]).toEqual(
       expect.objectContaining({
-        preview_id: expect.stringMatching(/^new-/),
+        preview_id: '3',
         regex_pattern: '###',
       })
     );
-    expect(API.saveM3URule).not.toHaveBeenCalled();
+    expect(API.saveM3URule).toHaveBeenCalledTimes(1);
   });
   it('saves and applies precisely the previewed snapshot', async () => {
     await load();
     fireEvent.click(screen.getByLabelText('Preview rule'));
     await screen.findByText('1 matching existing entries');
-    fireEvent.click(screen.getByText('Save and apply to existing'));
+    fireEvent.click(screen.getByText('Apply to existing'));
     await waitFor(() =>
       expect(API.saveApplyM3UGroupRules).toHaveBeenCalledWith(
         7,
@@ -190,7 +206,7 @@ describe('M3URulesEditor', () => {
     fireEvent.click(screen.getByLabelText('Preview rule'));
     await screen.findByText('1 matching existing entries');
     expect(
-      screen.getByRole('button', { name: 'Save and apply to existing' })
+      screen.getByRole('button', { name: 'Apply to existing' })
     ).toBeDisabled();
   });
   it('reorders only IDs and positions, not unsaved rule contents', async () => {
@@ -261,13 +277,108 @@ describe('M3URulesEditor', () => {
     });
     renderEditor({ streamFilters: true, scope: undefined });
     await screen.findByDisplayValue('###');
-    fireEvent.click(screen.getByLabelText('Preview rule'));
+    fireEvent.click(screen.getByLabelText('Preview filter'));
     expect(
       await screen.findByText(/Excluded streams remain available/)
     ).toBeInTheDocument();
     expect(screen.getByText('### Event')).toBeInTheDocument();
+    expect(screen.queryByText('Apply to existing')).not.toBeInTheDocument();
+  });
+  it('requires saving new stream filters and keeps their errors inline', async () => {
+    renderEditor({ streamFilters: true });
+    await waitFor(() => expect(API.getM3URules).toHaveBeenCalled());
+    fireEvent.click(screen.getByText('Add filter'));
+    expect(screen.getByLabelText('Preview filter')).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('Save filter'));
     expect(
-      screen.queryByText('Save and apply to existing')
+      await screen.findByText('Enter a regular expression before saving.')
+    ).toBeInTheDocument();
+    expect(API.previewM3URules).not.toHaveBeenCalled();
+    expect(API.saveM3URule).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Regular expression'), {
+      target: { value: '(?i)News' },
+    });
+    API.saveM3URule.mockResolvedValue({
+      id: 3,
+      filter_type: 'name',
+      regex_pattern: '(?i)News',
+      exclude: true,
+      order: 0,
+      custom_properties: { case_sensitive: false },
+    });
+    fireEvent.click(screen.getByLabelText('Save filter'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Preview filter')).toBeEnabled()
+    );
+    expect(API.saveM3URule).toHaveBeenCalledWith(
+      7,
+      'filters',
+      null,
+      expect.objectContaining({ regex_pattern: '(?i)News' })
+    );
+  });
+  it('keeps server validation errors on the row and preview blocked', async () => {
+    await load();
+    fireEvent.change(screen.getByLabelText('Regular expression'), {
+      target: { value: '[' },
+    });
+    API.saveM3URule.mockRejectedValue({
+      status: 400,
+      body: { regex_pattern: ['Invalid regular expression.'] },
+    });
+    fireEvent.click(screen.getByLabelText('Save rule'));
+    expect(
+      await screen.findByText(/Invalid regular expression/)
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    );
+    expect(screen.getByLabelText('Preview rule')).toBeDisabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+  it('does not show a failed evaluation as zero matches or duplicate its error', async () => {
+    await load();
+    API.previewM3URules.mockRejectedValue(new Error('Preview unavailable'));
+    fireEvent.click(screen.getByLabelText('Preview rule'));
+    expect(await screen.findByText('Preview unavailable')).toBeInTheDocument();
+    expect(screen.getAllByText('Preview unavailable')).toHaveLength(1);
+    expect(
+      screen.queryByText('0 matching existing entries')
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Preview could not be evaluated.')
+    ).toBeInTheDocument();
+  });
+  it('unblocks saved rules after deleting an unsaved row', async () => {
+    await load();
+    fireEvent.click(screen.getByText('Add rule'));
+    expect(screen.getAllByLabelText('Preview rule')[0]).toBeDisabled();
+    fireEvent.click(screen.getAllByLabelText('Delete rule')[1]);
+    fireEvent.click(screen.getByText('Confirm delete'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Preview rule')).toBeEnabled()
+    );
+    expect(API.deleteM3URule).not.toHaveBeenCalled();
+  });
+  it('keeps inputs locked while saving so later edits cannot be discarded', async () => {
+    await load();
+    let finish;
+    API.saveM3URule.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    fireEvent.click(screen.getByLabelText('Save rule'));
+    expect(screen.getByLabelText('Regular expression')).toBeDisabled();
+    expect(
+      screen
+        .getAllByLabelText('Rule result')
+        .find((element) => element.tagName === 'INPUT')
+    ).toBeDisabled();
+    finish(rule());
+    await waitFor(() =>
+      expect(screen.getByLabelText('Regular expression')).toBeEnabled()
+    );
   });
 });
