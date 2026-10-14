@@ -372,12 +372,12 @@ const M3U = ({
             <TabsPanel value="account" className={editorClasses.panel}>
               <SimpleGrid
                 cols={{ base: 1, sm: 2 }}
-                spacing="xl"
-                verticalSpacing="xl"
+                spacing="md"
+                verticalSpacing="xs"
               >
-                <Paper withBorder p="md">
+                <Paper withBorder p="sm">
                   <Stack
-                    gap="xs"
+                    gap={4}
                     style={{ minWidth: 0 }}
                     role="group"
                     aria-label="Account settings"
@@ -479,9 +479,9 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="md">
+                <Paper withBorder p="sm">
                   <Stack
-                    gap="xs"
+                    gap={4}
                     style={{ minWidth: 0 }}
                     role="group"
                     aria-label="Connection settings"
@@ -580,10 +580,10 @@ const M3U = ({
               </SimpleGrid>
             </TabsPanel>
             <TabsPanel value="content" className={editorClasses.panel}>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                <Paper withBorder p="sm">
                   <Stack
-                    gap="xs"
+                    gap={4}
                     style={{ minWidth: 0 }}
                     role="group"
                     aria-label="Live TV settings"
@@ -633,9 +633,9 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="md">
+                <Paper withBorder p="sm">
                   <Stack
-                    gap="xs"
+                    gap={4}
                     style={{ minWidth: 0 }}
                     role="group"
                     aria-label="VOD settings"
@@ -687,9 +687,9 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="md">
+                <Paper withBorder p="sm">
                   <Stack
-                    gap="xs"
+                    gap={4}
                     role="group"
                     aria-label="Live TV refresh schedule"
                   >
@@ -723,12 +723,8 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="md">
-                  <Stack
-                    gap="xs"
-                    role="group"
-                    aria-label="VOD refresh schedule"
-                  >
+                <Paper withBorder p="sm">
+                  <Stack gap={4} role="group" aria-label="VOD refresh schedule">
                     <Group justify="space-between">
                       <Text fw={600}>VOD refresh schedule</Text>
                       <Tooltip

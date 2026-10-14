@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import {
   ActionIcon,
+  Badge,
   Box,
   Button,
   Checkbox,
@@ -74,7 +75,6 @@ const LiveGroupCard = memo(function LiveGroupCard({
   group,
   hasChannelConflict,
   overlaps,
-  onToggle,
   onToggleAutoSync,
   onConfigure,
   onPreview,
@@ -100,7 +100,11 @@ const LiveGroupCard = memo(function LiveGroupCard({
     ),
   ].join('\n');
   return (
-    <TableTr data-testid="group-card">
+    <TableTr
+      data-testid="group-card"
+      data-selected={selected || undefined}
+      bg={selected ? 'var(--mantine-primary-color-light)' : undefined}
+    >
       <TableTd>
         <Checkbox
           aria-label={`Select ${group.name}`}
@@ -117,24 +121,20 @@ const LiveGroupCard = memo(function LiveGroupCard({
           multiline
           w={220}
         >
-          <Button
-            color={
-              group.enabled ? (group.is_stale ? 'orange' : 'green') : 'gray'
-            }
-            variant="subtle"
-            onClick={() => onToggle(group.channel_group)}
-            size="xs"
-            maw="100%"
-            styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}
-          >
+          <Text size="sm" c={group.is_stale ? 'orange' : undefined} truncate>
             {group.name}
-          </Button>
+          </Text>
         </Tooltip>
       </TableTd>
       <TableTd>
-        <Text size="xs" c={group.enabled ? 'green' : 'dimmed'}>
+        <Badge
+          size="sm"
+          radius="sm"
+          color={group.enabled ? 'green' : 'gray'}
+          variant={group.enabled ? 'filled' : 'light'}
+        >
           {group.enabled ? 'Active' : 'Inactive'}
-        </Text>
+        </Badge>
       </TableTd>
       <TableTd>
         <Checkbox
@@ -179,9 +179,9 @@ const LiveGroupCard = memo(function LiveGroupCard({
       </TableTd>
       <TableTd>
         <Flex gap={4} align="center">
-          <Tooltip label="Configure group">
+          <Tooltip label="Configure category">
             <ActionIcon
-              aria-label="Configure group"
+              aria-label="Configure category"
               variant="subtle"
               disabled={!group.enabled}
               onClick={() => onConfigure(group)}
@@ -189,9 +189,9 @@ const LiveGroupCard = memo(function LiveGroupCard({
               <Cog size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Preview group">
+          <Tooltip label="Preview category">
             <ActionIcon
-              aria-label="Preview group"
+              aria-label="Preview category"
               variant="subtle"
               onClick={() => onPreview(group)}
             >
@@ -658,19 +658,6 @@ const LiveGroupFilter = ({
     );
   }, [playlist, channelGroups, setGroupStates]);
 
-  const toggleGroupEnabled = useCallback(
-    (id) => {
-      setGroupStates((prev) =>
-        prev.map((state) =>
-          state.channel_group == id
-            ? { ...state, enabled: !state.enabled }
-            : state
-        )
-      );
-    },
-    [setGroupStates]
-  );
-
   const toggleAutoSync = useCallback(
     (id) => {
       setGroupStates((prev) =>
@@ -853,16 +840,6 @@ const LiveGroupFilter = ({
         >
           Stream filters
         </Button>
-        <Tooltip
-          label="Auto sync creates and maintains channels for imported streams in each enabled group. Number ranges and advanced options can be configured per group."
-          multiline
-          maw={360}
-          withArrow
-        >
-          <ActionIcon variant="subtle" aria-label="Auto channel sync help">
-            <Info size={16} />
-          </ActionIcon>
-        </Tooltip>
         <Text size="xs" c="dimmed">
           New unmatched categories are imported disabled.
         </Text>
@@ -870,7 +847,7 @@ const LiveGroupFilter = ({
 
       <Flex gap="sm" align="center" wrap="wrap">
         <TextInput
-          placeholder="Filter groups..."
+          placeholder="Filter categories..."
           value={groupFilter}
           onChange={(event) => setGroupFilter(event.currentTarget.value)}
           style={{ flex: '1 1 180px', minWidth: 0 }}
@@ -935,7 +912,7 @@ const LiveGroupFilter = ({
             <TableTr>
               <TableTh w={44}>
                 <Checkbox
-                  aria-label="Select visible groups"
+                  aria-label="Select visible categories"
                   checked={
                     visibleGroups.length > 0 &&
                     selectedVisibleCount === visibleGroups.length
@@ -950,9 +927,27 @@ const LiveGroupFilter = ({
                   }
                 />
               </TableTh>
-              <TableTh>Group</TableTh>
+              <TableTh>Category</TableTh>
               <TableTh w="10%">Enabled</TableTh>
-              <TableTh w="9%">Auto sync</TableTh>
+              <TableTh w="12%">
+                <Group gap={4} wrap="nowrap">
+                  Auto sync
+                  <Tooltip
+                    label="Auto sync creates and maintains channels for imported streams in each enabled category. Number ranges and advanced options can be configured per category."
+                    multiline
+                    maw={360}
+                    withArrow
+                  >
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      aria-label="Auto channel sync help"
+                    >
+                      <Info size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
+              </TableTh>
               <TableTh w="12%">Numbering</TableTh>
               <TableTh w="18%">Channel range</TableTh>
               <TableTh w={76}>Actions</TableTh>
@@ -971,7 +966,6 @@ const LiveGroupFilter = ({
                   overlaps={
                     overlapsByGroup.get(group.channel_group) || EMPTY_OVERLAPS
                   }
-                  onToggle={toggleGroupEnabled}
                   onToggleAutoSync={toggleAutoSync}
                   onConfigure={openConfigure}
                   onPreview={setPreviewGroup}
@@ -1007,7 +1001,7 @@ const LiveGroupFilter = ({
       <Modal
         opened={bulkEditorOpen}
         onClose={closeBulkEditor}
-        title={`Edit settings for ${selectedGroupIds.size} groups`}
+        title={`Edit settings for ${selectedGroupIds.size} categories`}
       >
         <Stack>
           <Text size="sm" c="dimmed">

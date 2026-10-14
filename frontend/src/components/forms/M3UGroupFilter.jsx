@@ -115,7 +115,7 @@ const M3UGroupFilter = ({
       );
 
       showNotification({
-        title: 'Group Settings Updated',
+        title: 'Category Settings Updated',
         message: isInitialSetup
           ? 'Settings saved. The initial refresh has been requested.'
           : 'Settings saved. Refresh actions use the saved settings.',
@@ -238,7 +238,7 @@ const M3UGroupFilter = ({
           }}
         >
           <TabsList className={editorClasses.tabList}>
-            <TabsTab value="live">Live</TabsTab>
+            <TabsTab value="live">Live TV</TabsTab>
             <TabsTab value="vod-movie">VOD - Movies</TabsTab>
             <TabsTab value="vod-series">VOD - Series</TabsTab>
           </TabsList>

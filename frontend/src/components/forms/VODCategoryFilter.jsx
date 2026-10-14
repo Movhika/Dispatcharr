@@ -7,6 +7,7 @@ import {
   Modal,
   Stack,
   ActionIcon,
+  Badge,
   Tooltip,
   ScrollArea,
   Table,
@@ -81,7 +82,6 @@ const parseCustomProperties = (raw) => {
 
 const CategoryCard = memo(function CategoryCard({
   category,
-  onToggle,
   onConfigure,
   onPreview,
   selected,
@@ -89,7 +89,10 @@ const CategoryCard = memo(function CategoryCard({
 }) {
   const props = category.custom_properties || {};
   return (
-    <TableTr>
+    <TableTr
+      data-selected={selected || undefined}
+      bg={selected ? 'var(--mantine-primary-color-light)' : undefined}
+    >
       <TableTd>
         <Checkbox
           aria-label={`Select ${category.name}`}
@@ -100,21 +103,19 @@ const CategoryCard = memo(function CategoryCard({
         />
       </TableTd>
       <TableTd>
-        <Button
-          color={category.enabled ? 'green' : 'gray'}
-          variant="subtle"
-          size="xs"
-          onClick={() => onToggle(category.id)}
-          maw="100%"
-          styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}
-        >
+        <Text size="sm" truncate>
           {category.name}
-        </Button>
+        </Text>
       </TableTd>
       <TableTd>
-        <Text size="xs" c={category.enabled ? 'green' : 'dimmed'}>
+        <Badge
+          size="sm"
+          radius="sm"
+          color={category.enabled ? 'green' : 'gray'}
+          variant={category.enabled ? 'filled' : 'light'}
+        >
           {category.enabled ? 'Active' : 'Inactive'}
-        </Text>
+        </Badge>
       </TableTd>
       <TableTd>
         <Text size="xs">
@@ -238,17 +239,6 @@ const VODCategoryFilter = ({
         .filter(Boolean)
     );
   }, [categories, playlist.id, setCategoryStates, type]);
-
-  const toggleEnabled = useCallback(
-    (id) => {
-      setCategoryStates((prev) =>
-        prev.map((state) =>
-          state.id == id ? { ...state, enabled: !state.enabled } : state
-        )
-      );
-    },
-    [setCategoryStates]
-  );
 
   const updateCustomProperty = useCallback(
     (id, key, value) => {
@@ -471,7 +461,6 @@ const VODCategoryFilter = ({
                 <CategoryCard
                   key={category.id}
                   category={category}
-                  onToggle={toggleEnabled}
                   onConfigure={openConfigure}
                   onPreview={setPreviewCategory}
                   selected={selectedCategoryIds.has(category.id)}

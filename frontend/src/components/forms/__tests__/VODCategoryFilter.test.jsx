@@ -17,6 +17,11 @@ vi.mock('lucide-react', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
+  Badge: ({ children, color, variant }) => (
+    <span data-color={color} data-variant={variant}>
+      {children}
+    </span>
+  ),
   Modal: ({ children, opened, title }) =>
     opened ? (
       <div role="dialog" aria-label={title}>
@@ -220,14 +225,10 @@ describe('VODCategoryFilter', () => {
       expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
-    it('renders a button for each category matching the type and playlist', () => {
+    it('renders a text label for each category matching the type and playlist', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      expect(
-        screen.getByRole('button', { name: 'Action' })
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
+      expect(screen.getByText('Action')).toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
     });
 
     it('does not render categories of a different type', () => {
@@ -268,12 +269,8 @@ describe('VODCategoryFilter', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
       const input = screen.getByPlaceholderText(/filter/i);
       fireEvent.change(input, { target: { value: 'act' } });
-      expect(
-        screen.getByRole('button', { name: 'Action' })
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Comedy' })
-      ).not.toBeInTheDocument();
+      expect(screen.getByText('Action')).toBeInTheDocument();
+      expect(screen.queryByText('Comedy')).not.toBeInTheDocument();
     });
 
     it('is case-insensitive', () => {
@@ -281,12 +278,8 @@ describe('VODCategoryFilter', () => {
       fireEvent.change(screen.getByPlaceholderText(/filter/i), {
         target: { value: 'COMEDY' },
       });
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
     });
 
     it('shows all categories when filter is cleared', () => {
@@ -294,13 +287,9 @@ describe('VODCategoryFilter', () => {
       const input = screen.getByPlaceholderText(/filter/i);
       fireEvent.change(input, { target: { value: 'act' } });
       fireEvent.change(input, { target: { value: '' } });
-      expect(
-        screen.getByRole('button', { name: 'Action' })
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Drama' })).toBeInTheDocument();
+      expect(screen.getByText('Action')).toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
+      expect(screen.getByText('Drama')).toBeInTheDocument();
     });
 
     it('shows no categories when filter matches nothing', () => {
@@ -308,9 +297,7 @@ describe('VODCategoryFilter', () => {
       fireEvent.change(screen.getByPlaceholderText(/filter/i), {
         target: { value: 'zzznomatch' },
       });
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
     });
   });
 
@@ -327,13 +314,9 @@ describe('VODCategoryFilter', () => {
       });
       render(<VODCategoryFilter {...props} />);
       fireEvent.click(screen.getByTestId('segment-enabled'));
-      expect(
-        screen.getByRole('button', { name: 'Action' })
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Comedy' })
-      ).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Drama' })).toBeInTheDocument();
+      expect(screen.getByText('Action')).toBeInTheDocument();
+      expect(screen.queryByText('Comedy')).not.toBeInTheDocument();
+      expect(screen.getByText('Drama')).toBeInTheDocument();
     });
 
     it('shows only disabled categories when "Disabled" segment is selected', () => {
@@ -346,12 +329,8 @@ describe('VODCategoryFilter', () => {
       });
       render(<VODCategoryFilter {...props} />);
       fireEvent.click(screen.getByTestId('segment-disabled'));
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
     });
 
     it('shows all categories when "All" segment is active', () => {
@@ -365,12 +344,8 @@ describe('VODCategoryFilter', () => {
       render(<VODCategoryFilter {...props} />);
       fireEvent.click(screen.getByTestId('segment-disabled'));
       fireEvent.click(screen.getByTestId('segment-all'));
-      expect(
-        screen.getByRole('button', { name: 'Action' })
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
+      expect(screen.getByText('Action')).toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
     });
   });
 
@@ -385,12 +360,8 @@ describe('VODCategoryFilter', () => {
       });
       fireEvent.click(screen.getByTestId('segment-disabled'));
       // "Comedy" matches "o" AND is disabled; "Action" matches "o" but is enabled
-      expect(
-        screen.getByRole('button', { name: 'Comedy' })
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
+      expect(screen.getByText('Comedy')).toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
     });
   });
 
@@ -619,16 +590,12 @@ describe('VODCategoryFilter', () => {
     it('renders no category buttons when categories list is empty', () => {
       setupMocks({ categories: [] });
       render(<VODCategoryFilter {...defaultProps({ categoryStates: [] })} />);
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
     });
 
     it('renders no category buttons when categoryStates is empty', () => {
       render(<VODCategoryFilter {...defaultProps({ categoryStates: [] })} />);
-      expect(
-        screen.queryByRole('button', { name: 'Action' })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText('Action')).not.toBeInTheDocument();
     });
 
     it('renders categories only for the matching playlist id', () => {
@@ -687,7 +654,7 @@ describe('VODCategoryFilter', () => {
         within(row)
           .getAllByRole('button')
           .map((button) => button.getAttribute('aria-label'))
-      ).toEqual([null, 'Configure Action', 'Preview category']);
+      ).toEqual(['Configure Action', 'Preview category']);
       fireEvent.click(screen.getByRole('button', { name: 'Configure Action' }));
       expect(screen.getByLabelText('Language')).toBeInTheDocument();
       expect(screen.getByLabelText('Quality')).toBeInTheDocument();

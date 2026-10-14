@@ -146,6 +146,11 @@ vi.mock('../../../utils/forms/LiveGroupFilterUtils.js', () => ({
 
 // ── Mantine core mock ─────────────────────────────────────────────────────────
 vi.mock('@mantine/core', async () => ({
+  Badge: ({ children, color, variant }) => (
+    <span data-color={color} data-variant={variant}>
+      {children}
+    </span>
+  ),
   Table: ({ children }) => <table>{children}</table>,
   TableThead: ({ children }) => <thead>{children}</thead>,
   TableTbody: ({ children }) => <tbody>{children}</tbody>,
@@ -693,7 +698,7 @@ describe('LiveGroupFilter', () => {
       });
       expect(screen.getAllByTestId('group-card')).toHaveLength(25);
       fireEvent.click(
-        screen.getByRole('checkbox', { name: 'Select visible groups' })
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
       );
       expect(screen.getByText('Edit settings (40)')).toBeEnabled();
       fireEvent.click(screen.getByText('Enable selected'));
@@ -710,7 +715,7 @@ describe('LiveGroupFilter', () => {
         ],
       });
       fireEvent.click(
-        screen.getByRole('checkbox', { name: 'Select visible groups' })
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
       );
       expect(screen.getAllByText('Inactive')).toHaveLength(2);
       fireEvent.click(screen.getByText('Enable selected'));
@@ -741,7 +746,7 @@ describe('LiveGroupFilter', () => {
       });
       fireEvent.click(screen.getByTestId('seg-enabled'));
       fireEvent.click(
-        screen.getByRole('checkbox', { name: 'Select visible groups' })
+        screen.getByRole('checkbox', { name: 'Select visible categories' })
       );
       expect(screen.getByText('Edit settings (1)')).toBeEnabled();
       // News (disabled) is not visible in Enabled filter, so it stays hidden
@@ -758,7 +763,7 @@ describe('LiveGroupFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 groups',
+        name: 'Edit settings for 1 categories',
       });
       fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
         target: { value: 'provider' },
@@ -780,7 +785,7 @@ describe('LiveGroupFilter', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));
       fireEvent.click(screen.getByText('Edit settings (1)'));
       const dialog = screen.getByRole('dialog', {
-        name: 'Edit settings for 1 groups',
+        name: 'Edit settings for 1 categories',
       });
       fireEvent.change(within(dialog).getByLabelText('Numbering mode'), {
         target: { value: 'provider' },
