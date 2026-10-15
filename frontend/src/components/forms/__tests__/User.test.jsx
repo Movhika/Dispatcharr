@@ -223,7 +223,7 @@ const setupMocks = ({
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('User', () => {
-  it('uses a compact content-height editor with scrollable panels', () => {
+  it('uses a compact editor with the shared stable-height tab panels', () => {
     setupMocks();
     render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
     expect(screen.getByTestId('modal')).toHaveAttribute(
@@ -238,6 +238,17 @@ describe('User', () => {
       editorClasses.panel
     );
     expect(screen.getByTestId('panel-api')).toHaveClass(editorClasses.panel);
+    for (const tab of [
+      'account',
+      'permissions',
+      'epg',
+      'api',
+      'live-refresh',
+    ]) {
+      expect(screen.getByTestId(`panel-${tab}`)).toHaveClass(
+        editorClasses.accountPanel
+      );
+    }
   });
   beforeEach(() => {
     vi.clearAllMocks();

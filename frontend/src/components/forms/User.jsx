@@ -97,6 +97,7 @@ const User = ({ user = null, isOpen, onClose }) => {
   const [generating, setGenerating] = useState(false);
   const [_generatedKey, setGeneratedKey] = useState(null);
   const [userAPIKey, setUserAPIKey] = useState(user?.api_key || null);
+  const [activeTab, setActiveTab] = useState('account');
 
   const theme = useMantineTheme();
 
@@ -160,6 +161,10 @@ const User = ({ user = null, isOpen, onClose }) => {
       setAllowedM3uProfilesUnrestricted(true);
     }
   }, [user]);
+
+  useEffect(() => {
+    setActiveTab('account');
+  }, [isOpen, user?.id]);
 
   const onAllowedM3uProfilesChange = (values) => {
     // Any MultiSelect change (including clear to []) is an explicit allowlist.
@@ -326,7 +331,11 @@ const User = ({ user = null, isOpen, onClose }) => {
       xOffset="3vw"
     >
       <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
-        <Tabs defaultValue="account" className={editorClasses.tabs}>
+        <Tabs
+          value={activeTab}
+          onChange={setActiveTab}
+          className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
+        >
           <TabsList className={editorClasses.tabList}>
             <TabsTab value="account">Account</TabsTab>
             {showPermissions && (
@@ -337,7 +346,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             {isAdmin && <TabsTab value="live-refresh">Live refresh</TabsTab>}
           </TabsList>
 
-          <TabsPanel value="account" className={editorClasses.panel}>
+          <TabsPanel
+            value="account"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'account'}
+            aria-hidden={activeTab !== 'account'}
+            inert={activeTab !== 'account'}
+          >
             <Stack gap="sm">
               <Group grow align="flex-start">
                 <TextInput
@@ -378,7 +393,13 @@ const User = ({ user = null, isOpen, onClose }) => {
           </TabsPanel>
 
           {showPermissions && (
-            <TabsPanel value="permissions" className={editorClasses.panel}>
+            <TabsPanel
+              value="permissions"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'permissions'}
+              aria-hidden={activeTab !== 'permissions'}
+              inert={activeTab !== 'permissions'}
+            >
               <Stack gap="sm">
                 <Group grow align="flex-start">
                   <Select
@@ -506,7 +527,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             </TabsPanel>
           )}
 
-          <TabsPanel value="epg" className={editorClasses.panel}>
+          <TabsPanel
+            value="epg"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'epg'}
+            aria-hidden={activeTab !== 'epg'}
+            inert={activeTab !== 'epg'}
+          >
             <Stack gap="sm">
               <Text size="sm" c="dimmed">
                 These defaults apply when no URL parameters are specified and
@@ -544,7 +571,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             </Stack>
           </TabsPanel>
 
-          <TabsPanel value="api" className={editorClasses.panel}>
+          <TabsPanel
+            value="api"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'api'}
+            aria-hidden={activeTab !== 'api'}
+            inert={activeTab !== 'api'}
+          >
             <Stack gap="sm">
               <TextInput
                 label="XC Password"
@@ -674,7 +707,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             </Stack>
           </TabsPanel>
           {isAdmin && (
-            <TabsPanel value="live-refresh" className={editorClasses.panel}>
+            <TabsPanel
+              value="live-refresh"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'live-refresh'}
+              aria-hidden={activeTab !== 'live-refresh'}
+              inert={activeTab !== 'live-refresh'}
+            >
               <Switch
                 label="Allow XC client to trigger Live TV refresh"
                 description="When this user's XC client requests the Live catalog, refresh eligible providers first. Return as soon as the newly queued refreshes finish, or after at most 15 seconds total. Unfinished refreshes continue in the background. Each provider's client refresh cooldown applies to all users."
