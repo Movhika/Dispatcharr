@@ -1,6 +1,8 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createElement } from 'react';
 import M3UGroupFilter from '../M3UGroupFilter';
+import editorClasses from '../AccountEditor.module.css';
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
@@ -67,7 +69,8 @@ vi.mock('@mantine/core', () => ({
       {children}
     </button>
   ),
-  Flex: ({ children }) => <div>{children}</div>,
+  Flex: ({ children, component = 'div', className, 'aria-label': ariaLabel }) =>
+    createElement(component, { className, 'aria-label': ariaLabel }, children),
   LoadingOverlay: ({ visible }) =>
     visible ? <div data-testid="loading-overlay" /> : null,
   Modal: ({ children, opened, onClose, title }) =>
@@ -154,6 +157,14 @@ describe('M3UGroupFilter', () => {
   });
 
   // ── Guard conditions ───────────────────────────────────────────────────────
+
+  it('keeps category actions without a separate divider', () => {
+    setupStores();
+    render(<M3UGroupFilter {...defaultProps()} />);
+    expect(
+      screen.getByRole('contentinfo', { name: 'Category actions' })
+    ).toHaveClass(editorClasses.plainFooter);
+  });
 
   describe('guard conditions', () => {
     it('does not render modal when isOpen is false', () => {

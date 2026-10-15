@@ -37,6 +37,7 @@ import { AlertTriangle, Eye, Info, Settings as Cog } from 'lucide-react';
 import ListPagination from '../ListPagination.jsx';
 import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
 import M3UFilters from './M3UFilters.jsx';
+import editorClasses from './AccountEditor.module.css';
 import GroupConfigureModal from './GroupConfigureModal';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
@@ -935,13 +936,8 @@ const LiveGroupFilter = ({
         )}
       </Flex>
 
-      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
-        <Table
-          striped
-          withTableBorder
-          stickyHeader
-          style={{ tableLayout: 'fixed' }}
-        >
+      <ScrollArea className={editorClasses.categoryTableFrame}>
+        <Table striped stickyHeader className={editorClasses.categoryTable}>
           <TableThead>
             <TableTr>
               <TableTh w={44}>

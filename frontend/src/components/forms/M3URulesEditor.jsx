@@ -370,20 +370,17 @@ const M3URulesEditor = ({
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between" align="flex-start">
-        <Alert
-          icon={<Info size={16} />}
-          color="blue"
-          variant="light"
-          style={{ flex: '1 1 320px' }}
-        >
-          <Text size="sm">
-            <strong>Order matters.</strong> The first matching rule wins.{' '}
-            {streamFilters
-              ? 'Stream filters decide whether individual Live TV streams are imported; category import rules remain separate. Without filters, streams from enabled categories are imported.'
-              : 'Category import rules decide how new categories are imported. New unmatched categories are imported disabled. Existing selections change only through Apply to existing.'}
-          </Text>
-        </Alert>
+      <Alert icon={<Info size={16} />} color="blue" variant="light">
+        <Text size="sm">
+          <strong>Order matters.</strong> The first matching rule wins.{' '}
+          {streamFilters
+            ? 'Stream filters decide whether individual Live TV streams are imported.'
+            : 'Category import rules decide how new categories are imported. New unmatched categories are imported disabled.'}
+        </Text>
+      </Alert>
+      {error && <Alert color="red">{error}</Alert>}
+      {busy && <Loader size="sm" />}
+      <Group justify="flex-end">
         <Button
           size="xs"
           leftSection={<Plus size={14} />}
@@ -393,14 +390,6 @@ const M3URulesEditor = ({
           Add {streamFilters ? 'filter' : 'rule'}
         </Button>
       </Group>
-      {error && <Alert color="red">{error}</Alert>}
-      {hasUnsavedChanges && (
-        <Text size="sm" c="dimmed" role="status">
-          Save all changes before previewing. The complete ordered list affects
-          the result.
-        </Text>
-      )}
-      {busy && <Loader size="sm" />}
       {!rules.length && !busy && (
         <Alert color="gray" variant="light">
           {streamFilters

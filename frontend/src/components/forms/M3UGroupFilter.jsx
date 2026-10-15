@@ -306,7 +306,7 @@ const M3UGroupFilter = ({
         <Flex
           component="footer"
           aria-label="Category actions"
-          className={`${editorClasses.footer} ${editorClasses.categoryFooter}`}
+          className={`${editorClasses.footer} ${editorClasses.plainFooter} ${editorClasses.categoryFooter}`}
           mih={50}
           gap="xs"
           justify="flex-end"

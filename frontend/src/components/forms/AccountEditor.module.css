@@ -99,6 +99,32 @@
   padding-bottom: 0;
 }
 
+.categoryTableFrame.categoryTableFrame {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+/* Separate cell borders keep scrolled rows from showing above the sticky header. */
+.categoryTable.categoryTable {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.categoryTable thead {
+  background-color: var(--mantine-color-body);
+}
+
+.categoryTable :is(th, td) {
+  border-bottom: 1px solid var(--table-border-color);
+}
+
+.categoryTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .paginationSlot {
   grid-column: 2;
   min-width: 0;

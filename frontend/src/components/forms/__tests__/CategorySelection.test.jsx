@@ -10,6 +10,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import LiveGroupFilter from '../LiveGroupFilter';
 import VODCategoryFilter from '../VODCategoryFilter';
+import editorClasses from '../AccountEditor.module.css';
 
 const groups = Array.from({ length: 40 }, (_, index) => ({
   channel_group: index + 1,
@@ -83,6 +84,23 @@ function Categories({ vod = false, previewAvailableIds }) {
 }
 
 describe('Category selection with Mantine controls', () => {
+  it.each([false, true])(
+    'frames the scrolling viewport instead of the long table (VOD=%s)',
+    async (vod) => {
+      render(
+        <MantineProvider>
+          <Categories vod={vod} />
+        </MantineProvider>
+      );
+      await screen.findByRole('checkbox', { name: 'Select Category 01' });
+      const table = screen.getByRole('table');
+      expect(table).toHaveClass(editorClasses.categoryTable);
+      expect(table).not.toHaveAttribute('data-with-table-border');
+      expect(
+        table.closest(`.${editorClasses.categoryTableFrame}`)
+      ).toBeInTheDocument();
+    }
+  );
   it.each([false, true])(
     'groups bulk settings and omits numbering (VOD=%s)',
     async (vod) => {

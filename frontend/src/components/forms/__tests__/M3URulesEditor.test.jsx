@@ -123,6 +123,18 @@ describe('M3URulesEditor', () => {
       });
       expect(screen.queryByRole('table')).not.toBeInTheDocument();
       expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
+      const add = screen.getByRole('button', {
+        name: streamFilters ? 'Add filter' : 'Add rule',
+      });
+      expect(
+        guidance.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(
+        add.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(guidance).not.toHaveTextContent(
+        /category import rules remain separate|Without filters|Existing selections/
+      );
       fireEvent.click(
         screen.getByRole('button', {
           name: streamFilters ? 'Add filter' : 'Add rule',
@@ -130,6 +142,20 @@ describe('M3URulesEditor', () => {
       );
       expect(screen.getByRole('table')).toBeInTheDocument();
       expect(empty).not.toBeInTheDocument();
+      expect(
+        add.compareDocumentPosition(screen.getByRole('table')) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(
+          'Save all changes before previewing. The complete ordered list affects the result.'
+        )
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', {
+          name: streamFilters ? 'Preview filter' : 'Preview rule',
+        })
+      ).toBeDisabled();
     }
   );
   it('saves future policy without applying it or refreshing', async () => {

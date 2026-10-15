@@ -27,6 +27,7 @@ import { Eye, Settings as Cog } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import ListPagination from '../ListPagination.jsx';
 import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
+import editorClasses from './AccountEditor.module.css';
 
 export const VOD_CATEGORY_QUALITIES = ['4K', '1080p', '720p', '480p', 'SD'];
 
@@ -457,13 +458,8 @@ const VODCategoryFilter = ({
         )}
       </Flex>
 
-      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
-        <Table
-          striped
-          withTableBorder
-          stickyHeader
-          style={{ tableLayout: 'fixed' }}
-        >
+      <ScrollArea className={editorClasses.categoryTableFrame}>
+        <Table striped stickyHeader className={editorClasses.categoryTable}>
           <TableThead>
             <TableTr>
               <TableTh w={44}>
