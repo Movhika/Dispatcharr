@@ -104,6 +104,34 @@ describe('M3URulesEditor', () => {
     await load();
     expect(API.getM3URules).toHaveBeenCalledWith(7, 'group-rules', 'live');
   });
+  it.each([false, true])(
+    'shows guidance and an empty-state alert without table headings (stream filters=%s)',
+    async (streamFilters) => {
+      renderEditor({ streamFilters });
+      const empty = await screen.findByText(
+        streamFilters
+          ? 'No stream filters configured.'
+          : 'No category filters configured.'
+      );
+      expect(empty.closest('[role="alert"]')).toBeInTheDocument();
+      const guidance = screen
+        .getByText('Order matters.')
+        .closest('[role="alert"]');
+      expect(guidance).toHaveAttribute('data-variant', 'light');
+      expect(guidance).toHaveStyle({
+        '--alert-color': 'var(--mantine-color-blue-light-color)',
+      });
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(screen.queryByRole('columnheader')).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: streamFilters ? 'Add filter' : 'Add rule',
+        })
+      );
+      expect(screen.getByRole('table')).toBeInTheDocument();
+      expect(empty).not.toBeInTheDocument();
+    }
+  );
   it('saves future policy without applying it or refreshing', async () => {
     await load();
     fireEvent.change(screen.getByLabelText('Regular expression'), {
@@ -335,7 +363,8 @@ describe('M3URulesEditor', () => {
       'true'
     );
     expect(screen.getByLabelText('Preview rule')).toBeDisabled();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('Order matters.');
   });
   it('does not show a failed evaluation as zero matches or duplicate its error', async () => {
     await load();

@@ -1100,9 +1100,6 @@ const LiveGroupFilter = ({
                   { value: 'never', label: 'Never remove' },
                 ]}
               />
-              <Text size="xs" c="dimmed">
-                Numbering and channel ranges remain configured per category.
-              </Text>
             </Stack>
           </Paper>
           <Group justify="flex-end">

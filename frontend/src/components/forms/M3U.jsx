@@ -688,20 +688,26 @@ const M3U = ({
                         multiline
                         maw={320}
                         withArrow
+                        events={{ hover: true, focus: true, touch: true }}
                       >
-                        <Switch
-                          id="enable_vod"
-                          name="enable_vod"
-                          size="sm"
-                          aria-label="Enable VOD"
-                          disabled={accountType !== 'XC'}
-                          checked={accountType === 'XC' && vodEnabled}
-                          onChange={(event) => {
-                            const enabled = event.currentTarget.checked;
-                            setVodEnabled(enabled);
-                            form.setFieldValue('enable_vod', enabled);
-                          }}
-                        />
+                        <span
+                          style={{ display: 'inline-flex' }}
+                          tabIndex={accountType !== 'XC' ? 0 : undefined}
+                        >
+                          <Switch
+                            id="enable_vod"
+                            name="enable_vod"
+                            size="sm"
+                            aria-label="Enable VOD"
+                            disabled={accountType !== 'XC'}
+                            checked={accountType === 'XC' && vodEnabled}
+                            onChange={(event) => {
+                              const enabled = event.currentTarget.checked;
+                              setVodEnabled(enabled);
+                              form.setFieldValue('enable_vod', enabled);
+                            }}
+                          />
+                        </span>
                       </Tooltip>
                     </Group>
                     {accountType === 'XC' ? (
@@ -771,21 +777,31 @@ const M3U = ({
                         multiline
                         maw={320}
                         withArrow
+                        events={{ hover: true, focus: true, touch: true }}
                       >
-                        <Switch
-                          size="sm"
-                          aria-label="Enable separate VOD refresh schedule"
-                          disabled={accountType !== 'XC' || !vodEnabled}
-                          checked={accountType === 'XC' && !vodRefreshAfterLive}
-                          onChange={(event) => {
-                            const afterLive = !event.currentTarget.checked;
-                            setVodRefreshAfterLive(afterLive);
-                            form.setFieldValue(
-                              'vod_refresh_after_live',
-                              afterLive
-                            );
-                          }}
-                        />
+                        <span
+                          style={{ display: 'inline-flex' }}
+                          tabIndex={
+                            accountType !== 'XC' || !vodEnabled ? 0 : undefined
+                          }
+                        >
+                          <Switch
+                            size="sm"
+                            aria-label="Enable separate VOD refresh schedule"
+                            disabled={accountType !== 'XC' || !vodEnabled}
+                            checked={
+                              accountType === 'XC' && !vodRefreshAfterLive
+                            }
+                            onChange={(event) => {
+                              const afterLive = !event.currentTarget.checked;
+                              setVodRefreshAfterLive(afterLive);
+                              form.setFieldValue(
+                                'vod_refresh_after_live',
+                                afterLive
+                              );
+                            }}
+                          />
+                        </span>
                       </Tooltip>
                     </Group>
                     {accountType === 'XC' && vodEnabled ? (

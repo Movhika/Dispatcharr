@@ -107,6 +107,9 @@ describe('Category selection with Mantine controls', () => {
         within(dialog).queryByLabelText('Numbering mode')
       ).not.toBeInTheDocument();
       expect(
+        within(dialog).queryByText(/Numbering and channel ranges/)
+      ).not.toBeInTheDocument();
+      expect(
         within(dialog).getByRole('group', {
           name: vod ? 'Category content settings' : 'Channel sync settings',
         })

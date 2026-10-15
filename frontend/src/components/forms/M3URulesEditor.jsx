@@ -37,7 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { Eye, GripVertical, Plus, Save, Trash2 } from 'lucide-react';
+import { Eye, GripVertical, Info, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api.js';
 import { showNotification } from '../../utils/notificationUtils.js';
 import {
@@ -370,13 +370,20 @@ const M3URulesEditor = ({
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between">
-        <Text size="sm" c="dimmed">
-          First matching rule wins.{' '}
-          {streamFilters
-            ? 'Filters decide which individual Live streams are imported.'
-            : 'Rules decide how new categories are imported. Existing selections change only through Apply to existing.'}
-        </Text>
+      <Group justify="space-between" align="flex-start">
+        <Alert
+          icon={<Info size={16} />}
+          color="blue"
+          variant="light"
+          style={{ flex: '1 1 320px' }}
+        >
+          <Text size="sm">
+            <strong>Order matters.</strong> The first matching rule wins.{' '}
+            {streamFilters
+              ? 'Stream filters decide whether individual Live TV streams are imported; category import rules remain separate. Without filters, streams from enabled categories are imported.'
+              : 'Category import rules decide how new categories are imported. New unmatched categories are imported disabled. Existing selections change only through Apply to existing.'}
+          </Text>
+        </Alert>
         <Button
           size="xs"
           leftSection={<Plus size={14} />}
@@ -395,252 +402,266 @@ const M3URulesEditor = ({
       )}
       {busy && <Loader size="sm" />}
       {!rules.length && !busy && (
-        <Text c="dimmed" size="sm">
+        <Alert color="gray" variant="light">
           {streamFilters
-            ? 'No filters configured. Streams from enabled groups are imported unless a matching filter excludes them.'
-            : 'No rules configured. New unmatched categories are imported disabled; existing selections are unchanged.'}
-        </Text>
+            ? 'No stream filters configured.'
+            : 'No category filters configured.'}
+        </Alert>
       )}
-      <ScrollArea>
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis]}
-          onDragEnd={reorder}
-        >
-          <SortableContext
-            items={rules.map((rule) => rule.id)}
-            strategy={verticalListSortingStrategy}
+      {rules.length > 0 && (
+        <ScrollArea>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis]}
+            onDragEnd={reorder}
           >
-            <Table striped withTableBorder miw={850}>
-              <TableThead>
-                <TableTr>
-                  <TableTh
-                    aria-label={`${streamFilters ? 'Filter' : 'Rule'} order`}
-                  />
-                  <TableTh>{streamFilters ? 'Field' : 'Match'}</TableTh>
-                  <TableTh>Regular expression</TableTh>
-                  {!streamFilters && <TableTh>Item mode</TableTh>}
-                  <TableTh>Result</TableTh>
-                  <TableTh>Case</TableTh>
-                  {!streamFilters && <TableTh>Status</TableTh>}
-                  <TableTh>Actions</TableTh>
-                </TableTr>
-              </TableThead>
-              <TableTbody>
-                {rules.map((rule) => (
-                  <SortableRow
-                    key={rule.id}
-                    id={rule.id}
-                    error={rowErrors[rule.id]}
-                    disabled={busy}
-                    noun={noun}
-                  >
-                    <TableTd>
-                      <Select
-                        size="xs"
-                        aria-label={
-                          streamFilters ? 'Filter field' : 'Rule match field'
-                        }
-                        value={
-                          streamFilters ? rule.filter_type : rule.match_field
-                        }
-                        disabled={busy}
-                        data={
-                          streamFilters
-                            ? [
-                                { value: 'name', label: 'Stream name' },
-                                { value: 'url', label: 'Stream URL' },
-                                ...(rule.filter_type === 'group'
-                                  ? [
-                                      {
-                                        value: 'group',
-                                        label: 'Group name (legacy)',
-                                      },
-                                    ]
-                                  : []),
-                              ]
-                            : [
-                                { value: 'group_name', label: 'Category name' },
-                                { value: 'item_name', label: 'Contained item' },
-                              ]
-                        }
-                        onChange={(value) =>
-                          update(rule.id, {
-                            [streamFilters ? 'filter_type' : 'match_field']:
-                              value,
-                          })
-                        }
-                      />
-                    </TableTd>
-                    <TableTd>
-                      <TextInput
-                        size="xs"
-                        aria-label="Regular expression"
-                        value={rule.regex_pattern}
-                        error={rowErrors[rule.id]}
-                        disabled={busy}
-                        onChange={(event) =>
-                          update(rule.id, {
-                            regex_pattern: event.currentTarget.value,
-                          })
-                        }
-                      />
-                      {warnings[rule.id]?.map((message) => (
-                        <Text key={message} size="xs" c="yellow" role="note">
-                          {message}
-                        </Text>
-                      ))}
-                    </TableTd>
-                    {!streamFilters && (
+            <SortableContext
+              items={rules.map((rule) => rule.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <Table striped withTableBorder miw={850}>
+                <TableThead>
+                  <TableTr>
+                    <TableTh
+                      aria-label={`${streamFilters ? 'Filter' : 'Rule'} order`}
+                    />
+                    <TableTh>{streamFilters ? 'Field' : 'Match'}</TableTh>
+                    <TableTh>Regular expression</TableTh>
+                    {!streamFilters && <TableTh>Item mode</TableTh>}
+                    <TableTh>Result</TableTh>
+                    <TableTh>Case</TableTh>
+                    {!streamFilters && <TableTh>Status</TableTh>}
+                    <TableTh>Actions</TableTh>
+                  </TableTr>
+                </TableThead>
+                <TableTbody>
+                  {rules.map((rule) => (
+                    <SortableRow
+                      key={rule.id}
+                      id={rule.id}
+                      error={rowErrors[rule.id]}
+                      disabled={busy}
+                      noun={noun}
+                    >
                       <TableTd>
                         <Select
                           size="xs"
-                          aria-label="Item matching mode"
-                          value={rule.match_mode}
-                          disabled={busy || rule.match_field !== 'item_name'}
-                          data={[
-                            { value: 'any', label: 'Any item' },
-                            { value: 'all', label: 'All items' },
-                          ]}
-                          onChange={(value) =>
-                            update(rule.id, { match_mode: value })
+                          aria-label={
+                            streamFilters ? 'Filter field' : 'Rule match field'
                           }
-                        />
-                      </TableTd>
-                    )}
-                    <TableTd>
-                      <Select
-                        size="xs"
-                        aria-label="Rule result"
-                        disabled={busy}
-                        value={
-                          streamFilters
-                            ? rule.exclude
-                              ? 'exclude'
-                              : 'include'
-                            : rule.action
-                        }
-                        data={
-                          streamFilters
-                            ? [
-                                { value: 'exclude', label: 'Exclude' },
-                                { value: 'include', label: 'Include' },
-                              ]
-                            : [
-                                { value: 'enable', label: 'Import enabled' },
-                                { value: 'disable', label: 'Import disabled' },
-                                { value: 'ignore', label: 'Ignore category' },
-                              ]
-                        }
-                        onChange={(value) =>
-                          update(
-                            rule.id,
-                            streamFilters
-                              ? { exclude: value === 'exclude' }
-                              : { action: value }
-                          )
-                        }
-                      />
-                    </TableTd>
-                    <TableTd>
-                      <Checkbox
-                        aria-label="Case sensitive"
-                        disabled={busy}
-                        checked={
-                          streamFilters
-                            ? rule.custom_properties?.case_sensitive !== false
-                            : rule.case_sensitive
-                        }
-                        onChange={(event) =>
-                          update(
-                            rule.id,
-                            streamFilters
-                              ? {
-                                  custom_properties: {
-                                    ...(rule.custom_properties || {}),
-                                    case_sensitive: event.currentTarget.checked,
-                                  },
-                                }
-                              : { case_sensitive: event.currentTarget.checked }
-                          )
-                        }
-                      />
-                    </TableTd>
-                    {!streamFilters && (
-                      <TableTd>
-                        <Checkbox
-                          aria-label="Rule enabled"
+                          value={
+                            streamFilters ? rule.filter_type : rule.match_field
+                          }
                           disabled={busy}
-                          checked={rule.enabled}
-                          onChange={(event) =>
+                          data={
+                            streamFilters
+                              ? [
+                                  { value: 'name', label: 'Stream name' },
+                                  { value: 'url', label: 'Stream URL' },
+                                  ...(rule.filter_type === 'group'
+                                    ? [
+                                        {
+                                          value: 'group',
+                                          label: 'Group name (legacy)',
+                                        },
+                                      ]
+                                    : []),
+                                ]
+                              : [
+                                  {
+                                    value: 'group_name',
+                                    label: 'Category name',
+                                  },
+                                  {
+                                    value: 'item_name',
+                                    label: 'Contained item',
+                                  },
+                                ]
+                          }
+                          onChange={(value) =>
                             update(rule.id, {
-                              enabled: event.currentTarget.checked,
+                              [streamFilters ? 'filter_type' : 'match_field']:
+                                value,
                             })
                           }
                         />
                       </TableTd>
-                    )}
-                    <TableTd>
-                      <Group gap={4} wrap="nowrap">
-                        <Tooltip label={`Save ${noun}`}>
-                          <ActionIcon
-                            aria-label={`Save ${noun}`}
-                            variant="subtle"
-                            disabled={busy}
-                            onClick={() => saveRow(rule)}
-                          >
-                            <Save size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip
-                          label={
-                            hasUnsavedChanges
-                              ? 'Save all changes before previewing.'
-                              : `Preview ${noun}`
+                      <TableTd>
+                        <TextInput
+                          size="xs"
+                          aria-label="Regular expression"
+                          value={rule.regex_pattern}
+                          error={rowErrors[rule.id]}
+                          disabled={busy}
+                          onChange={(event) =>
+                            update(rule.id, {
+                              regex_pattern: event.currentTarget.value,
+                            })
                           }
-                          events={{ hover: true, focus: true, touch: true }}
-                          withArrow
-                        >
-                          <span
-                            style={{ display: 'inline-flex' }}
-                            tabIndex={hasUnsavedChanges ? 0 : undefined}
-                            aria-label={
+                        />
+                        {warnings[rule.id]?.map((message) => (
+                          <Text key={message} size="xs" c="yellow" role="note">
+                            {message}
+                          </Text>
+                        ))}
+                      </TableTd>
+                      {!streamFilters && (
+                        <TableTd>
+                          <Select
+                            size="xs"
+                            aria-label="Item matching mode"
+                            value={rule.match_mode}
+                            disabled={busy || rule.match_field !== 'item_name'}
+                            data={[
+                              { value: 'any', label: 'Any item' },
+                              { value: 'all', label: 'All items' },
+                            ]}
+                            onChange={(value) =>
+                              update(rule.id, { match_mode: value })
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      <TableTd>
+                        <Select
+                          size="xs"
+                          aria-label="Rule result"
+                          disabled={busy}
+                          value={
+                            streamFilters
+                              ? rule.exclude
+                                ? 'exclude'
+                                : 'include'
+                              : rule.action
+                          }
+                          data={
+                            streamFilters
+                              ? [
+                                  { value: 'exclude', label: 'Exclude' },
+                                  { value: 'include', label: 'Include' },
+                                ]
+                              : [
+                                  { value: 'enable', label: 'Import enabled' },
+                                  {
+                                    value: 'disable',
+                                    label: 'Import disabled',
+                                  },
+                                  { value: 'ignore', label: 'Ignore category' },
+                                ]
+                          }
+                          onChange={(value) =>
+                            update(
+                              rule.id,
+                              streamFilters
+                                ? { exclude: value === 'exclude' }
+                                : { action: value }
+                            )
+                          }
+                        />
+                      </TableTd>
+                      <TableTd>
+                        <Checkbox
+                          aria-label="Case sensitive"
+                          disabled={busy}
+                          checked={
+                            streamFilters
+                              ? rule.custom_properties?.case_sensitive !== false
+                              : rule.case_sensitive
+                          }
+                          onChange={(event) =>
+                            update(
+                              rule.id,
+                              streamFilters
+                                ? {
+                                    custom_properties: {
+                                      ...(rule.custom_properties || {}),
+                                      case_sensitive:
+                                        event.currentTarget.checked,
+                                    },
+                                  }
+                                : {
+                                    case_sensitive: event.currentTarget.checked,
+                                  }
+                            )
+                          }
+                        />
+                      </TableTd>
+                      {!streamFilters && (
+                        <TableTd>
+                          <Checkbox
+                            aria-label="Rule enabled"
+                            disabled={busy}
+                            checked={rule.enabled}
+                            onChange={(event) =>
+                              update(rule.id, {
+                                enabled: event.currentTarget.checked,
+                              })
+                            }
+                          />
+                        </TableTd>
+                      )}
+                      <TableTd>
+                        <Group gap={4} wrap="nowrap">
+                          <Tooltip label={`Save ${noun}`}>
+                            <ActionIcon
+                              aria-label={`Save ${noun}`}
+                              variant="subtle"
+                              disabled={busy}
+                              onClick={() => saveRow(rule)}
+                            >
+                              <Save size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip
+                            label={
                               hasUnsavedChanges
                                 ? 'Save all changes before previewing.'
-                                : undefined
+                                : `Preview ${noun}`
                             }
+                            events={{ hover: true, focus: true, touch: true }}
+                            withArrow
                           >
-                            <ActionIcon
-                              aria-label={`Preview ${noun}`}
-                              variant="subtle"
-                              disabled={busy || hasUnsavedChanges}
-                              onClick={() => openPreview(rule)}
+                            <span
+                              style={{ display: 'inline-flex' }}
+                              tabIndex={hasUnsavedChanges ? 0 : undefined}
+                              aria-label={
+                                hasUnsavedChanges
+                                  ? 'Save all changes before previewing.'
+                                  : undefined
+                              }
                             >
-                              <Eye size={16} />
+                              <ActionIcon
+                                aria-label={`Preview ${noun}`}
+                                variant="subtle"
+                                disabled={busy || hasUnsavedChanges}
+                                onClick={() => openPreview(rule)}
+                              >
+                                <Eye size={16} />
+                              </ActionIcon>
+                            </span>
+                          </Tooltip>
+                          <Tooltip label={`Delete ${noun}`}>
+                            <ActionIcon
+                              aria-label={`Delete ${noun}`}
+                              color="red"
+                              variant="subtle"
+                              disabled={busy}
+                              onClick={() => setDeleteTarget(rule)}
+                            >
+                              <Trash2 size={16} />
                             </ActionIcon>
-                          </span>
-                        </Tooltip>
-                        <Tooltip label={`Delete ${noun}`}>
-                          <ActionIcon
-                            aria-label={`Delete ${noun}`}
-                            color="red"
-                            variant="subtle"
-                            disabled={busy}
-                            onClick={() => setDeleteTarget(rule)}
-                          >
-                            <Trash2 size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </TableTd>
-                  </SortableRow>
-                ))}
-              </TableTbody>
-            </Table>
-          </SortableContext>
-        </DndContext>
-      </ScrollArea>
+                          </Tooltip>
+                        </Group>
+                      </TableTd>
+                    </SortableRow>
+                  ))}
+                </TableTbody>
+              </Table>
+            </SortableContext>
+          </DndContext>
+        </ScrollArea>
+      )}
       <Modal
         opened={!!previewTarget}
         onClose={closePreview}
