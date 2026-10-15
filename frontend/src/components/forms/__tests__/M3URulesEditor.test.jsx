@@ -1005,6 +1005,29 @@ describe('M3URulesEditor', () => {
     expect(API.saveM3URule).not.toHaveBeenCalled();
   });
 
+  it('clears a saved duplicate marker when saving an earlier rule disabled resolves it', async () => {
+    API.getM3URules.mockResolvedValue([rule(), rule({ id: 2, order: 1 })]);
+    API.saveM3URule.mockResolvedValue(rule({ enabled: false }));
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('Regular expression')[1]).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    );
+    fireEvent.click(screen.getAllByLabelText('Rule enabled')[0]);
+    fireEvent.click(screen.getAllByLabelText('Save rule')[0]);
+    await waitFor(() => expect(API.saveM3URule).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getAllByLabelText('Regular expression')[1]
+      ).not.toHaveAttribute('aria-invalid', 'true')
+    );
+    expect(
+      screen.queryByRole('img', { name: /identical active match/ })
+    ).not.toBeInTheDocument();
+  });
+
   it('does not roll back a saved order when the following coverage check fails', async () => {
     await load([rule(), rule({ id: 2, regex_pattern: 'Sports', order: 1 })]);
     API.analyzeM3URules.mockRejectedValue(new Error('Analysis unavailable'));

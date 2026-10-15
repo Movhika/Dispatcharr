@@ -164,6 +164,23 @@ const RuleMarker = ({ error, cause, coveredBy }) => {
   );
 };
 
+const savedRuleErrors = (rows, streamFilters) => {
+  const errors = {};
+  rows.forEach((row, index) => {
+    const duplicate = findDuplicateRule(
+      row,
+      rows.slice(0, index),
+      streamFilters
+    );
+    if (!row.regex_pattern?.trim())
+      errors[row.id] = 'Enter a regular expression before saving.';
+    else if (duplicate)
+      errors[row.id] =
+        `An identical active match already exists (rule ${rows.findIndex((item) => item.id === duplicate.id) + 1}). Edit or remove the duplicate.`;
+  });
+  return errors;
+};
+
 const M3URulesEditor = ({
   accountId,
   scope,
@@ -264,19 +281,7 @@ const M3URulesEditor = ({
         setCoverage({ causes: {}, coveredBy: {} });
         return;
       }
-      const errors = {};
-      rows.forEach((row, index) => {
-        const duplicate = findDuplicateRule(
-          row,
-          rows.slice(0, index),
-          streamFilters
-        );
-        if (!row.regex_pattern?.trim())
-          errors[row.id] = 'Enter a regular expression before saving.';
-        else if (duplicate)
-          errors[row.id] =
-            `An identical active match already exists (rule ${rows.findIndex((item) => item.id === duplicate.id) + 1}). Edit or remove the duplicate.`;
-      });
+      const errors = savedRuleErrors(rows, streamFilters);
       try {
         const response = await API.analyzeM3URules(
           accountId,
@@ -506,8 +511,30 @@ const M3URulesEditor = ({
       const saved = await save(rule);
       if (saved) {
         setError(null);
+        const checkedSavedRows = checkedRows.map((item) =>
+          item.id === rule.id ? saved : item
+        );
+        const uncheckedDraftIds = new Set(
+          rules
+            .filter(
+              (item) =>
+                item.id !== rule.id && (item.isNew || dirtyIds.has(item.id))
+            )
+            .map((item) => String(item.id))
+        );
+        setRowErrors((current) => ({
+          // Other unsaved drafts were not part of this saved-list check.
+          ...Object.fromEntries(
+            Object.entries(current).filter(([id]) => uncheckedDraftIds.has(id))
+          ),
+          ...Object.fromEntries(
+            Object.entries(
+              savedRuleErrors(checkedSavedRows, streamFilters)
+            ).filter(([id]) => !uncheckedDraftIds.has(id))
+          ),
+        }));
         const checked = acceptCoverage(
-          checkedRows.map((item) => (item.id === rule.id ? saved : item)),
+          checkedSavedRows,
           {
             ...response,
             rule_coverage: response.rule_coverage?.map((row) => ({
