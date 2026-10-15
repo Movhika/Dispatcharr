@@ -1,0 +1,17 @@
+.ruleRow[data-covered='true'] {
+  color: var(--mantine-color-dimmed);
+
+  :global(.mantine-Input-input) {
+    color: var(--mantine-color-dimmed);
+  }
+}
+
+.coverageMarker {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--mantine-color-dimmed);
+}
+
+.coverageHint {
+  max-width: 32em;
+}

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Button,
   Checkbox,
   Group,
   Modal,
+  Popover,
   ScrollArea,
   Select,
   Stack,
@@ -35,7 +37,16 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { Eye, GripVertical, Info, Plus, Save, Trash2 } from 'lucide-react';
+import {
+  Ban,
+  CircleHelp,
+  Eye,
+  GripVertical,
+  Info,
+  Plus,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import API from '../../api.js';
 import {
   hideNotification,
@@ -49,17 +60,16 @@ import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import ListPagination from '../ListPagination.jsx';
 import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { formatApiError } from '../../utils.js';
-import {
-  getRuleWarnings,
-  getCoverageWarnings,
-} from './M3URulesEditor.utils.js';
+import { getRuleWarnings, getRuleCoverage } from './M3URulesEditor.utils.js';
 import editorClasses from './AccountEditor.module.css';
+import classes from './M3URulesEditor.module.css';
 
 const SortableRow = ({
   id,
   children,
   error,
   warning,
+  covered,
   dirty,
   disabled,
   noun,
@@ -72,6 +82,8 @@ const SortableRow = ({
       data-invalid={error ? 'true' : undefined}
       data-rule-id={id}
       data-warning={warning ? 'true' : undefined}
+      data-covered={covered ? 'true' : undefined}
+      className={classes.ruleRow}
       data-dirty={dirty ? 'true' : undefined}
       title={dirty ? 'Unsaved changes' : undefined}
       style={{
@@ -86,7 +98,9 @@ const SortableRow = ({
             ? 'var(--mantine-color-yellow-light)'
             : dirty
               ? 'var(--mantine-color-blue-light)'
-              : undefined,
+              : covered
+                ? 'var(--mantine-color-default-hover)'
+                : undefined,
       }}
     >
       <TableTd>
@@ -127,18 +141,101 @@ const M3URulesEditor = ({
   const [pageSize, setPageSize] = useState(50);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [pendingChange, setPendingChange] = useState(null);
-  const [coverageWarnings, setCoverageWarnings] = useState({});
+  const [regexHelpOpen, setRegexHelpOpen] = useState(false);
+  const [coverage, setCoverage] = useState({ causes: {}, coveredBy: {} });
+  const coverageRequest = useRef(0);
   const previewRequest = useRef(0);
   const shownWarnings = useRef(new Set());
+  const knownCauses = useRef(new Set());
   const savedRules = useRef(new Map());
   const errorNotificationId = `account-rules-${accountId}-${kind}-error`;
   const warningNotificationId = `account-rules-${accountId}-${kind}-warning`;
+  const coverageNotificationId = `account-rules-${accountId}-${kind}-coverage`;
   const { dateYearFormat, timeFormat } = useDateTimeFormat();
   const { toUserTime } = useTimeHelpers();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const payload = useCallback(
+    (rule) =>
+      streamFilters
+        ? {
+            filter_type: rule.filter_type,
+            regex_pattern: rule.regex_pattern,
+            exclude: rule.exclude,
+            order: rule.order,
+            custom_properties: {
+              ...(rule.custom_properties || {}),
+              case_sensitive: rule.custom_properties?.case_sensitive !== false,
+            },
+          }
+        : {
+            scope,
+            match_field: rule.match_field,
+            match_mode: rule.match_mode,
+            regex_pattern: rule.regex_pattern,
+            action: rule.action,
+            case_sensitive: rule.case_sensitive,
+            enabled: rule.enabled,
+            order: rule.order,
+          },
+    [streamFilters, scope]
+  );
+
+  const acceptCoverage = useCallback(
+    (rows, response, initial = false) => {
+      const found = getRuleCoverage(rows, response, streamFilters);
+      const causes = Object.values(found.causes);
+      const changed = causes.filter(
+        (cause) => !knownCauses.current.has(cause.key)
+      );
+      knownCauses.current = new Set(causes.map((cause) => cause.key));
+      setCoverage(found);
+      if (!causes.length) hideNotification(coverageNotificationId);
+      else if (!initial && changed.length) {
+        hideNotification(coverageNotificationId);
+        showNotification({
+          id: coverageNotificationId,
+          title: streamFilters
+            ? 'Stream filter warning'
+            : 'Import rule warning',
+          message: changed.map((cause) => cause.message).join('\n'),
+          color: 'yellow',
+          autoClose: false,
+        });
+      }
+    },
+    [coverageNotificationId, streamFilters]
+  );
+
+  const checkCoverage = useCallback(
+    async (rows, initial = false) => {
+      const requestId = ++coverageRequest.current;
+      if (!rows.length) {
+        acceptCoverage(rows, null, initial);
+        return;
+      }
+      try {
+        const response = await API.analyzeM3URules(
+          accountId,
+          kind,
+          rows.map((rule) => ({
+            ...payload(rule),
+            preview_id: String(rule.id),
+          }))
+        );
+        if (requestId !== coverageRequest.current) return;
+        // Reopening restores the markers quietly, without repeating old notices.
+        acceptCoverage(rows, response, initial);
+      } catch {
+        // Optional snapshot hints must not turn a successful save into an error.
+        if (requestId === coverageRequest.current)
+          setCoverage({ causes: {}, coveredBy: {} });
+      }
+    },
+    [accountId, kind, payload, acceptCoverage]
   );
 
   const load = useCallback(async () => {
@@ -150,12 +247,13 @@ const M3URulesEditor = ({
       setDirtyIds(new Set());
       setRowErrors({});
       setError(null);
+      void checkCoverage(loaded, true);
     } catch (error) {
       setError(error.message || 'Rules could not be loaded.');
     } finally {
       setBusy(false);
     }
-  }, [accountId, kind, scope]);
+  }, [accountId, kind, scope, checkCoverage]);
 
   useEffect(() => {
     load();
@@ -163,39 +261,18 @@ const M3URulesEditor = ({
   useEffect(
     () => () => {
       previewRequest.current += 1;
+      coverageRequest.current += 1;
     },
     []
   );
-
-  const payload = (rule) =>
-    streamFilters
-      ? {
-          filter_type: rule.filter_type,
-          regex_pattern: rule.regex_pattern,
-          exclude: rule.exclude,
-          order: rule.order,
-          custom_properties: {
-            ...(rule.custom_properties || {}),
-            case_sensitive: rule.custom_properties?.case_sensitive !== false,
-          },
-        }
-      : {
-          scope,
-          match_field: rule.match_field,
-          match_mode: rule.match_mode,
-          regex_pattern: rule.regex_pattern,
-          action: rule.action,
-          case_sensitive: rule.case_sensitive,
-          enabled: rule.enabled,
-          order: rule.order,
-        };
 
   useEffect(
     () => () => {
       hideNotification(errorNotificationId);
       hideNotification(warningNotificationId);
+      hideNotification(coverageNotificationId);
     },
-    [errorNotificationId, warningNotificationId]
+    [errorNotificationId, warningNotificationId, coverageNotificationId]
   );
 
   const update = (id, values) => {
@@ -219,7 +296,8 @@ const M3URulesEditor = ({
     });
     setRowErrors((current) => ({ ...current, [id]: undefined }));
     hideNotification(errorNotificationId);
-    setCoverageWarnings({});
+    coverageRequest.current += 1;
+    setCoverage({ causes: {}, coveredBy: {} });
   };
 
   const notifyError = (message) => {
@@ -282,11 +360,6 @@ const M3URulesEditor = ({
     );
     savedRules.current.delete(rule.id);
     savedRules.current.set(saved.id, saved);
-    if (rule.id !== saved.id)
-      setCoverageWarnings((current) => {
-        const { [rule.id]: warning, ...rest } = current;
-        return warning ? { ...rest, [saved.id]: warning } : rest;
-      });
     hideNotification(errorNotificationId);
     setRules((current) =>
       current.map((item) => (item.id === rule.id ? saved : item))
@@ -306,33 +379,19 @@ const M3URulesEditor = ({
     return saved;
   };
 
-  const checkCoverage = async (rows) => {
-    if (!rows.length) return false;
-    const response = await API.analyzeM3URules(
-      accountId,
-      kind,
-      rows.map((rule) => ({
-        ...payload(rule),
-        preview_id: String(rule.id),
-      }))
-    );
-    const found = getCoverageWarnings(rows, response, streamFilters);
-    setCoverageWarnings(found);
-    return Object.keys(found).length > 0;
-  };
-
-  const saveRow = async (rule, confirmed = false) => {
+  const saveRow = async (rule) => {
     setBusy(true);
+    coverageRequest.current += 1;
     try {
-      if (
-        rule.regex_pattern?.trim() &&
-        !confirmed &&
-        (await checkCoverage(persistedRows(rules, rule)))
-      ) {
-        setPendingChange({ type: 'save', rule });
-        return;
+      const saved = await save(rule);
+      if (saved) {
+        setError(null);
+        void checkCoverage(
+          persistedRows(
+            rules.map((item) => (item.id === rule.id ? saved : item))
+          )
+        );
       }
-      if (await save(rule)) setError(null);
     } catch (error) {
       setRowErrors((current) => ({
         ...current,
@@ -362,9 +421,8 @@ const M3URulesEditor = ({
       );
       if (requestId === previewRequest.current) {
         setPreview(response);
-        setCoverageWarnings(
-          getCoverageWarnings(draft, response, streamFilters)
-        );
+        coverageRequest.current += 1;
+        acceptCoverage(draft, response);
         hideNotification(errorNotificationId);
       }
     } catch (error) {
@@ -438,14 +496,11 @@ const M3URulesEditor = ({
     await persistOrder(reordered);
   };
 
-  const persistOrder = async (reordered, confirmed = false) => {
+  const persistOrder = async (reordered) => {
     const previous = rules;
     setBusy(true);
+    coverageRequest.current += 1;
     try {
-      if (!confirmed && (await checkCoverage(persistedRows(reordered)))) {
-        setPendingChange({ type: 'order', rules: reordered });
-        return;
-      }
       setRules(reordered);
       const saved = reordered.filter((rule) => !rule.isNew);
       await API.reorderM3URules(
@@ -462,6 +517,7 @@ const M3URulesEditor = ({
         });
       }
       hideNotification(errorNotificationId);
+      void checkCoverage(persistedRows(reordered));
     } catch (error) {
       setRules(previous);
       setError(error.message || 'Order could not be saved.');
@@ -472,11 +528,12 @@ const M3URulesEditor = ({
 
   const remove = async () => {
     setBusy(true);
+    coverageRequest.current += 1;
     try {
       if (!deleteTarget.isNew)
         await API.deleteM3URule(accountId, kind, deleteTarget.id);
       savedRules.current.delete(deleteTarget.id);
-      setCoverageWarnings({});
+      const remaining = rules.filter((rule) => rule.id !== deleteTarget.id);
       hideNotification(errorNotificationId);
       setRules((current) =>
         current.filter((rule) => rule.id !== deleteTarget.id)
@@ -488,6 +545,7 @@ const M3URulesEditor = ({
       });
       setRowErrors((current) => ({ ...current, [deleteTarget.id]: undefined }));
       setDeleteTarget(null);
+      void checkCoverage(persistedRows(remaining));
     } catch (error) {
       setError(error.message || 'Rule could not be deleted.');
     } finally {
@@ -500,25 +558,25 @@ const M3URulesEditor = ({
   const hasUnsavedChanges =
     dirtyIds.size > 0 || rules.some((rule) => rule.isNew);
   const warnings = getRuleWarnings(rules, streamFilters);
-  for (const [id, messages] of Object.entries(coverageWarnings)) {
-    warnings[id] = [...(warnings[id] || []), ...messages];
+  for (const [id, cause] of Object.entries(coverage.causes)) {
+    warnings[id] = [...(warnings[id] || []), cause.message];
   }
   const warningKey = JSON.stringify([
-    ...new Set(Object.values(warnings).flat()),
+    ...new Set(Object.values(getRuleWarnings(rules, streamFilters)).flat()),
   ]);
   useEffect(() => {
     const messages = JSON.parse(warningKey);
-    const changed =
-      messages.some((message) => !shownWarnings.current.has(message)) ||
-      shownWarnings.current.size !== messages.length;
+    const changed = messages.filter(
+      (message) => !shownWarnings.current.has(message)
+    );
     shownWarnings.current = new Set(messages);
     if (!messages.length) hideNotification(warningNotificationId);
-    else if (changed) {
+    else if (changed.length) {
       hideNotification(warningNotificationId);
       showNotification({
         id: warningNotificationId,
         title: streamFilters ? 'Stream filter warning' : 'Import rule warning',
-        message: messages.join('\n'),
+        message: changed.join('\n'),
         color: 'yellow',
         autoClose: false,
       });
@@ -529,7 +587,7 @@ const M3URulesEditor = ({
     onStateChange?.({
       dirty: hasUnsavedChanges,
       busy: busy || previewBusy,
-      overlayOpen: !!previewTarget || !!deleteTarget || !!pendingChange,
+      overlayOpen: !!previewTarget || !!deleteTarget || regexHelpOpen,
     });
   }, [
     hasUnsavedChanges,
@@ -537,7 +595,7 @@ const M3URulesEditor = ({
     previewBusy,
     previewTarget,
     deleteTarget,
-    pendingChange,
+    regexHelpOpen,
     onStateChange,
   ]);
 
@@ -614,7 +672,73 @@ const M3URulesEditor = ({
                       aria-label={`${streamFilters ? 'Filter' : 'Rule'} order`}
                     />
                     <TableTh>{streamFilters ? 'Field' : 'Match'}</TableTh>
-                    <TableTh>Regular expression</TableTh>
+                    <TableTh>
+                      <Group gap={4} wrap="nowrap">
+                        Regular expression
+                        <Popover
+                          opened={regexHelpOpen}
+                          onChange={setRegexHelpOpen}
+                          width={320}
+                          position="bottom"
+                          withArrow
+                          trapFocus
+                          returnFocus
+                        >
+                          <Popover.Target>
+                            <ActionIcon
+                              aria-label="Regular expression help"
+                              variant="subtle"
+                              color="gray"
+                              size="xs"
+                              onClick={() =>
+                                setRegexHelpOpen((opened) => !opened)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === 'Escape') {
+                                  event.stopPropagation();
+                                  setRegexHelpOpen(false);
+                                }
+                              }}
+                            >
+                              <CircleHelp size={14} />
+                            </ActionIcon>
+                          </Popover.Target>
+                          <Popover.Dropdown>
+                            <Stack gap="xs">
+                              <Text size="xs">
+                                Put specific rules first and broad fallback
+                                rules last. The first match wins.
+                              </Text>
+                              <Text size="xs">
+                                <code>KI</code> matches anywhere,{' '}
+                                <code>^KI</code> at the start, and{' '}
+                                <code>^KI$</code> the whole name.
+                              </Text>
+                              <Text size="xs">
+                                Escape literal characters such as{' '}
+                                <code>{'\\|'}</code> and <code>{'\\.'}</code>.
+                                Avoid empty alternatives such as{' '}
+                                <code>DE|</code>, which can match any name.
+                              </Text>
+                              <Text size="xs">
+                                Try sample names on{' '}
+                                <Anchor
+                                  href="https://regex101.com/"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  size="xs"
+                                >
+                                  regex101 (Python)
+                                </Anchor>
+                                . Do not paste credentials or private URLs. The
+                                app preview is authoritative; the backend uses
+                                Python&apos;s regex engine.
+                              </Text>
+                            </Stack>
+                          </Popover.Dropdown>
+                        </Popover>
+                      </Group>
+                    </TableTh>
                     {!streamFilters && <TableTh>Item mode</TableTh>}
                     <TableTh>Result</TableTh>
                     <TableTh>Case</TableTh>
@@ -629,6 +753,7 @@ const M3URulesEditor = ({
                       id={rule.id}
                       error={rowErrors[rule.id]}
                       warning={!!warnings[rule.id]?.length}
+                      covered={coverage.coveredBy[rule.id] !== undefined}
                       dirty={dirtyIds.has(rule.id) || rule.isNew}
                       disabled={busy}
                       noun={noun}
@@ -677,21 +802,53 @@ const M3URulesEditor = ({
                         />
                       </TableTd>
                       <TableTd>
-                        <TextInput
-                          size="xs"
-                          aria-label="Regular expression"
-                          sensitive={
-                            streamFilters && rule.filter_type === 'url'
-                          }
-                          value={rule.regex_pattern}
-                          error={!!rowErrors[rule.id]}
-                          disabled={busy}
-                          onChange={(event) =>
-                            update(rule.id, {
-                              regex_pattern: event.currentTarget.value,
-                            })
-                          }
-                        />
+                        <Group gap={6} wrap="nowrap" align="center">
+                          <TextInput
+                            style={{ flex: 1, minWidth: 0 }}
+                            size="xs"
+                            aria-label="Regular expression"
+                            sensitive={
+                              streamFilters && rule.filter_type === 'url'
+                            }
+                            value={rule.regex_pattern}
+                            error={!!rowErrors[rule.id]}
+                            disabled={busy}
+                            onChange={(event) =>
+                              update(rule.id, {
+                                regex_pattern: event.currentTarget.value,
+                              })
+                            }
+                          />
+                          {coverage.coveredBy[rule.id] !== undefined && (
+                            <Tooltip
+                              label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(coverage.coveredBy[rule.id])) + 1} in the last refresh snapshot. Move this rule earlier or narrow the earlier expression to give it matches.`}
+                              events={{ hover: true, focus: true, touch: true }}
+                              multiline
+                              w={280}
+                              withArrow
+                            >
+                              <span
+                                tabIndex={0}
+                                role="img"
+                                aria-label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(coverage.coveredBy[rule.id])) + 1} in the last refresh snapshot`}
+                                className={classes.coverageMarker}
+                              >
+                                <Ban size={15} aria-hidden="true" />
+                              </span>
+                            </Tooltip>
+                          )}
+                        </Group>
+                        {coverage.causes[rule.id] && (
+                          <Text
+                            size="xs"
+                            c="yellow"
+                            mt={4}
+                            className={classes.coverageHint}
+                          >
+                            {coverage.causes[rule.id].summary} Put specific
+                            rules before this rule, or narrow its expression.
+                          </Text>
+                        )}
                       </TableTd>
                       {!streamFilters && (
                         <TableTd>
@@ -984,23 +1141,6 @@ const M3URulesEditor = ({
           )}
         </Stack>
       </Modal>
-      <ConfirmationDialog
-        opened={!!pendingChange}
-        onClose={() => setPendingChange(null)}
-        onConfirm={() => {
-          const change = pendingChange;
-          setPendingChange(null);
-          if (change.type === 'save') saveRow(change.rule, true);
-          else persistOrder(change.rules, true);
-        }}
-        title="Check rule coverage"
-        message="A rule matches every available or remaining entry from the last refresh. Highlighted later rules may have no effect. Keep editing, or continue if this is intended."
-        cancelLabel="Keep editing"
-        confirmLabel={
-          pendingChange?.type === 'save' ? 'Save anyway' : 'Move anyway'
-        }
-        zIndex={300}
-      />
       <ConfirmationDialog
         opened={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}

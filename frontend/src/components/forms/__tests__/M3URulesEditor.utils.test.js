@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  getRuleWarnings,
-  getCoverageWarnings,
-} from '../M3URulesEditor.utils.js';
+import { getRuleWarnings, getRuleCoverage } from '../M3URulesEditor.utils.js';
 const rule = (id, regex_pattern, props = {}) => ({
   id,
   regex_pattern,
@@ -67,32 +64,54 @@ describe('inventory-based regex coverage', () => {
   it.each(['News|Sport', '[\\s\\S]+', '.*', '(?i)news|sport'])(
     'uses actual counts, not a special pattern check: %s',
     (pattern) => {
-      const warnings = getCoverageWarnings(
+      const coverage = getRuleCoverage(
         [rule(1, pattern), rule(2, 'Sport')],
         preview([10, 0])
       );
-      expect(warnings[1][0]).toContain('matches all 10 categories');
-      expect(warnings[2][0]).toContain(
-        'Later rules have no matches in this snapshot'
-      );
+      expect(coverage.causes[1].summary).toContain('Matches all 10 categories');
+      expect(coverage.causes[2]).toBeUndefined();
+      expect(coverage.coveredBy).toEqual({ 2: 1 });
     }
   );
   it('does not infer universality or warn about ordinary partial matches', () => {
     expect(
-      getCoverageWarnings([rule(1, '.*'), rule(2, 'Sport')], preview([3, 4]))
-    ).toEqual({});
+      getRuleCoverage([rule(1, '.*'), rule(2, 'Sport')], preview([3, 4]))
+    ).toEqual({ causes: {}, coveredBy: {} });
     expect(
-      getCoverageWarnings([rule(1, '.*')], {
+      getRuleCoverage([rule(1, '.*')], {
         inventory_count: 0,
         rule_coverage: [],
       })
-    ).toEqual({});
+    ).toEqual({ causes: {}, coveredBy: {} });
   });
   it('warns when a non-final rule consumes the remaining inventory, not a normal final fallback', () => {
     const rows = [rule(1, 'News'), rule(2, 'Sport'), rule(3, 'Events')];
-    expect(getCoverageWarnings(rows, preview([3, 7, 0]))[2][0]).toContain(
-      'all 7 remaining'
+    expect(
+      getRuleCoverage(rows, preview([3, 7, 0])).causes[2].summary
+    ).toContain('all 7 remaining');
+    expect(getRuleCoverage(rows.slice(0, 2), preview([3, 7]))).toEqual({
+      causes: {},
+      coveredBy: {},
+    });
+  });
+  it('does not mark disabled rules as covered', () => {
+    const coverage = getRuleCoverage(
+      [
+        rule(1, 'News|Sport'),
+        rule(2, 'Sport', { enabled: false }),
+        rule(3, 'News'),
+      ],
+      preview([10, 0, 0])
     );
-    expect(getCoverageWarnings(rows.slice(0, 2), preview([3, 7]))).toEqual({});
+    expect(coverage.coveredBy).toEqual({ 3: 1 });
+  });
+  it('keeps the cause identity stable when only covered rows move', () => {
+    const rows = [rule(1, 'News|Sport'), rule(2, 'Sport'), rule(3, 'News')];
+    const first = getRuleCoverage(rows, preview([10, 0, 0]));
+    const second = getRuleCoverage(
+      [rows[0], rows[2], rows[1]],
+      preview([10, 0, 0])
+    );
+    expect(first.causes[1].key).toBe(second.causes[1].key);
   });
 });

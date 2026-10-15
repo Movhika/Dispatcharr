@@ -67,7 +67,7 @@ describe('rule dialog unsaved changes', () => {
     render(<Harness />);
     fireEvent.click(screen.getByText('Start saving'));
     expect(screen.getByLabelText('Close modal')).toBeDisabled();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Save row'));
     fireEvent.click(screen.getByLabelText('Close modal'));
@@ -80,7 +80,7 @@ describe('rule dialog unsaved changes', () => {
   it('does not close the editor when Escape belongs to a nested dialog', () => {
     render(<Harness />);
     fireEvent.click(screen.getByText('Open preview'));
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
   });

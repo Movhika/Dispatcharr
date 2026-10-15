@@ -30,13 +30,13 @@ export const getRuleWarnings = (rules, streamFilters = false) => {
 
 // Coverage comes from the real backend regex engine and the last refresh inventory.
 // It describes this snapshot, not a proof that an expression matches every string.
-export const getCoverageWarnings = (rules, preview, streamFilters = false) => {
-  if (!preview?.inventory_count || !preview.rule_coverage) return {};
+export const getRuleCoverage = (rules, preview, streamFilters = false) => {
+  const coverage = { causes: {}, coveredBy: {} };
+  if (!preview?.inventory_count || !preview.rule_coverage) return coverage;
   const counts = new Map(
     preview.rule_coverage.map((row) => [String(row.rule_id), row.count])
   );
   const active = rules.filter((rule) => streamFilters || rule.enabled);
-  const warnings = {};
   const unit = streamFilters ? 'streams' : 'categories';
   let remaining = preview.inventory_count;
   active.forEach((rule, index) => {
@@ -47,16 +47,31 @@ export const getCoverageWarnings = (rules, preview, streamFilters = false) => {
       count === remaining &&
       (later.length || count === preview.inventory_count)
     ) {
-      const message =
+      const summary =
         count === preview.inventory_count
-          ? `This rule matches all ${count} ${unit} from the last refresh. Check whether this is intended.`
-          : `This rule matches all ${count} remaining ${unit} from the last refresh.`;
-      const detail = later.length
-        ? ' Later rules have no matches in this snapshot.'
-        : '';
-      for (const row of [rule, ...later]) warnings[row.id] = [message + detail];
+          ? `Matches all ${count} ${unit} from the last refresh.`
+          : `Matches all ${count} remaining ${unit} from the last refresh.`;
+      coverage.causes[rule.id] = {
+        summary,
+        message: `${summary} Check whether this is intended.${later.length ? ' Later rules have no matches in this snapshot.' : ''}`,
+        // Downstream reordering does not change the cause of this warning.
+        key: JSON.stringify([
+          rule.id,
+          rule.regex_pattern,
+          streamFilters ? rule.filter_type : rule.match_field,
+          streamFilters ? rule.exclude : rule.action,
+          streamFilters
+            ? rule.custom_properties?.case_sensitive !== false
+            : !!rule.case_sensitive,
+          !streamFilters && rule.match_mode,
+          count,
+          preview.inventory_count,
+          preview.last_completed_refresh,
+        ]),
+      };
+      for (const row of later) coverage.coveredBy[row.id] = rule.id;
     }
     remaining -= count;
   });
-  return warnings;
+  return coverage;
 };

@@ -2176,7 +2176,8 @@ export default class API {
     rules,
     targetId,
     page,
-    pageSize
+    pageSize,
+    { notifyOnError = true } = {}
   ) {
     try {
       return await request(
@@ -2184,12 +2185,13 @@ export default class API {
         { method: 'POST', body: { rules, target_id: String(targetId) } }
       );
     } catch (error) {
-      ruleErrorNotification(
-        'Failed to preview account rules',
-        error,
-        accountId,
-        kind
-      );
+      if (notifyOnError)
+        ruleErrorNotification(
+          'Failed to preview account rules',
+          error,
+          accountId,
+          kind
+        );
       throw error;
     }
   }
@@ -2221,7 +2223,8 @@ export default class API {
       rules,
       rules[0].preview_id,
       1,
-      1
+      1,
+      { notifyOnError: false }
     );
   }
 

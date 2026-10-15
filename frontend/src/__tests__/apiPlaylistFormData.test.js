@@ -102,6 +102,29 @@ describe('account import rule requests', () => {
       target_id: 'new',
     });
   });
+  it('uses the same read-only snapshot endpoint for quiet coverage analysis', async () => {
+    const rules = [{ preview_id: '1', regex_pattern: 'News' }];
+    await API.analyzeM3URules(7, 'group-rules', rules);
+    expect(globalThis.fetch.mock.calls[0][0]).toContain(
+      '/preview-draft/?page=1&page_size=1'
+    );
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
+      rules,
+      target_id: '1',
+    });
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
+  it('does not toast optional background analysis errors but still rejects them', async () => {
+    globalThis.fetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Unavailable',
+    });
+    await expect(
+      API.analyzeM3URules(7, 'filters', [{ preview_id: '1' }])
+    ).rejects.toThrow();
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
   it('saves and applies the previewed draft in one request', async () => {
     const rules = [{ preview_id: '2', action: 'enable' }];
     await API.saveApplyM3UGroupRules(7, rules, 2);
