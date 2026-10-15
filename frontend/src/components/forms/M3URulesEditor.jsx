@@ -48,17 +48,22 @@ import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { formatApiError } from '../../utils.js';
 import { getRuleWarnings } from './M3URulesEditor.utils.js';
 
-const SortableRow = ({ id, children, error, disabled, noun }) => {
+const SortableRow = ({ id, children, error, warning, disabled, noun }) => {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id, disabled });
   return (
     <TableTr
       ref={setNodeRef}
       data-invalid={error ? 'true' : undefined}
+      data-warning={warning ? 'true' : undefined}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        backgroundColor: error ? 'var(--mantine-color-red-light)' : undefined,
+        backgroundColor: error
+          ? 'var(--mantine-color-red-light)'
+          : warning
+            ? 'var(--mantine-color-yellow-light)'
+            : undefined,
       }}
     >
       <TableTd>
@@ -99,6 +104,7 @@ const M3URulesEditor = ({
   const [previewBusy, setPreviewBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const previewRequest = useRef(0);
+  const shownWarnings = useRef(new Set());
   const { dateYearFormat, timeFormat } = useDateTimeFormat();
   const { toUserTime } = useTimeHelpers();
   const sensors = useSensors(
@@ -184,10 +190,18 @@ const M3URulesEditor = ({
 
   const save = async (rule, notify = true) => {
     if (!rule.regex_pattern?.trim()) {
+      const message = 'Enter a regular expression before saving.';
       setRowErrors((current) => ({
         ...current,
-        [rule.id]: 'Enter a regular expression before saving.',
+        [rule.id]: message,
       }));
+      showNotification({
+        title: streamFilters
+          ? 'Stream filter was not saved'
+          : 'Import rule was not saved',
+        message,
+        color: 'red',
+      });
       return null;
     }
     const saved = await API.saveM3URule(
@@ -228,7 +242,13 @@ const M3URulesEditor = ({
     }
   };
 
-  const loadPreview = async (draft, target, nextPage, nextPageSize) => {
+  const loadPreview = async (
+    draft,
+    target,
+    nextPage,
+    nextPageSize,
+    notify = false
+  ) => {
     const requestId = ++previewRequest.current;
     setPreviewBusy(true);
     setPreviewError(null);
@@ -245,7 +265,19 @@ const M3URulesEditor = ({
         nextPage,
         nextPageSize
       );
-      if (requestId === previewRequest.current) setPreview(response);
+      if (requestId === previewRequest.current) {
+        setPreview(response);
+        if (notify && !response.catalog_complete)
+          showNotification({
+            title: streamFilters
+              ? 'Stream filter preview notice'
+              : 'Import rule preview notice',
+            message: streamFilters
+              ? 'No complete pre-filter catalog is available yet. This preview uses currently imported streams; run a Live refresh once to include excluded streams.'
+              : 'No complete group inventory is available yet. Contained-item rules use currently imported names. Save the item rule and run a refresh once to load names from disabled groups or categories.',
+            color: 'yellow',
+          });
+      }
     } catch (error) {
       if (requestId === previewRequest.current)
         setPreviewError(formatApiError(error));
@@ -264,7 +296,7 @@ const M3URulesEditor = ({
     setPreviewDraft(draft);
     setPreview(null);
     setPage(1);
-    loadPreview(draft, rule, 1, pageSize);
+    loadPreview(draft, rule, 1, pageSize, true);
   };
 
   const closePreview = () => {
@@ -360,6 +392,22 @@ const M3URulesEditor = ({
   const hasUnsavedChanges =
     dirtyIds.size > 0 || rules.some((rule) => rule.isNew);
   const warnings = getRuleWarnings(rules, streamFilters);
+  const warningKey = JSON.stringify([
+    ...new Set(Object.values(warnings).flat()),
+  ]);
+  useEffect(() => {
+    const messages = JSON.parse(warningKey);
+    const added = messages.filter(
+      (message) => !shownWarnings.current.has(message)
+    );
+    shownWarnings.current = new Set(messages);
+    if (added.length)
+      showNotification({
+        title: streamFilters ? 'Stream filter warning' : 'Import rule warning',
+        message: added.join('\n'),
+        color: 'yellow',
+      });
+  }, [warningKey, streamFilters]);
   const previewRows = preview?.results || [];
   const refreshedAt = preview?.last_completed_refresh
     ? toUserTime(preview.last_completed_refresh).format(
@@ -398,8 +446,7 @@ const M3URulesEditor = ({
           Add {streamFilters ? 'filter' : 'rule'}
         </Button>
       </Group>
-      {error && <Alert color="red">{error}</Alert>}
-      {!rules.length && !busy && (
+      {!rules.length && !busy && !error && (
         <Alert color="gray" variant="light">
           {streamFilters
             ? 'No stream filters configured.'
@@ -439,6 +486,7 @@ const M3URulesEditor = ({
                       key={rule.id}
                       id={rule.id}
                       error={rowErrors[rule.id]}
+                      warning={!!warnings[rule.id]?.length}
                       disabled={busy}
                       noun={noun}
                     >
@@ -493,7 +541,7 @@ const M3URulesEditor = ({
                             streamFilters && rule.filter_type === 'url'
                           }
                           value={rule.regex_pattern}
-                          error={rowErrors[rule.id]}
+                          error={!!rowErrors[rule.id]}
                           disabled={busy}
                           onChange={(event) =>
                             update(rule.id, {
@@ -501,11 +549,6 @@ const M3URulesEditor = ({
                             })
                           }
                         />
-                        {warnings[rule.id]?.map((message) => (
-                          <Text key={message} size="xs" c="yellow" role="note">
-                            {message}
-                          </Text>
-                        ))}
                       </TableTd>
                       {!streamFilters && (
                         <TableTd>
@@ -674,24 +717,23 @@ const M3URulesEditor = ({
             The complete saved ordered list is evaluated. Only entries for which
             this rule is the first match are shown.
           </Text>
-          {!streamFilters && preview && !preview.catalog_complete && (
-            <Alert color="yellow">
-              No complete group inventory is available yet. Contained-item rules
-              use currently imported names. Save the item rule and run a refresh
-              once to load names from disabled groups or categories.
-            </Alert>
-          )}
-          {streamFilters && preview && (
-            <Alert color={preview?.catalog_complete ? 'blue' : 'yellow'}>
-              {preview?.catalog_complete
-                ? `Data from the last completed Live refresh: ${refreshedAt}. Excluded streams remain available in this preview.`
-                : 'No complete pre-filter catalog is available yet. This preview uses currently imported streams; run a Live refresh once to include excluded streams.'}
+          {streamFilters && preview?.catalog_complete && (
+            <Alert color="blue">
+              {`Data from the last completed Live refresh: ${refreshedAt}. Excluded streams remain available in this preview.`}
               {preview?.refresh_in_progress &&
                 ' A refresh is running; this preview still uses the previous completed snapshot.'}
             </Alert>
           )}
-          {previewError && <Alert color="red">{previewError}</Alert>}
-          <Text fw={600}>
+          <Text
+            fw={600}
+            c={
+              previewError
+                ? 'red'
+                : preview && !preview.catalog_complete
+                  ? 'yellow'
+                  : undefined
+            }
+          >
             {previewBusy
               ? 'Evaluating…'
               : previewError

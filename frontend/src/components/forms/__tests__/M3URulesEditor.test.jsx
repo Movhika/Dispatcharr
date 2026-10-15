@@ -10,6 +10,7 @@ import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3URulesEditor from '../M3URulesEditor.jsx';
 import API from '../../../api.js';
+import { showNotification } from '../../../utils/notificationUtils.js';
 
 vi.mock('../../../api.js', () => ({
   default: {
@@ -231,14 +232,26 @@ describe('M3URulesEditor', () => {
     );
     expect(API.saveApplyM3UGroupRules).not.toHaveBeenCalled();
   });
-  it('keeps a blank-pattern error and never submits it', async () => {
+  it('notifies about a blank pattern, marks its row and never submits it', async () => {
     renderEditor();
     await waitFor(() => expect(API.getM3URules).toHaveBeenCalled());
     fireEvent.click(screen.getByText('Add rule'));
     fireEvent.click(screen.getByLabelText('Save rule'));
+    expect(showNotification).toHaveBeenCalledWith({
+      title: 'Import rule was not saved',
+      message: 'Enter a regular expression before saving.',
+      color: 'red',
+    });
     expect(
-      await screen.findByText('Enter a regular expression before saving.')
-    ).toBeInTheDocument();
+      screen.queryByText('Enter a regular expression before saving.')
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    );
+    expect(
+      screen.getByLabelText('Regular expression').closest('tr')
+    ).toHaveAttribute('data-invalid', 'true');
     expect(API.saveM3URule).not.toHaveBeenCalled();
   });
   it('blocks every preview until changes in other rows are saved', async () => {
@@ -354,6 +367,9 @@ describe('M3URulesEditor', () => {
     API.previewM3URules.mockResolvedValue({ count: 250, results: [] });
     fireEvent.click(screen.getByLabelText('Preview rule'));
     await screen.findByText('250 matching existing entries');
+    expect(
+      screen.getByText('250 matching existing entries').getAttribute('style')
+    ).toContain('yellow');
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', { name: '5' })
     );
@@ -395,17 +411,29 @@ describe('M3URulesEditor', () => {
     expect(screen.getByText('### Event')).toBeInTheDocument();
     expect(screen.queryByText('Apply to existing')).not.toBeInTheDocument();
   });
-  it('requires saving new stream filters and keeps their errors inline', async () => {
+  it('requires saving new stream filters and reports validation errors in a notification', async () => {
     renderEditor({ streamFilters: true });
     await waitFor(() => expect(API.getM3URules).toHaveBeenCalled());
     fireEvent.click(screen.getByText('Add filter'));
     expect(screen.getByLabelText('Preview filter')).toBeDisabled();
     fireEvent.click(screen.getByLabelText('Save filter'));
+    expect(showNotification).toHaveBeenCalledWith({
+      title: 'Stream filter was not saved',
+      message: 'Enter a regular expression before saving.',
+      color: 'red',
+    });
     expect(
-      await screen.findByText('Enter a regular expression before saving.')
-    ).toBeInTheDocument();
+      screen.queryByText('Enter a regular expression before saving.')
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    );
     expect(API.previewM3URules).not.toHaveBeenCalled();
     expect(API.saveM3URule).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Regular expression')).toBeEnabled()
+    );
     fireEvent.change(screen.getByLabelText('Regular expression'), {
       target: { value: '(?i)News' },
     });
@@ -428,7 +456,7 @@ describe('M3URulesEditor', () => {
       expect.objectContaining({ regex_pattern: '(?i)News' })
     );
   });
-  it('keeps server validation errors on the row and preview blocked', async () => {
+  it('keeps the server validation marker and preview blocked without duplicating the API error notification', async () => {
     await load();
     fireEvent.change(screen.getByLabelText('Regular expression'), {
       target: { value: '[' },
@@ -438,9 +466,16 @@ describe('M3URulesEditor', () => {
       body: { regex_pattern: ['Invalid regular expression.'] },
     });
     fireEvent.click(screen.getByLabelText('Save rule'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    );
     expect(
-      await screen.findByText(/Invalid regular expression/)
-    ).toBeInTheDocument();
+      screen.queryByText(/Invalid regular expression/)
+    ).not.toBeInTheDocument();
+    expect(showNotification).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
       'aria-invalid',
       'true'
@@ -453,8 +488,9 @@ describe('M3URulesEditor', () => {
     await load();
     API.previewM3URules.mockRejectedValue(new Error('Preview unavailable'));
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    expect(await screen.findByText('Preview unavailable')).toBeInTheDocument();
-    expect(screen.getAllByText('Preview unavailable')).toHaveLength(1);
+    await screen.findByText('Preview could not be evaluated.');
+    expect(screen.queryByText('Preview unavailable')).not.toBeInTheDocument();
+    expect(showNotification).not.toHaveBeenCalled();
     expect(
       screen.queryByText('0 matching existing entries')
     ).not.toBeInTheDocument();
@@ -492,5 +528,103 @@ describe('M3URulesEditor', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Regular expression')).toBeEnabled()
     );
+  });
+
+  it.each([false, true])(
+    'marks duplicate matches and notifies once without inline hints (stream filters=%s)',
+    async (streamFilters) => {
+      API.getM3URules.mockResolvedValue([
+        rule({ filter_type: 'name' }),
+        rule({ id: 2, order: 1, filter_type: 'name' }),
+      ]);
+      const { container } = renderEditor({ streamFilters });
+      await waitFor(() =>
+        expect(showNotification).toHaveBeenCalledWith({
+          title: streamFilters
+            ? 'Stream filter warning'
+            : 'Import rule warning',
+          message:
+            'An identical match already exists. The first matching rule wins.',
+          color: 'yellow',
+        })
+      );
+      expect(
+        container.querySelectorAll('tr[data-warning="true"]')
+      ).toHaveLength(2);
+      expect(
+        screen.queryByText(/An identical match already exists/)
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getAllByLabelText(streamFilters ? 'Save filter' : 'Save rule')[0]
+      );
+      await waitFor(() =>
+        expect(screen.getAllByLabelText('Regular expression')[0]).toBeEnabled()
+      );
+      expect(
+        showNotification.mock.calls.filter(
+          ([notice]) => notice.color === 'yellow'
+        )
+      ).toHaveLength(1);
+    }
+  );
+
+  it('notifies about a new catch-all hint without repeating it on unrelated edits', async () => {
+    await load([rule(), rule({ id: 2, order: 1, regex_pattern: 'Sport' })]);
+    expect(showNotification).not.toHaveBeenCalled();
+    fireEvent.change(screen.getAllByLabelText('Regular expression')[0], {
+      target: { value: '.*' },
+    });
+    await waitFor(() =>
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          color: 'yellow',
+          message: expect.stringContaining('Put catch-all rules last'),
+        })
+      )
+    );
+    fireEvent.click(screen.getAllByLabelText('Case sensitive')[0]);
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByText(/Put catch-all rules last/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the incomplete-catalog notice in one toast when paging the preview', async () => {
+    await load();
+    API.previewM3URules.mockResolvedValue({
+      count: 250,
+      results: [],
+      catalog_complete: false,
+    });
+    fireEvent.click(screen.getByLabelText('Preview rule'));
+    await screen.findByText('250 matching existing entries');
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        color: 'yellow',
+        message: expect.stringContaining('No complete group inventory'),
+      })
+    );
+    expect(
+      screen.queryByText(/No complete group inventory/)
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: '5' })
+    );
+    await waitFor(() => expect(API.previewM3URules).toHaveBeenCalledTimes(2));
+    expect(showNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show a failed load as an empty configured list or repeat the API error inline', async () => {
+    API.getM3URules.mockRejectedValue(new Error('Load unavailable'));
+    const { container } = renderEditor();
+    await waitFor(() =>
+      expect(container.querySelector('[aria-busy="true"]')).toBeNull()
+    );
+    expect(screen.queryByText('Load unavailable')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No category filters configured.')
+    ).not.toBeInTheDocument();
+    expect(showNotification).not.toHaveBeenCalled();
   });
 });

@@ -33,17 +33,42 @@ vi.mock('../utils', () => ({
 }));
 
 import API from '../api';
+import { notifications } from '@mantine/notifications';
 
 describe('account import rule requests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({
-        ok: true,
-        text: async () => JSON.stringify({ updated: 1, results: [] }),
-      });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ updated: 1, results: [] }),
+    });
   });
+  it.each([
+    ['load', () => API.getM3URules(7, 'group-rules', 'live')],
+    [
+      'save',
+      () => API.saveM3URule(7, 'group-rules', 1, { regex_pattern: '[' }),
+    ],
+    ['delete', () => API.deleteM3URule(7, 'filters', 1)],
+    ['preview', () => API.previewM3URules(7, 'group-rules', [], 1, 1, 50)],
+    ['reorder', () => API.reorderM3URules(7, 'group-rules', [1], 'live', [0])],
+    ['apply', () => API.saveApplyM3UGroupRules(7, [], 1)],
+  ])(
+    'already emits exactly one API error notification on %s failure',
+    async (_operation, request) => {
+      globalThis.fetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({ regex_pattern: ['Invalid regular expression.'] }),
+      });
+      await expect(request()).rejects.toMatchObject({ status: 400 });
+      expect(notifications.show).toHaveBeenCalledTimes(1);
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Error', color: 'red' })
+      );
+    }
+  );
   it('loads rules from the selected account and content scope', async () => {
     await API.getM3URules(7, 'group-rules', 'movie');
     expect(globalThis.fetch.mock.calls[0][0]).toContain(
