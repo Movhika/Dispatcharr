@@ -223,13 +223,16 @@ const setupMocks = ({
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('User', () => {
-  it('uses the shared responsive editor size and scrollable panels', () => {
+  it('uses a compact content-height editor with scrollable panels', () => {
     setupMocks();
     render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
-    expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '94vw');
+    expect(screen.getByTestId('modal')).toHaveAttribute(
+      'data-size',
+      'min(880px, 94vw)'
+    );
     expect(screen.getByTestId('modal')).toHaveAttribute(
       'data-content-class',
-      editorClasses.content
+      `${editorClasses.content} ${editorClasses.userContent}`
     );
     expect(screen.getByTestId('panel-account')).toHaveClass(
       editorClasses.panel

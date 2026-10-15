@@ -316,9 +316,9 @@ const User = ({ user = null, isOpen, onClose }) => {
       opened={isOpen}
       onClose={onClose}
       title={user?.id ? 'Edit user' : 'Create user'}
-      size="94vw"
+      size="min(880px, 94vw)"
       classNames={{
-        content: editorClasses.content,
+        content: `${editorClasses.content} ${editorClasses.userContent}`,
         body: editorClasses.body,
         header: editorClasses.header,
       }}
@@ -687,7 +687,10 @@ const User = ({ user = null, isOpen, onClose }) => {
           )}
         </Tabs>
 
-        <Group justify="flex-end" className={editorClasses.footer}>
+        <Group
+          justify="flex-end"
+          className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
+        >
           <Button
             type="submit"
             variant="filled"

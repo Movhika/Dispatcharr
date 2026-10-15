@@ -153,6 +153,11 @@
   max-height: 92dvh;
 }
 
+.userContent.userContent {
+  height: auto;
+  max-height: 92dvh;
+}
+
 @media (max-width: 50em) {
   .accountContent,
   .sourceContent,

@@ -11,3 +11,20 @@
   flex-shrink: 0;
   color: var(--mantine-color-dimmed);
 }
+
+.ruleTable {
+  table-layout: fixed;
+}
+
+.rowTools {
+  min-width: 46px;
+}
+
+.centeredCell.centeredCell {
+  text-align: center;
+}
+
+.centeredCheckbox {
+  display: inline-flex;
+  vertical-align: middle;
+}
