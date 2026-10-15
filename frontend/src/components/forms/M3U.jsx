@@ -14,7 +14,6 @@ import {
   MultiSelect,
   NumberInput,
   Paper,
-  PasswordInput,
   Select,
   SimpleGrid,
   Stack,
@@ -24,9 +23,12 @@ import {
   TabsPanel,
   TabsTab,
   Text,
-  TextInput,
   Tooltip,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitivePasswordInput as PasswordInput,
+} from '../SensitiveFields.jsx';
 import M3UGroupFilter from './M3UGroupFilter';
 import useChannelsStore from '../../store/channels';
 import { isNotEmpty, useForm } from '@mantine/form';

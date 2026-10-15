@@ -5,7 +5,6 @@ import {
   Button,
   Checkbox,
   Group,
-  Loader,
   Modal,
   ScrollArea,
   Select,
@@ -17,7 +16,6 @@ import {
   TableThead,
   TableTr,
   Text,
-  TextInput,
   Tooltip,
 } from '@mantine/core';
 import {
@@ -46,6 +44,7 @@ import {
 } from '../../utils/dateTimeUtils.js';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import ListPagination from '../ListPagination.jsx';
+import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { formatApiError } from '../../utils.js';
 import { getRuleWarnings } from './M3URulesEditor.utils.js';
 
@@ -369,18 +368,27 @@ const M3URulesEditor = ({
     : 'Never';
 
   return (
-    <Stack gap="sm">
-      <Alert icon={<Info size={16} />} color="blue" variant="light">
-        <Text size="sm">
-          <strong>Order matters.</strong> The first matching rule wins.{' '}
-          {streamFilters
-            ? 'Stream filters decide whether individual Live TV streams are imported.'
-            : 'Category import rules decide how new categories are imported. New unmatched categories are imported disabled.'}
-        </Text>
-      </Alert>
-      {error && <Alert color="red">{error}</Alert>}
-      {busy && <Loader size="sm" />}
-      <Group justify="flex-end">
+    <Stack gap="sm" aria-busy={busy}>
+      <Group align="flex-end" wrap="nowrap" gap="sm">
+        <Alert
+          icon={<Info size={16} />}
+          color="blue"
+          variant="light"
+          p={6}
+          mih={30}
+          style={{ flex: 1, minWidth: 0 }}
+          styles={{
+            icon: { width: 16, height: 16, marginInlineEnd: 8 },
+            wrapper: { alignItems: 'center' },
+          }}
+        >
+          <Text size="xs" lh="16px">
+            <strong>Order matters.</strong> The first matching rule wins.{' '}
+            {streamFilters
+              ? 'Filters decide which Live TV streams are imported.'
+              : 'New unmatched categories are imported disabled.'}
+          </Text>
+        </Alert>
         <Button
           size="xs"
           leftSection={<Plus size={14} />}
@@ -390,6 +398,7 @@ const M3URulesEditor = ({
           Add {streamFilters ? 'filter' : 'rule'}
         </Button>
       </Group>
+      {error && <Alert color="red">{error}</Alert>}
       {!rules.length && !busy && (
         <Alert color="gray" variant="light">
           {streamFilters
@@ -480,6 +489,9 @@ const M3URulesEditor = ({
                         <TextInput
                           size="xs"
                           aria-label="Regular expression"
+                          sensitive={
+                            streamFilters && rule.filter_type === 'url'
+                          }
                           value={rule.regex_pattern}
                           error={rowErrors[rule.id]}
                           disabled={busy}

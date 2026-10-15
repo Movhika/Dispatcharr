@@ -4,6 +4,7 @@ import {
   fireEvent,
   waitFor,
   within,
+  act,
 } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -105,6 +106,60 @@ describe('M3URulesEditor', () => {
     expect(API.getM3URules).toHaveBeenCalledWith(7, 'group-rules', 'live');
   });
   it.each([false, true])(
+    'keeps loading, saving and deleting quiet without a flashing loader (stream filters=%s)',
+    async (streamFilters) => {
+      let finish;
+      API.getM3URules.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      const saved = streamFilters
+        ? rule({ filter_type: 'name', exclude: false })
+        : rule();
+      const { container } = renderEditor({ streamFilters });
+      const add = screen.getByRole('button', {
+        name: streamFilters ? 'Add filter' : 'Add rule',
+      });
+      const expectQuietBusy = () => {
+        expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+        expect(container.querySelector('.mantine-Loader-root')).toBeNull();
+        expect(add).toBeDisabled();
+      };
+      expectQuietBusy();
+      await act(async () => finish([saved]));
+      await screen.findByDisplayValue('News');
+      API.saveM3URule.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      fireEvent.change(screen.getByLabelText('Regular expression'), {
+        target: { value: 'Sport' },
+      });
+      fireEvent.click(
+        screen.getByLabelText(streamFilters ? 'Save filter' : 'Save rule')
+      );
+      expectQuietBusy();
+      await act(async () => finish({ ...saved, regex_pattern: 'Sport' }));
+      API.deleteM3URule.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      fireEvent.click(
+        screen.getByLabelText(streamFilters ? 'Delete filter' : 'Delete rule')
+      );
+      fireEvent.click(screen.getByText('Confirm delete'));
+      expectQuietBusy();
+      await act(async () => finish());
+      expect(add).not.toBeDisabled();
+    }
+  );
+  it.each([false, true])(
     'shows guidance and an empty-state alert without table headings (stream filters=%s)',
     async (streamFilters) => {
       renderEditor({ streamFilters });
@@ -126,6 +181,8 @@ describe('M3URulesEditor', () => {
       const add = screen.getByRole('button', {
         name: streamFilters ? 'Add filter' : 'Add rule',
       });
+      expect(guidance.parentElement).toBe(add.parentElement);
+      expect(add.parentElement).toHaveStyle({ '--group-align': 'flex-end' });
       expect(
         guidance.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy();

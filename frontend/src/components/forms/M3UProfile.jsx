@@ -14,9 +14,12 @@ import {
   SegmentedControl,
   Text,
   Textarea,
-  TextInput,
   Title,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitiveValue,
+} from '../SensitiveFields.jsx';
 import { TriangleAlert } from 'lucide-react';
 import { DateTimePicker } from '@mantine/dates';
 import { useWebSocket } from '../../WebSocket';
@@ -301,6 +304,7 @@ const RegexFormAndView = ({
             </Alert>
             <TextInput
               label="Search Pattern (Regex)"
+              sensitive
               description="A regular expression matching the part of the stream URL you want to replace."
               placeholder="e.g. 10\.0\.0\.10"
               value={searchPattern}
@@ -309,6 +313,7 @@ const RegexFormAndView = ({
             />
             <TextInput
               label="Replace Pattern"
+              sensitive
               description="The value to substitute in place of the matched text. Use $1, $2, etc. to reference regex capture groups."
               placeholder="e.g. 192.168.1.100"
               value={replacePattern}
@@ -361,6 +366,7 @@ const RegexFormAndView = ({
               <>
                 <TextInput
                   label="Search Pattern (Regex)"
+                  sensitive
                   description="A regular expression matching the part of the stream URL you want to replace. For most users, matching just the credentials is enough."
                   placeholder="e.g. username1/password1"
                   value={searchPattern}
@@ -369,6 +375,7 @@ const RegexFormAndView = ({
                 />
                 <TextInput
                   label="Replace Pattern"
+                  sensitive
                   description="The value to substitute in place of the matched text. Use $1, $2, etc. to reference regex capture groups."
                   placeholder="e.g. username2/password2"
                   value={replacePattern}
@@ -447,6 +454,7 @@ const RegexFormAndView = ({
               Sample Text
             </Text>
             <TextInput
+              sensitive
               value={sampleInput}
               onChange={handleSampleInputChange}
               placeholder="Enter a sample URL to test with"
@@ -463,12 +471,12 @@ const RegexFormAndView = ({
                     highlighted
                   </Badge>
                 </Text>
-                <Text
+                <SensitiveValue
                   size="sm"
                   sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                 >
                   {getHighlightedSearchText()}
-                </Text>
+                </SensitiveValue>
               </Paper>
             </GridCol>
 
@@ -477,12 +485,12 @@ const RegexFormAndView = ({
                 <Text size="sm" weight={500} mb={3}>
                   Result After Replace
                 </Text>
-                <Text
+                <SensitiveValue
                   size="sm"
                   sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                 >
                   {getLocalReplaceResult()}
-                </Text>
+                </SensitiveValue>
               </Paper>
             </GridCol>
           </Grid>

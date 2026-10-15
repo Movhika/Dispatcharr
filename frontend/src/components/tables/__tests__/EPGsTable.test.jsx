@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
   within,
+  act,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import EPGsTable from '../EPGsTable';
@@ -12,6 +13,7 @@ import useEPGsStore from '../../../store/epgs';
 import useWarningsStore from '../../../store/warnings';
 import * as actions from '../../../utils/tables/EPGsTableUtils';
 import { showNotification } from '../../../utils/notificationUtils';
+import useScreenshotMode from '../../../store/useScreenshotMode.js';
 
 vi.mock('../../../store/epgs', () => ({ default: vi.fn() }));
 vi.mock('../../../store/warnings', () => ({ default: vi.fn() }));
@@ -101,12 +103,28 @@ describe('EPG source cards', () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    useScreenshotMode.setState({ enabled: false });
     setup();
     warnings = {
       isWarningSuppressed: vi.fn(() => false),
       suppressWarning: vi.fn(),
     };
     useWarningsStore.mockImplementation((selector) => selector(warnings));
+  });
+  it('places the URL under the name and dims Never like the other subtitles', () => {
+    show();
+    const name = card().getByText('Guide One');
+    const url = card().getByText('https://example.invalid/guide.xml');
+    expect(name.parentElement.parentElement).toContainElement(url);
+    expect(url).toHaveStyle({ color: 'var(--mantine-color-dimmed)' });
+    expect(card().getByText('Never')).toHaveStyle({
+      color: 'var(--mantine-color-dimmed)',
+    });
+    act(() => useScreenshotMode.getState().toggle());
+    expect(
+      card().queryByText('https://example.invalid/guide.xml')
+    ).not.toBeInTheDocument();
+    expect(card().getByText('••••••••')).toBeInTheDocument();
   });
   it('uses matching cards and control blocks without a table', () => {
     show();
@@ -299,6 +317,7 @@ describe('EPG source cards', () => {
         }),
       ]);
       show();
+      act(() => useScreenshotMode.getState().toggle());
       expect(
         card().getByText(username ? `User: ${username}` : '(credentials set)')
       ).toBeInTheDocument();

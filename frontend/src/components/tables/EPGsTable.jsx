@@ -48,6 +48,7 @@ import {
   updateEpg,
 } from '../../utils/tables/EPGsTableUtils.js';
 import cardClasses from './M3UsTable.module.css';
+import { SensitiveValue, ScreenshotText } from '../SensitiveFields.jsx';
 
 // Helper function to get status text color
 const getStatusColor = (status) => {
@@ -167,14 +168,18 @@ const EPGStatusCell = ({ epg }) => {
   // Show error message
   if (epg.status === 'error' && epg.last_message) {
     return (
-      <Tooltip label={epg.last_message} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text
           c="dimmed"
           size="xs"
           lineClamp={2}
           style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
         >
-          {epg.last_message}
+          <ScreenshotText>{epg.last_message}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -185,14 +190,18 @@ const EPGStatusCell = ({ epg }) => {
     const successMessage =
       epg.last_message || 'EPG data refreshed successfully';
     return (
-      <Tooltip label={successMessage} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{successMessage}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text
           c="dimmed"
           size="xs"
           lineClamp={2}
           style={{ color: theme.colors.green[6], lineHeight: 1.3 }}
         >
-          {successMessage}
+          <ScreenshotText>{successMessage}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -201,9 +210,13 @@ const EPGStatusCell = ({ epg }) => {
   // Show idle message
   if (epg.status === 'idle' && epg.last_message) {
     return (
-      <Tooltip label={epg.last_message} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text c="dimmed" size="xs" lineClamp={2} style={{ lineHeight: 1.3 }}>
-          {epg.last_message}
+          <ScreenshotText>{epg.last_message}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -287,34 +300,36 @@ const EPGsTable = () => {
         cell: ({ cell, row }) => {
           const sourceType = row.original.source_type;
           let value = '';
-          let tooltip = '';
 
           if (sourceType === 'schedules_direct') {
             // Never expose credentials — show username only
             const username = row.original.username || '';
             value = username ? `User: ${username}` : '(credentials set)';
-            tooltip = value;
           } else {
-            value = cell.getValue() || row.original.file_path || '';
-            tooltip = value;
+            value =
+              cell.getValue() ||
+              row.original.file_path ||
+              (sourceType === 'xmltv' ? 'No URL or local file configured' : '');
           }
 
           return (
-            <Tooltip label={tooltip} disabled={!tooltip}>
-              <Text
-                size="sm"
-                c="dimmed"
-                mt={4}
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: '100%',
-                }}
-              >
-                {value}
-              </Text>
-            </Tooltip>
+            <SensitiveValue
+              withTooltip
+              sensitive={
+                sourceType !== 'schedules_direct' && !!row.original.url
+              }
+              size="sm"
+              c="dimmed"
+              mt={4}
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+              }}
+            >
+              {value}
+            </SensitiveValue>
           );
         },
       },
@@ -352,10 +367,18 @@ const EPGsTable = () => {
         cell: ({ cell }) => {
           const value = cell.getValue();
           if (!value) {
-            return <Text size="xs">Never</Text>;
+            return (
+              <Text size="xs" c="dimmed">
+                Never
+              </Text>
+            );
           }
           const formatted = format(value, fullDateTimeFormat);
-          return <Text size="xs">{formatted}</Text>;
+          return (
+            <Text size="xs" c="dimmed">
+              {formatted}
+            </Text>
+          );
         },
       },
       {

@@ -1,6 +1,13 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import useScreenshotMode from '../../../store/useScreenshotMode.js';
 
 // ── API mock ───────────────────────────────────────────────────────────────────
 vi.mock('../../../api', () => ({
@@ -249,6 +256,7 @@ const getCol = (key) =>
 
 describe('UsersTable', () => {
   beforeEach(() => {
+    useScreenshotMode.setState({ enabled: false });
     vi.clearAllMocks();
     capturedTableOptions = null;
     vi.mocked(API.deleteUser).mockResolvedValue(undefined);
@@ -567,6 +575,19 @@ describe('UsersTable', () => {
 
       const { getByText } = renderXCCell({ xc_password: 'mypassword' });
       expect(getByText('••••••••')).toBeInTheDocument();
+    });
+    it('overrides an already revealed XC password while screenshot mode is enabled', () => {
+      setupMocks();
+      render(<UsersTable />);
+      renderXCCell({ xc_password: 'mypassword' });
+      fireEvent.click(screen.getByRole('button', { name: 'Show XC password' }));
+      expect(screen.getByText('mypassword')).toBeInTheDocument();
+      act(() => useScreenshotMode.getState().toggle());
+      expect(screen.queryByText('mypassword')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Show XC password' })
+      ).toBeDisabled();
+      expect(screen.getByText('••••••••')).toBeInTheDocument();
     });
 
     it('shows the password after clicking the eye toggle', () => {

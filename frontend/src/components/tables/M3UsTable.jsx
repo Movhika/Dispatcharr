@@ -54,6 +54,7 @@ import {
   updatePlaylist,
 } from '../../utils/tables/M3UsTableUtils.js';
 import tableClasses from './M3UsTable.module.css';
+import { SensitiveValue, ScreenshotText } from '../SensitiveFields.jsx';
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
@@ -361,21 +362,21 @@ const M3UTable = () => {
         cell: ({ cell, row }) => {
           const value = cell.getValue() || row.original.file_path || '';
           return (
-            <Tooltip label={value} disabled={!value}>
-              <Text
-                size="sm"
-                c="dimmed"
-                mt={4}
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: '100%',
-                }}
-              >
-                {value}
-              </Text>
-            </Tooltip>
+            <SensitiveValue
+              withTooltip
+              sensitive={!!row.original.server_url}
+              size="sm"
+              c="dimmed"
+              mt={4}
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+              }}
+            >
+              {value}
+            </SensitiveValue>
           );
         },
       },
@@ -434,7 +435,7 @@ const M3UTable = () => {
               })}
               {data.status === 'error' && data.last_message && (
                 <Text size="xs" c="red" lineClamp={2}>
-                  {data.last_message}
+                  <ScreenshotText>{data.last_message}</ScreenshotText>
                 </Text>
               )}
               {warning && (

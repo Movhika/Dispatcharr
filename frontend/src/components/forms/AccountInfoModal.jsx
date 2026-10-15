@@ -26,6 +26,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import usePlaylistsStore from '../../store/playlists';
+import { SensitiveValue } from '../SensitiveFields.jsx';
 import { showNotification } from '../../utils/notificationUtils.js';
 import {
   formatTimestamp,
@@ -339,9 +340,9 @@ const AccountInfoModal = ({ isOpen, onClose, profile, onRefresh }) => {
                         Server URL
                       </TableTd>
                       <TableTd>
-                        <Text size="sm" family="monospace">
+                        <SensitiveValue size="sm" family="monospace">
                           {server_info.url}
-                        </Text>
+                        </SensitiveValue>
                       </TableTd>
                     </TableTr>
                   )}

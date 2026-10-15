@@ -1,7 +1,8 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ConfirmationDialog from '../ConfirmationDialog';
 import useWarningsStore from '../../store/warnings';
+import useScreenshotMode from '../../store/useScreenshotMode.js';
 
 // Mock the warnings store
 vi.mock('../../store/warnings');
@@ -43,6 +44,7 @@ describe('ConfirmationDialog', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useScreenshotMode.setState({ enabled: false });
     mockGetActionPreference.mockReturnValue(false);
     useWarningsStore.mockImplementation((selector) => {
       const state = {
@@ -53,6 +55,26 @@ describe('ConfirmationDialog', () => {
       };
       return selector ? selector(state) : state;
     });
+  });
+  it('hides source URLs in a confirmation already on screen without altering the action', () => {
+    const url = 'https://example.invalid/playlist?password=example-secret';
+    render(
+      <ConfirmationDialog
+        opened
+        onClose={mockOnClose}
+        onConfirm={mockOnConfirm}
+        message={`Delete ${url} for ExampleUser?`}
+      />
+    );
+    expect(
+      screen.getByText(`Delete ${url} for ExampleUser?`)
+    ).toBeInTheDocument();
+    act(() => useScreenshotMode.getState().toggle());
+    expect(
+      screen.getByText('Delete •••••••• for ExampleUser?')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Confirm'));
+    expect(mockOnConfirm).toHaveBeenCalledWith();
   });
 
   it('should render when opened', () => {
