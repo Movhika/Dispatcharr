@@ -165,6 +165,15 @@ const EPGStatusCell = ({ epg }) => {
     );
   }
 
+  // Missing configuration is already described below the source name.
+  if (
+    epg.source_type === 'xmltv' &&
+    !epg.url &&
+    !epg.file_path &&
+    epg.last_message === 'No URL provided and no valid local file exists'
+  )
+    return null;
+
   // Show error message
   if (epg.status === 'error' && epg.last_message) {
     return (
@@ -302,7 +311,7 @@ const EPGsTable = () => {
           let value = '';
 
           if (sourceType === 'schedules_direct') {
-            // Never expose credentials — show username only
+            // Passwords are never displayed; screenshot mode also masks the username.
             const username = row.original.username || '';
             value = username ? `User: ${username}` : '(credentials set)';
           } else {
@@ -316,7 +325,9 @@ const EPGsTable = () => {
             <SensitiveValue
               withTooltip
               sensitive={
-                sourceType !== 'schedules_direct' && !!row.original.url
+                sourceType === 'schedules_direct'
+                  ? !!row.original.username
+                  : !!row.original.url
               }
               size="sm"
               c="dimmed"
@@ -777,17 +788,26 @@ const EPGsTable = () => {
 
 Name: ${epgToDelete.name}
 Source Type: ${epgToDelete.source_type}
-${
-  epgToDelete.source_type === 'schedules_direct'
-    ? epgToDelete.username
-      ? `Username: ${epgToDelete.username}`
-      : '(credentials set)'
-    : epgToDelete.url
-      ? `URL: ${epgToDelete.url}`
-      : epgToDelete.file_path
-        ? `File Path: ${epgToDelete.file_path}`
-        : ''
-}
+`}
+              {epgToDelete.source_type === 'schedules_direct' ? (
+                epgToDelete.username ? (
+                  <>
+                    Username:{' '}
+                    <SensitiveValue component="span" inherit>
+                      {epgToDelete.username}
+                    </SensitiveValue>
+                  </>
+                ) : (
+                  '(credentials set)'
+                )
+              ) : epgToDelete.url ? (
+                `URL: ${epgToDelete.url}`
+              ) : epgToDelete.file_path ? (
+                `File Path: ${epgToDelete.file_path}`
+              ) : (
+                ''
+              )}
+              {`
 
 This will remove all related program information and channel associations.
 This action cannot be undone.`}

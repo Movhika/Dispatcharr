@@ -563,6 +563,19 @@ describe('UsersTable', () => {
 
   // ── XCPasswordCell ─────────────────────────────────────────────────────────
 
+  it('masks the username column without changing its source value', () => {
+    setupMocks();
+    render(<UsersTable />);
+    const UsernameCell = getCol('username').cell;
+    const getValue = () => 'ExampleUser';
+    render(<UsernameCell getValue={getValue} />);
+    expect(screen.getByText('ExampleUser')).toBeInTheDocument();
+    act(() => useScreenshotMode.getState().toggle());
+    expect(screen.queryByText('ExampleUser')).not.toBeInTheDocument();
+    expect(screen.getByText('••••••••')).toBeInTheDocument();
+    expect(getValue()).toBe('ExampleUser');
+  });
+
   describe('XCPasswordCell', () => {
     const renderXCCell = (customProperties) => {
       const XCCell = getCol('custom_properties').cell;

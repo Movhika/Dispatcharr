@@ -5,6 +5,7 @@ import useUsersStore from '../../store/users';
 import useChannelsStore from '../../store/channels';
 import useAuthStore from '../../store/auth';
 import useScreenshotMode from '../../store/useScreenshotMode.js';
+import { SensitiveValue } from '../SensitiveFields.jsx';
 import { USER_LEVELS, USER_LEVEL_LABELS } from '../../constants';
 import useWarningsStore from '../../store/warnings';
 import {
@@ -270,7 +271,9 @@ const UsersTable = () => {
               textOverflow: 'ellipsis',
             }}
           >
-            {getValue()}
+            <SensitiveValue component="span" inherit>
+              {getValue()}
+            </SensitiveValue>
           </Box>
         ),
       },
@@ -590,7 +593,11 @@ const UsersTable = () => {
             <div style={{ whiteSpace: 'pre-line' }}>
               {`Are you sure you want to delete the following user?
 
-Username: ${userToDelete.username}
+Username: `}
+              <SensitiveValue component="span" inherit>
+                {userToDelete.username}
+              </SensitiveValue>
+              {`
 Email: ${userToDelete.email}
 User Level: ${USER_LEVEL_LABELS[userToDelete.user_level]}
 

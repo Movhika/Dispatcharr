@@ -208,12 +208,14 @@ describe('Sidebar', () => {
     expect(
       screen.getByRole('button', { name: 'Disable screenshot mode' })
     ).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Admin')).toBeInTheDocument();
+    expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    expect(screen.getByText('••••••••')).toBeInTheDocument();
     expect(container.textContent).toContain(mockEnvironment.public_ip);
     fireEvent.click(
       screen.getByRole('button', { name: 'Disable screenshot mode' })
     );
     expect(useScreenshotMode.getState().enabled).toBe(false);
+    expect(screen.getByText('Admin')).toBeInTheDocument();
   });
 
   it('keeps the screenshot toggle available in the collapsed sidebar', () => {

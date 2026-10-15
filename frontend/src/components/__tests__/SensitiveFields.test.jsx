@@ -1,4 +1,4 @@
-import { createRef } from 'react';
+import { createRef, useState } from 'react';
 import { MantineProvider } from '@mantine/core';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,17 +36,14 @@ describe('screenshot-safe presentation', () => {
     expect(screen.getAllByText(url).length).toBeGreaterThan(0);
   });
 
-  it('leaves usernames, public IPs and explicitly non-sensitive text unchanged', () => {
+  it('leaves public IPs and explicitly non-sensitive text unchanged', () => {
     useScreenshotMode.setState({ enabled: true });
     show(
       <>
-        <SensitiveTextInput label="Username" defaultValue="ExampleUser" />
         <SensitiveTextInput label="Public IP" defaultValue="203.0.113.7" />
         <SensitiveValue sensitive={false}>ExampleUser</SensitiveValue>
       </>
     );
-    expect(screen.getByLabelText('Username').type).toBe('text');
-    expect(screen.getByLabelText('Username')).not.toHaveAttribute('readonly');
     expect(screen.getByLabelText('Public IP').type).toBe('text');
     expect(screen.getByText('ExampleUser')).toBeInTheDocument();
   });
@@ -57,6 +54,8 @@ describe('screenshot-safe presentation', () => {
     { label: 'Target', value: url, onChange: () => {} },
     { label: 'XC Password', value: 'example-secret', onChange: () => {} },
     { label: 'Credentials', type: 'password' },
+    { label: 'Username', value: 'ExampleUser', onChange: () => {} },
+    { label: 'New Username', value: 'ExampleUser', onChange: () => {} },
   ])(
     'masks the input without changing its submitted value: $label',
     (props) => {
@@ -87,7 +86,7 @@ describe('screenshot-safe presentation', () => {
       expect(ref.current).toBe(input);
       toggle();
       expect(input).toHaveAttribute('type', 'password');
-      expect(input).toHaveAttribute('readonly');
+      expect(input).not.toHaveAttribute('readonly');
       expect(input).toHaveValue(original);
       fireEvent.click(screen.getByText('Save'));
       expect(submitted).toHaveBeenCalledWith(original);
@@ -110,11 +109,86 @@ describe('screenshot-safe presentation', () => {
     toggle();
     expect(input).toHaveAttribute('type', 'password');
     expect(input).toHaveValue('example-secret');
-    expect(input).toHaveAttribute('readonly');
+    expect(input).not.toHaveAttribute('readonly');
     expect(container.querySelector('button')).toBeDisabled();
     toggle();
     expect(input).toHaveAttribute('type', 'text');
     expect(container.querySelector('button')).not.toBeDisabled();
+  });
+
+  it('lets users edit and submit masked URL, username and password fields', () => {
+    const submit = vi.fn();
+    const EditForm = () => {
+      const [values, setValues] = useState({
+        url,
+        username: 'ExampleUser',
+        password: 'example-secret',
+      });
+      const update = (field) => (event) =>
+        setValues((current) => ({ ...current, [field]: event.target.value }));
+      return (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit(values);
+          }}
+        >
+          <SensitiveTextInput
+            label="URL"
+            value={values.url}
+            onChange={update('url')}
+          />
+          <SensitiveTextInput
+            label="Username"
+            value={values.username}
+            onChange={update('username')}
+          />
+          <SensitivePasswordInput
+            label="Password"
+            value={values.password}
+            onChange={update('password')}
+          />
+          <button type="submit">Save</button>
+        </form>
+      );
+    };
+    useScreenshotMode.setState({ enabled: true });
+    show(<EditForm />);
+    for (const [label, value] of [
+      ['URL', 'https://changed.invalid'],
+      ['Username', 'ChangedUser'],
+      ['Password', 'changed-secret'],
+    ]) {
+      const input = screen.getByLabelText(label);
+      expect(input).toHaveAttribute('type', 'password');
+      expect(input).not.toHaveAttribute('readonly');
+      fireEvent.change(input, { target: { value } });
+      expect(input).toHaveValue(value);
+    }
+    fireEvent.click(screen.getByText('Save'));
+    expect(submit).toHaveBeenCalledWith({
+      url: 'https://changed.invalid',
+      username: 'ChangedUser',
+      password: 'changed-secret',
+    });
+  });
+
+  it('preserves read-only fields explicitly configured by their caller', () => {
+    useScreenshotMode.setState({ enabled: true });
+    show(
+      <>
+        <SensitiveTextInput label="Generated URL" defaultValue={url} readOnly />
+        <SensitivePasswordInput
+          label="Managed password"
+          defaultValue="example-secret"
+          readOnly
+        />
+      </>
+    );
+    expect(screen.getByLabelText('Generated URL')).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Managed password')).toHaveAttribute(
+      'readonly'
+    );
   });
 
   it('redacts URL literals inside nested messages without changing other text', () => {

@@ -126,6 +126,42 @@ describe('EPG source cards', () => {
     ).not.toBeInTheDocument();
     expect(card().getByText('••••••••')).toBeInTheDocument();
   });
+  it.each(['idle', 'error'])(
+    'does not repeat the missing-source message below Last refresh (%s)',
+    (status) => {
+      setup([
+        source({
+          status,
+          url: '',
+          file_path: '',
+          last_message: 'No URL provided and no valid local file exists',
+        }),
+      ]);
+      show();
+      expect(
+        card().getByText('No URL or local file configured')
+      ).toBeInTheDocument();
+      expect(
+        card().queryByText('No URL provided and no valid local file exists')
+      ).not.toBeInTheDocument();
+      expect(card().getByText('Never')).toBeInTheDocument();
+    }
+  );
+  it('keeps missing-file errors when the source still has a configured path', () => {
+    setup([
+      source({
+        status: 'error',
+        url: '',
+        file_path: '/data/missing.xml',
+        last_message: 'No URL provided and no valid local file exists',
+      }),
+    ]);
+    show();
+    expect(card().getByText('/data/missing.xml')).toBeInTheDocument();
+    expect(
+      card().getByText('No URL provided and no valid local file exists')
+    ).toBeInTheDocument();
+  });
   it('uses matching cards and control blocks without a table', () => {
     show();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
@@ -208,6 +244,18 @@ describe('EPG source cards', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(actions.deleteEpg).toHaveBeenCalledWith(1));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+  it('also masks a Schedules Direct username in its deletion confirmation', () => {
+    setup([
+      source({ source_type: 'schedules_direct', username: 'ExampleUser' }),
+    ]);
+    show();
+    act(() => useScreenshotMode.getState().toggle());
+    fireEvent.click(card().getByRole('button', { name: 'Delete Guide One' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.queryByText('ExampleUser')).not.toBeInTheDocument();
+    expect(dialog.getByText('••••••••')).toBeInTheDocument();
+    expect(dialog.getByText(/Username:/)).toBeInTheDocument();
   });
   it('respects a suppressed deletion warning', async () => {
     warnings.isWarningSuppressed.mockReturnValue(true);
@@ -317,10 +365,15 @@ describe('EPG source cards', () => {
         }),
       ]);
       show();
-      act(() => useScreenshotMode.getState().toggle());
       expect(
         card().getByText(username ? `User: ${username}` : '(credentials set)')
       ).toBeInTheDocument();
+      act(() => useScreenshotMode.getState().toggle());
+      expect(
+        card().getByText(username ? '••••••••' : '(credentials set)')
+      ).toBeInTheDocument();
+      if (username)
+        expect(card().queryByText(`User: ${username}`)).not.toBeInTheDocument();
       expect(screen.queryByText('hidden-secret')).not.toBeInTheDocument();
     }
   );

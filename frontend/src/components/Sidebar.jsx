@@ -40,6 +40,7 @@ import { canViewVod } from '../utils/vodAccess';
 import UserForm from './forms/User';
 import NotificationCenter from './NotificationCenter';
 import useScreenshotMode from '../store/useScreenshotMode.js';
+import { SensitiveValue } from './SensitiveFields.jsx';
 
 export const ScreenshotModeButton = ({ collapsed = false }) => {
   const enabled = useScreenshotMode((state) => state.enabled);
@@ -48,8 +49,8 @@ export const ScreenshotModeButton = ({ collapsed = false }) => {
     <Tooltip
       label={
         enabled
-          ? 'Screenshot mode: URLs and passwords are hidden. Click to show them.'
-          : 'Hide URLs and passwords for screenshots'
+          ? 'Screenshot mode: URLs, usernames and passwords are hidden. Click to show them.'
+          : 'Hide URLs, usernames and passwords for screenshots'
       }
       position={collapsed ? 'right' : 'top'}
       withArrow
@@ -541,7 +542,9 @@ const Sidebar = ({ collapsed, toggleDrawer, drawerWidth, miniDrawerWidth }) => {
                 <Group gap="xs">
                   <Avatar src="" radius="xl" />
                   <UnstyledButton onClick={() => setUserFormOpen(true)}>
-                    {authUser.first_name || authUser.username}
+                    <SensitiveValue component="span" inherit>
+                      {authUser.first_name || authUser.username}
+                    </SensitiveValue>
                   </UnstyledButton>
                 </Group>
                 <ActionIcon variant="transparent" color="white" size="xs">

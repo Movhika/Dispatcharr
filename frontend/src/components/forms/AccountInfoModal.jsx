@@ -281,7 +281,15 @@ const AccountInfoModal = ({ isOpen, onClose, profile, onRefresh }) => {
                 <TableTd fw={500} w="40%">
                   Username
                 </TableTd>
-                <TableTd>{user_info?.username || 'Unknown'}</TableTd>
+                <TableTd>
+                  <SensitiveValue
+                    component="span"
+                    inherit
+                    sensitive={!!user_info?.username}
+                  >
+                    {user_info?.username || 'Unknown'}
+                  </SensitiveValue>
+                </TableTd>
               </TableTr>
               <TableTr>
                 <TableTd fw={500}>Account Created</TableTd>

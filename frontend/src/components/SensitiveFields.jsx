@@ -49,7 +49,7 @@ export const SensitiveTextInput = forwardRef(function SensitiveTextInput(
   const isSensitive =
     sensitive ??
     (props.type === 'password' ||
-      /url|password|passwd/i.test(fieldName) ||
+      /url|user.?name|password|passwd/i.test(fieldName) ||
       (typeof value === 'string' && /\b[a-z][a-z0-9+.-]*:\/\//i.test(value)));
   const hidden = enabled && isSensitive;
   return (
@@ -57,7 +57,6 @@ export const SensitiveTextInput = forwardRef(function SensitiveTextInput(
       {...props}
       ref={ref}
       type={hidden ? 'password' : props.type}
-      readOnly={hidden || props.readOnly}
       autoComplete={hidden ? 'off' : props.autoComplete}
     />
   );
@@ -71,7 +70,6 @@ export const SensitivePasswordInput = forwardRef(
         {...props}
         ref={ref}
         visible={enabled ? false : props.visible}
-        readOnly={enabled || props.readOnly}
         visibilityToggleButtonProps={{
           ...props.visibilityToggleButtonProps,
           disabled: enabled || props.visibilityToggleButtonProps?.disabled,
