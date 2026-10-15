@@ -11,7 +11,3 @@
   flex-shrink: 0;
   color: var(--mantine-color-dimmed);
 }
-
-.coverageHint {
-  max-width: 32em;
-}

@@ -10,6 +10,7 @@ import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3URulesEditor from '../M3URulesEditor.jsx';
 import API from '../../../api.js';
+import useM3URuleChecks from '../../../store/useM3URuleChecks.js';
 import {
   hideNotification,
   showNotification,
@@ -96,6 +97,7 @@ const load = async (rows = [rule()]) => {
 describe('M3URulesEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useM3URuleChecks.setState({ checks: {} });
     API.getM3URules.mockResolvedValue([]);
     API.analyzeM3URules.mockResolvedValue({});
     API.previewM3URules.mockResolvedValue({
@@ -122,6 +124,53 @@ describe('M3URulesEditor', () => {
     await load();
     expect(API.getM3URules).toHaveBeenCalledWith(7, 'group-rules', 'live');
   });
+  it.each([false, true])(
+    'allows only one unsaved new row and unlocks Add after save or delete (filters=%s)',
+    async (streamFilters) => {
+      renderEditor({ streamFilters });
+      const add = await screen.findByRole('button', {
+        name: streamFilters ? 'Add filter' : 'Add rule',
+      });
+      await waitFor(() => expect(add).toBeEnabled());
+      fireEvent.click(add);
+      expect(add).toBeDisabled();
+      fireEvent.click(add);
+      fireEvent.click(add);
+      expect(screen.getAllByLabelText('Regular expression')).toHaveLength(1);
+      fireEvent.click(
+        screen.getByLabelText(streamFilters ? 'Save filter' : 'Save rule')
+      );
+      await waitFor(() =>
+        expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+          'aria-invalid',
+          'true'
+        )
+      );
+      expect(add).toBeDisabled();
+      fireEvent.change(screen.getByLabelText('Regular expression'), {
+        target: { value: 'AFR' },
+      });
+      expect(API.analyzeM3URules).not.toHaveBeenCalled();
+      API.saveM3URule.mockResolvedValue(
+        rule({ id: 9, regex_pattern: 'AFR', filter_type: 'name' })
+      );
+      fireEvent.click(
+        screen.getByLabelText(streamFilters ? 'Save filter' : 'Save rule')
+      );
+      await waitFor(() => expect(add).toBeEnabled());
+      expect(API.saveM3URule).toHaveBeenCalledTimes(1);
+      fireEvent.click(add);
+      expect(add).toBeDisabled();
+      fireEvent.click(
+        screen.getAllByLabelText(
+          streamFilters ? 'Delete filter' : 'Delete rule'
+        )[1]
+      );
+      fireEvent.click(screen.getByText('Confirm delete'));
+      await waitFor(() => expect(add).toBeEnabled());
+      expect(API.deleteM3URule).not.toHaveBeenCalled();
+    }
+  );
   it.each([false, true])(
     'keeps loading, saving and deleting quiet without a flashing loader (stream filters=%s)',
     async (streamFilters) => {
@@ -556,6 +605,7 @@ describe('M3URulesEditor', () => {
         .getAllByLabelText('Rule result')
         .find((element) => element.tagName === 'INPUT')
     ).toBeDisabled();
+    await waitFor(() => expect(API.saveM3URule).toHaveBeenCalledTimes(1));
     finish(rule());
     await waitFor(() =>
       expect(screen.getByLabelText('Regular expression')).toBeEnabled()
@@ -563,29 +613,19 @@ describe('M3URulesEditor', () => {
   });
 
   it.each([false, true])(
-    'marks duplicate matches and notifies once without inline hints (stream filters=%s)',
+    'rejects a duplicate only on save and marks only the attempted row red (stream filters=%s)',
     async (streamFilters) => {
       API.getM3URules.mockResolvedValue([
         rule({ filter_type: 'name' }),
         rule({ id: 2, order: 1, filter_type: 'name' }),
       ]);
       const { container } = renderEditor({ streamFilters });
-      await waitFor(() =>
-        expect(showNotification).toHaveBeenCalledWith(
-          expect.objectContaining({
-            title: streamFilters
-              ? 'Stream filter warning'
-              : 'Import rule warning',
-            message:
-              'An identical match already exists. The first matching rule wins.',
-            color: 'yellow',
-            autoClose: false,
-          })
-        )
-      );
+      await screen.findAllByDisplayValue('News');
+      expect(showNotification).not.toHaveBeenCalled();
+      expect(API.analyzeM3URules).not.toHaveBeenCalled();
       expect(
         container.querySelectorAll('tr[data-warning="true"]')
-      ).toHaveLength(2);
+      ).toHaveLength(0);
       expect(
         screen.queryByText(/An identical match already exists/)
       ).not.toBeInTheDocument();
@@ -596,11 +636,21 @@ describe('M3URulesEditor', () => {
       await waitFor(() =>
         expect(screen.getAllByLabelText('Regular expression')[0]).toBeEnabled()
       );
+      expect(API.saveM3URule).not.toHaveBeenCalled();
+      expect(API.analyzeM3URules).not.toHaveBeenCalled();
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          color: 'red',
+          autoClose: false,
+          message: expect.stringContaining('identical active match'),
+        })
+      );
       expect(
-        showNotification.mock.calls.filter(
-          ([notice]) => notice.color === 'yellow'
-        )
-      ).toHaveLength(1);
+        screen.getAllByLabelText('Regular expression')[0].closest('tr')
+      ).toHaveAttribute('data-invalid', 'true');
+      expect(
+        screen.getAllByLabelText('Regular expression')[1].closest('tr')
+      ).not.toHaveAttribute('data-invalid');
     }
   );
 
@@ -634,7 +684,7 @@ describe('M3URulesEditor', () => {
     expect(showNotification).not.toHaveBeenCalled();
   });
 
-  it('clears persistent warnings when corrected and highlights only actual unsaved changes', async () => {
+  it('does not validate while typing and highlights only actual unsaved changes', async () => {
     const onStateChange = vi.fn();
     API.getM3URules.mockResolvedValue([
       rule(),
@@ -656,9 +706,8 @@ describe('M3URulesEditor', () => {
       busy: false,
       overlayOpen: false,
     });
-    expect(showNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ autoClose: false, color: 'yellow' })
-    );
+    expect(showNotification).not.toHaveBeenCalled();
+    expect(API.analyzeM3URules).not.toHaveBeenCalled();
     hideNotification.mockClear();
     fireEvent.change(pattern, { target: { value: 'News' } });
     expect(pattern.closest('tr')).not.toHaveAttribute('data-dirty');
@@ -668,12 +717,12 @@ describe('M3URulesEditor', () => {
       overlayOpen: false,
     });
     expect(hideNotification).toHaveBeenCalledWith(
-      'account-rules-7-group-rules-warning'
+      'account-rules-7-group-rules-error'
     );
   });
 
   it.each([false, true])(
-    'restores coverage quietly on open and saves changed causes without a confirmation (filters=%s)',
+    'checks only on save, shows one notification and restores the last check without a request (filters=%s)',
     async (streamFilters) => {
       API.getM3URules.mockResolvedValue([
         rule({ filter_type: 'name' }),
@@ -690,18 +739,9 @@ describe('M3URulesEditor', () => {
         rule({ regex_pattern: 'News|Sport', filter_type: 'name' })
       );
       const { container, unmount } = renderEditor({ streamFilters });
-      await screen.findByText(/Matches all 100/);
+      await screen.findByDisplayValue('News');
       expect(showNotification).not.toHaveBeenCalled();
-      expect(
-        container.querySelectorAll('tr[data-warning="true"]')
-      ).toHaveLength(1);
-      expect(
-        container.querySelectorAll('tr[data-covered="true"]')
-      ).toHaveLength(1);
-      expect(screen.getAllByLabelText('Regular expression')[1]).toBeEnabled();
-      expect(
-        screen.getByRole('img', { name: /Covered by rule 1/ })
-      ).toBeInTheDocument();
+      expect(API.analyzeM3URules).not.toHaveBeenCalled();
       const saveLabel = streamFilters ? 'Save filter' : 'Save rule';
       fireEvent.change(screen.getAllByLabelText('Regular expression')[0], {
         target: { value: 'News|Sport' },
@@ -718,19 +758,35 @@ describe('M3URulesEditor', () => {
         )
       );
       expect(
+        container.querySelectorAll('tr[data-warning="true"]')
+      ).toHaveLength(1);
+      expect(
+        container.querySelectorAll('tr[data-covered="true"]')
+      ).toHaveLength(1);
+      expect(
+        screen.getByRole('img', { name: /Covered by rule 1/ })
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Matches all 100/)).not.toBeInTheDocument();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      expect(
         screen.getAllByLabelText('Regular expression')[1].closest('tr')
       ).not.toHaveAttribute('data-warning');
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-      expect(API.analyzeM3URules).toHaveBeenCalledTimes(2);
+      expect(API.analyzeM3URules).toHaveBeenCalledTimes(1);
+      API.getM3URules.mockResolvedValue([
+        rule({ regex_pattern: 'News|Sport', filter_type: 'name' }),
+        rule({ id: 2, order: 1, regex_pattern: 'Sport', filter_type: 'name' }),
+      ]);
       unmount();
       showNotification.mockClear();
       renderEditor({ streamFilters });
-      await screen.findByText(/Matches all 100/);
+      await screen.findByRole('img', { name: /Matches all 100/ });
+      expect(API.analyzeM3URules).toHaveBeenCalledTimes(1);
       expect(showNotification).not.toHaveBeenCalled();
     }
   );
 
-  it('persists a broad reorder directly and marks only the cause yellow', async () => {
+  it('does not check a reorder until a rule is saved', async () => {
     await load([
       rule(),
       rule({ id: 2, order: 1, regex_pattern: 'News|Sport' }),
@@ -752,7 +808,15 @@ describe('M3URulesEditor', () => {
         [0, 1]
       )
     );
-    await screen.findByText(/Matches all 100/);
+    expect(API.analyzeM3URules).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('Save rule')[0]).toBeEnabled()
+    );
+    API.saveM3URule.mockResolvedValue(
+      rule({ id: 2, regex_pattern: 'News|Sport', order: 0 })
+    );
+    fireEvent.click(screen.getAllByLabelText('Save rule')[0]);
+    await screen.findByRole('img', { name: /Matches all 100/ });
     expect(
       screen.getAllByLabelText('Regular expression')[0].closest('tr')
     ).toHaveAttribute('data-warning', 'true');
@@ -777,9 +841,15 @@ describe('M3URulesEditor', () => {
       ],
     });
     renderEditor();
-    await screen.findByText(/Matches all 10/);
+    await screen.findByDisplayValue('News|Sport|Events');
+    API.saveM3URule.mockResolvedValue(
+      rule({ regex_pattern: 'News|Sport|Events' })
+    );
+    fireEvent.click(screen.getAllByLabelText('Save rule')[0]);
+    await screen.findByRole('img', { name: /Matches all 10/ });
+    showNotification.mockClear();
     await act(async () => drag.onEnd({ active: { id: 3 }, over: { id: 2 } }));
-    await waitFor(() => expect(API.analyzeM3URules).toHaveBeenCalledTimes(2));
+    expect(API.analyzeM3URules).toHaveBeenCalledTimes(1);
     expect(showNotification).not.toHaveBeenCalled();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(screen.getAllByLabelText('Regular expression')[1]).toHaveValue(
@@ -787,37 +857,26 @@ describe('M3URulesEditor', () => {
     );
   });
 
-  it('ignores a stale opening analysis after an edit and keeps analysis failures non-blocking', async () => {
-    let finish;
-    API.analyzeM3URules.mockReturnValueOnce(
-      new Promise((resolve) => {
-        finish = resolve;
-      })
-    );
+  it('reports an unsuccessful save-time check in red without writing anything', async () => {
     await load();
     fireEvent.change(screen.getByLabelText('Regular expression'), {
       target: { value: 'Sport' },
     });
-    await act(async () =>
-      finish({
-        inventory_count: 10,
-        rule_coverage: [{ rule_id: '1', count: 10 }],
-      })
-    );
-    expect(screen.queryByText(/Matches all 10/)).not.toBeInTheDocument();
+    expect(API.analyzeM3URules).not.toHaveBeenCalled();
     API.analyzeM3URules.mockRejectedValue(new Error('Analysis unavailable'));
     API.saveM3URule.mockResolvedValue(rule({ regex_pattern: 'Sport' }));
     fireEvent.click(screen.getByLabelText('Save rule'));
     await waitFor(() =>
-      expect(screen.getByLabelText('Preview rule')).toBeEnabled()
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', autoClose: false })
+      )
     );
-    expect(screen.getByLabelText('Regular expression')).not.toHaveAttribute(
+    expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
       'aria-invalid',
       'true'
     );
-    expect(showNotification).not.toHaveBeenCalledWith(
-      expect.objectContaining({ color: 'red' })
-    );
+    expect(API.saveM3URule).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Preview rule')).toBeDisabled();
   });
 
   it('offers generic regex help without sending expressions or account data to the helper site', async () => {
@@ -843,7 +902,7 @@ describe('M3URulesEditor', () => {
   it('does not special-case catch-all text or prevent adding a row to reorder later', async () => {
     await load([rule({ regex_pattern: '.*' })]);
     fireEvent.click(screen.getByText('Add rule'));
-    expect(screen.getByRole('button', { name: 'Add rule' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add rule' })).toBeDisabled();
     const newRow = screen.getAllByLabelText('Regular expression')[1];
     fireEvent.change(newRow, { target: { value: 'Sport' } });
     const newId = newRow.closest('tr').getAttribute('data-rule-id');

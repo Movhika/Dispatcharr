@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getRuleWarnings, getRuleCoverage } from '../M3URulesEditor.utils.js';
+import {
+  findDuplicateRule,
+  getRuleCoverage,
+  ruleCheckSignature,
+} from '../M3URulesEditor.utils.js';
 const rule = (id, regex_pattern, props = {}) => ({
   id,
   regex_pattern,
@@ -8,48 +12,68 @@ const rule = (id, regex_pattern, props = {}) => ({
   case_sensitive: false,
   ...props,
 });
-describe('rule editing hints', () => {
-  it('warns on duplicate active matches even with different results', () => {
-    const warnings = getRuleWarnings([
-      rule(1, 'News', { action: 'enable' }),
-      rule(2, 'News', { action: 'disable' }),
-    ]);
-    expect(warnings[1][0]).toContain('identical match');
-    expect(warnings[2][0]).toContain('identical match');
+describe('save-time duplicate validation', () => {
+  it('finds identical active predicates even with different results, excluding itself', () => {
+    const saved = rule(1, 'News', { action: 'enable' });
+    expect(
+      findDuplicateRule(rule(2, 'News', { action: 'disable' }), [saved])
+    ).toBe(saved);
+    expect(findDuplicateRule(saved, [saved])).toBeUndefined();
   });
   it('does not confuse matching modes, case or disabled rules', () => {
+    const saved = rule(1, 'News');
+    for (const values of [
+      { case_sensitive: true },
+      { enabled: false },
+      { scope: 'movie' },
+      { match_field: 'item_name', match_mode: 'all' },
+    ])
+      expect(
+        findDuplicateRule(rule(2, 'News', values), [saved])
+      ).toBeUndefined();
     expect(
-      getRuleWarnings([
-        rule(1, 'News'),
-        rule(2, 'News', { case_sensitive: true }),
-        rule(3, 'News', { enabled: false }),
-      ])
-    ).toEqual({});
-    expect(
-      getRuleWarnings([
-        rule(1, 'News', { match_field: 'item_name', match_mode: 'any' }),
-        rule(2, 'News', { match_field: 'item_name', match_mode: 'all' }),
-      ])
-    ).toEqual({});
+      findDuplicateRule(rule(2, 'News'), [rule(1, 'News', { enabled: false })])
+    ).toBeUndefined();
   });
   it('does not block Python-only or invalid regex syntax', () => {
-    expect(getRuleWarnings([rule(1, '(?i)News'), rule(2, '[')])).toEqual({});
+    expect(
+      findDuplicateRule(rule(1, '(?i)News'), [rule(2, '[')])
+    ).toBeUndefined();
   });
   it('distinguishes stream filter targets', () => {
     expect(
-      getRuleWarnings(
-        [
-          rule(1, 'News', { filter_type: 'name' }),
-          rule(2, 'News', { filter_type: 'url' }),
-        ],
+      findDuplicateRule(
+        rule(1, 'News', { filter_type: 'name' }),
+        [rule(2, 'News', { filter_type: 'url' })],
         true
       )
-    ).toEqual({});
+    ).toBeUndefined();
   });
   it('does not evaluate arbitrary potentially expensive regexes in the UI', () => {
     expect(
-      getRuleWarnings([rule(1, '(a?){100000000}'), rule(2, 'News')])
-    ).toEqual({});
+      findDuplicateRule(rule(1, '(a?){100000000}'), [rule(2, 'News')])
+    ).toBeUndefined();
+  });
+  it('signs only relevant matching fields, results, identities and order', () => {
+    const saved = rule(1, 'News', {
+      filter_type: 'name',
+      order: 0,
+      custom_properties: { case_sensitive: false, note: 'one' },
+    });
+    expect(ruleCheckSignature([saved], true)).toBe(
+      ruleCheckSignature(
+        [
+          {
+            ...saved,
+            custom_properties: { note: 'two', case_sensitive: false },
+          },
+        ],
+        true
+      )
+    );
+    expect(ruleCheckSignature([saved], true)).not.toBe(
+      ruleCheckSignature([{ ...saved, order: 1 }], true)
+    );
   });
 });
 

@@ -1,32 +1,42 @@
-// Hints only: the backend remains authoritative for regex validation.
-export const getRuleWarnings = (rules, streamFilters = false) => {
-  const warnings = {};
-  const identities = new Map();
-  const add = (id, message) => {
-    warnings[id] = [...new Set([...(warnings[id] || []), message])];
-  };
-  rules.forEach((rule) => {
-    if (!rule.regex_pattern?.trim() || (!streamFilters && !rule.enabled))
-      return;
-    const identity = JSON.stringify([
-      streamFilters ? rule.filter_type : rule.match_field,
-      !streamFilters && rule.match_field === 'item_name'
-        ? rule.match_mode
-        : 'any',
-      rule.regex_pattern,
-      streamFilters
-        ? rule.custom_properties?.case_sensitive !== false
-        : !!rule.case_sensitive,
-    ]);
-    if (identities.has(identity)) {
-      const message =
-        'An identical match already exists. The first matching rule wins.';
-      add(identities.get(identity), message);
-      add(rule.id, message);
-    } else identities.set(identity, rule.id);
-  });
-  return warnings;
+// Compare identical predicates only; never execute provider regexes in the UI.
+const matchIdentity = (rule, streamFilters) =>
+  JSON.stringify([
+    !streamFilters && rule.scope,
+    streamFilters ? rule.filter_type : rule.match_field,
+    !streamFilters && rule.match_field === 'item_name'
+      ? rule.match_mode
+      : 'any',
+    rule.regex_pattern,
+    streamFilters
+      ? rule.custom_properties?.case_sensitive !== false
+      : !!rule.case_sensitive,
+  ]);
+
+export const findDuplicateRule = (
+  candidate,
+  savedRules,
+  streamFilters = false
+) => {
+  if (!streamFilters && !candidate.enabled) return undefined;
+  const identity = matchIdentity(candidate, streamFilters);
+  return savedRules.find(
+    (rule) =>
+      String(rule.id) !== String(candidate.id) &&
+      (streamFilters || rule.enabled) &&
+      matchIdentity(rule, streamFilters) === identity
+  );
 };
+
+export const ruleCheckSignature = (rules, streamFilters = false) =>
+  JSON.stringify(
+    rules.map((rule) => [
+      String(rule.id),
+      rule.order,
+      matchIdentity(rule, streamFilters),
+      streamFilters ? rule.exclude : rule.action,
+      !streamFilters && rule.enabled,
+    ])
+  );
 
 // Coverage comes from the real backend regex engine and the last refresh inventory.
 // It describes this snapshot, not a proof that an expression matches every string.

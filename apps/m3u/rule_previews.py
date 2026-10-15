@@ -34,6 +34,7 @@ from .serializers import (
     M3UPreviewResponseSerializer,
     M3URuleApplyResponseSerializer,
     M3URuleOrderSerializer,
+    validate_unique_rule_matches,
 )
 
 PREVIEW_PARAMETERS = [
@@ -534,7 +535,9 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 "Ignore prevents future imports; existing entries are never deleted."
             )
+        validate_unique_rule_matches(rows)
         with transaction.atomic():
+            M3UAccount.objects.select_for_update().get(pk=account.pk)
             existing = {
                 rule.id: rule
                 for rule in account.group_rules.select_for_update().filter(scope=scope)
@@ -553,7 +556,9 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
                     for field in M3UGroupRuleSerializer.Meta.fields
                     if field != "id"
                 }
-                serializer = M3UGroupRuleSerializer(instance, data=values)
+                serializer = M3UGroupRuleSerializer(
+                    instance, data=values, context={"validated_rule_list": True}
+                )
                 serializer.is_valid(raise_exception=True)
                 saved = serializer.save(m3u_account=account)
                 saved_rows.append(saved)

@@ -46,6 +46,7 @@ import {
   Plus,
   Save,
   Trash2,
+  TriangleAlert,
 } from 'lucide-react';
 import API from '../../api.js';
 import {
@@ -60,7 +61,12 @@ import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import ListPagination from '../ListPagination.jsx';
 import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { formatApiError } from '../../utils.js';
-import { getRuleWarnings, getRuleCoverage } from './M3URulesEditor.utils.js';
+import {
+  findDuplicateRule,
+  getRuleCoverage,
+  ruleCheckSignature,
+} from './M3URulesEditor.utils.js';
+import useM3URuleChecks from '../../store/useM3URuleChecks.js';
 import editorClasses from './AccountEditor.module.css';
 import classes from './M3URulesEditor.module.css';
 
@@ -145,12 +151,10 @@ const M3URulesEditor = ({
   const [coverage, setCoverage] = useState({ causes: {}, coveredBy: {} });
   const coverageRequest = useRef(0);
   const previewRequest = useRef(0);
-  const shownWarnings = useRef(new Set());
-  const knownCauses = useRef(new Set());
   const savedRules = useRef(new Map());
   const errorNotificationId = `account-rules-${accountId}-${kind}-error`;
-  const warningNotificationId = `account-rules-${accountId}-${kind}-warning`;
   const coverageNotificationId = `account-rules-${accountId}-${kind}-coverage`;
+  const checkKey = `${accountId}-${kind}-${scope || 'live'}`;
   const { dateYearFormat, timeFormat } = useDateTimeFormat();
   const { toUserTime } = useTimeHelpers();
   const sensors = useSensors(
@@ -185,57 +189,29 @@ const M3URulesEditor = ({
   );
 
   const acceptCoverage = useCallback(
-    (rows, response, initial = false) => {
+    (rows, response) => {
       const found = getRuleCoverage(rows, response, streamFilters);
       const causes = Object.values(found.causes);
-      const changed = causes.filter(
-        (cause) => !knownCauses.current.has(cause.key)
-      );
-      knownCauses.current = new Set(causes.map((cause) => cause.key));
       setCoverage(found);
+      useM3URuleChecks
+        .getState()
+        .remember(checkKey, ruleCheckSignature(rows, streamFilters), found);
       if (!causes.length) hideNotification(coverageNotificationId);
-      else if (!initial && changed.length) {
+      else {
         hideNotification(coverageNotificationId);
         showNotification({
           id: coverageNotificationId,
           title: streamFilters
-            ? 'Stream filter warning'
-            : 'Import rule warning',
-          message: changed.map((cause) => cause.message).join('\n'),
+            ? 'Stream filter saved with warning'
+            : 'Import rule saved with warning',
+          message: causes.map((cause) => cause.message).join('\n'),
           color: 'yellow',
           autoClose: false,
         });
       }
+      return found;
     },
-    [coverageNotificationId, streamFilters]
-  );
-
-  const checkCoverage = useCallback(
-    async (rows, initial = false) => {
-      const requestId = ++coverageRequest.current;
-      if (!rows.length) {
-        acceptCoverage(rows, null, initial);
-        return;
-      }
-      try {
-        const response = await API.analyzeM3URules(
-          accountId,
-          kind,
-          rows.map((rule) => ({
-            ...payload(rule),
-            preview_id: String(rule.id),
-          }))
-        );
-        if (requestId !== coverageRequest.current) return;
-        // Reopening restores the markers quietly, without repeating old notices.
-        acceptCoverage(rows, response, initial);
-      } catch {
-        // Optional snapshot hints must not turn a successful save into an error.
-        if (requestId === coverageRequest.current)
-          setCoverage({ causes: {}, coveredBy: {} });
-      }
-    },
-    [accountId, kind, payload, acceptCoverage]
+    [coverageNotificationId, streamFilters, checkKey]
   );
 
   const load = useCallback(async () => {
@@ -247,13 +223,18 @@ const M3URulesEditor = ({
       setDirtyIds(new Set());
       setRowErrors({});
       setError(null);
-      void checkCoverage(loaded, true);
+      const checked = useM3URuleChecks.getState().checks[checkKey];
+      const restored =
+        checked?.signature === ruleCheckSignature(loaded, streamFilters)
+          ? checked.coverage
+          : { causes: {}, coveredBy: {} };
+      setCoverage(restored);
     } catch (error) {
       setError(error.message || 'Rules could not be loaded.');
     } finally {
       setBusy(false);
     }
-  }, [accountId, kind, scope, checkCoverage]);
+  }, [accountId, kind, scope, checkKey, streamFilters]);
 
   useEffect(() => {
     load();
@@ -269,10 +250,9 @@ const M3URulesEditor = ({
   useEffect(
     () => () => {
       hideNotification(errorNotificationId);
-      hideNotification(warningNotificationId);
       hideNotification(coverageNotificationId);
     },
-    [errorNotificationId, warningNotificationId, coverageNotificationId]
+    [errorNotificationId, coverageNotificationId]
   );
 
   const update = (id, values) => {
@@ -297,7 +277,6 @@ const M3URulesEditor = ({
     setRowErrors((current) => ({ ...current, [id]: undefined }));
     hideNotification(errorNotificationId);
     coverageRequest.current += 1;
-    setCoverage({ causes: {}, coveredBy: {} });
   };
 
   const notifyError = (message) => {
@@ -322,7 +301,8 @@ const M3URulesEditor = ({
       return saved ? [{ ...saved, order: rule.order }] : [];
     });
 
-  const add = () =>
+  const add = () => {
+    if (busy || rules.some((rule) => rule.isNew)) return;
     setRules((current) => [
       ...current,
       {
@@ -341,8 +321,9 @@ const M3URulesEditor = ({
         enabled: true,
       },
     ]);
+  };
 
-  const save = async (rule, notify = true) => {
+  const save = async (rule) => {
     if (!rule.regex_pattern?.trim()) {
       const message = 'Enter a regular expression before saving.';
       setRowErrors((current) => ({
@@ -370,27 +351,68 @@ const M3URulesEditor = ({
       return next;
     });
     setRowErrors((current) => ({ ...current, [rule.id]: undefined }));
-    if (notify)
-      showNotification({
-        title: streamFilters ? 'Stream filter saved' : 'Import rule saved',
-        message: 'Used during future scans. Existing selections are unchanged.',
-        color: 'green',
-      });
     return saved;
   };
 
   const saveRow = async (rule) => {
     setBusy(true);
-    coverageRequest.current += 1;
+    hideNotification(errorNotificationId);
+    hideNotification(coverageNotificationId);
+    const requestId = ++coverageRequest.current;
     try {
+      if (!rule.regex_pattern?.trim()) {
+        await save(rule);
+        return;
+      }
+      const duplicate = findDuplicateRule(rule, persistedRows(), streamFilters);
+      if (duplicate) {
+        const message = `An identical active match already exists (rule ${rules.findIndex((item) => item.id === duplicate.id) + 1}). Edit that rule instead.`;
+        setRowErrors((current) => ({ ...current, [rule.id]: message }));
+        notifyError(message);
+        return;
+      }
+      const checkedRows = persistedRows(rules, rule);
+      let response;
+      try {
+        response = await API.analyzeM3URules(
+          accountId,
+          kind,
+          checkedRows.map((item) => ({
+            ...payload(item),
+            preview_id: String(item.id),
+          }))
+        );
+      } catch (error) {
+        const message = formatApiError(error);
+        setRowErrors((current) => ({ ...current, [rule.id]: message }));
+        notifyError(message);
+        return;
+      }
+      if (requestId !== coverageRequest.current) return;
       const saved = await save(rule);
       if (saved) {
         setError(null);
-        void checkCoverage(
-          persistedRows(
-            rules.map((item) => (item.id === rule.id ? saved : item))
-          )
+        const checked = acceptCoverage(
+          checkedRows.map((item) => (item.id === rule.id ? saved : item)),
+          {
+            ...response,
+            rule_coverage: response.rule_coverage?.map((row) => ({
+              ...row,
+              rule_id:
+                String(row.rule_id) === String(rule.id)
+                  ? String(saved.id)
+                  : row.rule_id,
+            })),
+          }
         );
+        if (!Object.keys(checked.causes).length)
+          showNotification({
+            id: coverageNotificationId,
+            title: streamFilters ? 'Stream filter saved' : 'Import rule saved',
+            message:
+              'Used during future scans. Existing selections are unchanged.',
+            color: 'green',
+          });
       }
     } catch (error) {
       setRowErrors((current) => ({
@@ -421,8 +443,6 @@ const M3URulesEditor = ({
       );
       if (requestId === previewRequest.current) {
         setPreview(response);
-        coverageRequest.current += 1;
-        acceptCoverage(draft, response);
         hideNotification(errorNotificationId);
       }
     } catch (error) {
@@ -517,7 +537,8 @@ const M3URulesEditor = ({
         });
       }
       hideNotification(errorNotificationId);
-      void checkCoverage(persistedRows(reordered));
+      setCoverage({ causes: {}, coveredBy: {} });
+      useM3URuleChecks.getState().forget(checkKey);
     } catch (error) {
       setRules(previous);
       setError(error.message || 'Order could not be saved.');
@@ -533,7 +554,6 @@ const M3URulesEditor = ({
       if (!deleteTarget.isNew)
         await API.deleteM3URule(accountId, kind, deleteTarget.id);
       savedRules.current.delete(deleteTarget.id);
-      const remaining = rules.filter((rule) => rule.id !== deleteTarget.id);
       hideNotification(errorNotificationId);
       setRules((current) =>
         current.filter((rule) => rule.id !== deleteTarget.id)
@@ -545,7 +565,10 @@ const M3URulesEditor = ({
       });
       setRowErrors((current) => ({ ...current, [deleteTarget.id]: undefined }));
       setDeleteTarget(null);
-      void checkCoverage(persistedRows(remaining));
+      if (!deleteTarget.isNew) {
+        setCoverage({ causes: {}, coveredBy: {} });
+        useM3URuleChecks.getState().forget(checkKey);
+      }
     } catch (error) {
       setError(error.message || 'Rule could not be deleted.');
     } finally {
@@ -557,31 +580,10 @@ const M3URulesEditor = ({
   const noun = streamFilters ? 'filter' : 'rule';
   const hasUnsavedChanges =
     dirtyIds.size > 0 || rules.some((rule) => rule.isNew);
-  const warnings = getRuleWarnings(rules, streamFilters);
-  for (const [id, cause] of Object.entries(coverage.causes)) {
-    warnings[id] = [...(warnings[id] || []), cause.message];
-  }
-  const warningKey = JSON.stringify([
-    ...new Set(Object.values(getRuleWarnings(rules, streamFilters)).flat()),
-  ]);
-  useEffect(() => {
-    const messages = JSON.parse(warningKey);
-    const changed = messages.filter(
-      (message) => !shownWarnings.current.has(message)
-    );
-    shownWarnings.current = new Set(messages);
-    if (!messages.length) hideNotification(warningNotificationId);
-    else if (changed.length) {
-      hideNotification(warningNotificationId);
-      showNotification({
-        id: warningNotificationId,
-        title: streamFilters ? 'Stream filter warning' : 'Import rule warning',
-        message: changed.join('\n'),
-        color: 'yellow',
-        autoClose: false,
-      });
-    }
-  }, [warningKey, streamFilters, warningNotificationId]);
+  const hasNewRule = rules.some((rule) => rule.isNew);
+  const visibleCoverage = hasUnsavedChanges
+    ? { causes: {}, coveredBy: {} }
+    : coverage;
 
   useEffect(() => {
     onStateChange?.({
@@ -637,14 +639,26 @@ const M3URulesEditor = ({
               : 'New unmatched categories are imported disabled.'}
           </Text>
         </Alert>
-        <Button
-          size="xs"
-          leftSection={<Plus size={14} />}
-          onClick={add}
-          disabled={busy}
+        <Tooltip
+          label={`Save or delete the new ${noun} before adding another.`}
+          disabled={!hasNewRule}
+          events={{ hover: true, focus: true, touch: true }}
+          withArrow
         >
-          Add {streamFilters ? 'filter' : 'rule'}
-        </Button>
+          <span
+            style={{ display: 'inline-flex' }}
+            tabIndex={hasNewRule ? 0 : undefined}
+          >
+            <Button
+              size="xs"
+              leftSection={<Plus size={14} />}
+              onClick={add}
+              disabled={busy || hasNewRule}
+            >
+              Add {streamFilters ? 'filter' : 'rule'}
+            </Button>
+          </span>
+        </Tooltip>
       </Group>
       {!rules.length && !busy && !error && (
         <Alert color="gray" variant="light">
@@ -752,8 +766,8 @@ const M3URulesEditor = ({
                       key={rule.id}
                       id={rule.id}
                       error={rowErrors[rule.id]}
-                      warning={!!warnings[rule.id]?.length}
-                      covered={coverage.coveredBy[rule.id] !== undefined}
+                      warning={!!visibleCoverage.causes[rule.id]}
+                      covered={visibleCoverage.coveredBy[rule.id] !== undefined}
                       dirty={dirtyIds.has(rule.id) || rule.isNew}
                       disabled={busy}
                       noun={noun}
@@ -819,9 +833,13 @@ const M3URulesEditor = ({
                               })
                             }
                           />
-                          {coverage.coveredBy[rule.id] !== undefined && (
+                          {(rowErrors[rule.id] ||
+                            visibleCoverage.causes[rule.id]) && (
                             <Tooltip
-                              label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(coverage.coveredBy[rule.id])) + 1} in the last refresh snapshot. Move this rule earlier or narrow the earlier expression to give it matches.`}
+                              label={
+                                rowErrors[rule.id] ||
+                                visibleCoverage.causes[rule.id].message
+                              }
                               events={{ hover: true, focus: true, touch: true }}
                               multiline
                               w={280}
@@ -830,25 +848,45 @@ const M3URulesEditor = ({
                               <span
                                 tabIndex={0}
                                 role="img"
-                                aria-label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(coverage.coveredBy[rule.id])) + 1} in the last refresh snapshot`}
+                                aria-label={
+                                  rowErrors[rule.id] ||
+                                  visibleCoverage.causes[rule.id].message
+                                }
                                 className={classes.coverageMarker}
+                                style={{
+                                  color: rowErrors[rule.id]
+                                    ? 'var(--mantine-color-red-6)'
+                                    : 'var(--mantine-color-yellow-6)',
+                                }}
                               >
-                                <Ban size={15} aria-hidden="true" />
+                                <TriangleAlert size={15} aria-hidden="true" />
                               </span>
                             </Tooltip>
                           )}
+                          {visibleCoverage.coveredBy[rule.id] !== undefined &&
+                            !rowErrors[rule.id] && (
+                              <Tooltip
+                                label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(visibleCoverage.coveredBy[rule.id])) + 1} in the last refresh snapshot. Move this rule earlier or narrow the earlier expression to give it matches.`}
+                                events={{
+                                  hover: true,
+                                  focus: true,
+                                  touch: true,
+                                }}
+                                multiline
+                                w={280}
+                                withArrow
+                              >
+                                <span
+                                  tabIndex={0}
+                                  role="img"
+                                  aria-label={`Covered by rule ${rules.findIndex((item) => String(item.id) === String(visibleCoverage.coveredBy[rule.id])) + 1} in the last refresh snapshot`}
+                                  className={classes.coverageMarker}
+                                >
+                                  <Ban size={15} aria-hidden="true" />
+                                </span>
+                              </Tooltip>
+                            )}
                         </Group>
-                        {coverage.causes[rule.id] && (
-                          <Text
-                            size="xs"
-                            c="yellow"
-                            mt={4}
-                            className={classes.coverageHint}
-                          >
-                            {coverage.causes[rule.id].summary} Put specific
-                            rules before this rule, or narrow its expression.
-                          </Text>
-                        )}
                       </TableTd>
                       {!streamFilters && (
                         <TableTd>

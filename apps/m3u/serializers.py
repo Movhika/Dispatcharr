@@ -10,13 +10,105 @@ from apps.channels.serializers import (
     ChannelGroupM3UAccountSerializer,
 )
 from datetime import timezone as dt_tz
+from django.db import transaction
 import logging
 import json
 
 logger = logging.getLogger(__name__)
 
 
-class M3UFilterSerializer(serializers.ModelSerializer):
+def rule_match_identity(rule):
+    """Compare identical predicates, not arbitrary regex equivalence or results."""
+    if isinstance(rule, M3UGroupRule):
+        if not rule.enabled:
+            return None
+        return (
+            rule.scope,
+            rule.match_field,
+            rule.match_mode if rule.match_field == "item_name" else "any",
+            rule.regex_pattern,
+            rule.case_sensitive,
+        )
+    return (
+        rule.filter_type,
+        rule.regex_pattern,
+        (rule.custom_properties or {}).get("case_sensitive", True),
+    )
+
+
+def validate_unique_rule_matches(rules):
+    seen = {}
+    for position, rule in enumerate(rules, 1):
+        identity = rule_match_identity(rule)
+        if identity is None:
+            continue
+        if identity in seen:
+            raise serializers.ValidationError(
+                {
+                    "regex_pattern": (
+                        f"Rules {seen[identity]} and {position} have an identical "
+                        "active match. Edit the existing rule instead."
+                    )
+                }
+            )
+        seen[identity] = position
+
+
+class UniqueRuleMatchMixin:
+    """Serialize account rule writes so concurrent saves cannot add duplicates."""
+
+    def _validate_unique_match(self, account, values, instance=None):
+        data = (
+            {
+                field: getattr(instance, field)
+                for field in self.Meta.fields
+                if field != "id"
+            }
+            if instance is not None
+            else {}
+        )
+        candidate = self.Meta.model(**{**data, **values})
+        identity = rule_match_identity(candidate)
+        if identity is None:
+            return
+        existing = self.Meta.model.objects.filter(m3u_account=account).order_by(
+            "order", "id"
+        )
+        if instance is not None:
+            existing = existing.exclude(pk=instance.pk)
+        for rule in existing:
+            if rule_match_identity(rule) == identity:
+                raise serializers.ValidationError(
+                    {
+                        "regex_pattern": (
+                            "An identical active match already exists "
+                            f"(rule ID {rule.pk}). Edit that rule instead."
+                        )
+                    }
+                )
+
+    def create(self, validated_data):
+        if self.context.get("validated_rule_list"):
+            return super().create(validated_data)
+        account = validated_data["m3u_account"]
+        with transaction.atomic():
+            M3UAccount.objects.select_for_update().get(pk=account.pk)
+            self._validate_unique_match(account, validated_data)
+            return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if self.context.get("validated_rule_list"):
+            return super().update(instance, validated_data)
+        with transaction.atomic():
+            M3UAccount.objects.select_for_update().get(pk=instance.m3u_account_id)
+            instance.refresh_from_db()
+            self._validate_unique_match(
+                instance.m3u_account, validated_data, instance
+            )
+            return super().update(instance, validated_data)
+
+
+class M3UFilterSerializer(UniqueRuleMatchMixin, serializers.ModelSerializer):
     """Serializer for M3U Filters"""
 
     class Meta:
@@ -53,7 +145,7 @@ class M3UFilterSerializer(serializers.ModelSerializer):
         return value
 
 
-class M3UGroupRuleSerializer(serializers.ModelSerializer):
+class M3UGroupRuleSerializer(UniqueRuleMatchMixin, serializers.ModelSerializer):
     class Meta:
         model = M3UGroupRule
         fields = [

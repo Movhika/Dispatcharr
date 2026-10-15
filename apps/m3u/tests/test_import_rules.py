@@ -284,6 +284,148 @@ class ImportRuleApiTests(TestCase):
         relation.refresh_from_db()
         self.assertFalse(relation.enabled)
 
+    def test_duplicate_group_match_is_rejected_on_create_and_update(self):
+        values = draft(regex_pattern="AFR")
+        values.pop("preview_id")
+        first = self.client.post(self.url, values, format="json")
+        self.assertEqual(first.status_code, 201)
+        duplicate = self.client.post(
+            self.url, {**values, "action": "disable"}, format="json"
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("regex_pattern", duplicate.data)
+        self.assertEqual(self.account.group_rules.count(), 1)
+        same = self.client.patch(
+            self.url + f"{first.data['id']}/", {"action": "disable"}, format="json"
+        )
+        self.assertEqual(same.status_code, 200)
+        other = M3UGroupRule.objects.create(
+            m3u_account=self.account, scope="live", regex_pattern="EU"
+        )
+        changed = self.client.patch(
+            self.url + f"{other.id}/", {"regex_pattern": "AFR"}, format="json"
+        )
+        self.assertEqual(changed.status_code, 400)
+        other.refresh_from_db()
+        self.assertEqual(other.regex_pattern, "EU")
+
+    def test_duplicate_identity_respects_scope_field_case_and_item_mode(self):
+        values = draft(regex_pattern="AFR")
+        values.pop("preview_id")
+        M3UGroupRule.objects.create(m3u_account=self.account, **values)
+        for differences in (
+            {"scope": "movie"},
+            {"scope": "series"},
+            {"case_sensitive": True},
+            {"match_field": "item_name", "match_mode": "any"},
+            {"match_field": "item_name", "match_mode": "all"},
+            {"enabled": False},
+        ):
+            with self.subTest(differences=differences):
+                response = self.client.post(
+                    self.url, {**values, **differences}, format="json"
+                )
+                self.assertEqual(response.status_code, 201, response.data)
+        ignored_mode = self.client.post(
+            self.url, {**values, "match_mode": "all"}, format="json"
+        )
+        self.assertEqual(ignored_mode.status_code, 400)
+        foreign = self.client.post(
+            f"/api/m3u/accounts/{self.other.id}/group-rules/", values, format="json"
+        )
+        self.assertEqual(foreign.status_code, 201)
+
+    def test_enabling_an_inactive_duplicate_is_rejected_without_changing_it(self):
+        M3UGroupRule.objects.create(
+            m3u_account=self.account, scope="live", regex_pattern="AFR"
+        )
+        inactive = M3UGroupRule.objects.create(
+            m3u_account=self.account, scope="live", regex_pattern="AFR", enabled=False
+        )
+        response = self.client.patch(
+            self.url + f"{inactive.id}/", {"enabled": True}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        inactive.refresh_from_db()
+        self.assertFalse(inactive.enabled)
+
+    def test_filter_duplicates_respect_account_field_and_case(self):
+        url = f"/api/m3u/accounts/{self.account.id}/filters/"
+        values = {
+            "filter_type": "name", "regex_pattern": "AFR", "exclude": True,
+            "custom_properties": {"case_sensitive": False},
+        }
+        first = self.client.post(url, values, format="json")
+        self.assertEqual(first.status_code, 201)
+        duplicate = self.client.post(url, {**values, "exclude": False}, format="json")
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("regex_pattern", duplicate.data)
+        self.assertEqual(self.account.filters.count(), 1)
+        same = self.client.patch(
+            url + f"{first.data['id']}/", {"exclude": False}, format="json"
+        )
+        self.assertEqual(same.status_code, 200)
+        for differences in (
+            {"filter_type": "url"},
+            {"custom_properties": {"case_sensitive": True}},
+        ):
+            response = self.client.post(url, {**values, **differences}, format="json")
+            self.assertEqual(response.status_code, 201, response.data)
+        other = M3UFilter.objects.create(
+            m3u_account=self.account, filter_type="name", regex_pattern="EU",
+            custom_properties={"case_sensitive": False},
+        )
+        response = self.client.patch(
+            url + f"{other.id}/", {"regex_pattern": "AFR"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        other.refresh_from_db()
+        self.assertEqual(other.regex_pattern, "EU")
+        foreign = self.client.post(
+            f"/api/m3u/accounts/{self.other.id}/filters/", values, format="json"
+        )
+        self.assertEqual(foreign.status_code, 201)
+
+    def test_save_apply_validates_the_final_list_before_any_writes(self):
+        relation = self.group("AFR")
+        first = M3UGroupRule.objects.create(
+            m3u_account=self.account, scope="live", regex_pattern="AFR"
+        )
+        second = M3UGroupRule.objects.create(
+            m3u_account=self.account, scope="live", regex_pattern="EU", order=1
+        )
+        duplicate = self.client.post(
+            self.url + "save-apply/",
+            {
+                "rules": [
+                    draft(first.id, regex_pattern="AFR"),
+                    draft(second.id, regex_pattern="AFR", order=1),
+                ],
+                "target_id": str(first.id),
+            },
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        second.refresh_from_db()
+        relation.refresh_from_db()
+        self.assertEqual(second.regex_pattern, "EU")
+        self.assertFalse(relation.enabled)
+        swapped = self.client.post(
+            self.url + "save-apply/",
+            {
+                "rules": [
+                    draft(first.id, regex_pattern="EU"),
+                    draft(second.id, regex_pattern="AFR", order=1),
+                ],
+                "target_id": str(second.id),
+            },
+            format="json",
+        )
+        self.assertEqual(swapped.status_code, 200, swapped.data)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.regex_pattern, second.regex_pattern), ("EU", "AFR"))
+
     def test_coverage_is_evaluated_for_arbitrary_regexes_not_special_catch_all_text(self):
         self.group("News")
         self.group("Sport")
