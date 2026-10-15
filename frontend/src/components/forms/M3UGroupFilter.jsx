@@ -23,7 +23,7 @@ import {
 } from '../../utils/forms/M3uGroupFilterUtils.js';
 import { detectGroupReservationOverlaps } from '../../utils/forms/GroupSyncUtils';
 import API from '../../api.js';
-import M3URulesEditor from './M3URulesEditor.jsx';
+import M3URulesModal from './M3URulesModal.jsx';
 import editorClasses from './AccountEditor.module.css';
 import useCategoryPreviewAvailability from '../../hooks/useCategoryPreviewAvailability.jsx';
 
@@ -345,20 +345,14 @@ const M3UGroupFilter = ({
           </div>
         </Flex>
       </Stack>
-      <Modal
+      <M3URulesModal
         opened={!!rulesScope}
         onClose={() => setRulesScope(null)}
         title={`${rulesScope === 'live' ? 'Live TV' : rulesScope === 'movie' ? 'Movie' : 'Series'} import rules`}
-        size="min(1400px, 94vw)"
-      >
-        {rulesScope && (
-          <M3URulesEditor
-            accountId={playlist.id}
-            scope={rulesScope}
-            onApplied={applyRuleResult}
-          />
-        )}
-      </Modal>
+        accountId={playlist.id}
+        scope={rulesScope}
+        onApplied={applyRuleResult}
+      />
     </Modal>
   );
 };

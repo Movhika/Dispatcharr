@@ -20,6 +20,7 @@ vi.mock('../M3URulesEditor.jsx', () => ({
     />
   ),
 }));
+vi.mock('../../ConfirmationDialog.jsx', () => ({ default: () => null }));
 
 describe('M3UFilters', () => {
   it('uses the ordered-rule editor for the selected account', () => {

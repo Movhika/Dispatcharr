@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount, Stream
@@ -207,6 +208,72 @@ class ImportRuleApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 230)
         self.assertEqual(len(response.data["results"]), 30)
+        self.assertEqual(response.data["inventory_count"], 230)
+
+    def test_group_preview_metadata_is_scoped_and_uses_live_refresh_fallback(self):
+        self.group("News")
+        self.group("Sport")
+        self.group("Foreign", account=self.other)
+        completed = "2026-10-14T06:00:00Z"
+        self.account.custom_properties = {
+            "refresh_timings": {"live_completed_at": completed}
+        }
+        self.account.save()
+        response = self.post_preview([draft(regex_pattern="News")])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            (response.data["count"], response.data["inventory_count"]), (1, 2)
+        )
+        self.assertEqual(
+            parse_datetime(response.data["last_completed_refresh"]),
+            parse_datetime(completed),
+        )
+        self.assertFalse(response.data["catalog_complete"])
+
+    def test_group_preview_uses_completed_catalog_timestamp(self):
+        self.group("News")
+        write_live_filter_catalog(self.account.id, [], scope="live-groups")
+        path = os.path.join(
+            self.directory.name,
+            f"{self.account.id}.live-groups-filter-preview.jsonl.gz",
+        )
+        timestamp = parse_datetime("2026-10-14T06:00:00Z")
+        os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
+        self.account.custom_properties = {
+            "refresh_timings": {"live_completed_at": "2026-10-15T06:00:00Z"}
+        }
+        self.account.save()
+        response = self.post_preview([draft()])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            parse_datetime(response.data["last_completed_refresh"]), timestamp
+        )
+        self.assertTrue(response.data["catalog_complete"])
+
+    def test_vod_preview_metadata_does_not_use_live_refresh_or_other_scopes(self):
+        for scope, name in (("movie", "News Movies"), ("series", "News Series")):
+            category = VODCategory.objects.create(name=name, category_type=scope)
+            M3UVODCategoryRelation.objects.create(
+                m3u_account=self.account, category=category
+            )
+        self.group("News Live")
+        completed = "2026-10-13T03:00:00Z"
+        self.account.custom_properties = {
+            "refresh_timings": {
+                "vod_completed_at": completed,
+                "live_completed_at": "2026-10-15T06:00:00Z",
+            }
+        }
+        self.account.save()
+        response = self.post_preview([draft(scope="movie")])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            (response.data["count"], response.data["inventory_count"]), (1, 1)
+        )
+        self.assertEqual(
+            parse_datetime(response.data["last_completed_refresh"]),
+            parse_datetime(completed),
+        )
 
     def test_save_does_not_change_existing_selections(self):
         relation = self.group("News")
@@ -216,6 +283,58 @@ class ImportRuleApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         relation.refresh_from_db()
         self.assertFalse(relation.enabled)
+
+    def test_coverage_is_evaluated_for_arbitrary_regexes_not_special_catch_all_text(self):
+        self.group("News")
+        self.group("Sport")
+        for pattern in (r"[\s\S]+", "News|Sport", "(?i)news|sport", ".*"):
+            with self.subTest(pattern=pattern):
+                response = self.post_preview(
+                    [
+                        draft("first", regex_pattern=pattern),
+                        draft("later", regex_pattern="Sport", order=1),
+                    ],
+                    target="first",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.data["rule_coverage"],
+                    [
+                        {"rule_id": "first", "count": 2},
+                        {"rule_id": "later", "count": 0},
+                    ],
+                )
+
+    def test_stream_coverage_uses_order_and_actual_inventory(self):
+        write_live_filter_catalog(
+            self.account.id,
+            [
+                {"name": "News", "attributes": {}},
+                {"name": "Sport", "attributes": {}},
+            ],
+        )
+        response = self.client.post(
+            f"/api/m3u/accounts/{self.account.id}/filters/preview-draft/",
+            {
+                "target_id": "one",
+                "rules": [
+                    {
+                        "preview_id": "one", "filter_type": "name",
+                        "regex_pattern": "News|Sport", "exclude": True, "order": 0,
+                    },
+                    {
+                        "preview_id": "two", "filter_type": "name",
+                        "regex_pattern": "Sport", "exclude": False, "order": 1,
+                    },
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["rule_coverage"],
+            [{"rule_id": "one", "count": 2}, {"rule_id": "two", "count": 0}],
+        )
 
     def test_save_apply_updates_target_only_and_keeps_other_properties(self):
         relation = self.group("News")

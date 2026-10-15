@@ -127,6 +127,11 @@ class M3UGroupContentAvailabilitySerializer(serializers.Serializer):
     series = serializers.ListField(child=serializers.IntegerField())
 
 
+class M3URuleCoverageSerializer(serializers.Serializer):
+    rule_id = serializers.CharField()
+    count = serializers.IntegerField()
+
+
 class M3UPreviewResponseSerializer(serializers.Serializer):
     count = serializers.IntegerField()
     results = M3UPreviewResultSerializer(many=True)
@@ -136,6 +141,7 @@ class M3UPreviewResponseSerializer(serializers.Serializer):
     catalog_complete = serializers.BooleanField(required=False)
     last_completed_refresh = serializers.DateTimeField(allow_null=True, required=False)
     refresh_in_progress = serializers.BooleanField(required=False)
+    rule_coverage = M3URuleCoverageSerializer(many=True, required=False)
 
 
 class M3URuleApplyResponseSerializer(serializers.Serializer):

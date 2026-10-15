@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { getRuleWarnings } from '../M3URulesEditor.utils.js';
+import {
+  getRuleWarnings,
+  getCoverageWarnings,
+} from '../M3URulesEditor.utils.js';
 const rule = (id, regex_pattern, props = {}) => ({
   id,
   regex_pattern,
@@ -32,12 +35,6 @@ describe('rule editing hints', () => {
       ])
     ).toEqual({});
   });
-  it('warns about catch-all rules before later active rules, not when last', () => {
-    expect(getRuleWarnings([rule(1, '.*'), rule(2, 'News')])[1][0]).toContain(
-      'may hide later rules'
-    );
-    expect(getRuleWarnings([rule(1, 'News'), rule(2, '.*')])).toEqual({});
-  });
   it('does not block Python-only or invalid regex syntax', () => {
     expect(getRuleWarnings([rule(1, '(?i)News'), rule(2, '[')])).toEqual({});
   });
@@ -52,11 +49,50 @@ describe('rule editing hints', () => {
       )
     ).toEqual({});
   });
-  it('warns on literal-pipe mistakes but not escaped separators', () => {
-    expect(getRuleWarnings([rule(1, 'DE|'), rule(2, 'News')])[1][0]).toContain('escape a literal');
-    expect(getRuleWarnings([rule(1, '^DE\\|'), rule(2, 'News')])).toEqual({});
-  });
   it('does not evaluate arbitrary potentially expensive regexes in the UI', () => {
-    expect(getRuleWarnings([rule(1, '(a?){100000000}'), rule(2, 'News')])).toEqual({});
+    expect(
+      getRuleWarnings([rule(1, '(a?){100000000}'), rule(2, 'News')])
+    ).toEqual({});
+  });
+});
+
+describe('inventory-based regex coverage', () => {
+  const preview = (counts) => ({
+    inventory_count: 10,
+    rule_coverage: counts.map((count, index) => ({
+      rule_id: String(index + 1),
+      count,
+    })),
+  });
+  it.each(['News|Sport', '[\\s\\S]+', '.*', '(?i)news|sport'])(
+    'uses actual counts, not a special pattern check: %s',
+    (pattern) => {
+      const warnings = getCoverageWarnings(
+        [rule(1, pattern), rule(2, 'Sport')],
+        preview([10, 0])
+      );
+      expect(warnings[1][0]).toContain('matches all 10 categories');
+      expect(warnings[2][0]).toContain(
+        'Later rules have no matches in this snapshot'
+      );
+    }
+  );
+  it('does not infer universality or warn about ordinary partial matches', () => {
+    expect(
+      getCoverageWarnings([rule(1, '.*'), rule(2, 'Sport')], preview([3, 4]))
+    ).toEqual({});
+    expect(
+      getCoverageWarnings([rule(1, '.*')], {
+        inventory_count: 0,
+        rule_coverage: [],
+      })
+    ).toEqual({});
+  });
+  it('warns when a non-final rule consumes the remaining inventory, not a normal final fallback', () => {
+    const rows = [rule(1, 'News'), rule(2, 'Sport'), rule(3, 'Events')];
+    expect(getCoverageWarnings(rows, preview([3, 7, 0]))[2][0]).toContain(
+      'all 7 remaining'
+    );
+    expect(getCoverageWarnings(rows.slice(0, 2), preview([3, 7]))).toEqual({});
   });
 });

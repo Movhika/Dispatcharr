@@ -25,7 +25,7 @@ vi.mock('../store/streamsTable', () => ({ default: vi.fn() }));
 vi.mock('../store/users', () => ({ default: vi.fn() }));
 vi.mock('../store/connect', () => ({ default: vi.fn() }));
 vi.mock('@mantine/notifications', () => ({
-  notifications: { show: vi.fn() },
+  notifications: { show: vi.fn(), hide: vi.fn() },
 }));
 vi.mock('../utils', () => ({
   default: { all: vi.fn() },
@@ -65,7 +65,12 @@ describe('account import rule requests', () => {
       await expect(request()).rejects.toMatchObject({ status: 400 });
       expect(notifications.show).toHaveBeenCalledTimes(1);
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Error', color: 'red' })
+        expect.objectContaining({
+          title: 'Error',
+          color: 'red',
+          autoClose: false,
+          id: expect.stringMatching(/^account-rules-7-/),
+        })
       );
     }
   );

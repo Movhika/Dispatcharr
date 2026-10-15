@@ -1,17 +1,13 @@
-import { Modal } from '@mantine/core';
-import M3URulesEditor from './M3URulesEditor.jsx';
+import M3URulesModal from './M3URulesModal.jsx';
 
 const M3UFilters = ({ playlist, isOpen, onClose }) => (
-  <Modal
-    opened={isOpen}
+  <M3URulesModal
+    opened={isOpen && !!playlist?.id}
     onClose={onClose}
     title="Stream filters"
-    size="min(1400px, 94vw)"
-  >
-    {isOpen && playlist?.id && (
-      <M3URulesEditor accountId={playlist.id} streamFilters />
-    )}
-  </Modal>
+    accountId={playlist?.id}
+    streamFilters
+  />
 );
 
 export default M3UFilters;

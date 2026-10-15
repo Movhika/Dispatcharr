@@ -166,6 +166,7 @@ class StreamFilterPreviewMixin:
             else _imported_live_inventory(account.id)
         )
         inventory_count = 0
+        coverage = {str(row.id): 0 for row in rows}
 
         def matches():
             nonlocal inventory_count
@@ -179,6 +180,7 @@ class StreamFilterPreviewMixin:
                         stream.get(key) or "", timeout=REGEX_TIMEOUT_SECONDS
                     ):
                         continue
+                    coverage[str(row.id)] += 1
                     if row.id == target_id:
                         yield {
                             "name": stream.get("name") or "",
@@ -200,6 +202,10 @@ class StreamFilterPreviewMixin:
         response.update(
             {
                 "inventory_count": inventory_count,
+                "rule_coverage": [
+                    {"rule_id": rule_id, "count": count}
+                    for rule_id, count in coverage.items()
+                ],
                 "catalog_complete": complete,
                 "last_completed_refresh": (
                     live_filter_catalog_timestamp(account.id)
@@ -334,7 +340,7 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
             ).data
         )
 
-    def _matches(self, account, rules, target_id, scope):
+    def _matches(self, account, rules, target_id, scope, stats=None):
         compiled = compile_group_rules(rules)
         item_names = defaultdict(list)
         if scope == M3UGroupRule.Scope.LIVE:
@@ -383,9 +389,13 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
             for key, name in names.iterator(chunk_size=2000):
                 item_names[key].append(name)
         for relation in relations.iterator(chunk_size=2000):
+            if stats is not None:
+                stats["inventory_count"] += 1
             name = getattr(relation, name_field).name
             items = item_names[name if complete else getattr(relation, key_field)]
             decision = evaluate_group_rules(compiled, group_name=name, item_names=items)
+            if stats is not None and decision.matched_rule_id is not None:
+                stats["coverage"][str(decision.matched_rule_id)] += 1
             if decision.matched_rule_id == target_id:
                 yield {
                     "relation_id": relation.id,
@@ -420,16 +430,43 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
                 "All draft rules must use the same content scope."
             )
         scope = scopes.pop()
+        stats = {
+            "inventory_count": 0,
+            "coverage": {str(row.id): 0 for row in rows},
+        }
         try:
             response = _paged_matches(
-                self._matches(account, rows, target_id, scope), page, page_size
+                self._matches(account, rows, target_id, scope, stats), page, page_size
             )
         except TimeoutError as exc:
             raise serializers.ValidationError(
                 "A regular expression took too long. Simplify it and retry."
             ) from exc
         catalog_scope = "live-groups" if scope == M3UGroupRule.Scope.LIVE else scope
-        response["catalog_complete"] = has_live_filter_catalog(account.id, catalog_scope)
+        complete = has_live_filter_catalog(account.id, catalog_scope)
+        timings = (account.custom_properties or {}).get("refresh_timings") or {}
+        refresh_kind = "live" if scope == M3UGroupRule.Scope.LIVE else "vod"
+        response.update(
+            {
+                "inventory_count": stats["inventory_count"],
+                "rule_coverage": [
+                    {"rule_id": rule_id, "count": count}
+                    for rule_id, count in stats["coverage"].items()
+                ],
+                "catalog_complete": complete,
+                "last_completed_refresh": (
+                    live_filter_catalog_timestamp(account.id, catalog_scope)
+                    if complete
+                    else timings.get(f"{refresh_kind}_completed_at")
+                    or (account.updated_at if refresh_kind == "live" else None)
+                ),
+                "refresh_in_progress": (
+                    scope == M3UGroupRule.Scope.LIVE
+                    and account.status
+                    in (M3UAccount.Status.FETCHING, M3UAccount.Status.PARSING)
+                ),
+            }
+        )
         return Response(M3UPreviewResponseSerializer(response).data)
 
     @extend_schema(request=None, responses=M3URuleApplyResponseSerializer)

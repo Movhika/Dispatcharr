@@ -37,7 +37,10 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { Eye, GripVertical, Info, Plus, Save, Trash2 } from 'lucide-react';
 import API from '../../api.js';
-import { showNotification } from '../../utils/notificationUtils.js';
+import {
+  hideNotification,
+  showNotification,
+} from '../../utils/notificationUtils.js';
 import {
   useDateTimeFormat,
   useTimeHelpers,
@@ -46,24 +49,44 @@ import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import ListPagination from '../ListPagination.jsx';
 import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { formatApiError } from '../../utils.js';
-import { getRuleWarnings } from './M3URulesEditor.utils.js';
+import {
+  getRuleWarnings,
+  getCoverageWarnings,
+} from './M3URulesEditor.utils.js';
+import editorClasses from './AccountEditor.module.css';
 
-const SortableRow = ({ id, children, error, warning, disabled, noun }) => {
+const SortableRow = ({
+  id,
+  children,
+  error,
+  warning,
+  dirty,
+  disabled,
+  noun,
+}) => {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id, disabled });
   return (
     <TableTr
       ref={setNodeRef}
       data-invalid={error ? 'true' : undefined}
+      data-rule-id={id}
       data-warning={warning ? 'true' : undefined}
+      data-dirty={dirty ? 'true' : undefined}
+      title={dirty ? 'Unsaved changes' : undefined}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
+        boxShadow: dirty
+          ? 'inset 3px 0 var(--mantine-color-blue-5)'
+          : undefined,
         backgroundColor: error
           ? 'var(--mantine-color-red-light)'
           : warning
             ? 'var(--mantine-color-yellow-light)'
-            : undefined,
+            : dirty
+              ? 'var(--mantine-color-blue-light)'
+              : undefined,
       }}
     >
       <TableTd>
@@ -88,6 +111,7 @@ const M3URulesEditor = ({
   scope,
   streamFilters = false,
   onApplied,
+  onStateChange,
 }) => {
   const kind = streamFilters ? 'filters' : 'group-rules';
   const [rules, setRules] = useState([]);
@@ -103,8 +127,13 @@ const M3URulesEditor = ({
   const [pageSize, setPageSize] = useState(50);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [pendingChange, setPendingChange] = useState(null);
+  const [coverageWarnings, setCoverageWarnings] = useState({});
   const previewRequest = useRef(0);
   const shownWarnings = useRef(new Set());
+  const savedRules = useRef(new Map());
+  const errorNotificationId = `account-rules-${accountId}-${kind}-error`;
+  const warningNotificationId = `account-rules-${accountId}-${kind}-warning`;
   const { dateYearFormat, timeFormat } = useDateTimeFormat();
   const { toUserTime } = useTimeHelpers();
   const sensors = useSensors(
@@ -115,7 +144,9 @@ const M3URulesEditor = ({
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      setRules(await API.getM3URules(accountId, kind, scope));
+      const loaded = await API.getM3URules(accountId, kind, scope);
+      savedRules.current = new Map(loaded.map((rule) => [rule.id, rule]));
+      setRules(loaded);
       setDirtyIds(new Set());
       setRowErrors({});
       setError(null);
@@ -159,14 +190,59 @@ const M3URulesEditor = ({
           order: rule.order,
         };
 
+  useEffect(
+    () => () => {
+      hideNotification(errorNotificationId);
+      hideNotification(warningNotificationId);
+    },
+    [errorNotificationId, warningNotificationId]
+  );
+
   const update = (id, values) => {
+    const updated = { ...rules.find((rule) => rule.id === id), ...values };
     setRules((current) =>
-      current.map((rule) => (rule.id === id ? { ...rule, ...values } : rule))
+      current.map((rule) => (rule.id === id ? updated : rule))
     );
     setError(null);
-    setDirtyIds((current) => new Set(current).add(id));
+    setDirtyIds((current) => {
+      const next = new Set(current);
+      const original = savedRules.current.get(id);
+      // Order is persisted separately; reverting field edits is not dirty.
+      const fields = (rule) => ({ ...payload(rule), order: 0 });
+      if (
+        original &&
+        JSON.stringify(fields(updated)) === JSON.stringify(fields(original))
+      )
+        next.delete(id);
+      else next.add(id);
+      return next;
+    });
     setRowErrors((current) => ({ ...current, [id]: undefined }));
+    hideNotification(errorNotificationId);
+    setCoverageWarnings({});
   };
+
+  const notifyError = (message) => {
+    hideNotification(errorNotificationId);
+    showNotification({
+      id: errorNotificationId,
+      title: streamFilters
+        ? 'Stream filter was not saved'
+        : 'Import rule was not saved',
+      message,
+      color: 'red',
+      autoClose: false,
+    });
+  };
+
+  const persistedRows = (ordered = rules, replacement) =>
+    ordered.flatMap((rule) => {
+      const saved =
+        replacement?.id === rule.id
+          ? replacement
+          : savedRules.current.get(rule.id);
+      return saved ? [{ ...saved, order: rule.order }] : [];
+    });
 
   const add = () =>
     setRules((current) => [
@@ -195,13 +271,7 @@ const M3URulesEditor = ({
         ...current,
         [rule.id]: message,
       }));
-      showNotification({
-        title: streamFilters
-          ? 'Stream filter was not saved'
-          : 'Import rule was not saved',
-        message,
-        color: 'red',
-      });
+      notifyError(message);
       return null;
     }
     const saved = await API.saveM3URule(
@@ -210,6 +280,14 @@ const M3URulesEditor = ({
       rule.isNew ? null : rule.id,
       payload(rule)
     );
+    savedRules.current.delete(rule.id);
+    savedRules.current.set(saved.id, saved);
+    if (rule.id !== saved.id)
+      setCoverageWarnings((current) => {
+        const { [rule.id]: warning, ...rest } = current;
+        return warning ? { ...rest, [saved.id]: warning } : rest;
+      });
+    hideNotification(errorNotificationId);
     setRules((current) =>
       current.map((item) => (item.id === rule.id ? saved : item))
     );
@@ -228,9 +306,32 @@ const M3URulesEditor = ({
     return saved;
   };
 
-  const saveRow = async (rule) => {
+  const checkCoverage = async (rows) => {
+    if (!rows.length) return false;
+    const response = await API.analyzeM3URules(
+      accountId,
+      kind,
+      rows.map((rule) => ({
+        ...payload(rule),
+        preview_id: String(rule.id),
+      }))
+    );
+    const found = getCoverageWarnings(rows, response, streamFilters);
+    setCoverageWarnings(found);
+    return Object.keys(found).length > 0;
+  };
+
+  const saveRow = async (rule, confirmed = false) => {
     setBusy(true);
     try {
+      if (
+        rule.regex_pattern?.trim() &&
+        !confirmed &&
+        (await checkCoverage(persistedRows(rules, rule)))
+      ) {
+        setPendingChange({ type: 'save', rule });
+        return;
+      }
       if (await save(rule)) setError(null);
     } catch (error) {
       setRowErrors((current) => ({
@@ -242,13 +343,7 @@ const M3URulesEditor = ({
     }
   };
 
-  const loadPreview = async (
-    draft,
-    target,
-    nextPage,
-    nextPageSize,
-    notify = false
-  ) => {
+  const loadPreview = async (draft, target, nextPage, nextPageSize) => {
     const requestId = ++previewRequest.current;
     setPreviewBusy(true);
     setPreviewError(null);
@@ -267,16 +362,10 @@ const M3URulesEditor = ({
       );
       if (requestId === previewRequest.current) {
         setPreview(response);
-        if (notify && !response.catalog_complete)
-          showNotification({
-            title: streamFilters
-              ? 'Stream filter preview notice'
-              : 'Import rule preview notice',
-            message: streamFilters
-              ? 'No complete pre-filter catalog is available yet. This preview uses currently imported streams; run a Live refresh once to include excluded streams.'
-              : 'No complete group inventory is available yet. Contained-item rules use currently imported names. Save the item rule and run a refresh once to load names from disabled groups or categories.',
-            color: 'yellow',
-          });
+        setCoverageWarnings(
+          getCoverageWarnings(draft, response, streamFilters)
+        );
+        hideNotification(errorNotificationId);
       }
     } catch (error) {
       if (requestId === previewRequest.current)
@@ -296,7 +385,7 @@ const M3URulesEditor = ({
     setPreviewDraft(draft);
     setPreview(null);
     setPage(1);
-    loadPreview(draft, rule, 1, pageSize, true);
+    loadPreview(draft, rule, 1, pageSize);
   };
 
   const closePreview = () => {
@@ -304,6 +393,7 @@ const M3URulesEditor = ({
     setPreviewTarget(null);
     setPreview(null);
     setPreviewBusy(false);
+    hideNotification(errorNotificationId);
     setPreviewError(null);
   };
 
@@ -340,15 +430,23 @@ const M3URulesEditor = ({
       !rules.some((rule) => rule.id === over.id)
     )
       return;
-    const previous = rules;
     const reordered = arrayMove(
       rules,
       rules.findIndex((rule) => rule.id === active.id),
       rules.findIndex((rule) => rule.id === over.id)
     ).map((rule, order) => ({ ...rule, order }));
-    setRules(reordered);
+    await persistOrder(reordered);
+  };
+
+  const persistOrder = async (reordered, confirmed = false) => {
+    const previous = rules;
     setBusy(true);
     try {
+      if (!confirmed && (await checkCoverage(persistedRows(reordered)))) {
+        setPendingChange({ type: 'order', rules: reordered });
+        return;
+      }
+      setRules(reordered);
       const saved = reordered.filter((rule) => !rule.isNew);
       await API.reorderM3URules(
         accountId,
@@ -357,6 +455,13 @@ const M3URulesEditor = ({
         scope,
         saved.map((rule) => rule.order)
       );
+      for (const rule of saved) {
+        savedRules.current.set(rule.id, {
+          ...savedRules.current.get(rule.id),
+          order: rule.order,
+        });
+      }
+      hideNotification(errorNotificationId);
     } catch (error) {
       setRules(previous);
       setError(error.message || 'Order could not be saved.');
@@ -370,6 +475,9 @@ const M3URulesEditor = ({
     try {
       if (!deleteTarget.isNew)
         await API.deleteM3URule(accountId, kind, deleteTarget.id);
+      savedRules.current.delete(deleteTarget.id);
+      setCoverageWarnings({});
+      hideNotification(errorNotificationId);
       setRules((current) =>
         current.filter((rule) => rule.id !== deleteTarget.id)
       );
@@ -392,22 +500,56 @@ const M3URulesEditor = ({
   const hasUnsavedChanges =
     dirtyIds.size > 0 || rules.some((rule) => rule.isNew);
   const warnings = getRuleWarnings(rules, streamFilters);
+  for (const [id, messages] of Object.entries(coverageWarnings)) {
+    warnings[id] = [...(warnings[id] || []), ...messages];
+  }
   const warningKey = JSON.stringify([
     ...new Set(Object.values(warnings).flat()),
   ]);
   useEffect(() => {
     const messages = JSON.parse(warningKey);
-    const added = messages.filter(
-      (message) => !shownWarnings.current.has(message)
-    );
+    const changed =
+      messages.some((message) => !shownWarnings.current.has(message)) ||
+      shownWarnings.current.size !== messages.length;
     shownWarnings.current = new Set(messages);
-    if (added.length)
+    if (!messages.length) hideNotification(warningNotificationId);
+    else if (changed) {
+      hideNotification(warningNotificationId);
       showNotification({
+        id: warningNotificationId,
         title: streamFilters ? 'Stream filter warning' : 'Import rule warning',
-        message: added.join('\n'),
+        message: messages.join('\n'),
         color: 'yellow',
+        autoClose: false,
       });
-  }, [warningKey, streamFilters]);
+    }
+  }, [warningKey, streamFilters, warningNotificationId]);
+
+  useEffect(() => {
+    onStateChange?.({
+      dirty: hasUnsavedChanges,
+      busy: busy || previewBusy,
+      overlayOpen: !!previewTarget || !!deleteTarget || !!pendingChange,
+    });
+  }, [
+    hasUnsavedChanges,
+    busy,
+    previewBusy,
+    previewTarget,
+    deleteTarget,
+    pendingChange,
+    onStateChange,
+  ]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [hasUnsavedChanges]);
   const previewRows = preview?.results || [];
   const refreshedAt = preview?.last_completed_refresh
     ? toUserTime(preview.last_completed_refresh).format(
@@ -487,6 +629,7 @@ const M3URulesEditor = ({
                       id={rule.id}
                       error={rowErrors[rule.id]}
                       warning={!!warnings[rule.id]?.length}
+                      dirty={dirtyIds.has(rule.id) || rule.isNew}
                       disabled={busy}
                       noun={noun}
                     >
@@ -711,113 +854,153 @@ const M3URulesEditor = ({
         onClose={closePreview}
         title={`${title} preview`}
         size="min(1100px, 94vw)"
+        closeButtonProps={{ 'aria-label': 'Close preview' }}
+        classNames={{
+          content: editorClasses.content,
+          body: editorClasses.body,
+          header: editorClasses.header,
+        }}
       >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            The complete saved ordered list is evaluated. Only entries for which
-            this rule is the first match are shown.
-          </Text>
-          {streamFilters && preview?.catalog_complete && (
-            <Alert color="blue">
-              {`Data from the last completed Live refresh: ${refreshedAt}. Excluded streams remain available in this preview.`}
+        <Stack className={editorClasses.previewStack} gap="sm">
+          {preview && !previewError && (
+            <Alert
+              color="blue"
+              icon={<Info size={16} />}
+              p="xs"
+              style={{ flexShrink: 0 }}
+            >
+              {preview.last_completed_refresh
+                ? `Data from the last completed ${streamFilters || scope === 'live' ? 'Live TV' : 'VOD'} refresh: ${refreshedAt}.`
+                : `No completed ${streamFilters || scope === 'live' ? 'Live TV' : 'VOD'} refresh recorded.`}
+              {!preview.catalog_complete &&
+                (streamFilters
+                  ? ' Currently imported streams only; refresh to include excluded streams.'
+                  : previewDraft.some(
+                        (rule) =>
+                          rule.enabled && rule.match_field === 'item_name'
+                      )
+                    ? ' Contained-item matches use imported names only; refresh to include disabled categories.'
+                    : '')}
               {preview?.refresh_in_progress &&
                 ' A refresh is running; this preview still uses the previous completed snapshot.'}
             </Alert>
           )}
           <Text
             fw={600}
-            c={
-              previewError
-                ? 'red'
-                : preview && !preview.catalog_complete
-                  ? 'yellow'
-                  : undefined
-            }
+            c={previewError ? 'red' : undefined}
+            style={{ flexShrink: 0 }}
           >
             {previewBusy
               ? 'Evaluating…'
               : previewError
                 ? 'Preview could not be evaluated.'
-                : `${preview?.count || 0} matching ${streamFilters ? 'streams' : 'existing entries'}${streamFilters && preview ? ` from ${preview.inventory_count} candidates` : ''}`}
+                : `${preview?.count || 0} matching ${streamFilters ? 'streams' : 'categories'} from ${preview?.inventory_count ?? 0} ${streamFilters ? 'streams' : 'categories'}`}
           </Text>
           {preview && !previewError && (
             <>
-              <ScrollArea h="55vh">
-                <Table striped withTableBorder>
-                  <TableThead>
-                    <TableTr>
-                      <TableTh>Name</TableTh>
-                      {streamFilters ? (
-                        <TableTh>Group</TableTh>
-                      ) : (
-                        <TableTh>Current</TableTh>
-                      )}
-                      <TableTh>Result</TableTh>
-                      {!streamFilters && <TableTh>Items</TableTh>}
-                    </TableTr>
-                  </TableThead>
-                  <TableTbody>
-                    {previewRows.map((row, index) => (
-                      <TableTr key={row.relation_id || index}>
-                        <TableTd>{row.name}</TableTd>
-                        <TableTd>
-                          {streamFilters
-                            ? row.group
-                            : row.currently_enabled
-                              ? 'Enabled'
-                              : 'Disabled'}
-                        </TableTd>
-                        <TableTd>
-                          {streamFilters
-                            ? row.result
-                            : row.action === 'ignore'
-                              ? 'Unchanged'
-                              : row.would_enable
+              <div className={editorClasses.categoryTableFrame}>
+                <ScrollArea h="100%" type="auto">
+                  <Table
+                    striped
+                    stickyHeader
+                    stickyHeaderOffset={0}
+                    className={editorClasses.categoryTable}
+                  >
+                    <TableThead>
+                      <TableTr>
+                        <TableTh w={streamFilters ? '55%' : '50%'}>Name</TableTh>
+                        {streamFilters ? (
+                          <TableTh>Group</TableTh>
+                        ) : (
+                          <TableTh>Current</TableTh>
+                        )}
+                        <TableTh>Result</TableTh>
+                        {!streamFilters && <TableTh>Items</TableTh>}
+                      </TableTr>
+                    </TableThead>
+                    <TableTbody>
+                      {previewRows.map((row, index) => (
+                        <TableTr key={row.relation_id || index}>
+                          <TableTd>{row.name}</TableTd>
+                          <TableTd>
+                            {streamFilters
+                              ? row.group
+                              : row.currently_enabled
                                 ? 'Enabled'
                                 : 'Disabled'}
-                        </TableTd>
-                        {!streamFilters && <TableTd>{row.item_count}</TableTd>}
-                      </TableTr>
-                    ))}
-                  </TableTbody>
-                </Table>
-              </ScrollArea>
-              <ListPagination
-                page={page}
-                pageSize={pageSize}
-                total={preview?.count || 0}
-                onPageChange={(value) => {
-                  setPage(value);
-                  loadPreview(previewDraft, previewTarget, value, pageSize);
-                }}
-                onPageSizeChange={(value) => {
-                  setPageSize(value);
-                  setPage(1);
-                  loadPreview(previewDraft, previewTarget, 1, value);
-                }}
-              />
+                          </TableTd>
+                          <TableTd>
+                            {streamFilters
+                              ? row.result
+                              : row.action === 'ignore'
+                                ? 'Unchanged'
+                                : row.would_enable
+                                  ? 'Enabled'
+                                  : 'Disabled'}
+                          </TableTd>
+                          {!streamFilters && (
+                            <TableTd>{row.item_count}</TableTd>
+                          )}
+                        </TableTr>
+                      ))}
+                    </TableTbody>
+                  </Table>
+                </ScrollArea>
+              </div>
+              <div className={editorClasses.categoryFooter}>
+                <div className={editorClasses.paginationSlot}>
+                  <ListPagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={preview?.count || 0}
+                    onPageChange={(value) => {
+                      setPage(value);
+                      loadPreview(previewDraft, previewTarget, value, pageSize);
+                    }}
+                    onPageSizeChange={(value) => {
+                      setPageSize(value);
+                      setPage(1);
+                      loadPreview(previewDraft, previewTarget, 1, value);
+                    }}
+                  />
+                </div>
+                {!streamFilters && (
+                  <div className={editorClasses.categoryFooterActions}>
+                    <Button
+                      onClick={apply}
+                      loading={previewBusy}
+                      disabled={
+                        !preview?.count ||
+                        previewTarget?.action === 'ignore' ||
+                        !!previewError
+                      }
+                    >
+                      Apply to existing
+                    </Button>
+                  </div>
+                )}
+              </div>
             </>
           )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closePreview}>
-              Close
-            </Button>
-            {!streamFilters && (
-              <Button
-                onClick={apply}
-                loading={previewBusy}
-                disabled={
-                  !preview?.count ||
-                  previewTarget?.action === 'ignore' ||
-                  !!previewError
-                }
-              >
-                Apply to existing
-              </Button>
-            )}
-          </Group>
         </Stack>
       </Modal>
+      <ConfirmationDialog
+        opened={!!pendingChange}
+        onClose={() => setPendingChange(null)}
+        onConfirm={() => {
+          const change = pendingChange;
+          setPendingChange(null);
+          if (change.type === 'save') saveRow(change.rule, true);
+          else persistOrder(change.rules, true);
+        }}
+        title="Check rule coverage"
+        message="A rule matches every available or remaining entry from the last refresh. Highlighted later rules may have no effect. Keep editing, or continue if this is intended."
+        cancelLabel="Keep editing"
+        confirmLabel={
+          pendingChange?.type === 'save' ? 'Save anyway' : 'Move anyway'
+        }
+        zIndex={300}
+      />
       <ConfirmationDialog
         opened={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -826,6 +1009,7 @@ const M3URulesEditor = ({
         title={`Delete ${streamFilters ? 'stream filter' : 'import rule'}`}
         message="Delete this rule? Existing groups and streams will not be deleted."
         confirmLabel="Delete"
+        zIndex={300}
       />
     </Stack>
   );

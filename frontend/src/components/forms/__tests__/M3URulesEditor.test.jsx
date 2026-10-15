@@ -10,11 +10,17 @@ import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3URulesEditor from '../M3URulesEditor.jsx';
 import API from '../../../api.js';
-import { showNotification } from '../../../utils/notificationUtils.js';
+import {
+  hideNotification,
+  showNotification,
+} from '../../../utils/notificationUtils.js';
+
+const drag = vi.hoisted(() => ({ onEnd: null }));
 
 vi.mock('../../../api.js', () => ({
   default: {
     getM3URules: vi.fn(),
+    analyzeM3URules: vi.fn(),
     saveM3URule: vi.fn(),
     deleteM3URule: vi.fn(),
     previewM3URules: vi.fn(),
@@ -24,6 +30,7 @@ vi.mock('../../../api.js', () => ({
 }));
 vi.mock('../../../utils/notificationUtils.js', () => ({
   showNotification: vi.fn(),
+  hideNotification: vi.fn(),
 }));
 vi.mock('../../../utils/dateTimeUtils.js', () => ({
   useDateTimeFormat: () => ({
@@ -35,24 +42,31 @@ vi.mock('../../../utils/dateTimeUtils.js', () => ({
   }),
 }));
 vi.mock('../../ConfirmationDialog.jsx', () => ({
-  default: ({ opened, onConfirm, onClose }) =>
+  default: ({ opened, onConfirm, onClose, confirmLabel, cancelLabel }) =>
     opened ? (
       <div role="alertdialog">
-        <button onClick={onConfirm}>Confirm delete</button>
-        <button onClick={onClose}>Cancel delete</button>
+        <button onClick={onConfirm}>
+          {confirmLabel === 'Delete' ? 'Confirm delete' : confirmLabel}
+        </button>
+        <button onClick={onClose}>{cancelLabel || 'Cancel delete'}</button>
       </div>
     ) : null,
 }));
 vi.mock('@dnd-kit/core', async (importOriginal) => ({
   ...(await importOriginal()),
-  DndContext: ({ children, onDragEnd }) => (
-    <div>
-      {children}
-      <button onClick={() => onDragEnd({ active: { id: 2 }, over: { id: 1 } })}>
-        Move second first
-      </button>
-    </div>
-  ),
+  DndContext: ({ children, onDragEnd }) => {
+    drag.onEnd = onDragEnd;
+    return (
+      <div>
+        {children}
+        <button
+          onClick={() => onDragEnd({ active: { id: 2 }, over: { id: 1 } })}
+        >
+          Move second first
+        </button>
+      </div>
+    );
+  },
 }));
 
 const rule = (values = {}) => ({
@@ -83,8 +97,10 @@ describe('M3URulesEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     API.getM3URules.mockResolvedValue([]);
+    API.analyzeM3URules.mockResolvedValue({});
     API.previewM3URules.mockResolvedValue({
       count: 1,
+      inventory_count: 1,
       results: [
         {
           name: 'News',
@@ -144,6 +160,7 @@ describe('M3URulesEditor', () => {
         screen.getByLabelText(streamFilters ? 'Save filter' : 'Save rule')
       );
       expectQuietBusy();
+      await waitFor(() => expect(API.saveM3URule).toHaveBeenCalledTimes(1));
       await act(async () => finish({ ...saved, regex_pattern: 'Sport' }));
       API.deleteM3URule.mockImplementationOnce(
         () =>
@@ -182,8 +199,10 @@ describe('M3URulesEditor', () => {
       const add = screen.getByRole('button', {
         name: streamFilters ? 'Add filter' : 'Add rule',
       });
-      expect(guidance.parentElement).toBe(add.parentElement);
-      expect(add.parentElement).toHaveStyle({ '--group-align': 'flex-end' });
+      expect(guidance.parentElement).toContainElement(add);
+      expect(guidance.parentElement).toHaveStyle({
+        '--group-align': 'flex-end',
+      });
       expect(
         guidance.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING
       ).toBeTruthy();
@@ -237,11 +256,14 @@ describe('M3URulesEditor', () => {
     await waitFor(() => expect(API.getM3URules).toHaveBeenCalled());
     fireEvent.click(screen.getByText('Add rule'));
     fireEvent.click(screen.getByLabelText('Save rule'));
-    expect(showNotification).toHaveBeenCalledWith({
-      title: 'Import rule was not saved',
-      message: 'Enter a regular expression before saving.',
-      color: 'red',
-    });
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Import rule was not saved',
+        message: 'Enter a regular expression before saving.',
+        color: 'red',
+        autoClose: false,
+      })
+    );
     expect(
       screen.queryByText('Enter a regular expression before saving.')
     ).not.toBeInTheDocument();
@@ -271,7 +293,7 @@ describe('M3URulesEditor', () => {
       expect(screen.getAllByLabelText('Preview rule')[1]).toBeEnabled()
     );
     fireEvent.click(screen.getAllByLabelText('Preview rule')[1]);
-    await screen.findByText('1 matching existing entries');
+    await screen.findByText('1 matching categories from 1 categories');
     expect(API.previewM3URules).toHaveBeenCalledWith(
       7,
       'group-rules',
@@ -303,7 +325,7 @@ describe('M3URulesEditor', () => {
       expect(screen.getByLabelText('Preview rule')).toBeEnabled()
     );
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    await screen.findByText('1 matching existing entries');
+    await screen.findByText('1 matching categories from 1 categories');
     expect(API.previewM3URules.mock.calls[0][2][0]).toEqual(
       expect.objectContaining({
         preview_id: '3',
@@ -315,7 +337,7 @@ describe('M3URulesEditor', () => {
   it('saves and applies precisely the previewed snapshot', async () => {
     await load();
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    await screen.findByText('1 matching existing entries');
+    await screen.findByText('1 matching categories from 1 categories');
     fireEvent.click(screen.getByText('Apply to existing'));
     await waitFor(() =>
       expect(API.saveApplyM3UGroupRules).toHaveBeenCalledWith(
@@ -328,7 +350,7 @@ describe('M3URulesEditor', () => {
   it('does not apply ignored groups to existing selections', async () => {
     await load([rule({ action: 'ignore' })]);
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    await screen.findByText('1 matching existing entries');
+    await screen.findByText('1 matching categories from 1 categories');
     expect(
       screen.getByRole('button', { name: 'Apply to existing' })
     ).toBeDisabled();
@@ -364,12 +386,16 @@ describe('M3URulesEditor', () => {
   });
   it('paginates beyond the former first-200 limit', async () => {
     await load();
-    API.previewM3URules.mockResolvedValue({ count: 250, results: [] });
+    API.previewM3URules.mockResolvedValue({
+      count: 250,
+      inventory_count: 250,
+      results: [],
+    });
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    await screen.findByText('250 matching existing entries');
+    await screen.findByText('250 matching categories from 250 categories');
     expect(
-      screen.getByText('250 matching existing entries').getAttribute('style')
-    ).toContain('yellow');
+      screen.getByText('250 matching categories from 250 categories')
+    ).not.toHaveStyle({ color: 'var(--mantine-color-yellow-light-color)' });
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', { name: '5' })
     );
@@ -406,7 +432,7 @@ describe('M3URulesEditor', () => {
     await screen.findByDisplayValue('###');
     fireEvent.click(screen.getByLabelText('Preview filter'));
     expect(
-      await screen.findByText(/Excluded streams remain available/)
+      await screen.findByText(/Data from the last completed Live TV refresh/)
     ).toBeInTheDocument();
     expect(screen.getByText('### Event')).toBeInTheDocument();
     expect(screen.queryByText('Apply to existing')).not.toBeInTheDocument();
@@ -417,11 +443,14 @@ describe('M3URulesEditor', () => {
     fireEvent.click(screen.getByText('Add filter'));
     expect(screen.getByLabelText('Preview filter')).toBeDisabled();
     fireEvent.click(screen.getByLabelText('Save filter'));
-    expect(showNotification).toHaveBeenCalledWith({
-      title: 'Stream filter was not saved',
-      message: 'Enter a regular expression before saving.',
-      color: 'red',
-    });
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Stream filter was not saved',
+        message: 'Enter a regular expression before saving.',
+        color: 'red',
+        autoClose: false,
+      })
+    );
     expect(
       screen.queryByText('Enter a regular expression before saving.')
     ).not.toBeInTheDocument();
@@ -492,7 +521,7 @@ describe('M3URulesEditor', () => {
     expect(screen.queryByText('Preview unavailable')).not.toBeInTheDocument();
     expect(showNotification).not.toHaveBeenCalled();
     expect(
-      screen.queryByText('0 matching existing entries')
+      screen.queryByText('0 matching categories from 0 categories')
     ).not.toBeInTheDocument();
     expect(
       screen.getByText('Preview could not be evaluated.')
@@ -539,14 +568,17 @@ describe('M3URulesEditor', () => {
       ]);
       const { container } = renderEditor({ streamFilters });
       await waitFor(() =>
-        expect(showNotification).toHaveBeenCalledWith({
-          title: streamFilters
-            ? 'Stream filter warning'
-            : 'Import rule warning',
-          message:
-            'An identical match already exists. The first matching rule wins.',
-          color: 'yellow',
-        })
+        expect(showNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: streamFilters
+              ? 'Stream filter warning'
+              : 'Import rule warning',
+            message:
+              'An identical match already exists. The first matching rule wins.',
+            color: 'yellow',
+            autoClose: false,
+          })
+        )
       );
       expect(
         container.querySelectorAll('tr[data-warning="true"]')
@@ -569,50 +601,169 @@ describe('M3URulesEditor', () => {
     }
   );
 
-  it('notifies about a new catch-all hint without repeating it on unrelated edits', async () => {
-    await load([rule(), rule({ id: 2, order: 1, regex_pattern: 'Sport' })]);
-    expect(showNotification).not.toHaveBeenCalled();
-    fireEvent.change(screen.getAllByLabelText('Regular expression')[0], {
-      target: { value: '.*' },
-    });
-    await waitFor(() =>
-      expect(showNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          color: 'yellow',
-          message: expect.stringContaining('Put catch-all rules last'),
-        })
-      )
-    );
-    fireEvent.click(screen.getAllByLabelText('Case sensitive')[0]);
-    expect(showNotification).toHaveBeenCalledTimes(1);
-    expect(
-      screen.queryByText(/Put catch-all rules last/)
-    ).not.toBeInTheDocument();
-  });
-
-  it('keeps the incomplete-catalog notice in one toast when paging the preview', async () => {
+  it('uses a shared metadata header without irrelevant catalog notices', async () => {
     await load();
     API.previewM3URules.mockResolvedValue({
       count: 250,
+      inventory_count: 300,
       results: [],
       catalog_complete: false,
+      last_completed_refresh: '2026-10-14T06:00:00Z',
     });
     fireEvent.click(screen.getByLabelText('Preview rule'));
-    await screen.findByText('250 matching existing entries');
-    expect(showNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        color: 'yellow',
-        message: expect.stringContaining('No complete group inventory'),
-      })
-    );
+    await screen.findByText('250 matching categories from 300 categories');
     expect(
-      screen.queryByText(/No complete group inventory/)
+      screen.getByText(/Data from the last completed Live TV refresh/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        /complete saved ordered list|No complete group inventory/
+      )
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Close' })
+    ).not.toBeInTheDocument();
+    expect(showNotification).not.toHaveBeenCalled();
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', { name: '5' })
     );
     await waitFor(() => expect(API.previewM3URules).toHaveBeenCalledTimes(2));
-    expect(showNotification).toHaveBeenCalledTimes(1);
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+
+  it('clears persistent warnings when corrected and highlights only actual unsaved changes', async () => {
+    const onStateChange = vi.fn();
+    API.getM3URules.mockResolvedValue([
+      rule(),
+      rule({ id: 2, order: 1, regex_pattern: 'Sport' }),
+    ]);
+    renderEditor({ onStateChange });
+    const pattern = (await screen.findAllByLabelText('Regular expression'))[0];
+    await waitFor(() =>
+      expect(onStateChange).toHaveBeenLastCalledWith({
+        dirty: false,
+        busy: false,
+        overlayOpen: false,
+      })
+    );
+    fireEvent.change(pattern, { target: { value: 'Sport' } });
+    expect(pattern.closest('tr')).toHaveAttribute('data-dirty', 'true');
+    expect(onStateChange).toHaveBeenLastCalledWith({
+      dirty: true,
+      busy: false,
+      overlayOpen: false,
+    });
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ autoClose: false, color: 'yellow' })
+    );
+    hideNotification.mockClear();
+    fireEvent.change(pattern, { target: { value: 'News' } });
+    expect(pattern.closest('tr')).not.toHaveAttribute('data-dirty');
+    expect(onStateChange).toHaveBeenLastCalledWith({
+      dirty: false,
+      busy: false,
+      overlayOpen: false,
+    });
+    expect(hideNotification).toHaveBeenCalledWith(
+      'account-rules-7-group-rules-warning'
+    );
+  });
+
+  it.each([false, true])(
+    'checks real coverage before saving without assuming any regex syntax (filters=%s)',
+    async (streamFilters) => {
+      API.getM3URules.mockResolvedValue([
+        rule({ filter_type: 'name' }),
+        rule({ id: 2, order: 1, regex_pattern: 'Sport', filter_type: 'name' }),
+      ]);
+      API.analyzeM3URules.mockResolvedValue({
+        inventory_count: 100,
+        rule_coverage: [
+          { rule_id: '1', count: 100 },
+          { rule_id: '2', count: 0 },
+        ],
+      });
+      renderEditor({ streamFilters });
+      await screen.findByDisplayValue('News');
+      const saveLabel = streamFilters ? 'Save filter' : 'Save rule';
+      fireEvent.change(screen.getAllByLabelText('Regular expression')[0], {
+        target: { value: 'News|Sport' },
+      });
+      fireEvent.click(screen.getAllByLabelText(saveLabel)[0]);
+      await screen.findByText('Save anyway');
+      expect(API.saveM3URule).not.toHaveBeenCalled();
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          color: 'yellow',
+          autoClose: false,
+          message: expect.stringContaining('matches all 100'),
+        })
+      );
+      expect(
+        screen.getAllByLabelText('Regular expression')[1].closest('tr')
+      ).toHaveAttribute('data-warning', 'true');
+      fireEvent.click(screen.getByText('Keep editing'));
+      fireEvent.click(screen.getAllByLabelText(saveLabel)[0]);
+      await screen.findByText('Save anyway');
+      fireEvent.click(screen.getByText('Save anyway'));
+      await waitFor(() => expect(API.saveM3URule).toHaveBeenCalledTimes(1));
+      expect(API.analyzeM3URules).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('requires explicit confirmation before a reorder that consumes all available matches', async () => {
+    await load([
+      rule(),
+      rule({ id: 2, order: 1, regex_pattern: 'News|Sport' }),
+    ]);
+    API.analyzeM3URules.mockResolvedValue({
+      inventory_count: 100,
+      rule_coverage: [
+        { rule_id: '2', count: 100 },
+        { rule_id: '1', count: 0 },
+      ],
+    });
+    fireEvent.click(screen.getByText('Move second first'));
+    await screen.findByText('Move anyway');
+    expect(API.reorderM3URules).not.toHaveBeenCalled();
+    expect(screen.getAllByLabelText('Regular expression')[0]).toHaveValue(
+      'News'
+    );
+    fireEvent.click(screen.getByText('Move anyway'));
+    await waitFor(() =>
+      expect(API.reorderM3URules).toHaveBeenCalledWith(
+        7,
+        'group-rules',
+        [2, 1],
+        'live',
+        [0, 1]
+      )
+    );
+  });
+
+  it('does not special-case catch-all text or prevent adding a row to reorder later', async () => {
+    await load([rule({ regex_pattern: '.*' })]);
+    fireEvent.click(screen.getByText('Add rule'));
+    expect(screen.getByRole('button', { name: 'Add rule' })).toBeEnabled();
+    const newRow = screen.getAllByLabelText('Regular expression')[1];
+    fireEvent.change(newRow, { target: { value: 'Sport' } });
+    const newId = newRow.closest('tr').getAttribute('data-rule-id');
+    await act(async () =>
+      drag.onEnd({ active: { id: newId }, over: { id: 1 } })
+    );
+    expect(screen.getAllByLabelText('Regular expression')[0]).toHaveValue(
+      'Sport'
+    );
+    API.saveM3URule.mockResolvedValue(rule({ id: 3, regex_pattern: 'Sport' }));
+    fireEvent.click(screen.getAllByLabelText('Save rule')[0]);
+    await waitFor(() =>
+      expect(API.saveM3URule).toHaveBeenCalledWith(
+        7,
+        'group-rules',
+        null,
+        expect.objectContaining({ regex_pattern: 'Sport', order: 0 })
+      )
+    );
   });
 
   it('does not show a failed load as an empty configured list or repeat the API error inline', async () => {

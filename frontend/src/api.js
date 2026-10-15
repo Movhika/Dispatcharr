@@ -22,7 +22,7 @@ const host = import.meta.env.DEV
   ? `http://${window.location.hostname}:5656`
   : '';
 
-const errorNotification = (message, error) => {
+const errorNotification = (message, error, options = {}) => {
   const errorMessage = formatApiError(error);
 
   notifications.show({
@@ -30,9 +30,19 @@ const errorNotification = (message, error) => {
     message: `${message}: ${errorMessage}`,
     autoClose: 10000,
     color: 'red',
+    ...options,
   });
 
   throw error;
+};
+
+const ruleErrorNotification = (message, error, accountId, kind) => {
+  const id = `account-rules-${accountId}-${kind}-error`;
+  notifications.hide(id);
+  return errorNotification(message, error, {
+    id,
+    autoClose: false,
+  });
 };
 
 // FormData cannot encode null. Empty string clears hash_key so the account
@@ -2090,7 +2100,12 @@ export default class API {
         `${host}/api/m3u/accounts/${accountId}/${kind}/${query}`
       );
     } catch (error) {
-      errorNotification('Failed to load account rules', error);
+      ruleErrorNotification(
+        'Failed to load account rules',
+        error,
+        accountId,
+        kind
+      );
       throw error;
     }
   }
@@ -2128,7 +2143,12 @@ export default class API {
         { method: ruleId ? 'PATCH' : 'POST', body: values }
       );
     } catch (error) {
-      errorNotification('Failed to save account rule', error);
+      ruleErrorNotification(
+        'Failed to save account rule',
+        error,
+        accountId,
+        kind
+      );
       throw error;
     }
   }
@@ -2140,7 +2160,12 @@ export default class API {
         { method: 'DELETE' }
       );
     } catch (error) {
-      errorNotification('Failed to delete account rule', error);
+      ruleErrorNotification(
+        'Failed to delete account rule',
+        error,
+        accountId,
+        kind
+      );
       throw error;
     }
   }
@@ -2159,7 +2184,12 @@ export default class API {
         { method: 'POST', body: { rules, target_id: String(targetId) } }
       );
     } catch (error) {
-      errorNotification('Failed to preview account rules', error);
+      ruleErrorNotification(
+        'Failed to preview account rules',
+        error,
+        accountId,
+        kind
+      );
       throw error;
     }
   }
@@ -2174,9 +2204,25 @@ export default class API {
         }
       );
     } catch (error) {
-      errorNotification('Failed to save rule order', error);
+      ruleErrorNotification(
+        'Failed to save rule order',
+        error,
+        accountId,
+        kind
+      );
       throw error;
     }
+  }
+
+  static async analyzeM3URules(accountId, kind, rules) {
+    return API.previewM3URules(
+      accountId,
+      kind,
+      rules,
+      rules[0].preview_id,
+      1,
+      1
+    );
   }
 
   static async applyM3UGroupRule(accountId, ruleId) {
@@ -2201,7 +2247,12 @@ export default class API {
         }
       );
     } catch (error) {
-      errorNotification('Failed to save and apply import rules', error);
+      ruleErrorNotification(
+        'Failed to save and apply import rules',
+        error,
+        accountId,
+        'group-rules'
+      );
       throw error;
     }
   }
