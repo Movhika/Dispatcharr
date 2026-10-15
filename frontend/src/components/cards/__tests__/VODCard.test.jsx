@@ -35,7 +35,16 @@ vi.mock('@mantine/core', () => ({
       {children}
     </div>
   ),
-  Card: ({ children, onClick, style, withBorder, shadow, radius, p }) => (
+  Card: ({
+    children,
+    onClick,
+    style,
+    withBorder,
+    shadow,
+    radius,
+    p,
+    ...props
+  }) => (
     <div
       data-testid="vod-card"
       onClick={onClick}
@@ -44,6 +53,7 @@ vi.mock('@mantine/core', () => ({
       data-shadow={shadow}
       data-radius={radius}
       data-p={p}
+      {...props}
     >
       {children}
     </div>
@@ -202,8 +212,8 @@ describe('VODCard', () => {
       expect(screen.getByTestId('icon-calendar')).toBeInTheDocument();
     });
 
-    it('renders the play icon', () => {
-      render(<VODCard vod={makeMovie()} onClick={vi.fn()} />);
+    it('renders a placeholder icon when there is no artwork', () => {
+      render(<VODCard vod={makeMovie({ logo: null })} onClick={vi.fn()} />);
       expect(screen.getByTestId('icon-play')).toBeInTheDocument();
     });
 
@@ -328,11 +338,14 @@ describe('VODCard', () => {
       expect(onClick).toHaveBeenCalledWith(vod);
     });
 
-    it('calls onClick when play button is clicked', async () => {
+    it('opens the preview with the keyboard', async () => {
       const onClick = vi.fn();
       const vod = makeMovie();
       render(<VODCard vod={vod} onClick={onClick} />);
-      fireEvent.click(screen.getByTestId('action-icon'));
+      fireEvent.keyDown(
+        screen.getByRole('button', { name: 'Preview Test Movie' }),
+        { key: 'Enter' }
+      );
       expect(onClick).toHaveBeenCalledWith(vod);
     });
 

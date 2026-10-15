@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Box,
   Card,
@@ -11,6 +10,7 @@ import {
 } from '@mantine/core';
 import { Calendar, Clock, Play, Star } from 'lucide-react';
 import React from 'react';
+import classes from '../VODLayout.module.css';
 import {
   formatDuration,
   getSeasonLabel,
@@ -24,21 +24,24 @@ const VODCard = ({ vod, onClick }) => {
   const getDisplayTitle = () => {
     if (isEpisode && vod.series) {
       return (
-        <Stack spacing={4}>
+        <Stack gap={4}>
           <Text size="sm" c="dimmed">
             {vod.series.name}
           </Text>
-          <Text weight={500}>
+          <Text fw={500} className={classes.cardTitle}>
             {getSeasonLabel(vod)} - {vod.name}
           </Text>
         </Stack>
       );
     }
-    return <Text weight={500}>{vod.name}</Text>;
+    return (
+      <Text fw={500} className={classes.cardTitle}>
+        {vod.name}
+      </Text>
+    );
   };
 
-  const handleCardClick = async () => {
-    // Just pass the basic vod info to the parent handler
+  const handleCardClick = () => {
     onClick(vod);
   };
 
@@ -48,46 +51,28 @@ const VODCard = ({ vod, onClick }) => {
       padding="md"
       radius="md"
       withBorder
-      style={{ cursor: 'pointer', backgroundColor: '#27272A' }}
+      className={classes.card}
+      role="button"
+      tabIndex={0}
+      aria-label={`Preview ${vod.name}`}
+      aria-haspopup="dialog"
       onClick={handleCardClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleCardClick();
+        }
+      }}
     >
       <CardSection>
         <Box pos="relative" h={300}>
           {posterSrc ? (
-            <Image
-              src={posterSrc}
-              height={300}
-              alt={vod.name}
-              fit="contain"
-            />
+            <Image src={posterSrc} height={300} alt={vod.name} fit="contain" />
           ) : (
-            <Box
-              style={{
-                backgroundColor: '#404040',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              h={300}
-              display="flex"
-            >
-              <Play size={48} color="#666" />
+            <Box className={classes.placeholder} h={300} display="flex">
+              <Play size={48} aria-hidden="true" />
             </Box>
           )}
-
-          <ActionIcon
-            style={{
-              backgroundColor: 'rgba(0,0,0,0.7)',
-            }}
-            pos="absolute"
-            top={8}
-            right={8}
-            onClick={(e) => {
-              e.stopPropagation();
-              onClick(vod);
-            }}
-          >
-            <Play size={16} color="white" />
-          </ActionIcon>
 
           <Badge
             pos="absolute"
@@ -100,12 +85,12 @@ const VODCard = ({ vod, onClick }) => {
         </Box>
       </CardSection>
 
-      <Stack spacing={8} mt="md">
+      <Stack gap={8} mt="md">
         {getDisplayTitle()}
 
-        <Group spacing={16}>
+        <Group gap={16}>
           {vod.year && (
-            <Group spacing={4}>
+            <Group gap={4}>
               <Calendar size={14} color="#666" />
               <Text size="xs" c="dimmed">
                 {vod.year}
@@ -114,7 +99,7 @@ const VODCard = ({ vod, onClick }) => {
           )}
 
           {vod.duration && (
-            <Group spacing={4}>
+            <Group gap={4}>
               <Clock size={14} color="#666" />
               <Text size="xs" c="dimmed">
                 {formatDuration(vod.duration_secs)}
@@ -123,7 +108,7 @@ const VODCard = ({ vod, onClick }) => {
           )}
 
           {vod.rating && (
-            <Group spacing={4}>
+            <Group gap={4}>
               <Star size={14} color="#666" />
               <Text size="xs" c="dimmed">
                 {vod.rating}

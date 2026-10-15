@@ -14,8 +14,17 @@ vi.mock('@mantine/core', async () => ({
       {children}
     </div>
   ),
-  Card: ({ children, onClick, style, withBorder, shadow, padding, radius }) => (
-    <div data-testid="series-card" onClick={onClick} style={style}>
+  Card: ({
+    children,
+    onClick,
+    style,
+    withBorder,
+    shadow,
+    padding,
+    radius,
+    ...props
+  }) => (
+    <div data-testid="series-card" onClick={onClick} style={style} {...props}>
       {children}
     </div>
   ),
@@ -63,6 +72,16 @@ const makeSeries = (overrides = {}) => ({
 describe('SeriesCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+  it('opens its preview with Space or Enter', () => {
+    const onClick = vi.fn();
+    const series = makeSeries();
+    render(<SeriesCard series={series} onClick={onClick} />);
+    const card = screen.getByRole('button', { name: 'Preview Breaking Bad' });
+    fireEvent.keyDown(card, { key: ' ' });
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onClick).toHaveBeenCalledTimes(2);
+    expect(onClick).toHaveBeenLastCalledWith(series);
   });
 
   // ── Rendering ──────────────────────────────────────────────────────────────

@@ -6,19 +6,23 @@ const ListPagination = ({
   total,
   onPageChange,
   onPageSizeChange,
+  pageSizeOptions = [10, 25, 50, 100],
+  itemLabel = 'Rows',
+  disabled = false,
 }) => (
   <Group gap="xs" justify="center" wrap="wrap">
-    <Text size="xs">Rows</Text>
+    <Text size="xs">{itemLabel}</Text>
     <Select
-      aria-label="Rows per page"
+      aria-label={`${itemLabel} per page`}
       size="xs"
       value={String(pageSize)}
       onChange={(value) => onPageSizeChange(Number(value))}
-      data={[10, 25, 50, 100].map((value) => ({
+      data={pageSizeOptions.map((value) => ({
         value: String(value),
         label: String(value),
       }))}
       allowDeselect={false}
+      disabled={disabled}
       w={70}
     />
     {total > 0 && (
@@ -28,6 +32,15 @@ const ListPagination = ({
         total={Math.max(1, Math.ceil(total / pageSize))}
         size="xs"
         withEdges
+        disabled={disabled}
+        getControlProps={(control) => ({
+          'aria-label': {
+            first: 'First page',
+            previous: 'Previous page',
+            next: 'Next page',
+            last: 'Last page',
+          }[control],
+        })}
       />
     )}
     <Text size="xs" c="dimmed">
