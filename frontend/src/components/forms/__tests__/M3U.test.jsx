@@ -98,6 +98,32 @@ vi.mock('../ScheduleInput', () => ({
   ),
 }));
 
+vi.mock('../M3USetupSteps.jsx', () => ({
+  default: ({ onSelect, contentAvailable }) => (
+    <div aria-label="M3U setup progress">
+      <button type="button" onClick={() => onSelect?.('account')}>
+        Account step
+      </button>
+      <button
+        type="button"
+        disabled={!contentAvailable}
+        onClick={() => onSelect?.('content')}
+      >
+        Content step
+      </button>
+    </div>
+  ),
+}));
+vi.mock('../../ConfirmationDialog.jsx', () => ({
+  default: ({ opened, title, onConfirm, onClose }) =>
+    opened ? (
+      <div role="dialog" aria-label={title}>
+        <button onClick={onConfirm}>Discard</button>
+        <button onClick={onClose}>Keep editing</button>
+      </div>
+    ) : null,
+}));
+
 // ── Mantine dates ──────────────────────────────────────────────────────────────
 vi.mock('@mantine/dates', () => ({
   DateTimePicker: ({
@@ -153,6 +179,9 @@ vi.mock('@mantine/form', () => {
           _values = { ...initialValues };
         },
         submitting: false,
+        setErrors: vi.fn(),
+        isDirty: () =>
+          JSON.stringify(_values) !== JSON.stringify(initialValues),
         onSubmit: vi.fn((handler) => (e) => {
           e?.preventDefault?.();
           if (_values?.name) handler();
@@ -458,7 +487,6 @@ import usePlaylistsStore from '../../../store/playlists';
 import * as M3uUtils from '../../../utils/forms/M3uUtils.js';
 import * as DummyEpgUtils from '../../../utils/forms/DummyEpgUtils.js';
 import * as mantineForm from '@mantine/form';
-import { showNotification } from '../../../utils/notificationUtils.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const makeM3uAccount = (overrides = {}) => ({
@@ -613,9 +641,7 @@ describe('M3U', () => {
       expect(screen.getByTestId('modal-title')).toHaveTextContent(
         'Create M3U account'
       );
-      expect(
-        screen.getByRole('button', { name: 'Create' })
-      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
     });
 
     it('uses editing labels for an existing account', () => {
@@ -806,6 +832,13 @@ describe('M3U', () => {
           target: { value: 'http://example.com/new.m3u' },
         });
       }
+      fireEvent.change(screen.getByTestId('text-input-username'), {
+        target: { value: 'example-user' },
+      });
+      fireEvent.change(document.querySelector('input[type="password"]'), {
+        target: { value: 'example-password' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     };
 
     it('calls addPlaylist on valid submit', async () => {
@@ -835,19 +868,19 @@ describe('M3U', () => {
       expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
     });
 
-    it('marks the new account group save as the initial refresh', async () => {
+    it('hands the persisted account to its resumable setup', async () => {
+      const onClose = vi.fn();
       setupStores();
-      render(<M3U {...defaultProps()} />);
+      render(<M3U {...defaultProps({ onClose })} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
-
-      fireEvent.click(await screen.findByRole('button', { name: 'Skip' }));
-      await waitFor(() => {
-        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-          'data-initial-setup',
-          'true'
-        );
-      });
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      await waitFor(() =>
+        expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
+      );
+      expect(M3uUtils.addPlaylist).toHaveBeenCalledWith(
+        expect.objectContaining({ start_setup: true }),
+        null
+      );
     });
 
     it('calls prepareSubmitValues before addPlaylist', async () => {
@@ -863,14 +896,7 @@ describe('M3U', () => {
     it('calls onClose after successful add', async () => {
       const onClose = vi.fn();
       setupStores();
-      render(
-        <M3U
-          {...defaultProps({
-            onClose,
-            m3uAccount: makeM3uAccount({ account_type: 'Other' }),
-          })}
-        />
-      );
+      render(<M3U {...defaultProps({ onClose })} />);
       fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
       await waitFor(() => {
@@ -941,7 +967,7 @@ describe('M3U', () => {
       // Clear name if pre-filled, then submit
       const nameInput = screen.getByTestId('text-input-name');
       fireEvent.change(nameInput, { target: { value: '' } });
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await new Promise((r) => setTimeout(r, 50));
       expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
     });
@@ -1081,7 +1107,7 @@ describe('M3U', () => {
     });
     it('groups account, connection and content settings into bordered boxes', () => {
       setupStores();
-      render(<M3U {...defaultProps()} />);
+      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       for (const name of [
         'Account settings',
         'Connection settings',
@@ -1242,21 +1268,28 @@ describe('M3U', () => {
         priority: 30,
       });
       render(<M3U {...defaultProps({ m3uAccount: account })} />);
-      fireEvent.change(screen.getByLabelText('Live TV refresh interval (hours)'), { target: { value: '8' } });
-      fireEvent.change(screen.getByLabelText('VOD refresh interval (hours)'), { target: { value: '48' } });
+      fireEvent.change(
+        screen.getByLabelText('Live TV refresh interval (hours)'),
+        { target: { value: '8' } }
+      );
+      fireEvent.change(screen.getByLabelText('VOD refresh interval (hours)'), {
+        target: { value: '48' },
+      });
       fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-      await waitFor(() => expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
-        account,
-        expect.objectContaining({
-          refresh_interval: 8,
-          vod_refresh_interval: 48,
-          vod_refresh_after_live: false,
-          enable_vod: true,
-          xc_live_refresh_min_age_minutes: 55,
-          priority: 30,
-        }),
-        null
-      ));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
+          account,
+          expect.objectContaining({
+            refresh_interval: 8,
+            vod_refresh_interval: 48,
+            vod_refresh_after_live: false,
+            enable_vod: true,
+            xc_live_refresh_min_age_minutes: 55,
+            priority: 30,
+          }),
+          null
+        )
+      );
     });
   });
 
@@ -1318,141 +1351,34 @@ describe('M3U', () => {
     });
   });
 
-  // ── Dummy EPG creation ─────────────────────────────────────────────────────
-
-  describe('optional EPG after account creation', () => {
-    const createAccount = async () => {
+  describe('guided creation', () => {
+    it('does not allow Content before validating Account', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-
-      const nameInput = screen.getByTestId('text-input-name');
-      fireEvent.change(nameInput, { target: { value: 'My Playlist' } });
-
-      const urlInput = screen.getByTestId('text-input-server_url');
-      if (urlInput) {
-        fireEvent.change(urlInput, {
-          target: { value: 'http://example.com/p.m3u' },
-        });
-      }
-
-      fireEvent.change(screen.getByTestId('text-input-username'), {
-        target: { value: 'name&extra' },
-      });
-      fireEvent.change(document.querySelector('input[type="password"]'), {
-        target: { value: 'secret?&=' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-      await screen.findByText('Create matching EPG source?');
-      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-      expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
-    };
-
-    it('creates an EPG only after confirmation and safely encodes credentials', async () => {
-      await createAccount();
-      fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-      await waitFor(() =>
-        expect(DummyEpgUtils.addEPG).toHaveBeenCalledTimes(1)
-      );
-      const url = new URL(DummyEpgUtils.addEPG.mock.calls[0][0].url);
-      expect(url.pathname).toBe('/xmltv.php');
-      expect(url.searchParams.get('username')).toBe('name&extra');
-      expect(url.searchParams.get('password')).toBe('secret?&=');
-      await waitFor(() =>
-        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-          'data-initial-setup',
-          'true'
-        )
-      );
+      expect(
+        screen.getByRole('button', { name: 'Content step' })
+      ).toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole('button', { name: 'Content step' })
+      ).toBeDisabled();
     });
 
-    it('continues to categories without EPG when skipped', async () => {
-      await createAccount();
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-      await waitFor(() =>
-        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-          'data-open',
-          'true'
-        )
-      );
-      expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
-      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-    });
-
-    it('can close the question while retaining the account already created', async () => {
-      await createAccount();
+    it('warns before discarding a new unsaved draft', () => {
+      setupStores();
+      const onClose = vi.fn();
+      render(<M3U {...defaultProps({ onClose })} />);
+      fireEvent.change(screen.getByTestId('text-input-name'), {
+        target: { value: 'Draft' },
+      });
       fireEvent.click(screen.getByTestId('modal-close'));
-      expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
-      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-      expect(M3uUtils.getPlaylist).not.toHaveBeenCalled();
-      expect(
-        screen.queryByText('Create matching EPG source?')
-      ).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+      expect(screen.getByDisplayValue('Draft')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('modal-close'));
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(onClose).toHaveBeenCalledOnce();
     });
-
-    it('keeps the created account when EPG fails and allows skipping', async () => {
-      await createAccount();
-      vi.mocked(DummyEpgUtils.addEPG).mockRejectedValueOnce(
-        new Error('Unavailable')
-      );
-      fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-      await waitFor(() =>
-        expect(showNotification).toHaveBeenCalledWith(
-          expect.objectContaining({ title: 'EPG source was not created' })
-        )
-      );
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-      await waitFor(() =>
-        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-          'data-open',
-          'true'
-        )
-      );
-      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps the question open when the EPG API has reported an error and returns no source', async () => {
-      await createAccount();
-      vi.mocked(DummyEpgUtils.addEPG).mockResolvedValueOnce(undefined);
-      fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Skip' })).toBeEnabled()
-      );
-      expect(
-        screen.getByText('Create matching EPG source?')
-      ).toBeInTheDocument();
-      expect(M3uUtils.getPlaylist).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-      await waitFor(() =>
-        expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-          'data-open',
-          'true'
-        )
-      );
-      expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-    });
-
-    it.each(['rejected', 'empty'])(
-      'does not create a duplicate EPG when category loading needs a retry (%s)',
-      async (response) => {
-        await createAccount();
-        if (response === 'rejected')
-          vi.mocked(M3uUtils.getPlaylist).mockRejectedValueOnce(
-            new Error('Unavailable')
-          );
-        else vi.mocked(M3uUtils.getPlaylist).mockResolvedValueOnce(undefined);
-        fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-        fireEvent.click(
-          await screen.findByRole('button', { name: 'Continue' })
-        );
-        await waitFor(() =>
-          expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-            'data-open',
-            'true'
-          )
-        );
-        expect(DummyEpgUtils.addEPG).toHaveBeenCalledTimes(1);
-        expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1);
-      }
-    );
   });
 });

@@ -35,6 +35,7 @@ from .serializers import (
     M3UFilterSerializer,
     ServerGroupSerializer,
     M3UAccountProfileSerializer,
+    M3USetupActionSerializer,
 )
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
@@ -62,6 +63,26 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         return permissions_for_action(self)
+
+    @extend_schema(
+        request=M3USetupActionSerializer,
+        responses={200: M3UAccountSerializer},
+        description="Continue an unfinished guided M3U setup without creating another account.",
+    )
+    @action(
+        detail=True, methods=["post"], url_path="setup",
+        permission_classes=[IsAdmin],
+    )
+    def advance_setup(self, request, pk=None):
+        from .account_setup import advance_account_setup
+
+        account = self.get_object()
+        serializer = M3USetupActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account = advance_account_setup(
+            account.id, serializer.validated_data["action"]
+        )
+        return Response(self.get_serializer(account).data)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -141,6 +162,25 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             'type': 'playlist_created',
             'playlist_id': account_id
         })
+
+        if response.data.get("setup_step"):
+            from rest_framework.exceptions import APIException
+            from .account_setup import queue_setup_categories
+
+            # The account already exists. Discovery failure must not invite
+            # another Create request; its persisted setup can be retried.
+            M3UAccount.objects.filter(pk=account_id).update(
+                status=M3UAccount.Status.FETCHING,
+                last_message="Loading provider categories for setup.",
+            )
+            try:
+                queue_setup_categories(account_id)
+            except APIException:
+                pass
+            response.data = self.get_serializer(
+                self.get_queryset().get(pk=account_id)
+            ).data
+            return response
 
         if account_type == M3UAccount.Types.XC:
             refresh_m3u_groups(account_id)

@@ -336,10 +336,18 @@ class M3URefreshScheduleSerializer(serializers.Serializer):
     next_run_at = serializers.DateTimeField(allow_null=True)
 
 
+class M3USetupActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=("create_epg", "skip_epg", "retry_categories", "complete")
+    )
+
+
 class M3UAccountSerializer(serializers.ModelSerializer):
     """Serializer for M3U Account"""
 
     filters = serializers.SerializerMethodField()
+    start_setup = serializers.BooleanField(write_only=True, required=False)
+    setup_step = serializers.CharField(read_only=True)
     earliest_expiration = serializers.SerializerMethodField()
     all_expirations = serializers.SerializerMethodField()
     live_refresh_schedule = serializers.SerializerMethodField()
@@ -431,6 +439,8 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "priority",
             "hash_key",
             "status",
+            "start_setup",
+            "setup_step",
             "last_message",
             "enable_vod",
             "auto_enable_new_groups_live",
@@ -447,6 +457,23 @@ class M3UAccountSerializer(serializers.ModelSerializer):
                 "write_only": True,
             },
         }
+
+    def validate(self, attrs):
+        if self.instance is not None:
+            attrs.pop("start_setup", None)
+            return attrs
+        if not attrs.get("start_setup"):
+            return attrs
+        errors = {}
+        if attrs.get("account_type", M3UAccount.Types.STADNARD) == "XC":
+            for field in ("server_url", "username", "password"):
+                if not attrs.get(field):
+                    errors[field] = "Required for a new Xtream Codes account."
+        elif not attrs.get("server_url") and not attrs.get("file_path"):
+            errors["server_url"] = "Enter a playlist URL or upload a file."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def to_representation(self, instance):
         # When the list() view pre-aggregates stream counts for all accounts
@@ -649,6 +676,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         return instance
 
     def create(self, validated_data):
+        start_setup = validated_data.pop("start_setup", False)
         # Pop exp_date — it's written to the default profile after creation
         exp_date = validated_data.pop("exp_date", None)
 
@@ -684,6 +712,12 @@ class M3UAccountSerializer(serializers.ModelSerializer):
 
         # Build instance manually so we can attach transient attr before save triggers signal
         instance = M3UAccount(**validated_data)
+        if start_setup:
+            instance.setup_step = (
+                M3UAccount.SetupStep.EPG
+                if instance.account_type == M3UAccount.Types.XC
+                else M3UAccount.SetupStep.CATEGORIES
+            )
         instance._cron_expression = cron_expr
         instance._vod_cron_expression = vod_cron_expr
         instance.save()

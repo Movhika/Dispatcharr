@@ -56,6 +56,16 @@ vi.mock('../VODCategoryFilter', () => ({
   ),
 }));
 
+vi.mock('../../ConfirmationDialog.jsx', () => ({
+  default: ({ opened, title, onConfirm, onClose }) =>
+    opened ? (
+      <div role="dialog" aria-label={title}>
+        <button onClick={onConfirm}>Discard</button>
+        <button onClick={onClose}>Keep editing</button>
+      </div>
+    ) : null,
+}));
+
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
   Button: ({ children, onClick, loading, disabled, variant, color }) => (
@@ -164,6 +174,47 @@ describe('M3UGroupFilter', () => {
     expect(
       screen.getByRole('contentinfo', { name: 'Category actions' })
     ).toHaveClass(editorClasses.plainFooter);
+  });
+
+  it('saves wizard selections before completing setup without handoff toasts', async () => {
+    setupStores();
+    const onSetupComplete = vi.fn().mockResolvedValue(true);
+    render(
+      <M3UGroupFilter
+        {...defaultProps({ isInitialSetup: true, onSetupComplete })}
+      />
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Finish and start import' })
+    );
+    await waitFor(() => expect(onSetupComplete).toHaveBeenCalledOnce());
+    expect(
+      M3uGroupFilterUtils.savePlaylistGroupSettings
+    ).toHaveBeenCalledOnce();
+    expect(M3uGroupFilterUtils.saveAndRefreshPlaylist).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+
+  it('confirms discarding category changes while keeping setup resumable', () => {
+    setupStores();
+    const onClose = vi.fn();
+    render(
+      <M3UGroupFilter
+        {...defaultProps({
+          isInitialSetup: true,
+          onSetupComplete: vi.fn(),
+          onClose,
+        })}
+      />
+    );
+    fireEvent.click(screen.getByTestId('live-change-groups'));
+    fireEvent.click(screen.getByTestId('modal-close'));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('dialog', { name: 'Discard category changes?' })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   describe('guard conditions', () => {

@@ -1,5 +1,5 @@
 // Modal.js
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import useUserAgentsStore from '../../store/userAgents';
 import useServerGroupsStore from '../../store/serverGroups';
 import usePlaylistsStore from '../../store/playlists';
@@ -30,19 +30,14 @@ import {
   SensitivePasswordInput as PasswordInput,
 } from '../SensitiveFields.jsx';
 import M3UGroupFilter from './M3UGroupFilter';
-import useChannelsStore from '../../store/channels';
 import { isNotEmpty, useForm } from '@mantine/form';
-import useEPGsStore from '../../store/epgs';
 import useVODStore from '../../store/useVODStore';
 import ScheduleInput from './ScheduleInput';
 import { DateTimePicker } from '@mantine/dates';
-import { showNotification } from '../../utils/notificationUtils.js';
-import { addEPG } from '../../utils/forms/DummyEpgUtils.js';
 import {
   addPlaylist,
   expDateFromPlaylist,
   expDateKey,
-  getPlaylist,
   prepareSubmitValues,
   updatePlaylist,
 } from '../../utils/forms/M3uUtils.js';
@@ -53,6 +48,9 @@ import {
   useTimeHelpers,
 } from '../../utils/dateTimeUtils.js';
 import editorClasses from './AccountEditor.module.css';
+import ConfirmationDialog from '../ConfirmationDialog.jsx';
+import M3USetupSteps from './M3USetupSteps.jsx';
+import { validateNewM3UAccount } from '../../utils/forms/M3uSetupUtils.js';
 
 const helpLabel = (label, help) => (
   <Group gap={5} wrap="nowrap">
@@ -100,8 +98,6 @@ const M3U = ({
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
   const serverGroups = useServerGroupsStore((s) => s.serverGroups);
-  const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
-  const fetchEPGs = useEPGsStore((s) => s.fetchEPGs);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
 
   const [playlist, setPlaylist] = useState(null);
@@ -109,7 +105,6 @@ const M3U = ({
   const [expDate, setExpDate] = useState(null);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
-  const [initialGroupSetup, setInitialGroupSetup] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
   const [vodEnabled, setVodEnabled] = useState(false);
@@ -118,8 +113,10 @@ const M3U = ({
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [hasHashKeyOverride, setHasHashKeyOverride] = useState(false);
   const [activeTab, setActiveTab] = useState('account');
-  const [pendingCreation, setPendingCreation] = useState(null);
-  const [finishingCreation, setFinishingCreation] = useState(false);
+  const [contentAvailable, setContentAvailable] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
 
@@ -175,10 +172,12 @@ const M3U = ({
   });
 
   useEffect(() => {
+    if (!isOpen) return;
+    setFile(null);
     setActiveTab('account');
-    setPendingCreation(null);
+    setContentAvailable(false);
+    setDiscardOpen(false);
     if (m3uAccount) {
-      setInitialGroupSetup(false);
       setPlaylist(m3uAccount);
       setAccountType(m3uAccount.account_type);
       form.setValues({
@@ -234,7 +233,6 @@ const M3U = ({
       setVodEnabled(Boolean(m3uAccount.enable_vod));
       setVodRefreshAfterLive(m3uAccount.vod_refresh_after_live !== false);
     } else {
-      setInitialGroupSetup(false);
       setPlaylist(null);
       setAccountType('XC');
       form.reset();
@@ -246,7 +244,7 @@ const M3U = ({
       setHasHashKeyOverride(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m3uAccount]);
+  }, [m3uAccount, isOpen]);
 
   useEffect(() => {
     if (storeExpDate === undefined) return;
@@ -254,31 +252,29 @@ const M3U = ({
     setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
   }, [storeExpDate]);
 
-  const handleNewPlaylist = async (newPlaylist, values) => {
-    if (values.account_type != 'XC') {
-      showNotification({
-        title: 'Fetching M3U Groups',
-        message:
-          'Configure group filters and auto sync settings once complete.',
-      });
-      close();
-      return;
-    }
-
-    const updatedPlaylist = await getPlaylist(newPlaylist);
-    if (!updatedPlaylist?.id) throw new Error('Account details unavailable');
-    await Promise.all([fetchChannelGroups(), fetchEPGs()]);
-
-    if (values.enable_vod) {
-      fetchCategories();
-    }
-
-    setPlaylist(updatedPlaylist);
-    setInitialGroupSetup(true);
-    setGroupFilterModalOpen(true);
+  const next = () => {
+    const errors = validateNewM3UAccount(form.getValues(), file);
+    form.setErrors(errors);
+    if (Object.keys(errors).length) return false;
+    setContentAvailable(true);
+    setActiveTab('content');
+    return true;
   };
 
   const onSubmit = async () => {
+    if (creatingRef.current) return;
+    if (!playlist?.id && activeTab === 'account') {
+      next();
+      return;
+    }
+    if (!playlist?.id) {
+      const errors = validateNewM3UAccount(form.getValues(), file);
+      form.setErrors(errors);
+      if (Object.keys(errors).length) {
+        setActiveTab('account');
+        return;
+      }
+    }
     const rawValues = form.getValues();
     const values = prepareSubmitValues(rawValues, expDate);
 
@@ -292,54 +288,20 @@ const M3U = ({
       return;
     }
 
-    const newPlaylist = await addPlaylist(values, file);
-    if (!newPlaylist?.id) return;
-    if (values.account_type === 'XC') {
-      // The account already exists before asking about its optional EPG source.
-      setPlaylist(newPlaylist);
-      setPendingCreation({ playlist: newPlaylist, values, epgCreated: false });
-    } else {
-      await handleNewPlaylist(newPlaylist, values);
-    }
-  };
-
-  const finishCreation = async (createEpg) => {
-    if (!pendingCreation || finishingCreation) return;
-    setFinishingCreation(true);
-    let creatingEpg = createEpg && !pendingCreation.epgCreated;
+    creatingRef.current = true;
+    setCreating(true);
     try {
-      const { playlist: newPlaylist, values } = pendingCreation;
-      if (creatingEpg) {
-        const url = new URL('/xmltv.php', values.server_url);
-        url.searchParams.set('username', values.username || '');
-        url.searchParams.set('password', values.password || '');
-        const epg = await addEPG({
-          name: values.name,
-          source_type: 'xmltv',
-          url: url.toString(),
-          api_key: '',
-          is_active: true,
-          refresh_interval: 24,
-        });
-        // The API already reports failures and returns no source in that case.
-        if (!epg?.id) return;
-        setPendingCreation((current) => ({ ...current, epgCreated: true }));
-        creatingEpg = false;
-      }
-      await handleNewPlaylist(newPlaylist, values);
-      setPendingCreation(null);
-    } catch {
-      showNotification({
-        title: creatingEpg
-          ? 'EPG source was not created'
-          : 'Categories could not be loaded',
-        message: creatingEpg
-          ? 'The M3U account is already created. Retry or continue without an EPG source.'
-          : 'The M3U account is already created. Please retry opening its categories.',
-        color: 'red',
-      });
+      const newPlaylist = await addPlaylist(
+        { ...values, start_setup: true },
+        file
+      );
+      if (!newPlaylist?.id) return;
+      form.reset();
+      setFile(null);
+      onClose(newPlaylist);
     } finally {
-      setFinishingCreation(false);
+      creatingRef.current = false;
+      setCreating(false);
     }
   };
 
@@ -347,20 +309,24 @@ const M3U = ({
     form.reset();
     setFile(null);
     setPlaylist(null);
-    setInitialGroupSetup(false);
-    setPendingCreation(null);
+    setActiveTab('account');
+    setContentAvailable(false);
+    setExpDate(null);
+    setDiscardOpen(false);
     onClose();
   };
 
   const closeGroupFilter = () => {
     setGroupFilterModalOpen(false);
-    if (!initialGroupSetup) return;
-    // After group filter setup for a new account, reset everything
-    form.reset();
-    setFile(null);
-    setPlaylist(null);
-    setInitialGroupSetup(false);
-    onClose();
+  };
+
+  const requestClose = () => {
+    if (creating || form.submitting) return;
+    if (!playlist?.id && (form.isDirty() || file || expDate)) {
+      setDiscardOpen(true);
+      return;
+    }
+    close();
   };
 
   useEffect(() => {
@@ -377,8 +343,8 @@ const M3U = ({
     <>
       <Modal
         size="68vw"
-        opened={isOpen && !pendingCreation}
-        onClose={close}
+        opened={isOpen}
+        onClose={requestClose}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         closeButtonProps={{ 'aria-label': 'Close M3U account editor' }}
         classNames={{
@@ -391,31 +357,51 @@ const M3U = ({
         trapFocus={
           !groupFilterModalOpen &&
           !serverGroupsManagerOpen &&
-          !profileOverlayOpen
+          !profileOverlayOpen &&
+          !discardOpen
         }
         closeOnEscape={
           !groupFilterModalOpen &&
           !serverGroupsManagerOpen &&
-          !profileOverlayOpen
+          !profileOverlayOpen &&
+          !discardOpen &&
+          !creating
         }
         yOffset="2vh"
         xOffset="3vw"
       >
-        <LoadingOverlay visible={form.submitting} overlayBlur={2} />
+        <LoadingOverlay visible={form.submitting || creating} overlayBlur={2} />
 
         <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
+          {!playlist?.id && (
+            <M3USetupSteps
+              stage={activeTab}
+              accountType={accountType}
+              contentAvailable={contentAvailable}
+              onSelect={(stage) => {
+                if (
+                  !creating &&
+                  (stage === 'account' ||
+                    (stage === 'content' && contentAvailable))
+                )
+                  setActiveTab(stage);
+              }}
+            />
+          )}
           <Tabs
             value={activeTab}
             onChange={setActiveTab}
             className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
           >
-            <TabsList className={editorClasses.tabList}>
-              <TabsTab value="account">Account</TabsTab>
-              <TabsTab value="content">Content</TabsTab>
-              <TabsTab value="profiles" disabled={!playlist?.id}>
-                Profiles
-              </TabsTab>
-            </TabsList>
+            {playlist?.id && (
+              <TabsList className={editorClasses.tabList}>
+                <TabsTab value="account">Account</TabsTab>
+                <TabsTab value="content">Content</TabsTab>
+                <TabsTab value="profiles" disabled={!playlist?.id}>
+                  Profiles
+                </TabsTab>
+              </TabsList>
+            )}
             <TabsPanel
               value="account"
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
@@ -445,6 +431,7 @@ const M3U = ({
                       id="name"
                       name="name"
                       label="Name"
+                      withAsterisk={!playlist?.id}
                       {...form.getInputProps('name')}
                       key={form.key('name')}
                     />
@@ -468,6 +455,7 @@ const M3U = ({
                       id="server_url"
                       name="server_url"
                       label="URL"
+                      withAsterisk={!playlist?.id && accountType === 'XC'}
                       placeholder={
                         accountType === 'XC'
                           ? 'Xtream Codes server URL'
@@ -483,12 +471,14 @@ const M3U = ({
                           id="username"
                           name="username"
                           label="Username"
+                          withAsterisk={!playlist?.id}
                           {...form.getInputProps('username')}
                         />
                         <PasswordInput
                           id="password"
                           name="password"
                           label="Password"
+                          withAsterisk={!playlist?.id}
                           placeholder={
                             playlist?.id
                               ? 'Leave empty to keep existing password'
@@ -504,6 +494,8 @@ const M3U = ({
                         <FileInput
                           id="file"
                           label="Upload files"
+                          description="Use a playlist URL or upload a file."
+                          clearable
                           placeholder="Upload files"
                           onChange={setFile}
                           styles={{
@@ -909,57 +901,56 @@ const M3U = ({
                 </>
               )}
 
-              <Button
-                type="submit"
-                variant="filled"
-                disabled={form.submitting}
-                size="sm"
-              >
-                {playlist?.id ? 'Save' : 'Create'}
-              </Button>
+              {!playlist?.id && activeTab === 'content' && (
+                <Button
+                  variant="default"
+                  onClick={() => setActiveTab('account')}
+                  disabled={creating}
+                >
+                  Back
+                </Button>
+              )}
+              {!playlist?.id && activeTab === 'account' ? (
+                <Button
+                  key="next"
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    next();
+                  }}
+                >
+                  Next
+                </Button>
+              ) : (
+                <Button
+                  key="save"
+                  type="submit"
+                  variant="filled"
+                  disabled={form.submitting || creating}
+                  loading={creating}
+                  size="sm"
+                >
+                  {playlist?.id ? 'Save' : 'Create'}
+                </Button>
+              )}
             </Flex>
           </Flex>
         </form>
       </Modal>
-      <Modal
-        opened={!!pendingCreation}
-        onClose={close}
-        title="Create matching EPG source?"
-        centered
-        closeOnClickOutside={false}
-        closeOnEscape={!finishingCreation}
-        withCloseButton={!finishingCreation}
-      >
-        <Stack>
-          <Text size="sm">
-            The M3U account has been created. Would you also like to create an
-            XMLTV EPG source using this account’s provider and credentials?
-          </Text>
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              onClick={() => finishCreation(false)}
-              disabled={finishingCreation}
-            >
-              {pendingCreation?.epgCreated ? 'Continue' : 'Skip'}
-            </Button>
-            {!pendingCreation?.epgCreated && (
-              <Button
-                onClick={() => finishCreation(true)}
-                loading={finishingCreation}
-              >
-                Create EPG
-              </Button>
-            )}
-          </Group>
-        </Stack>
-      </Modal>
+      <ConfirmationDialog
+        opened={discardOpen}
+        onClose={() => setDiscardOpen(false)}
+        onConfirm={close}
+        title="Discard new account?"
+        message="This account has not been created. Discard the unsaved entries?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+      />
       {playlist && (
         <>
           <M3UGroupFilter
             isOpen={groupFilterModalOpen}
             playlist={playlist}
-            isInitialSetup={initialGroupSetup}
             onClose={closeGroupFilter}
           />
         </>

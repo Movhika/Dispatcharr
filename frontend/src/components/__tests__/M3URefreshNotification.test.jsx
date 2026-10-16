@@ -401,6 +401,29 @@ describe('M3URefreshNotification', () => {
       fireEvent.click(screen.getByText('Refresh Now'));
       expect(API.refreshPlaylist).toHaveBeenCalledWith(1);
     });
+
+    it('does not duplicate handoff notifications during guided setup', () => {
+      mockPlaylistsStore.playlists = [
+        { ...mockPlaylist, setup_step: 'categories' },
+      ];
+      setProgress({
+        status: 'pending_setup',
+        action: 'processing_groups',
+        progress: 100,
+      });
+      renderWithProviders(<M3URefreshNotification />);
+      expect(mockChannelsStore.fetchChannelGroups).toHaveBeenCalled();
+      expect(showNotification).not.toHaveBeenCalled();
+    });
+
+    it('keeps provider errors visible during guided setup', () => {
+      mockPlaylistsStore.playlists = [{ ...mockPlaylist, setup_step: 'epg' }];
+      setProgress({ status: 'error', error: 'Provider request failed' });
+      renderWithProviders(<M3URefreshNotification />);
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', autoClose: false })
+      );
+    });
   });
 
   describe('Auto-sync count rendering on parsing complete', () => {

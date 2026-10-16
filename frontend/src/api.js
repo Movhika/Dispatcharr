@@ -1542,6 +1542,15 @@ export default class API {
     }
   }
 
+  static async advanceM3USetup(id, action) {
+    const response = await request(`${host}/api/m3u/accounts/${id}/setup/`, {
+      method: 'POST',
+      body: { action },
+    });
+    usePlaylistsStore.getState().updatePlaylist(response);
+    return response;
+  }
+
   static async refreshPlaylist(id, includeVod) {
     try {
       const url = `${host}/api/m3u/refresh/${id}/`;

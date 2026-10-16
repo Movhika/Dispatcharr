@@ -55,6 +55,15 @@ vi.mock('../../ServerGroupsManagerModal', () => ({
       </div>
     ) : null,
 }));
+vi.mock('../../forms/M3USetup.jsx', () => ({
+  default: ({ account, onClose, onEditAccount }) => (
+    <div role="dialog" aria-label="Account setup">
+      <span>{account.name}</span>
+      <button onClick={onClose}>Close setup</button>
+      <button onClick={() => onEditAccount(account)}>Edit setup account</button>
+    </div>
+  ),
+}));
 vi.mock('../../../components/ConfirmationDialog', () => ({
   default: ({
     opened,
@@ -221,9 +230,9 @@ describe('M3U account cards', () => {
     ).toHaveTextContent('New account');
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
     expect(
-      screen.getByRole('dialog', { name: 'Account editor' })
-    ).toHaveTextContent('Initial setup');
-    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+      screen.getByRole('dialog', { name: 'Account setup' })
+    ).toHaveTextContent('Created account');
+    fireEvent.click(screen.getByRole('button', { name: 'Close setup' }));
     fireEvent.click(card().getByRole('button', { name: 'Edit Provider One' }));
     expect(
       screen.getByRole('dialog', { name: 'Account editor' })
@@ -242,6 +251,22 @@ describe('M3U account cards', () => {
       screen.getByRole('dialog', { name: 'Account editor' })
     ).toHaveTextContent('Provider One');
     expect(state.setEditPlaylistId).toHaveBeenCalledWith(null);
+  });
+
+  it('resumes unfinished setup without reopening account creation', () => {
+    setup({ playlists: [account({ setup_step: 'categories' })] });
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+    expect(
+      screen.getByRole('dialog', { name: 'Account setup' })
+    ).toHaveTextContent('Provider One');
+    expect(
+      screen.queryByRole('dialog', { name: 'Account editor' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit setup account' }));
+    expect(
+      screen.getByRole('dialog', { name: 'Account editor' })
+    ).toHaveTextContent('Provider One');
   });
 
   it('reactivates disabled accounts using a toggle-only patch', async () => {

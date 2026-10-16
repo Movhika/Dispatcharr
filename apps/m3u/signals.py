@@ -26,7 +26,10 @@ def refresh_account_on_save(sender, instance, created, **kwargs):
     call a Celery task that fetches & parses that single account
     if it is active or newly created.
     """
-    if created and instance.account_type != M3UAccount.Types.XC:
+    if (
+        created and not instance.setup_step
+        and instance.account_type != M3UAccount.Types.XC
+    ):
         refresh_m3u_groups.delay(instance.id)
 
 @receiver(post_save, sender=M3UAccount)

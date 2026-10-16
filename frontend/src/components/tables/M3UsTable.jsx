@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import usePlaylistsStore from '../../store/playlists';
 import M3UForm from '../forms/M3U';
+import M3USetup from '../forms/M3USetup.jsx';
 import ServerGroupsManagerModal from '../ServerGroupsManagerModal';
 import {
   Paper,
@@ -191,6 +192,7 @@ const M3UTable = () => {
   const [playlist, setPlaylist] = useState(null);
   const [playlistModalOpen, setPlaylistModalOpen] = useState(false);
   const [playlistCreated, setPlaylistCreated] = useState(false);
+  const [setupAccount, setSetupAccount] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playlistToDelete, setPlaylistToDelete] = useState(null);
@@ -580,8 +582,10 @@ const M3UTable = () => {
 
   const closeModal = (newPlaylist = null) => {
     if (newPlaylist) {
-      setPlaylistCreated(true);
-      setPlaylist(newPlaylist);
+      setPlaylistModalOpen(false);
+      setPlaylist(null);
+      setPlaylistCreated(false);
+      setSetupAccount(newPlaylist);
     } else {
       setPlaylistModalOpen(false);
       setPlaylist(null);
@@ -800,6 +804,17 @@ const M3UTable = () => {
                       />
                     </Group>
                   </Group>
+                  {account.setup_step && (
+                    <Group justify="flex-end">
+                      <Button
+                        size="xs"
+                        variant="light"
+                        onClick={() => setSetupAccount(account)}
+                      >
+                        Resume setup
+                      </Button>
+                    </Group>
+                  )}
                   <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="md">
                     <Box>
                       <Text size="xs" fw={600} mb={4}>
@@ -843,6 +858,17 @@ const M3UTable = () => {
         onClose={closeModal}
         playlistCreated={playlistCreated}
       />
+      {setupAccount && (
+        <M3USetup
+          key={setupAccount.id}
+          account={setupAccount}
+          onClose={() => setSetupAccount(null)}
+          onEditAccount={(account) => {
+            setSetupAccount(null);
+            editPlaylist(account);
+          }}
+        />
+      )}
 
       <ServerGroupsManagerModal
         isOpen={serverGroupsManagerOpen}

@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class M3UAccount(models.Model):
+    class SetupStep(models.TextChoices):
+        EPG = "epg", "Optional EPG"
+        CATEGORIES = "categories", "Categories"
+
     class Types(models.TextChoices):
         STADNARD = "STD", "Standard"
         XC = "XC", "Xtream Codes"
@@ -65,6 +69,10 @@ class M3UAccount(models.Model):
     )
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.IDLE
+    )
+    setup_step = models.CharField(
+        max_length=16, choices=SetupStep.choices, blank=True, default="",
+        help_text="Unfinished guided setup step, independent of refresh status.",
     )
     last_message = models.TextField(
         null=True,

@@ -1741,6 +1741,20 @@ def cleanup_streams(account_id, scan_start_time=timezone.now):
 
 
 @shared_task
+def prepare_account_setup(account_id):
+    from .account_setup import discover_setup_categories
+
+    task_name = "prepare_m3u_account_setup"
+    if not acquire_task_lock(task_name, account_id):
+        return
+    try:
+        with TaskLockRenewer(task_name, account_id):
+            discover_setup_categories(account_id)
+    finally:
+        release_task_lock(task_name, account_id)
+
+
+@shared_task
 def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_start_time=None):
     """Refresh M3U groups for an account.
 

@@ -26,12 +26,16 @@ import API from '../../api.js';
 import M3URulesModal from './M3URulesModal.jsx';
 import editorClasses from './AccountEditor.module.css';
 import useCategoryPreviewAvailability from '../../hooks/useCategoryPreviewAvailability.jsx';
+import ConfirmationDialog from '../ConfirmationDialog.jsx';
 
 const M3UGroupFilter = ({
   playlist = null,
   isOpen,
   onClose,
   isInitialSetup = false,
+  setupHeader,
+  onSetupComplete,
+  onEditAccount,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
@@ -46,6 +50,8 @@ const M3UGroupFilter = ({
   const [activeAction, setActiveAction] = useState(null);
   const [paginationContainer, setPaginationContainer] = useState(null);
   const groupsAccount = useRef(null);
+  const savedGroups = useRef('[]');
+  const [discardAction, setDiscardAction] = useState(null);
   const { availability, hint: previewHint } = useCategoryPreviewAvailability(
     playlist?.id,
     isOpen
@@ -68,7 +74,9 @@ const M3UGroupFilter = ({
     )
       return;
     groupsAccount.current = playlist.id;
-    setGroupStates(buildGroupStates(channelGroups, playlist.channel_groups));
+    const groups = buildGroupStates(channelGroups, playlist.channel_groups);
+    savedGroups.current = JSON.stringify(groups);
+    setGroupStates(groups);
   }, [playlist, channelGroups, isOpen]);
 
   // Fetch VOD categories when modal opens for XC accounts with VOD enabled
@@ -108,9 +116,10 @@ const M3UGroupFilter = ({
     setIsLoading(true);
     setActiveAction('save');
     try {
-      const save = isInitialSetup
-        ? saveAndRefreshPlaylist
-        : savePlaylistGroupSettings;
+      const save =
+        isInitialSetup && !onSetupComplete
+          ? saveAndRefreshPlaylist
+          : savePlaylistGroupSettings;
       await save(
         playlist,
         groupStates,
@@ -119,6 +128,27 @@ const M3UGroupFilter = ({
         {},
         isInitialSetup
       );
+
+      savedGroups.current = JSON.stringify(groupStates);
+      setMovieCategoryStates((current) =>
+        current.map((category) => ({
+          ...category,
+          original_enabled: category.enabled,
+          original_custom_properties: { ...(category.custom_properties || {}) },
+        }))
+      );
+      setSeriesCategoryStates((current) =>
+        current.map((category) => ({
+          ...category,
+          original_enabled: category.enabled,
+          original_custom_properties: { ...(category.custom_properties || {}) },
+        }))
+      );
+
+      if (onSetupComplete) {
+        await onSetupComplete();
+        return;
+      }
 
       showNotification({
         title: 'Category Settings Updated',
@@ -140,20 +170,6 @@ const M3UGroupFilter = ({
         });
 
       if (isInitialSetup) onClose();
-      setMovieCategoryStates((current) =>
-        current.map((category) => ({
-          ...category,
-          original_enabled: category.enabled,
-          original_custom_properties: { ...(category.custom_properties || {}) },
-        }))
-      );
-      setSeriesCategoryStates((current) =>
-        current.map((category) => ({
-          ...category,
-          original_enabled: category.enabled,
-          original_custom_properties: { ...(category.custom_properties || {}) },
-        }))
-      );
     } catch (error) {
       showNotification({
         title: 'Settings were not saved',
@@ -209,6 +225,20 @@ const M3UGroupFilter = ({
     else setSeriesCategoryStates(update);
   };
 
+  const requestExit = (action) => {
+    if (isLoading) return;
+    const changed =
+      savedGroups.current !== JSON.stringify(groupStates) ||
+      [...movieCategoryStates, ...seriesCategoryStates].some(
+        (row) =>
+          row.enabled !== row.original_enabled ||
+          JSON.stringify(row.custom_properties || {}) !==
+            JSON.stringify(row.original_custom_properties || {})
+      );
+    if (onSetupComplete && changed) setDiscardAction(() => action);
+    else action();
+  };
+
   if (!isOpen) {
     return <></>;
   }
@@ -216,7 +246,7 @@ const M3UGroupFilter = ({
   return (
     <Modal
       opened={isOpen}
-      onClose={onClose}
+      onClose={() => requestExit(onClose)}
       title="Categories"
       closeButtonProps={{ 'aria-label': 'Close categories' }}
       size="94vw"
@@ -230,13 +260,16 @@ const M3UGroupFilter = ({
       }}
       lockScroll={false}
       withinPortal={true}
-      trapFocus={!rulesScope && !childOverlayOpen}
-      closeOnEscape={!rulesScope && !childOverlayOpen}
+      trapFocus={!rulesScope && !childOverlayOpen && !discardAction}
+      closeOnEscape={
+        !rulesScope && !childOverlayOpen && !discardAction && !isLoading
+      }
       yOffset="2vh"
       xOffset="3vw"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
       <Stack className={editorClasses.form} gap={0}>
+        {setupHeader}
         <Tabs
           className={editorClasses.tabs}
           value={activeTab}
@@ -246,8 +279,18 @@ const M3UGroupFilter = ({
         >
           <TabsList className={editorClasses.tabList}>
             <TabsTab value="live">Live TV</TabsTab>
-            <TabsTab value="vod-movie">VOD - Movies</TabsTab>
-            <TabsTab value="vod-series">VOD - Series</TabsTab>
+            <TabsTab
+              value="vod-movie"
+              disabled={!!onSetupComplete && !playlist.enable_vod}
+            >
+              VOD - Movies
+            </TabsTab>
+            <TabsTab
+              value="vod-series"
+              disabled={!!onSetupComplete && !playlist.enable_vod}
+            >
+              VOD - Series
+            </TabsTab>
           </TabsList>
 
           <TabsPanel
@@ -319,6 +362,15 @@ const M3UGroupFilter = ({
             className={editorClasses.paginationSlot}
           />
           <div className={editorClasses.categoryFooterActions}>
+            {onEditAccount && (
+              <Button
+                variant="default"
+                disabled={isLoading}
+                onClick={() => requestExit(onEditAccount)}
+              >
+                Edit account
+              </Button>
+            )}
             {!isInitialSetup && (
               <Button
                 variant="default"
@@ -341,7 +393,11 @@ const M3UGroupFilter = ({
               loading={activeAction === 'save'}
               onClick={submit}
             >
-              {isInitialSetup ? 'Save and Refresh' : 'Save'}
+              {onSetupComplete
+                ? 'Finish and start import'
+                : isInitialSetup
+                  ? 'Save and Refresh'
+                  : 'Save'}
             </Button>
           </div>
         </Flex>
@@ -353,6 +409,19 @@ const M3UGroupFilter = ({
         accountId={playlist.id}
         scope={rulesScope}
         onApplied={applyRuleResult}
+      />
+      <ConfirmationDialog
+        opened={!!discardAction}
+        onClose={() => setDiscardAction(null)}
+        onConfirm={() => {
+          const action = discardAction;
+          setDiscardAction(null);
+          action?.();
+        }}
+        title="Discard category changes?"
+        message="These category changes have not been saved. The account remains available to resume setup later."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
       />
     </Modal>
   );

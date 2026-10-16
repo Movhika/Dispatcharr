@@ -207,6 +207,16 @@ export default function M3URefreshNotification() {
     // Update notification status
     notificationStatus.current[data.account] = data;
 
+    // Guided setup owns its handoffs; retain errors, but do not add a
+    // second configure/categories prompt or progress toast over its dialog.
+    if (playlist.setup_step && data.status !== 'error') {
+      if (data.status === 'pending_setup') {
+        fetchChannelGroups();
+        fetchPlaylists();
+      }
+      return;
+    }
+
     // Handle different status types
     if (data.status === 'pending_setup') {
       handlePendingSetup(playlist, data);
