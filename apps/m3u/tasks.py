@@ -1896,7 +1896,7 @@ def refresh_m3u_groups(account_id, use_cache=False, full_refresh=False, scan_sta
                                 for values in groups.values()
                                 if values.get("xc_id") is not None
                             }
-                            for item in xc_client.get_live_streams():
+                            for item in xc_client.get_all_live_streams():
                                 properties = by_category_id.get(
                                     str(item.get("category_id"))
                                 )
