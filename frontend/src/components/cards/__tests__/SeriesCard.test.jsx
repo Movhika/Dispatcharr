@@ -34,17 +34,26 @@ vi.mock('@mantine/core', async () => ({
   Group: ({ children, gap, justify }) => (
     <div data-testid="group">{children}</div>
   ),
-  Image: ({ src, alt, fallbackSrc, height, fit }) => (
-    <img src={src} alt={alt} data-fallback={fallbackSrc} data-fit={fit} />
+  Image: ({ src, alt, fallbackSrc, height, fit, loading }) => (
+    <img
+      src={src}
+      alt={alt}
+      data-fallback={fallbackSrc}
+      data-fit={fit}
+      data-height={height}
+      loading={loading}
+    />
   ),
   Stack: ({ children, gap }) => <div data-testid="stack">{children}</div>,
-  Text: ({ children, size, fw, c, lineClamp, style }) => (
+  Text: ({ children, size, fw, c, lineClamp, style, title }) => (
     <span
       data-testid="text"
       data-size={size}
       data-fw={fw}
       data-color={c}
+      data-line-clamp={lineClamp}
       style={style}
+      title={title}
     >
       {children}
     </span>
@@ -129,9 +138,28 @@ describe('SeriesCard', () => {
       expect(screen.getByText('9.5')).toBeInTheDocument();
     });
 
-    it('renders calendar icon', () => {
+    it('shows the type and year below the poster without an overlay badge', () => {
       render(<SeriesCard series={makeSeries()} onClick={vi.fn()} />);
-      expect(screen.getByTestId('icon-calendar')).toBeInTheDocument();
+      expect(screen.getByText(/Series ·/)).toHaveTextContent('Series · 2008');
+      expect(screen.getByTestId('card-section')).not.toHaveTextContent(
+        'Series'
+      );
+      expect(screen.queryByTestId('badge')).not.toBeInTheDocument();
+    });
+
+    it('fills the responsive poster frame and loads artwork lazily', () => {
+      render(<SeriesCard series={makeSeries()} onClick={vi.fn()} />);
+      const image = screen.getByRole('img');
+      expect(image).toHaveAttribute('data-fit', 'cover');
+      expect(image).toHaveAttribute('loading', 'lazy');
+      expect(image).not.toHaveAttribute('data-height');
+    });
+
+    it('keeps long titles compact while exposing their full text', () => {
+      const name = 'A very long series title that needs more than one line';
+      render(<SeriesCard series={makeSeries({ name })} onClick={vi.fn()} />);
+      expect(screen.getByText(name)).toHaveAttribute('data-line-clamp', '2');
+      expect(screen.getByText(name)).toHaveAttribute('title', name);
     });
 
     it('renders play icon', () => {

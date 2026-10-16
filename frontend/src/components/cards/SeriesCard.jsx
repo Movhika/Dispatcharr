@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Card,
   CardSection,
@@ -8,7 +7,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { Calendar, Play, Star } from 'lucide-react';
+import { Play, Star } from 'lucide-react';
 import React from 'react';
 import classes from '../VODLayout.module.css';
 import { vodLogoSrc } from '../../utils/cards/VODCardUtils.js';
@@ -17,8 +16,7 @@ const SeriesCard = ({ series, onClick }) => {
   const posterSrc = vodLogoSrc(series.logo);
   return (
     <Card
-      shadow="sm"
-      padding="md"
+      padding={0}
       radius="md"
       withBorder
       className={classes.card}
@@ -35,49 +33,51 @@ const SeriesCard = ({ series, onClick }) => {
       }}
     >
       <CardSection>
-        <Box pos="relative" h={300}>
+        <Box className={classes.cardMedia}>
           {posterSrc ? (
             <Image
               src={posterSrc}
-              height={300}
+              className={classes.cardImage}
               alt={series.name}
-              fit="contain"
+              fit="cover"
+              loading="lazy"
             />
           ) : (
-            <Box className={classes.placeholder} h={300} display="flex">
-              <Play size={48} aria-hidden="true" />
+            <Box className={classes.placeholder} h="100%" display="flex">
+              <Play size={36} aria-hidden="true" />
             </Box>
           )}
-          {/* Add Series badge in the same position as Movie badge */}
-          <Badge pos="absolute" bottom={8} left={8} color="purple">
-            Series
-          </Badge>
         </Box>
       </CardSection>
 
-      <Stack gap={8} mt="md">
-        <Text fw={500} className={classes.cardTitle}>
+      <Stack gap={2} className={classes.cardInfo}>
+        <Text
+          fw={600}
+          size="sm"
+          lineClamp={2}
+          title={series.name}
+          className={classes.cardTitle}
+        >
           {series.name}
         </Text>
 
-        <Group gap={16}>
-          {series.year && (
-            <Group gap={4}>
-              <Calendar size={14} color="#666" />
-              <Text size="xs" c="dimmed">
-                {series.year}
-              </Text>
-            </Group>
-          )}
-          {series.rating && (
-            <Group gap={4}>
-              <Star size={14} color="#666" />
-              <Text size="xs" c="dimmed">
-                {series.rating}
-              </Text>
-            </Group>
-          )}
-        </Group>
+        <Text size="xs" c="dimmed">
+          Series
+          {series.year ? (
+            <>
+              {' '}
+              · <span>{series.year}</span>
+            </>
+          ) : null}
+        </Text>
+        {series.rating && (
+          <Group gap={4} wrap="nowrap" c="dimmed">
+            <Star size={12} aria-hidden="true" />
+            <Text size="xs" c="dimmed">
+              {series.rating}
+            </Text>
+          </Group>
+        )}
 
         {series.genre && (
           <Text size="xs" c="dimmed" lineClamp={1}>
