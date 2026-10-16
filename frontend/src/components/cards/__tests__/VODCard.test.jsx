@@ -199,6 +199,16 @@ describe('VODCard', () => {
       expect(screen.getByText('120m')).toBeInTheDocument();
     });
 
+    it.each([
+      { duration: 5700, duration_secs: undefined },
+      { duration: undefined, duration_secs: 5700 },
+    ])('renders the duration from either Library API shape: %j', (duration) => {
+      render(<VODCard vod={makeMovie(duration)} onClick={vi.fn()} />);
+      expect(formatDuration).toHaveBeenCalledWith(5700);
+      expect(screen.getByTestId('icon-clock')).toBeInTheDocument();
+      expect(screen.getByText('5700m')).toBeInTheDocument();
+    });
+
     it('renders the clock icon when duration is present', () => {
       render(<VODCard vod={makeMovie()} onClick={vi.fn()} />);
       expect(screen.getByTestId('icon-clock')).toBeInTheDocument();
@@ -330,10 +340,15 @@ describe('VODCard', () => {
       expect(screen.queryByTestId('icon-star')).not.toBeInTheDocument();
     });
 
-    it('does not render duration when formatDuration returns null', () => {
-      vi.mocked(formatDuration).mockReturnValue(null);
-      render(<VODCard vod={makeMovie({ duration: null })} onClick={vi.fn()} />);
+    it('does not render a clock or call the formatter when duration is absent', () => {
+      render(
+        <VODCard
+          vod={makeMovie({ duration: null, duration_secs: null })}
+          onClick={vi.fn()}
+        />
+      );
       expect(screen.queryByTestId('icon-clock')).not.toBeInTheDocument();
+      expect(formatDuration).not.toHaveBeenCalled();
     });
 
     it('does not render genre when absent', () => {

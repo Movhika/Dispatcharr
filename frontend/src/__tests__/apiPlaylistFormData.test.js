@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
 
 vi.mock('../store/auth', () => ({
   default: { getState: () => ({ getToken: () => Promise.resolve('token') }) },
@@ -34,15 +35,51 @@ vi.mock('../utils', () => ({
 
 import API from '../api';
 import { notifications } from '@mantine/notifications';
+import { formatApiError } from '../utils';
+import useScreenshotMode from '../store/useScreenshotMode.js';
 
 describe('account import rule requests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useScreenshotMode.setState({ enabled: false });
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ updated: 1, results: [] }),
     });
   });
+  it.each([
+    ['rules', () => API.getM3URules(7, 'group-rules', 'live')],
+    ['library', () => API.getMovies()],
+  ])(
+    'keeps %s API error notifications masked when screenshot mode changes',
+    async (_name, request) => {
+      const url =
+        'https://example.invalid/player_api.php?username=example-user&password=example-secret';
+      vi.mocked(formatApiError).mockReturnValueOnce(`Request failed: ${url}`);
+      globalThis.fetch.mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: async () => 'Unavailable',
+      });
+      await expect(request()).rejects.toMatchObject({ status: 503 });
+      render(notifications.show.mock.calls[0][0].message);
+      expect(
+        screen.getByText(new RegExp('example-secret'))
+      ).toBeInTheDocument();
+      act(() => useScreenshotMode.setState({ enabled: true }));
+      expect(
+        screen.queryByText(new RegExp('example-secret'))
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(new RegExp('example-user'))
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/••••••••/)).toBeInTheDocument();
+      act(() => useScreenshotMode.setState({ enabled: false }));
+      expect(
+        screen.getByText(new RegExp('example-secret'))
+      ).toBeInTheDocument();
+    }
+  );
   it.each([
     ['load', () => API.getM3URules(7, 'group-rules', 'live')],
     [

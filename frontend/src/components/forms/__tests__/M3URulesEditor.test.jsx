@@ -440,6 +440,143 @@ describe('M3URulesEditor', () => {
       expect(API.deleteM3URule).toHaveBeenCalledWith(7, 'group-rules', 1)
     );
   });
+  it.each([false, true])(
+    'rechecks remaining saved rows and updates or clears coverage after deletion (filters=%s)',
+    async (streamFilters) => {
+      const rows = [
+        rule({ filter_type: 'name' }),
+        rule({ id: 2, order: 1, regex_pattern: '(?:)', filter_type: 'name' }),
+        rule({ id: 3, order: 2, regex_pattern: 'Sport', filter_type: 'name' }),
+      ];
+      API.getM3URules.mockResolvedValue(rows);
+      API.deleteM3URule.mockResolvedValue(undefined);
+      API.analyzeM3URules
+        .mockResolvedValueOnce({
+          inventory_count: 100,
+          rule_coverage: [
+            { rule_id: '1', count: 10 },
+            { rule_id: '2', count: 90 },
+            { rule_id: '3', count: 0 },
+          ],
+        })
+        .mockResolvedValueOnce({
+          inventory_count: 100,
+          rule_coverage: [
+            { rule_id: '2', count: 100 },
+            { rule_id: '3', count: 0 },
+          ],
+        })
+        .mockResolvedValueOnce({
+          inventory_count: 100,
+          rule_coverage: [{ rule_id: '3', count: 20 }],
+        });
+      const { container } = renderEditor({ streamFilters });
+      await screen.findByRole('img', { name: /Matches all 90 remaining/ });
+      showNotification.mockClear();
+      const deleteFirst = async () => {
+        fireEvent.click(
+          screen.getAllByLabelText(
+            streamFilters ? 'Delete filter' : 'Delete rule'
+          )[0]
+        );
+        fireEvent.click(screen.getByText('Confirm delete'));
+      };
+      await deleteFirst();
+      await screen.findByRole('img', { name: /Matches all 100/ });
+      expect(
+        container.querySelectorAll('tr[data-warning="true"]')
+      ).toHaveLength(1);
+      expect(
+        container.querySelectorAll('tr[data-covered="true"]')
+      ).toHaveLength(1);
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Matches all 100'),
+          color: 'yellow',
+        })
+      );
+      expect(API.analyzeM3URules).toHaveBeenLastCalledWith(
+        7,
+        streamFilters ? 'filters' : 'group-rules',
+        expect.arrayContaining([
+          expect.objectContaining({ preview_id: '2' }),
+          expect.objectContaining({ preview_id: '3' }),
+        ])
+      );
+      await deleteFirst();
+      await waitFor(() =>
+        expect(
+          container.querySelectorAll(
+            'tr[data-warning="true"],tr[data-covered="true"]'
+          )
+        ).toHaveLength(0)
+      );
+      expect(hideNotification).toHaveBeenCalledWith(
+        `account-rules-7-${streamFilters ? 'filters' : 'group-rules'}-coverage`
+      );
+      await deleteFirst();
+      await screen.findByText(
+        streamFilters
+          ? 'No stream filters configured.'
+          : 'No category filters configured.'
+      );
+      expect(API.analyzeM3URules).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it.each([false, true])(
+    'keeps an invalid unsaved draft marked when the last saved row is deleted (filters=%s)',
+    async (streamFilters) => {
+      API.getM3URules.mockResolvedValue([rule({ filter_type: 'name' })]);
+      API.deleteM3URule.mockResolvedValue(undefined);
+      renderEditor({ streamFilters });
+      await waitFor(() =>
+        expect(
+          screen.getByLabelText(streamFilters ? 'Save filter' : 'Save rule')
+        ).toBeEnabled()
+      );
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: streamFilters ? 'Add filter' : 'Add rule',
+        })
+      );
+      fireEvent.click(
+        screen.getAllByLabelText(streamFilters ? 'Save filter' : 'Save rule')[1]
+      );
+      await waitFor(() =>
+        expect(
+          screen.getAllByLabelText(
+            streamFilters ? 'Delete filter' : 'Delete rule'
+          )[0]
+        ).toBeEnabled()
+      );
+      fireEvent.click(
+        screen.getAllByLabelText(
+          streamFilters ? 'Delete filter' : 'Delete rule'
+        )[0]
+      );
+      fireEvent.click(screen.getByText('Confirm delete'));
+      await waitFor(() =>
+        expect(screen.getAllByLabelText('Regular expression')).toHaveLength(1)
+      );
+      expect(screen.getByLabelText('Regular expression')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      );
+      expect(
+        screen.getByRole('button', {
+          name: streamFilters ? 'Add filter' : 'Add rule',
+        })
+      ).toBeDisabled();
+      expect(showNotification).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          color: 'red',
+          autoClose: false,
+          message: 'Enter a regular expression before saving.',
+        })
+      );
+    }
+  );
   it('paginates beyond the former first-200 limit', async () => {
     await load();
     API.previewM3URules.mockResolvedValue({

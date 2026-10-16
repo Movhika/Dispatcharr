@@ -276,20 +276,26 @@ const M3URulesEditor = ({
   );
 
   const checkSavedRows = useCallback(
-    async (rows, requestId) => {
+    async (rows, requestId, preservedErrors = {}) => {
       if (!rows.length) {
         setCoverage({ causes: {}, coveredBy: {} });
-        return;
+        hideNotification(coverageNotificationId);
+        lastCoverageNotice.current = null;
       }
-      const errors = savedRuleErrors(rows, streamFilters);
+      const errors = {
+        ...savedRuleErrors(rows, streamFilters),
+        ...preservedErrors,
+      };
       try {
-        const response = await API.analyzeM3URules(
-          accountId,
-          kind,
-          rows.map((row) => ({ ...payload(row), preview_id: String(row.id) }))
-        );
-        if (requestId !== coverageRequest.current) return;
-        acceptCoverage(rows, response, false, !Object.keys(errors).length);
+        if (rows.length) {
+          const response = await API.analyzeM3URules(
+            accountId,
+            kind,
+            rows.map((row) => ({ ...payload(row), preview_id: String(row.id) }))
+          );
+          if (requestId !== coverageRequest.current) return;
+          acceptCoverage(rows, response, false, !Object.keys(errors).length);
+        }
       } catch (error) {
         if (requestId !== coverageRequest.current) return;
         setCoverage({ causes: {}, coveredBy: {} });
@@ -692,15 +698,14 @@ const M3URulesEditor = ({
 
   const remove = async () => {
     setBusy(true);
-    coverageRequest.current += 1;
+    const requestId = ++coverageRequest.current;
     try {
       if (!deleteTarget.isNew)
         await API.deleteM3URule(accountId, kind, deleteTarget.id);
       savedRules.current.delete(deleteTarget.id);
       hideNotification(errorNotificationId);
-      setRules((current) =>
-        current.filter((rule) => rule.id !== deleteTarget.id)
-      );
+      const remaining = rules.filter((rule) => rule.id !== deleteTarget.id);
+      setRules(remaining);
       setDirtyIds((current) => {
         const next = new Set(current);
         next.delete(deleteTarget.id);
@@ -711,6 +716,21 @@ const M3URulesEditor = ({
       if (!deleteTarget.isNew) {
         setCoverage({ causes: {}, coveredBy: {} });
         useM3URuleChecks.getState().forget(checkKey);
+        const remainingDraftIds = new Set(
+          remaining
+            .filter((rule) => rule.isNew || dirtyIds.has(rule.id))
+            .map((rule) => String(rule.id))
+        );
+        const preservedErrors = Object.fromEntries(
+          Object.entries(rowErrors).filter(
+            ([id, message]) => remainingDraftIds.has(id) && message
+          )
+        );
+        await checkSavedRows(
+          persistedRows(remaining),
+          requestId,
+          preservedErrors
+        );
       }
     } catch (error) {
       setError(error.message || 'Rule could not be deleted.');
@@ -1226,7 +1246,9 @@ const M3URulesEditor = ({
                   >
                     <TableThead>
                       <TableTr>
-                        <TableTh w={streamFilters ? '55%' : '50%'}>Name</TableTh>
+                        <TableTh w={streamFilters ? '55%' : '50%'}>
+                          Name
+                        </TableTh>
                         {streamFilters ? (
                           <TableTh>Group</TableTh>
                         ) : (

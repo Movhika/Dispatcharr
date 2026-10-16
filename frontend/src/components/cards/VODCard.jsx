@@ -19,6 +19,7 @@ import {
 const VODCard = ({ vod, onClick }) => {
   const isEpisode = vod.type === 'episode';
   const posterSrc = vodLogoSrc(vod.logo);
+  const durationSeconds = vod.duration_secs ?? vod.duration;
 
   const getDisplayTitle = () => {
     if (isEpisode && vod.series) {
@@ -105,13 +106,13 @@ const VODCard = ({ vod, onClick }) => {
           ) : null}
         </Text>
 
-        {(vod.duration || vod.rating) && (
+        {(durationSeconds > 0 || vod.rating) && (
           <Group gap="sm">
-            {vod.duration && (
+            {durationSeconds > 0 && (
               <Group gap={4} wrap="nowrap" c="dimmed">
                 <Clock size={12} aria-hidden="true" />
                 <Text size="xs" c="dimmed">
-                  {formatDuration(vod.duration_secs)}
+                  {formatDuration(durationSeconds)}
                 </Text>
               </Group>
             )}
