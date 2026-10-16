@@ -154,6 +154,26 @@ class AccountSetupTests(TestCase):
         self.assertEqual(account.setup_step, "categories")
         self.assertFalse(EPGSource.objects.exists())
 
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    def test_automatic_refreshes_wait_until_setup_is_complete(self, refresh):
+        account = self.account(
+            custom_properties={"enable_vod": True},
+            refresh_interval=24,
+            vod_refresh_after_live=False,
+            vod_refresh_interval=6,
+        )
+        self.assertFalse(account.refresh_task.enabled)
+        self.assertFalse(account.vod_refresh_task.enabled)
+        self.action(account, "skip_epg")
+        account.refresh_from_db()
+        self.assertFalse(account.refresh_task.enabled)
+        self.group(account)
+        self.assertEqual(self.action(account, "complete").status_code, 200)
+        account.refresh_from_db()
+        self.assertTrue(account.refresh_task.enabled)
+        self.assertTrue(account.vod_refresh_task.enabled)
+        self.assertFalse(EPGSource.objects.exists())
+
     def test_epg_validation_failure_leaves_step_resumable(self):
         account = self.account()
         EPGSource.objects.create(name=account.name, source_type="dummy")
@@ -180,7 +200,7 @@ class AccountSetupTests(TestCase):
         side_effect=RuntimeError("broker unavailable"),
     )
     def test_failed_import_dispatch_restores_category_step(self, refresh):
-        account = self.account(setup_step="categories")
+        account = self.account(setup_step="categories", refresh_interval=24)
         self.group(account)
         with (
             self.assertRaises(APIException),
@@ -189,6 +209,7 @@ class AccountSetupTests(TestCase):
             advance_account_setup(account.id, "complete")
         account.refresh_from_db()
         self.assertEqual(account.setup_step, "categories")
+        self.assertFalse(account.refresh_task.enabled)
 
     def test_completion_requires_epg_decision_and_loaded_categories(self):
         account = self.account()
@@ -230,7 +251,9 @@ class AccountSetupTests(TestCase):
     @patch("apps.m3u.tasks.refresh_m3u_groups", return_value=([], {"Example": {}}))
     def test_discovery_loads_live_and_vod_categories_without_importing(self, live, vod):
         account = self.account(custom_properties={"enable_vod": True})
-        discover_setup_categories(account.id)
+        with patch("apps.m3u.tasks.send_m3u_update") as notify:
+            discover_setup_categories(account.id)
+        self.assertEqual(notify.call_args.kwargs["status"], "pending_setup")
         live.assert_called_once_with(account.id, full_refresh=True)
         vod.assert_called_once_with(account.id)
         account.refresh_from_db()
@@ -243,7 +266,9 @@ class AccountSetupTests(TestCase):
         account = self.account(
             setup_step="categories", custom_properties={"enable_vod": True}
         )
-        discover_setup_categories(account.id)
+        with patch("apps.m3u.tasks.send_m3u_update") as notify:
+            discover_setup_categories(account.id)
+        self.assertEqual(notify.call_args.kwargs["status"], "error")
         account.refresh_from_db()
         self.assertEqual(account.status, "error")
         self.assertEqual(account.setup_step, "categories")

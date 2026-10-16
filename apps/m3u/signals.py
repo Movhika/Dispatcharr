@@ -44,7 +44,7 @@ def create_or_update_refresh_task(sender, instance, created, update_fields=None,
     SCHEDULE_FIELDS = {
         'refresh_interval', 'refresh_task', 'vod_refresh_interval',
         'vod_refresh_task', 'vod_refresh_after_live', 'is_active',
-        'account_type', 'custom_properties',
+        'account_type', 'custom_properties', 'setup_step',
     }
     if (
         not created
@@ -56,7 +56,7 @@ def create_or_update_refresh_task(sender, instance, created, update_fields=None,
         return
 
     task_name = f"m3u_account-refresh-{instance.id}"
-    should_be_enabled = instance.is_active
+    should_be_enabled = instance.is_active and not instance.setup_step
 
     # Read cron_expression from transient attribute set by the serializer.
     # If not set (e.g. save came from a task updating status/last_message),
@@ -97,6 +97,7 @@ def create_or_update_refresh_task(sender, instance, created, update_fields=None,
     custom = ensure_custom_properties_dict(instance.custom_properties)
     separate_vod_schedule_enabled = (
         instance.is_active
+        and not instance.setup_step
         and instance.account_type == M3UAccount.Types.XC
         and bool(custom.get('enable_vod', False))
         and not instance.vod_refresh_after_live

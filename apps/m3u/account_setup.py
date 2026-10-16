@@ -31,7 +31,7 @@ def queue_setup_categories(account_id):
 
 def discover_setup_categories(account_id):
     """Load category choices only; the user starts importing after selection."""
-    from .tasks import refresh_m3u_groups
+    from .tasks import refresh_m3u_groups, send_m3u_update
 
     account = M3UAccount.objects.get(pk=account_id)
     if not account.setup_step or not account.is_active:
@@ -57,6 +57,11 @@ def discover_setup_categories(account_id):
             status=M3UAccount.Status.PENDING_SETUP,
             last_message="Categories loaded. Continue setup to select imports.",
         )
+        send_m3u_update(
+            account_id, "processing_groups", 100,
+            status=M3UAccount.Status.PENDING_SETUP,
+            message="Categories loaded. Continue setup to select imports.",
+        )
     except Exception:
         logger.exception(
             "Could not load setup categories for account %s", account_id
@@ -64,6 +69,14 @@ def discover_setup_categories(account_id):
         M3UAccount.objects.filter(pk=account_id).update(
             status=M3UAccount.Status.ERROR,
             last_message=(
+                "Categories could not be loaded. "
+                "Check the account and retry setup."
+            ),
+        )
+        send_m3u_update(
+            account_id, "processing_groups", 100,
+            status=M3UAccount.Status.ERROR,
+            message=(
                 "Categories could not be loaded. "
                 "Check the account and retry setup."
             ),
@@ -77,9 +90,11 @@ def _queue_initial_import(account_id, include_vod):
         refresh_single_m3u_account.delay(account_id, include_vod=include_vod)
     except Exception as exc:
         # Settings are already saved. Leave a resumable step if dispatch fails.
-        M3UAccount.objects.filter(pk=account_id, setup_step="").update(
-            setup_step=M3UAccount.SetupStep.CATEGORIES
-        )
+        with transaction.atomic():
+            account = M3UAccount.objects.select_for_update().get(pk=account_id)
+            if not account.setup_step:
+                account.setup_step = M3UAccount.SetupStep.CATEGORIES
+                account.save(update_fields=["setup_step"])
         logger.exception("Could not queue initial import for account %s", account_id)
         raise APIException(
             "Category settings are saved, but the initial import could not be "
