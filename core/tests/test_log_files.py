@@ -247,6 +247,43 @@ class LogFilesEndpointTests(TestCase):
             b"".join(response.streaming_content), b"line one\nline two\n"
         )
 
+    def test_legacy_logs_are_redacted_in_views_and_downloads_without_a_ui_flag(self):
+        path = os.path.join(self.log_dir, "dispatcharr.log")
+        original = (
+            b'ERROR Failed https://example.invalid/player_api.php?username=alice&password=secret status=403\n'
+            b'username=alice password=secret\n'
+            b'GET /movie/alice/secret/123.mp4 HTTP/1.1\n'
+        )
+        with open(path, "wb") as log:
+            log.write(original)
+        view = self.client.get("/api/core/logs/dispatcharr.log/").json()
+        response = self.client.get("/api/core/logs/dispatcharr.log/download/")
+        exported = b"".join(response.streaming_content).decode()
+        response.close()
+        self.assertEqual(view["content"], exported)
+        self.assertNotIn("alice", exported)
+        self.assertNotIn("secret", exported)
+        self.assertNotIn("example.invalid", exported)
+        self.assertIn("status=403", exported)
+        self.assertIn("[REDACTED]", exported)
+        self.assertTrue(view["cursor"].endswith(f"-{len(original)}"))
+        with open(path, "rb") as log:
+            self.assertEqual(log.read(), original)
+        with open(path, "ab") as log:
+            log.write(b'password=another-secret\n')
+        delta = self.client.get(
+            "/api/core/logs/dispatcharr.log/", {"cursor": view["cursor"]}
+        ).json()
+        self.assertFalse(delta["reset"])
+        self.assertEqual(delta["content"], 'password=[REDACTED]\n')
+
+    def test_an_unconsumed_redacted_download_still_closes_its_file(self):
+        log = open(os.path.join(self.log_dir, "dispatcharr.log"), "rb")
+        with mock.patch('core.log_files._open_log', return_value=log):
+            response = self.client.get("/api/core/logs/dispatcharr.log/download/")
+        response.close()
+        self.assertTrue(log.closed)
+
     def test_endpoints_serve_only_the_log_family(self):
         # DISPATCHARR_LOG_DIR may point at a data root; view and download are not a file server.
         for name in ("secrets.env", "dispatcharr.logevil", "dispatcharr.log.bak"):
