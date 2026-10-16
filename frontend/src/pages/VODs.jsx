@@ -37,6 +37,7 @@ const SeriesCard = React.lazy(() => import('../components/cards/SeriesCard'));
 
 const PAGE_SIZES = [12, 24, 48, 96];
 const LOAD_ERROR_ID = 'vod-library-load-error';
+const CATEGORIES_ERROR_ID = 'vod-library-categories-error';
 
 const VODsPage = () => {
   const authUser = useAuthStore((s) => s.user);
@@ -55,6 +56,8 @@ const VODsPage = () => {
   const setPageSize = useVODStore((s) => s.setPageSize);
   const fetchContent = useVODStore((s) => s.fetchContent);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
+  const categoriesError = useVODStore((s) => s.categoriesError);
+  const categoriesLoading = useVODStore((s) => s.categoriesLoading);
 
   // Hydrate page size from localStorage before the first content fetch so a
   // stored size that differs from the store default does not cause a refetch.
@@ -126,6 +129,21 @@ const VODsPage = () => {
   }, [vodAllowed, fetchCategories]);
 
   useEffect(() => {
+    if (!vodAllowed || !categoriesError) {
+      hideNotification(CATEGORIES_ERROR_ID);
+      return;
+    }
+    showNotification({
+      id: CATEGORIES_ERROR_ID,
+      title: 'Library categories could not be loaded',
+      message:
+        'Titles remain available. Retry categories to update the category filter.',
+      color: 'red',
+      autoClose: false,
+    });
+  }, [vodAllowed, categoriesError]);
+
+  useEffect(() => {
     if (!vodAllowed || !pageSizeReady) return;
     if (requiredType && filters.type !== requiredType) return;
     let cancelled = false;
@@ -162,7 +180,13 @@ const VODsPage = () => {
     reload,
   ]);
 
-  useEffect(() => () => hideNotification(LOAD_ERROR_ID), []);
+  useEffect(
+    () => () => {
+      hideNotification(LOAD_ERROR_ID);
+      hideNotification(CATEGORIES_ERROR_ID);
+    },
+    []
+  );
 
   if (!vodAllowed) {
     return <Navigate to="/channels" replace />;
@@ -225,7 +249,19 @@ const VODsPage = () => {
             clearable
             className={classes.category}
             searchable
+            error={!!categoriesError}
+            disabled={categoriesLoading}
+            aria-busy={categoriesLoading}
           />
+          {categoriesError && (
+            <Button
+              variant="default"
+              onClick={() => fetchCategories()}
+              disabled={categoriesLoading}
+            >
+              {categoriesLoading ? 'Retrying categories…' : 'Retry categories'}
+            </Button>
+          )}
         </div>
 
         {/* Content */}

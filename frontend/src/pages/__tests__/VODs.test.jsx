@@ -4,7 +4,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import VODsPage from '../VODs';
 import useAuthStore from '../../store/auth';
 import useVODStore from '../../store/useVODStore';
-import { showNotification } from '../../utils/notificationUtils.js';
+import {
+  hideNotification,
+  showNotification,
+} from '../../utils/notificationUtils.js';
 import { USER_LEVELS } from '../../constants';
 import {
   filterCategoriesToEnabled,
@@ -180,6 +183,8 @@ describe('VODsPage', () => {
     setPageSize: mockSetPageSize,
     fetchContent: mockFetchContent,
     fetchCategories: mockFetchCategories,
+    categoriesError: null,
+    categoriesLoading: false,
   };
 
   beforeEach(() => {
@@ -341,6 +346,86 @@ describe('VODsPage', () => {
     renderVODsPage();
     await screen.findByLabelText('Items per page');
     expect(mockSetPageSize).not.toHaveBeenCalled();
+  });
+
+  it('reports category failures independently without hiding successfully loaded titles', async () => {
+    let state = {
+      ...defaultStoreState,
+      currentPageContent: [{ id: 1, name: 'Movie 1', contentType: 'movie' }],
+      totalCount: 1,
+      categoriesError: null,
+    };
+    useVODStore.mockImplementation((selector) => selector(state));
+    const { rerender } = render(
+      <MemoryRouter>
+        <VODsPage />
+      </MemoryRouter>
+    );
+    await screen.findByText('Movie 1');
+    state = { ...state, categoriesError: 'Failed to load categories.' };
+    rerender(
+      <MemoryRouter>
+        <VODsPage />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Movie 1')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Library could not be loaded.')
+    ).not.toBeInTheDocument();
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'vod-library-categories-error',
+        title: 'Library categories could not be loaded',
+        color: 'red',
+        autoClose: false,
+      })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry categories' }));
+    expect(mockFetchCategories).toHaveBeenCalledTimes(2);
+    expect(mockFetchContent).toHaveBeenCalledTimes(1);
+    state = { ...state, categoriesLoading: true };
+    rerender(
+      <MemoryRouter>
+        <VODsPage />
+      </MemoryRouter>
+    );
+    expect(
+      screen.getByRole('button', { name: 'Retrying categories…' })
+    ).toBeDisabled();
+    state = { ...state, categoriesLoading: false, categoriesError: null };
+    rerender(
+      <MemoryRouter>
+        <VODsPage />
+      </MemoryRouter>
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Retry categories' })
+    ).not.toBeInTheDocument();
+    expect(hideNotification).toHaveBeenCalledWith(
+      'vod-library-categories-error'
+    );
+    expect(screen.getByText('Movie 1')).toBeInTheDocument();
+  });
+
+  it('reports a category failure before content finishes without treating it as a content error', async () => {
+    useVODStore.mockImplementation((selector) =>
+      selector({
+        ...defaultStoreState,
+        categoriesError: 'Failed to load categories.',
+      })
+    );
+    mockFetchContent.mockImplementationOnce(() => new Promise(() => {}));
+    renderVODsPage();
+    await screen.findByText('Loading library…');
+    expect(
+      screen.getByRole('button', { name: 'Retry categories' })
+    ).toBeInTheDocument();
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'vod-library-categories-error' })
+    );
+    expect(showNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'vod-library-load-error' })
+    );
   });
 
   it('displays content after loading', async () => {

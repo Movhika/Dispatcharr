@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import api from '../api';
 
+let categoriesRequestId = 0;
+
 const getFetchContentParams = (state) => {
   const params = new URLSearchParams();
   params.append('page', state.currentPage);
@@ -128,6 +130,8 @@ const useVODStore = create((set, get) => ({
   categories: {},
   loading: false,
   error: null,
+  categoriesError: null,
+  categoriesLoading: false,
   filters: {
     type: 'all', // 'all', 'movies', 'series'
     search: '',
@@ -285,20 +289,29 @@ const useVODStore = create((set, get) => ({
   },
 
   fetchCategories: async () => {
+    const requestId = ++categoriesRequestId;
+    set({ categoriesLoading: true });
     try {
       const response = await api.getVODCategories();
+      if (requestId !== categoriesRequestId) return;
       // Handle both array and paginated responses
       const results = response.results || response;
 
       set({
+        categoriesError: null,
+        categoriesLoading: false,
         categories: results.reduce((acc, category) => {
           acc[category.id] = category;
           return acc;
         }, {}),
       });
     } catch (error) {
+      if (requestId !== categoriesRequestId) return;
       console.error('Failed to fetch VOD categories:', error);
-      set({ error: 'Failed to load categories.' });
+      set({
+        categoriesError: 'Failed to load categories.',
+        categoriesLoading: false,
+      });
     }
   },
 
