@@ -36,7 +36,7 @@ class LogRedactionTests(TestCase):
         cases = (
             (
                 "https://user:password@example.invalid/live/user/password/123.ts?token=secret",
-                f"https://{REDACTED}@redacted.invalid/live/"
+                "https://redacted@redacted.invalid/live/"
                 f"{REDACTED}/{REDACTED}/123.ts?token={REDACTED}",
             ),
             (
@@ -47,7 +47,7 @@ class LogRedactionTests(TestCase):
             ),
             (
                 "rtsp://alice:secret@example.invalid/stream",
-                f"rtsp://{REDACTED}@redacted.invalid/{REDACTED}",
+                f"rtsp://redacted@redacted.invalid/{REDACTED}",
             ),
             (
                 r"https:\/\/example.invalid\/player_api.php?password=secret",
@@ -66,6 +66,15 @@ class LogRedactionTests(TestCase):
                     redact_log_text(message), result,
                 )
                 self.assertEqual(redact_log_text(result), result)
+
+    def test_repeated_json_escaping_cannot_expose_url_credentials(self):
+        original = "https://example.invalid/live/alice/secret/123.ts"
+        expected = f"https://redacted.invalid/live/{REDACTED}/{REDACTED}/123.ts"
+        for depth in (1, 2, 4):
+            with self.subTest(depth=depth):
+                escaped = original.replace("/", "\\" * depth + "/")
+                self.assertEqual(redact_log_text(escaped), expected)
+                self.assertEqual(redact_log_text(expected), expected)
 
     def test_public_poster_and_project_help_urls_remain_readable(self):
         urls = (
@@ -102,7 +111,7 @@ class LogRedactionTests(TestCase):
             "?username=alice&password=secret&signature=secret#secret"
         )
         expected = (
-            f"https://{REDACTED}@image.tmdb.org/t/p/w500/example.jpg"
+            "https://redacted@image.tmdb.org/t/p/w500/example.jpg"
             f"?username={REDACTED}&password={REDACTED}&signature={REDACTED}#{REDACTED}"
         )
         self.assertEqual(redact_log_text(url), expected)

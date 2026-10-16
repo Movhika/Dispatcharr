@@ -16,7 +16,7 @@ MAX_LINE_BYTES = 256 * 1024
 _OVERSIZE_NOTICE = b" ... [log redaction omitted oversized continuation]\n"
 
 _URL = re.compile(
-    r"\b[a-z][a-z0-9+.-]*(?::(?:\\?/){2}|%3a(?:%2f){2})[^\s<>\"']+",
+    r"\b[a-z][a-z0-9+.-]*(?::(?:\\*/){2}|%3a(?:%2f){2})[^\s<>\"']+",
     re.IGNORECASE,
 )
 _KEY = (
@@ -170,7 +170,7 @@ def _redact_url(value):
     # an encoded slash may be part of a credential rather than a separator.
     if len(value) > 16 * 1024:
         return REDACTED
-    value = value.replace(r"\/", "/")
+    value = re.sub(r"\\+/", "/", value)
     if re.match(r"[a-z][a-z0-9+.-]*%3a%2f%2f", value, re.IGNORECASE):
         value = unquote(value)
     try:
@@ -192,7 +192,9 @@ def _redact_url(value):
             if port is not None:
                 authority += f":{port}"
             if "@" in parts.netloc:
-                authority = f"{REDACTED}@{authority}"
+                # Bracketed markers in userinfo are rejected by Python 3.13's
+                # URL parser. Keep repeated formatter/collector passes stable.
+                authority = f"redacted@{authority}"
         fragment = REDACTED if parts.fragment else ""
         return urlunsplit((scheme, authority, path, _safe_query(parts.query, known), fragment))
     except ValueError:
