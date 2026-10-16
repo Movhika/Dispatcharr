@@ -32,20 +32,214 @@ class LogRedactionTests(TestCase):
             self.assertNotIn(b'secret', result.stdout)
             self.assertIn(b'status=403', result.stdout)
 
-    def test_complete_urls_are_removed_including_encoded_or_escaped_urls(self):
+    def test_provider_urls_keep_known_endpoints_but_never_credentials(self):
+        cases = (
+            (
+                "https://user:password@example.invalid/live/user/password/123.ts?token=secret",
+                f"https://{REDACTED}@redacted.invalid/live/"
+                f"{REDACTED}/{REDACTED}/123.ts?token={REDACTED}",
+            ),
+            (
+                "http://example.invalid:8080/player_api.php"
+                "?username=alice&password=secret&action=get_live_streams",
+                "http://redacted.invalid:8080/player_api.php"
+                f"?username={REDACTED}&password={REDACTED}&action=get_live_streams",
+            ),
+            (
+                "rtsp://alice:secret@example.invalid/stream",
+                f"rtsp://{REDACTED}@redacted.invalid/{REDACTED}",
+            ),
+            (
+                r"https:\/\/example.invalid\/player_api.php?password=secret",
+                f"https://redacted.invalid/player_api.php?password={REDACTED}",
+            ),
+            (
+                "https%3A%2F%2Fexample.invalid%2Fstream%3Fpassword%3Dsecret",
+                f"https://redacted.invalid/{REDACTED}?password={REDACTED}",
+            ),
+        )
+        for url, expected in cases:
+            with self.subTest(url=url):
+                message = f"Failed {url} status=403"
+                result = f"Failed {expected} status=403"
+                self.assertEqual(
+                    redact_log_text(message), result,
+                )
+                self.assertEqual(redact_log_text(result), result)
+
+    def test_public_poster_and_project_help_urls_remain_readable(self):
         urls = (
-            "https://user:password@example.invalid/live/user/password/123.ts?token=secret",
-            "http://example.invalid/player_api.php?username=alice&password=secret",
-            "rtsp://alice:secret@example.invalid/stream",
-            r"https:\/\/example.invalid\/player_api.php?password=secret",
-            "https%3A%2F%2Fexample.invalid%2Fstream%3Fpassword%3Dsecret",
+            "https://image.tmdb.org/t/p/w500/example.jpg",
+            "https://image.tmdb.org/t/p/original/example_poster-1.webp",
+            "https://dispatcharr.github.io/Dispatcharr-Docs/",
+            "https://dispatcharr.github.io/Dispatcharr-Docs/guides/setup/",
+            "https://github.com/Dispatcharr/Dispatcharr/issues/123",
+            "https://github.com/Dispatcharr/Dispatcharr/blob/main/CONTRIBUTING.md",
         )
         for url in urls:
             with self.subTest(url=url):
+                self.assertEqual(redact_log_text(f"Resource {url}"), f"Resource {url}")
+
+    def test_public_url_exceptions_do_not_allow_domain_or_path_spoofing(self):
+        urls = (
+            "https://image.tmdb.org.evil.invalid/t/p/w500/example.jpg",
+            "https://image.tmdb.org/private/alice/secret",
+            "https://dispatcharr.github.io/OtherProject/alice/secret",
+            "https://github.com/private/alice/secret",
+            "https://alice:secret@image.tmdb.org.evil.invalid/t/p/w500/example.jpg",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                result = redact_log_text(url)
+                self.assertNotIn("alice", result)
+                self.assertNotIn("secret", result)
+                self.assertNotIn("evil.invalid", result)
+                self.assertEqual(redact_log_text(result), result)
+
+    def test_credentials_and_unknown_values_are_hidden_even_on_public_urls(self):
+        url = (
+            "https://alice:secret@image.tmdb.org/t/p/w500/example.jpg"
+            "?username=alice&password=secret&signature=secret#secret"
+        )
+        expected = (
+            f"https://{REDACTED}@image.tmdb.org/t/p/w500/example.jpg"
+            f"?username={REDACTED}&password={REDACTED}&signature={REDACTED}#{REDACTED}"
+        )
+        self.assertEqual(redact_log_text(url), expected)
+        self.assertEqual(redact_log_text(expected), expected)
+
+    def test_only_known_safe_query_values_are_visible(self):
+        url = (
+            "https://example.invalid/player_api.php?action=get_vod_info&vod_id=123"
+            "&category_id=4&page=2&page_size=50&output=ts&type=m3u_plus"
+            "&token=secret&key=secret&unknown=secret&limit=secret&action=secret"
+        )
+        expected = (
+            "https://redacted.invalid/player_api.php?action=get_vod_info&vod_id=123"
+            "&category_id=4&page=2&page_size=50&output=ts&type=m3u_plus"
+            f"&token={REDACTED}&key={REDACTED}&{REDACTED}={REDACTED}"
+            f"&limit={REDACTED}&action={REDACTED}"
+        )
+        self.assertEqual(redact_log_text(url), expected)
+        self.assertEqual(redact_log_text(expected), expected)
+
+    def test_encoded_credentials_and_unknown_query_names_cannot_escape(self):
+        cases = (
+            "https://example.invalid/player_api.php?%75sername=alice&%70assword=secret",
+            "https://example.invalid/live/alice%2Fsecret/secret%3Ftoken/123.ts",
+            "https://example.invalid/player_api.php?alice%40secret=secret",
+            "https://example.invalid/player_api.php?alice=secret",
+            "https://example.invalid/player_api.php?secret",
+            "https://example.invalid/player_api.php?password=secret;token=secret",
+        )
+        for url in cases:
+            with self.subTest(url=url):
+                result = redact_log_text(f"url='{url}'")
+                self.assertNotIn("alice", result)
+                self.assertNotIn("secret", result)
+                self.assertEqual(redact_log_text(result), result)
+
+    def test_xc_stream_and_timeshift_ids_stay_visible(self):
+        for path, expected in (
+            ("/movie/alice/secret/123.mp4", f"/movie/{REDACTED}/{REDACTED}/123.mp4"),
+            ("/series/alice/secret/456.mkv", f"/series/{REDACTED}/{REDACTED}/456.mkv"),
+            ("/live/alice/secret/789", f"/live/{REDACTED}/{REDACTED}/789"),
+            (
+                "/timeshift/alice/secret/60/2026-10-16:12-00/123.ts",
+                f"/timeshift/{REDACTED}/{REDACTED}/60/2026-10-16:12-00/123.ts",
+            ),
+        ):
+            with self.subTest(path=path):
                 self.assertEqual(
-                    redact_log_text(f"Failed {url} status=403"),
-                    f"Failed {REDACTED} status=403",
+                    redact_log_text(f"GET https://example.invalid{path} status=403"),
+                    f"GET https://redacted.invalid{expected} status=403",
                 )
+
+    def test_unknown_path_tails_and_prefixes_are_not_exposed(self):
+        for url, expected in (
+            (
+                "https://example.invalid/alice/secret/player_api.php?action=get_series",
+                f"https://redacted.invalid/{REDACTED}/player_api.php?action=get_series",
+            ),
+            (
+                "https://example.invalid/live/alice/secret/private-secret.ts?action=get_series",
+                f"https://redacted.invalid/{REDACTED}?action={REDACTED}",
+            ),
+            (
+                "https://example.invalid/private-secret.xml?page=2",
+                f"https://redacted.invalid/{REDACTED}?page={REDACTED}",
+            ),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(redact_log_text(url), expected)
+
+    def test_local_urls_and_relative_request_targets_keep_diagnostic_routes(self):
+        for text in (
+            "GET http://localhost:9191/api/vod/movies/?page=2 status=200",
+            "GET http://127.0.0.1:9191/api/status/ status=200",
+            "GET http://[::1]:9191/api/core/logs/ status=200",
+            "GET /api/core/logs/dispatcharr.log/ HTTP/1.1 200",
+            "url='/api/vod/categories/?page_size=50'",
+            "broker=redis://localhost:6379/0",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(redact_log_text(text), text)
+        self.assertEqual(
+            redact_log_text(
+                "GET /get.php?username=alice&password=secret&type=m3u_plus HTTP/1.1 403"
+            ),
+            f"GET /get.php?username={REDACTED}&password={REDACTED}&type=m3u_plus HTTP/1.1 403",
+        )
+
+    def test_labelled_urls_use_the_same_rules_as_unlabelled_urls(self):
+        for label in ("url", "server_url", "logo_url", "uri", "--url"):
+            with self.subTest(label=label):
+                text = f'{label}="https://example.invalid/get.php?password=secret&type=m3u_plus"'
+                expected = (
+                    f'{label}="https://redacted.invalid/get.php'
+                    f'?password={REDACTED}&type=m3u_plus"'
+                )
+                self.assertEqual(redact_log_text(text), expected)
+                self.assertEqual(redact_log_text(expected), expected)
+
+    def test_malformed_urls_and_unsupported_schemes_fail_closed(self):
+        for url in (
+            "https://example.invalid:secret/get.php?password=secret",
+            "https://[bad-address]/secret",
+            "file:///home/alice/secret",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(redact_log_text(url), REDACTED)
+
+    def test_separate_host_fields_hide_addresses_but_keep_ports(self):
+        for original, expected in (
+            ("host='example.invalid:8080'", "host='redacted.invalid:8080'"),
+            ("host='localhost:9191'", "host='localhost:9191'"),
+            ("hostname='[::1]:9191'", "hostname='[::1]:9191'"),
+            ("host='[2001:db8::1]:8080'", "host='redacted.invalid:8080'"),
+        ):
+            with self.subTest(original=original):
+                self.assertEqual(redact_log_text(original), expected)
+                self.assertEqual(redact_log_text(expected), expected)
+
+    def test_unquoted_relative_url_values_with_commas_do_not_leak(self):
+        text = "url=/get.php?username=alice&password=secret,another-secret"
+        self.assertEqual(
+            redact_log_text(text),
+            f"url=/get.php?username={REDACTED}&password={REDACTED}",
+        )
+
+    def test_oversized_urls_are_redacted_without_parsing_their_fields(self):
+        url = "https://example.invalid/player_api.php?password=" + "secret" * 5000
+        self.assertEqual(redact_log_text(url), REDACTED)
+
+    def test_endpoint_wrappers_and_non_address_prose_remain_readable(self):
+        self.assertEqual(
+            redact_log_text("Request failed (https://example.invalid/player_api.php). status=403"),
+            "Request failed (https://redacted.invalid/player_api.php). status=403",
+        )
+        text = "Host not found. URL validation failed."
+        self.assertEqual(redact_log_text(text), text)
 
     def test_labelled_credentials_and_headers_are_removed(self):
         messages = (
@@ -86,9 +280,10 @@ class LogRedactionTests(TestCase):
             "failed with url: /get.php?username=alice&password=secret"
         )
         redacted = redact_log_text(message)
-        for sensitive in ('example.invalid', 'get.php', 'alice', 'secret'):
+        for sensitive in ('example.invalid', 'alice', 'secret'):
             self.assertNotIn(sensitive, redacted)
         self.assertIn('port=80', redacted)
+        self.assertIn(f'url: /get.php?username={REDACTED}&password={REDACTED}', redacted)
 
     def test_credential_sql_does_not_expose_positional_values(self):
         line = (

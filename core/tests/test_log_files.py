@@ -288,6 +288,28 @@ class LogFilesEndpointTests(TestCase):
             response.close()
         self.assertTrue(log.closed)
 
+    def test_views_and_downloads_keep_safe_legacy_url_diagnostics(self):
+        original = (
+            "ERROR account_id=7 https://provider.example:8080/player_api.php"
+            "?username=alice&password=secret&action=get_live_streams status=403\n"
+            "Poster https://image.tmdb.org/t/p/w500/example.jpg\n"
+            "Help https://dispatcharr.github.io/Dispatcharr-Docs/\n"
+        )
+        expected = (
+            "ERROR account_id=7 https://redacted.invalid:8080/player_api.php"
+            "?username=[REDACTED]&password=[REDACTED]&action=get_live_streams status=403\n"
+            "Poster https://image.tmdb.org/t/p/w500/example.jpg\n"
+            "Help https://dispatcharr.github.io/Dispatcharr-Docs/\n"
+        )
+        with open(os.path.join(self.log_dir, "dispatcharr.log"), "w") as log:
+            log.write(original)
+        view = self.client.get("/api/core/logs/dispatcharr.log/").json()
+        self.assertEqual(view["content"], expected)
+        response = self.client.get("/api/core/logs/dispatcharr.log/download/")
+        self.assertEqual(b"".join(response.streaming_content).decode(), expected)
+        with mock.patch("django.core.signals.request_finished.send"):
+            response.close()
+
     def test_endpoints_serve_only_the_log_family(self):
         # DISPATCHARR_LOG_DIR may point at a data root; view and download are not a file server.
         for name in ("secrets.env", "dispatcharr.logevil", "dispatcharr.log.bak"):
