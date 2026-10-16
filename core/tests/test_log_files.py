@@ -259,7 +259,10 @@ class LogFilesEndpointTests(TestCase):
         view = self.client.get("/api/core/logs/dispatcharr.log/").json()
         response = self.client.get("/api/core/logs/dispatcharr.log/download/")
         exported = b"".join(response.streaming_content).decode()
-        response.close()
+        # Manual close must exercise resource cleanup, not end the enclosing
+        # TestCase transaction through Django's request_finished receivers.
+        with mock.patch("django.core.signals.request_finished.send"):
+            response.close()
         self.assertEqual(view["content"], exported)
         self.assertNotIn("alice", exported)
         self.assertNotIn("secret", exported)
@@ -281,7 +284,8 @@ class LogFilesEndpointTests(TestCase):
         log = open(os.path.join(self.log_dir, "dispatcharr.log"), "rb")
         with mock.patch('core.log_files._open_log', return_value=log):
             response = self.client.get("/api/core/logs/dispatcharr.log/download/")
-        response.close()
+        with mock.patch("django.core.signals.request_finished.send"):
+            response.close()
         self.assertTrue(log.closed)
 
     def test_endpoints_serve_only_the_log_family(self):
