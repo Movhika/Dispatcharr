@@ -321,6 +321,7 @@ const User = ({ user = null, isOpen, onClose }) => {
       opened={isOpen}
       onClose={onClose}
       title={user?.id ? 'Edit user' : 'Create user'}
+      closeButtonProps={{ 'aria-label': 'Close user editor' }}
       size="min(880px, 94vw)"
       classNames={{
         content: `${editorClasses.content} ${editorClasses.userContent}`,
@@ -592,6 +593,7 @@ const User = ({ user = null, isOpen, onClose }) => {
                 rightSectionWidth={30}
                 rightSection={
                   <ActionIcon
+                    aria-label="Generate XC password"
                     variant="transparent"
                     size="sm"
                     color="white"

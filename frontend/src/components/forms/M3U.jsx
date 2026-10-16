@@ -380,6 +380,7 @@ const M3U = ({
         opened={isOpen && !pendingCreation}
         onClose={close}
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
+        closeButtonProps={{ 'aria-label': 'Close M3U account editor' }}
         classNames={{
           content: `${editorClasses.content} ${editorClasses.accountContent}`,
           body: editorClasses.body,

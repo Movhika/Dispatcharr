@@ -54,7 +54,8 @@ import {
   updatePlaylist,
 } from '../../utils/tables/M3UsTableUtils.js';
 import tableClasses from './M3UsTable.module.css';
-import { SensitiveValue, ScreenshotText } from '../SensitiveFields.jsx';
+import { SensitiveValue } from '../SensitiveFields.jsx';
+import SourceStatus from '../SourceStatus.jsx';
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
@@ -82,6 +83,35 @@ const refreshKinds = (account) => {
     kinds.push(['vod', 'VOD']);
   }
   return kinds;
+};
+
+const AccountStatus = ({ account, progress }) => {
+  const refreshError =
+    account.is_active && progress?.status === 'error' ? progress.error : null;
+  const status = refreshError ? 'error' : account.status;
+  const autoSync = account.custom_properties?.live_auto_sync_result;
+  const warning =
+    autoSync?.status === 'error'
+      ? `Auto-sync failed: ${autoSync.error || 'Unknown error'}`
+      : autoSync?.channels_failed > 0
+        ? `Auto-sync: ${autoSync.channels_failed} channel(s) failed`
+        : account.last_message?.match(
+            /Auto-sync error: .+|Auto-sync: .*\b\d+ failed\./
+          )?.[0];
+  return (
+    <SourceStatus
+      label={formatStatusText(status)}
+      color={getStatusColor(status)}
+      messages={[
+        refreshError ||
+          (['error', 'pending_setup'].includes(status)
+            ? account.last_message
+            : null),
+        warning,
+      ]}
+      messageColor={status === 'error' ? 'red' : 'yellow'}
+    />
+  );
 };
 
 const RowActions = ({
@@ -386,15 +416,6 @@ const M3UTable = () => {
         cell: ({ row }) => {
           const data = row.original;
           const timings = data.custom_properties?.refresh_timings || {};
-          const autoSync = data.custom_properties?.live_auto_sync_result;
-          const warning =
-            autoSync?.status === 'error'
-              ? `Auto-sync failed: ${autoSync.error || 'Unknown error'}`
-              : autoSync?.channels_failed > 0
-                ? `Auto-sync: ${autoSync.channels_failed} channel(s) failed`
-                : data.last_message?.match(
-                    /Auto-sync error: .+|Auto-sync: .*\b\d+ failed\./
-                  )?.[0];
           return (
             <Stack gap={4}>
               {refreshKinds(data).map(([kind, label]) => {
@@ -433,16 +454,6 @@ const M3UTable = () => {
                   </Text>
                 );
               })}
-              {data.status === 'error' && data.last_message && (
-                <Text size="xs" c="red" lineClamp={2}>
-                  <ScreenshotText>{data.last_message}</ScreenshotText>
-                </Text>
-              )}
-              {warning && (
-                <Text size="xs" c="yellow" lineClamp={2}>
-                  {warning}
-                </Text>
-              )}
             </Stack>
           );
         },
@@ -754,18 +765,27 @@ const M3UTable = () => {
                   <Group justify="space-between" align="flex-start">
                     <Box style={{ minWidth: 0, flex: '1 1 200px' }}>
                       <Group gap="xs">
-                        <Text fw={700} size="lg">
-                          {account.name}
-                        </Text>
+                        <Tooltip
+                          label={account.name}
+                          multiline
+                          className={tableClasses.detailTooltip}
+                        >
+                          <Text
+                            fw={700}
+                            size="lg"
+                            truncate
+                            className={tableClasses.name}
+                          >
+                            {account.name}
+                          </Text>
+                        </Tooltip>
                         <Badge variant="light">
                           {account.account_type === 'XC' ? 'XC' : 'M3U'}
                         </Badge>
-                        <Badge
-                          variant="light"
-                          color={getStatusColor(account.status)}
-                        >
-                          {formatStatusText(account.status)}
-                        </Badge>
+                        <AccountStatus
+                          account={account}
+                          progress={refreshProgress[account.id]}
+                        />
                       </Group>
                       {renderDetail(account, 'server_url')}
                     </Box>

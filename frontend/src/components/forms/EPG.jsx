@@ -813,6 +813,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
         opened={isOpen}
         onClose={handleClose}
         title="EPG Source"
+        closeButtonProps={{ 'aria-label': 'Close EPG source editor' }}
         size="68vw"
         yOffset="2vh"
         classNames={{

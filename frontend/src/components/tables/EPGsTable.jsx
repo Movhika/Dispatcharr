@@ -21,7 +21,6 @@ import {
   Switch,
   Text,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import {
   ChevronDown,
@@ -49,6 +48,7 @@ import {
 } from '../../utils/tables/EPGsTableUtils.js';
 import cardClasses from './M3UsTable.module.css';
 import { SensitiveValue, ScreenshotText } from '../SensitiveFields.jsx';
+import SourceStatus from '../SourceStatus.jsx';
 
 // Helper function to get status text color
 const getStatusColor = (status) => {
@@ -124,7 +124,6 @@ const EPGStatusCell = ({ epg }) => {
   // This component re-renders whenever its source's progress changes,
   // independent of the parent table's render cycle.
   const progress = useEPGsStore((s) => s.refreshProgress[epg.id]);
-  const theme = useMantineTheme();
 
   const isDummyEPG = epg.source_type === 'dummy';
   if (isDummyEPG) return null;
@@ -132,6 +131,7 @@ const EPGStatusCell = ({ epg }) => {
   // Show progress bar if an active fetch is in progress
   if (
     progress &&
+    progress.status !== 'error' &&
     (progress.progress < 100 ||
       progress.status === 'in_progress' ||
       (progress.action === 'parsing_channels' && epg.status === 'parsing'))
@@ -142,7 +142,7 @@ const EPGStatusCell = ({ epg }) => {
     const additionalInfo = getProgressInfo(progress);
 
     return (
-      <Stack spacing={2}>
+      <Stack gap={2}>
         <Text size="xs">
           {label}: {parseInt(progress.progress)}%
         </Text>
@@ -157,14 +157,25 @@ const EPGStatusCell = ({ epg }) => {
           </Text>
         )}
         {additionalInfo && (
-          <Text size="xs" c="dimmed" lineClamp={1}>
-            {additionalInfo}
-          </Text>
+          <Tooltip
+            label={<ScreenshotText>{additionalInfo}</ScreenshotText>}
+            multiline
+            className={cardClasses.detailTooltip}
+          >
+            <Text size="xs" c="dimmed" truncate>
+              <ScreenshotText>{additionalInfo}</ScreenshotText>
+            </Text>
+          </Tooltip>
         )}
       </Stack>
     );
   }
 
+  return null;
+};
+
+const epgMessage = (epg) => {
+  if (epg.source_type === 'dummy') return null;
   // Missing configuration is already described below the source name.
   if (
     epg.source_type === 'xmltv' &&
@@ -173,65 +184,9 @@ const EPGStatusCell = ({ epg }) => {
     epg.last_message === 'No URL provided and no valid local file exists'
   )
     return null;
-
-  // Show error message
-  if (epg.status === 'error' && epg.last_message) {
-    return (
-      <Tooltip
-        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
-        multiline
-        width={300}
-      >
-        <Text
-          c="dimmed"
-          size="xs"
-          lineClamp={2}
-          style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
-        >
-          <ScreenshotText>{epg.last_message}</ScreenshotText>
-        </Text>
-      </Tooltip>
-    );
-  }
-
-  // Show success message
-  if (epg.status === 'success') {
-    const successMessage =
-      epg.last_message || 'EPG data refreshed successfully';
-    return (
-      <Tooltip
-        label={<ScreenshotText>{successMessage}</ScreenshotText>}
-        multiline
-        width={300}
-      >
-        <Text
-          c="dimmed"
-          size="xs"
-          lineClamp={2}
-          style={{ color: theme.colors.green[6], lineHeight: 1.3 }}
-        >
-          <ScreenshotText>{successMessage}</ScreenshotText>
-        </Text>
-      </Tooltip>
-    );
-  }
-
-  // Show idle message
-  if (epg.status === 'idle' && epg.last_message) {
-    return (
-      <Tooltip
-        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
-        multiline
-        width={300}
-      >
-        <Text c="dimmed" size="xs" lineClamp={2} style={{ lineHeight: 1.3 }}>
-          <ScreenshotText>{epg.last_message}</ScreenshotText>
-        </Text>
-      </Tooltip>
-    );
-  }
-
-  return null;
+  if (epg.status === 'success')
+    return epg.last_message || 'EPG data refreshed successfully';
+  return ['error', 'idle'].includes(epg.status) ? epg.last_message : null;
 };
 
 const ALL_SOURCE_TYPES = ['xmltv', 'schedules_direct', 'dummy'];
@@ -581,7 +536,7 @@ const EPGsTable = () => {
             marginBottom: 0,
           }}
         >
-          EPGs
+          EPG Sources
         </Text>
         <Flex gap={6} align="center">
           <Menu shadow="md" width={200} closeOnItemClick={false}>
@@ -697,26 +652,39 @@ const EPGsTable = () => {
                   <Group justify="space-between" align="flex-start">
                     <Box style={{ minWidth: 0, flex: '1 1 200px' }}>
                       <Group gap="xs">
-                        <Text fw={700} size="lg">
-                          {source.name}
-                        </Text>
+                        <Tooltip
+                          label={source.name}
+                          multiline
+                          className={cardClasses.detailTooltip}
+                        >
+                          <Text
+                            fw={700}
+                            size="lg"
+                            truncate
+                            className={cardClasses.name}
+                          >
+                            {source.name}
+                          </Text>
+                        </Tooltip>
                         <Badge variant="light">
                           {renderDetail(source, 'source_type')}
                         </Badge>
-                        <Badge
-                          variant="light"
+                        <SourceStatus
+                          label={formatStatusText(
+                            source.source_type === 'dummy'
+                              ? 'idle'
+                              : source.status
+                          )}
                           color={getStatusColor(
                             source.source_type === 'dummy'
                               ? 'idle'
                               : source.status
                           )}
-                        >
-                          {formatStatusText(
-                            source.source_type === 'dummy'
-                              ? 'idle'
-                              : source.status
-                          )}
-                        </Badge>
+                          messages={[epgMessage(source)]}
+                          messageColor={
+                            source.status === 'error' ? 'red' : undefined
+                          }
+                        />
                       </Group>
                       {renderDetail(source, 'url')}
                     </Box>

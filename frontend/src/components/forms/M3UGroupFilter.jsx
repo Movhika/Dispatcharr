@@ -218,6 +218,7 @@ const M3UGroupFilter = ({
       opened={isOpen}
       onClose={onClose}
       title="Categories"
+      closeButtonProps={{ 'aria-label': 'Close categories' }}
       size="94vw"
       classNames={{
         content: editorClasses.content,

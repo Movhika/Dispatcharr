@@ -162,6 +162,33 @@ describe('EPG source cards', () => {
       card().getByText('No URL provided and no valid local file exists')
     ).toBeInTheDocument();
   });
+
+  it('places compact errors by the status and keeps full details out of Last refresh', async () => {
+    const message =
+      'EPG download failed: 403 Client Error: Forbidden for url: https://example.invalid/guide.xml?password=secret';
+    setup([source({ status: 'error', last_message: message })], {
+      1: { action: 'downloading', progress: 42, status: 'error' },
+    });
+    show();
+    const status = card().getByRole('group', { name: 'Error status' });
+    expect(status).toHaveTextContent('EPG download failed');
+    expect(
+      card().getByText('Last refresh').parentElement
+    ).not.toHaveTextContent('EPG download failed');
+    expect(card().queryByText(/42%/)).not.toBeInTheDocument();
+    fireEvent.mouseEnter(status);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(message);
+    act(() => useScreenshotMode.getState().toggle());
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent(
+      'password=secret'
+    );
+  });
+
+  it('uses the navigation label for the source overview', () => {
+    show();
+    expect(screen.getByText('EPG Sources')).toBeInTheDocument();
+    expect(screen.queryByText('EPGs')).not.toBeInTheDocument();
+  });
   it('uses matching cards and control blocks without a table', () => {
     show();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();

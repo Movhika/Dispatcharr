@@ -116,6 +116,43 @@ describe('screenshot-safe presentation', () => {
     expect(container.querySelector('button')).not.toBeDisabled();
   });
 
+  it('names password visibility controls and preserves visibility callbacks', () => {
+    const onVisibilityChange = vi.fn();
+    show(
+      <SensitivePasswordInput
+        label="Password"
+        defaultValue="example-secret"
+        onVisibilityChange={onVisibilityChange}
+      />
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Show password' }), {
+      key: ' ',
+    });
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text');
+    expect(onVisibilityChange).toHaveBeenLastCalledWith(true);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Hide password' }), {
+      key: ' ',
+    });
+    expect(screen.getByLabelText('Password')).toHaveAttribute(
+      'type',
+      'password'
+    );
+    expect(onVisibilityChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does not enable the visibility toggle of a disabled password field', () => {
+    show(
+      <SensitivePasswordInput
+        label="Password"
+        defaultValue="example-secret"
+        disabled
+      />
+    );
+    expect(
+      screen.getByRole('button', { name: 'Show password' })
+    ).toBeDisabled();
+  });
+
   it('lets users edit and submit masked URL, username and password fields', () => {
     const submit = vi.fn();
     const EditForm = () => {

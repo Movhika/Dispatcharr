@@ -453,7 +453,7 @@ describe('M3U account cards', () => {
     }
   );
 
-  it('shows upstream errors and auto-sync warnings', () => {
+  it('keeps upstream errors by the status and auto-sync warning details in its tooltip', async () => {
     setup({
       playlists: [
         account({
@@ -470,9 +470,38 @@ describe('M3U account cards', () => {
     });
     show();
     expect(card().getByText('Provider unavailable')).toBeInTheDocument();
+    const status = card().getByRole('group', { name: 'Error status' });
+    expect(status).toHaveTextContent('Provider unavailable');
     expect(
-      card().getByText('Auto-sync failed: Sync unavailable')
-    ).toBeInTheDocument();
+      card().getByText('Last refresh').parentElement
+    ).not.toHaveTextContent('Provider unavailable');
+    expect(
+      card().queryByText('Auto-sync failed: Sync unavailable')
+    ).not.toBeInTheDocument();
+    fireEvent.mouseEnter(status);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Auto-sync failed: Sync unavailable'
+    );
+  });
+
+  it('shows a compact warning by the successful status without expanding Last refresh', async () => {
+    setup({
+      playlists: [
+        account({
+          custom_properties: { live_auto_sync_result: { channels_failed: 3 } },
+        }),
+      ],
+    });
+    show();
+    const status = card().getByRole('group', { name: 'Success status' });
+    expect(status).toHaveTextContent('Auto-sync');
+    expect(
+      card().getByText('Last refresh').parentElement
+    ).not.toHaveTextContent('Auto-sync');
+    fireEvent.mouseEnter(status);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      '3 channel(s) failed'
+    );
   });
 
   it('still shows Live refresh running when only its download phase is complete', () => {
@@ -482,6 +511,26 @@ describe('M3U account cards', () => {
     expect(
       card().queryByText('Live TV: formatted:2026-10-14T12:00:00Z')
     ).not.toBeInTheDocument();
+  });
+
+  it('shows refresh-start failures by the status even before account data is reloaded', () => {
+    setup({
+      refreshProgress: {
+        1: {
+          action: 'error',
+          progress: 0,
+          status: 'error',
+          error: 'Failed to start refresh task',
+        },
+      },
+    });
+    show();
+    expect(
+      card().getByRole('group', { name: 'Error status' })
+    ).toHaveTextContent('Failed to start refresh task');
+    expect(
+      card().getByText('Last refresh').parentElement
+    ).not.toHaveTextContent('Failed to start refresh task');
   });
 
   it('shows capacity across active profiles and expiry', () => {

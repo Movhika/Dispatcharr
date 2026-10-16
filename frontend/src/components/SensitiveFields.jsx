@@ -1,4 +1,10 @@
-import { Children, cloneElement, forwardRef, isValidElement } from 'react';
+import {
+  Children,
+  cloneElement,
+  forwardRef,
+  isValidElement,
+  useState,
+} from 'react';
 import { PasswordInput, Text, TextInput, Tooltip } from '@mantine/core';
 import useScreenshotMode from '../store/useScreenshotMode.js';
 import { HIDDEN_VALUE, redactUrls } from '../utils/screenshotMode.js';
@@ -65,14 +71,25 @@ export const SensitiveTextInput = forwardRef(function SensitiveTextInput(
 export const SensitivePasswordInput = forwardRef(
   function SensitivePasswordInput(props, ref) {
     const enabled = useScreenshotMode((state) => state.enabled);
+    const [visible, setVisible] = useState(false);
+    const revealed = enabled ? false : (props.visible ?? visible);
     return (
       <PasswordInput
         {...props}
         ref={ref}
-        visible={enabled ? false : props.visible}
+        visible={revealed}
+        onVisibilityChange={(value) => {
+          setVisible(value);
+          props.onVisibilityChange?.(value);
+        }}
         visibilityToggleButtonProps={{
+          'aria-label': revealed ? 'Hide password' : 'Show password',
+          tabIndex: 0,
           ...props.visibilityToggleButtonProps,
-          disabled: enabled || props.visibilityToggleButtonProps?.disabled,
+          disabled:
+            enabled ||
+            props.disabled ||
+            props.visibilityToggleButtonProps?.disabled,
         }}
       />
     );
