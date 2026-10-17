@@ -97,6 +97,15 @@ describe('persisted M3U setup', () => {
     API.getM3UEPG.mockResolvedValue({ source: null });
   });
 
+  it('labels the return to account settings as Back during initial setup', async () => {
+    const { onEditAccount } = renderSetup();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(onEditAccount).toHaveBeenCalledExactlyOnceWith(account);
+    expect(
+      screen.queryByRole('button', { name: 'Edit account' })
+    ).not.toBeInTheDocument();
+  });
+
   it.each(['skip_epg', 'create_epg'])(
     'advances the existing account with %s',
     async (action) => {

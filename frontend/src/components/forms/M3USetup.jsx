@@ -226,7 +226,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
               disabled={busy}
               onClick={() => onEditAccount(account)}
             >
-              Edit account
+              Back
             </Button>
             <Group>
               {categories ? (
