@@ -235,8 +235,8 @@ const M3UTable = () => {
   );
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
 
-  const editPlaylist = async (playlist = null, editConnection = false) => {
-    if (playlist?.setup_step && !editConnection) {
+  const editPlaylist = async (playlist = null) => {
+    if (playlist?.setup_step) {
       setSetupAccount(playlist);
       return;
     }
@@ -857,10 +857,6 @@ const M3UTable = () => {
           key={setupAccount.id}
           account={setupAccount}
           onClose={() => setSetupAccount(null)}
-          onEditAccount={(account) => {
-            setSetupAccount(null);
-            editPlaylist(account, true);
-          }}
         />
       )}
 

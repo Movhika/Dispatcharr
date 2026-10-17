@@ -14,8 +14,9 @@ import M3UGroupFilter from './M3UGroupFilter.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
 import editorClasses from './AccountEditor.module.css';
 import M3UAccountEPG from './M3UAccountEPG.jsx';
+import M3U from './M3U.jsx';
 
-const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
+const M3USetup = ({ account: initialAccount, onClose }) => {
   const [account, setAccount] = useState(initialAccount);
   const [ready, setReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -101,6 +102,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
       const current = await API.advanceM3USetup(account.id, action);
       hideNotification(`m3u-setup-${account.id}`);
       setAccount(current);
+      usePlaylistsStore.getState().updatePlaylist(current);
       if (action === 'create_epg') fetchEPGs().catch(() => {});
       if (action === 'retry_categories') {
         setReady(false);
@@ -145,6 +147,27 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
     setCategoriesSaved(true);
     setCategoryEditorOpen(false);
   };
+  if (['account', 'content'].includes(account.setup_step)) {
+    return (
+      <M3U
+        m3uAccount={account}
+        isOpen
+        setupMode
+        setupBusy={busy}
+        onClose={onClose}
+        onSetupBack={() => advance('back_to_account')}
+        onSetupNext={(saved) =>
+          advance(
+            account.setup_step === 'account'
+              ? 'continue_content'
+              : saved.account_type === 'XC'
+                ? 'continue_epg'
+                : 'continue_categories'
+          )
+        }
+      />
+    );
+  }
   return (
     <>
       <Modal
@@ -217,29 +240,36 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
           <Group
             component="footer"
             aria-label="M3U setup actions"
-            justify="space-between"
+            justify="flex-end"
+            gap="xs"
             mih={50}
             className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
           >
+            {categories && (!ready || loadFailed) && (
+              <Button
+                disabled={busy || (!loadFailed && !slowLoading)}
+                loading={busy}
+                onClick={() => advance('retry_categories')}
+              >
+                Retry
+              </Button>
+            )}
             <Button
               variant="default"
               disabled={busy}
-              onClick={() => onEditAccount(account)}
+              onClick={() =>
+                advance(
+                  categories && account.account_type === 'XC'
+                    ? 'back_to_epg'
+                    : 'back_to_content'
+                )
+              }
             >
               Back
             </Button>
-            <Group>
+            <Group gap="xs">
               {categories ? (
                 <>
-                  {(!ready || loadFailed) && (
-                    <Button
-                      disabled={busy || (!loadFailed && !slowLoading)}
-                      loading={busy}
-                      onClick={() => advance('retry_categories')}
-                    >
-                      Retry
-                    </Button>
-                  )}
                   <Button
                     disabled={busy || !ready || loadFailed}
                     loading={busy}

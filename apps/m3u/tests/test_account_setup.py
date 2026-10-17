@@ -218,6 +218,8 @@ class AccountSetupTests(TestCase):
             ("STD", "categories", "XC", "epg"),
             ("XC", "categories", "XC", "categories"),
             ("STD", "epg", "STD", "categories"),
+            ("XC", "account", "STD", "account"),
+            ("STD", "content", "XC", "content"),
         ):
             with self.subTest(previous_type=previous_type, step=step):
                 account = self.account(
@@ -237,6 +239,81 @@ class AccountSetupTests(TestCase):
                 self.assertEqual(account.setup_step, expected_step)
                 self.assertFalse(account.refresh_task.enabled)
         self.assertFalse(EPGSource.objects.exists())
+
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    @patch("apps.m3u.tasks.prepare_account_setup.delay")
+    def test_navigation_is_sequential_persisted_and_retry_safe(self, discover, refresh):
+        account_count = M3UAccount.objects.count()
+        for kind, route in (
+            ("XC", [
+                ("back_to_epg", "epg"),
+                ("back_to_content", "content"),
+                ("back_to_account", "account"),
+                ("continue_content", "content"),
+                ("continue_epg", "epg"),
+                ("skip_epg", "categories"),
+            ]),
+            ("STD", [
+                ("back_to_content", "content"),
+                ("back_to_account", "account"),
+                ("continue_content", "content"),
+                ("continue_categories", "categories"),
+            ]),
+        ):
+            account = self.account(
+                name=f"Navigate {kind}", account_type=kind,
+                setup_step="categories", refresh_interval=24,
+            )
+            for action, target in route:
+                for _ in range(2):
+                    response = self.action(account, action)
+                    self.assertEqual(response.status_code, 200, response.data)
+                    self.assertEqual(response.data["setup_step"], target)
+                response = self.client.get(f"/api/m3u/accounts/{account.id}/")
+                self.assertEqual(response.data["setup_step"], target)
+                account.refresh_from_db()
+                self.assertFalse(account.refresh_task.enabled)
+        self.assertEqual(M3UAccount.objects.count(), account_count + 2)
+        self.assertFalse(EPGSource.objects.exists())
+        discover.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_navigation_cannot_skip_steps_or_restart_completed_setup(self):
+        for kind, stage, action in (
+            ("XC", "categories", "back_to_content"),
+            ("XC", "account", "continue_epg"),
+            ("STD", "categories", "back_to_epg"),
+            ("STD", "content", "continue_epg"),
+            ("XC", "", "back_to_epg"),
+            ("STD", "", "continue_categories"),
+        ):
+            account = self.account(
+                name=f"Invalid {kind} {stage} {action}",
+                account_type=kind, setup_step=stage,
+            )
+            response = self.action(account, action)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["setup_step"], stage)
+
+    @patch("apps.epg.signals.refresh_epg_data.delay")
+    def test_back_to_epg_reuses_existing_source(self, refresh):
+        account = self.account()
+        self.action(account, "create_epg")
+        self.action(account, "back_to_epg")
+        self.action(account, "create_epg")
+        self.assertEqual(EPGSource.objects.count(), 1)
+        refresh.assert_called_once()
+
+    @patch("apps.vod.tasks.refresh_vod_content.delay")
+    def test_content_corrections_do_not_import_vod_before_finish(self, refresh):
+        account = self.account(setup_step="content")
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {"enable_vod": True}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["setup_step"], "content")
+        refresh.assert_not_called()
 
     def test_account_type_edits_do_not_restart_completed_setup(self):
         for previous_type, new_type in (("XC", "STD"), ("STD", "XC")):

@@ -102,6 +102,10 @@ const M3U = ({
   onClose,
   onSaved,
   playlistCreated = false,
+  setupMode = false,
+  setupBusy = false,
+  onSetupNext,
+  onSetupBack,
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
   const serverGroups = useServerGroupsStore((s) => s.serverGroups);
@@ -125,6 +129,7 @@ const M3U = ({
   const [discardOpen, setDiscardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
+  const initializedSetupAccount = useRef(null);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
 
@@ -180,9 +185,17 @@ const M3U = ({
   });
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      initializedSetupAccount.current = null;
+      return;
+    }
+    if (setupMode && initializedSetupAccount.current === m3uAccount?.id) {
+      setActiveTab(m3uAccount.setup_step);
+      return;
+    }
+    initializedSetupAccount.current = setupMode ? m3uAccount?.id : null;
     setFile(null);
-    setActiveTab('account');
+    setActiveTab(setupMode ? m3uAccount.setup_step : 'account');
     setContentAvailable(false);
     setDiscardOpen(false);
     if (m3uAccount) {
@@ -254,7 +267,7 @@ const M3U = ({
       setHasHashKeyOverride(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m3uAccount, isOpen]);
+  }, [m3uAccount, isOpen, setupMode]);
 
   useEffect(() => {
     if (storeExpDate === undefined) return;
@@ -285,7 +298,8 @@ const M3U = ({
     });
     form.setErrors(errors);
     if (Object.keys(errors).length) {
-      setActiveTab('account');
+      if (setupMode && activeTab === 'content') await onSetupBack();
+      else setActiveTab('account');
       return;
     }
     const rawValues = form.getValues();
@@ -298,16 +312,29 @@ const M3U = ({
     if (playlist?.id) {
       // Enabled is controlled in the overview, not by a stale editor snapshot.
       delete values.is_active;
-      const updatedPlaylist = await updatePlaylist(
-        playlist,
-        values,
-        selectedFile
-      );
-      if (!updatedPlaylist?.id) return;
-      form.reset();
-      setFile(null);
-      if (onSaved) onSaved(updatedPlaylist);
-      else onClose();
+      creatingRef.current = true;
+      setCreating(true);
+      try {
+        const updatedPlaylist = await updatePlaylist(
+          playlist,
+          values,
+          selectedFile
+        );
+        if (!updatedPlaylist?.id) return;
+        setFile(null);
+        if (setupMode) {
+          setPlaylist(updatedPlaylist);
+          form.resetDirty();
+          await onSetupNext(updatedPlaylist);
+        } else {
+          form.reset();
+          if (onSaved) onSaved(updatedPlaylist);
+          else onClose();
+        }
+      } finally {
+        creatingRef.current = false;
+        setCreating(false);
+      }
       return;
     }
 
@@ -344,7 +371,7 @@ const M3U = ({
   };
 
   const requestClose = () => {
-    if (creating || form.submitting) return;
+    if (creating || setupBusy || form.submitting) return;
     if (!playlist?.id && (form.isDirty() || file || expDate)) {
       setDiscardOpen(true);
       return;
@@ -368,7 +395,13 @@ const M3U = ({
         size="68vw"
         opened={isOpen}
         onClose={requestClose}
-        title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
+        title={
+          setupMode
+            ? `Set up ${m3uAccount.name}`
+            : m3uAccount?.id
+              ? 'Edit M3U account'
+              : 'Create M3U account'
+        }
         closeButtonProps={{ 'aria-label': 'Close M3U account editor' }}
         classNames={{
           content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
@@ -388,7 +421,8 @@ const M3U = ({
           !serverGroupsManagerOpen &&
           !profileOverlayOpen &&
           !discardOpen &&
-          !creating
+          !creating &&
+          !setupBusy
         }
         yOffset="2vh"
         xOffset="3vw"
@@ -396,19 +430,23 @@ const M3U = ({
         <LoadingOverlay visible={form.submitting || creating} overlayBlur={2} />
 
         <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
-          {!playlist?.id && (
+          {(!playlist?.id || setupMode) && (
             <M3USetupSteps
               stage={activeTab}
               accountType={accountType}
               contentAvailable={contentAvailable}
-              onSelect={(stage) => {
-                if (
-                  !creating &&
-                  (stage === 'account' ||
-                    (stage === 'content' && contentAvailable))
-                )
-                  setActiveTab(stage);
-              }}
+              onSelect={
+                setupMode
+                  ? undefined
+                  : (stage) => {
+                      if (
+                        !creating &&
+                        (stage === 'account' ||
+                          (stage === 'content' && contentAvailable))
+                      )
+                        setActiveTab(stage);
+                    }
+              }
             />
           )}
           <Tabs
@@ -416,7 +454,7 @@ const M3U = ({
             onChange={setActiveTab}
             className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
           >
-            {playlist?.id && (
+            {playlist?.id && !setupMode && (
               <TabsList className={editorClasses.tabList}>
                 <TabsTab value="account">Account</TabsTab>
                 <TabsTab value="content">Content</TabsTab>
@@ -943,7 +981,7 @@ const M3U = ({
             mih={50}
           >
             <Flex gap="xs" align="center">
-              {playlist && (
+              {playlist && !setupMode && (
                 <>
                   <Button
                     variant="default"
@@ -964,11 +1002,13 @@ const M3U = ({
                 </>
               )}
 
-              {!playlist?.id && activeTab === 'content' && (
+              {(!playlist?.id || setupMode) && activeTab === 'content' && (
                 <Button
                   variant="default"
-                  onClick={() => setActiveTab('account')}
-                  disabled={creating}
+                  onClick={() =>
+                    setupMode ? onSetupBack() : setActiveTab('account')
+                  }
+                  disabled={creating || setupBusy}
                 >
                   Back
                 </Button>
@@ -989,11 +1029,11 @@ const M3U = ({
                   key="save"
                   type="submit"
                   variant="filled"
-                  disabled={form.submitting || creating}
-                  loading={creating}
+                  disabled={form.submitting || creating || setupBusy}
+                  loading={creating || setupBusy}
                   size="sm"
                 >
-                  {playlist?.id ? 'Save' : 'Next'}
+                  {playlist?.id && !setupMode ? 'Save' : 'Next'}
                 </Button>
               )}
             </Flex>

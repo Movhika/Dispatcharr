@@ -338,7 +338,11 @@ class M3URefreshScheduleSerializer(serializers.Serializer):
 
 class M3USetupActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(
-        choices=("create_epg", "skip_epg", "retry_categories", "complete")
+        choices=(
+            "create_epg", "skip_epg", "retry_categories", "complete",
+            "back_to_epg", "back_to_content", "back_to_account",
+            "continue_content", "continue_epg", "continue_categories",
+        )
     )
 
 

@@ -68,7 +68,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
     @extend_schema(
         request=M3USetupActionSerializer,
         responses={200: M3UAccountSerializer},
-        description="Continue an unfinished guided M3U setup without creating another account.",
+        description="Navigate or continue an unfinished guided M3U setup without creating another account.",
     )
     @action(
         detail=True, methods=["post"], url_path="setup",
@@ -340,6 +340,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
 
         if (
             instance.account_type == M3UAccount.Types.XC
+            and not instance.setup_step
             and not old_vod_enabled
             and new_vod_enabled
         ):

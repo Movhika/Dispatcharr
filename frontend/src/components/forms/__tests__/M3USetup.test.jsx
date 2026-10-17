@@ -57,6 +57,18 @@ vi.mock('../M3UGroupFilter.jsx', () => ({
     </div>
   ),
 }));
+vi.mock('../M3U.jsx', () => ({
+  default: ({ m3uAccount, onSetupNext, onSetupBack, onClose }) => (
+    <div role="dialog" aria-label="Guided account editor">
+      <span>Step: {m3uAccount.setup_step}</span>
+      {m3uAccount.setup_step === 'content' && (
+        <button onClick={onSetupBack}>Back</button>
+      )}
+      <button onClick={() => onSetupNext(m3uAccount)}>Next</button>
+      <button onClick={onClose}>Close guided editor</button>
+    </div>
+  ),
+}));
 
 const account = {
   id: 7,
@@ -70,7 +82,6 @@ const renderSetup = (overrides = {}) => {
   const props = {
     account,
     onClose: vi.fn(),
-    onEditAccount: vi.fn(),
     ...overrides,
   };
   return {
@@ -97,13 +108,59 @@ describe('persisted M3U setup', () => {
     API.getM3UEPG.mockResolvedValue({ source: null });
   });
 
-  it('labels the return to account settings as Back during initial setup', async () => {
-    const { onEditAccount } = renderSetup();
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(onEditAccount).toHaveBeenCalledExactlyOnceWith(account);
+  it.each([
+    ['XC', 'categories', 'back_to_epg', 'epg'],
+    ['XC', 'epg', 'back_to_content', 'content'],
+    ['STD', 'categories', 'back_to_content', 'content'],
+    ['XC', 'content', 'back_to_account', 'account'],
+  ])(
+    'moves %s %s back exactly one step',
+    async (kind, stage, action, target) => {
+      let current = { ...account, account_type: kind, setup_step: stage };
+      API.getPlaylist.mockImplementation(async () => current);
+      API.advanceM3USetup.mockImplementation(async () => {
+        current = { ...current, setup_step: target };
+        return current;
+      });
+      renderSetup({ account: current });
+      fireEvent.click(await screen.findByRole('button', { name: 'Back' }));
+      await waitFor(() =>
+        expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(7, action)
+      );
+      if (target !== 'epg') await screen.findByText(`Step: ${target}`);
+      expect(showNotification).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['XC', 'account', 'continue_content', 'content'],
+    ['XC', 'content', 'continue_epg', 'epg'],
+    ['STD', 'content', 'continue_categories', 'categories'],
+  ])(
+    'continues %s %s to its next step',
+    async (kind, stage, action, target) => {
+      let current = { ...account, account_type: kind, setup_step: stage };
+      API.getPlaylist.mockImplementation(async () => current);
+      API.advanceM3USetup.mockImplementation(async () => {
+        current = { ...current, setup_step: target };
+        return current;
+      });
+      renderSetup({ account: current });
+      fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
+      await waitFor(() =>
+        expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(7, action)
+      );
+    }
+  );
+
+  it('places Back immediately before the primary footer action', () => {
+    renderSetup();
+    const actions = within(
+      screen.getByRole('contentinfo', { name: 'M3U setup actions' })
+    );
     expect(
-      screen.queryByRole('button', { name: 'Edit account' })
-    ).not.toBeInTheDocument();
+      actions.getAllByRole('button').map((button) => button.textContent)
+    ).toEqual(['Back', 'Next']);
   });
 
   it.each(['skip_epg', 'create_epg'])(

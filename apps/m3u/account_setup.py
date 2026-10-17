@@ -165,7 +165,30 @@ def advance_account_setup(account_id, action):
         account = M3UAccount.objects.select_for_update().get(pk=account_id)
         if not account.setup_step:
             return account
-        if action in {"create_epg", "skip_epg"}:
+        step = M3UAccount.SetupStep
+        is_xc = account.account_type == M3UAccount.Types.XC
+        navigation = {
+            "back_to_account": (step.CONTENT, step.ACCOUNT),
+            "continue_content": (step.ACCOUNT, step.CONTENT),
+            "back_to_content": (
+                step.EPG if is_xc else step.CATEGORIES, step.CONTENT,
+            ),
+        }
+        if is_xc:
+            navigation.update({
+                "back_to_epg": (step.CATEGORIES, step.EPG),
+                "continue_epg": (step.CONTENT, step.EPG),
+            })
+        else:
+            navigation["continue_categories"] = (step.CONTENT, step.CATEGORIES)
+        if action in navigation:
+            source, target = navigation[action]
+            # Explicit targets make retries safe: a repeated Back cannot skip
+            # another step, and navigation never starts an import or EPG.
+            if account.setup_step == source:
+                account.setup_step = target
+                account.save(update_fields=["setup_step"])
+        elif action in {"create_epg", "skip_epg"}:
             if account.setup_step != M3UAccount.SetupStep.EPG:
                 return account
             if action == "create_epg":

@@ -72,12 +72,11 @@ vi.mock('../../ServerGroupsManagerModal', () => ({
     ) : null,
 }));
 vi.mock('../../forms/M3USetup.jsx', () => ({
-  default: ({ account, onClose, onEditAccount }) => (
+  default: ({ account, onClose }) => (
     <div role="dialog" aria-label="Account setup">
       <span>{account.name}</span>
       <span>Step: {account.setup_step}</span>
       <button onClick={onClose}>Close setup</button>
-      <button onClick={() => onEditAccount(account)}>Edit setup account</button>
     </div>
   ),
 }));
@@ -283,27 +282,23 @@ describe('M3U account cards', () => {
     expect(
       screen.queryByRole('dialog', { name: 'Account editor' })
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit setup account' }));
-    expect(
-      screen.getByRole('dialog', { name: 'Account editor' })
-    ).toHaveTextContent('Provider One');
   });
 
-  it.each(['epg', 'categories'])(
-    'continues %s setup immediately after saving account corrections',
+  it.each(['account', 'content', 'epg', 'categories'])(
+    'resumes persisted %s setup through Edit, including after closing',
     (setup_step) => {
       setup({ playlists: [account({ setup_step })] });
       show();
       fireEvent.click(
         screen.getByRole('button', { name: 'Edit Provider One' })
       );
+      fireEvent.click(screen.getByRole('button', { name: 'Close setup' }));
       fireEvent.click(
-        screen.getByRole('button', { name: 'Edit setup account' })
+        screen.getByRole('button', { name: 'Edit Provider One' })
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Save account' }));
       expect(
         screen.getByRole('dialog', { name: 'Account setup' })
-      ).toHaveTextContent('Edited account');
+      ).toHaveTextContent('Provider One');
       expect(
         screen.getByRole('dialog', { name: 'Account setup' })
       ).toHaveTextContent(`Step: ${setup_step}`);
@@ -312,20 +307,6 @@ describe('M3U account cards', () => {
       ).not.toBeInTheDocument();
     }
   );
-
-  it('resumes the saved step after changing the account type', () => {
-    setup({ playlists: [account({ setup_step: 'epg' })] });
-    show();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Provider One' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit setup account' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save as Standard' }));
-    expect(
-      screen.getByRole('dialog', { name: 'Account setup' })
-    ).toHaveTextContent('Step: categories');
-    expect(
-      screen.queryByRole('dialog', { name: 'Account editor' })
-    ).not.toBeInTheDocument();
-  });
 
   it('does not start setup after saving a completed account', () => {
     show();

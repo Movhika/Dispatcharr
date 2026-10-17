@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 class M3UAccount(models.Model):
     class SetupStep(models.TextChoices):
+        ACCOUNT = "account", "Account"
+        CONTENT = "content", "Content"
         EPG = "epg", "Optional EPG"
         CATEGORIES = "categories", "Categories"
 
@@ -147,7 +149,9 @@ class M3UAccount(models.Model):
 
     def update_setup_step_for_account_type(self, previous_account_type):
         """Keep unfinished setup aligned with the edited connection type."""
-        if not self.setup_step:
+        if not self.setup_step or self.setup_step in {
+            self.SetupStep.ACCOUNT, self.SetupStep.CONTENT,
+        }:
             return
         if self.account_type != self.Types.XC:
             self.setup_step = self.SetupStep.CATEGORIES

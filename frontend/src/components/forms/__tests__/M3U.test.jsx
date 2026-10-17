@@ -181,6 +181,7 @@ vi.mock('@mantine/form', () => {
         reset: () => {
           _values = { ...initialValues };
         },
+        resetDirty: vi.fn(),
         submitting: false,
         setErrors: vi.fn(),
         clearErrors: vi.fn(),
@@ -1572,6 +1573,66 @@ describe('M3U', () => {
   });
 
   describe('guided creation', () => {
+    it.each(['account', 'content'])(
+      'saves the existing %s step without creating another account',
+      async (setup_step) => {
+        setupStores();
+        const account = makeM3uAccount({ setup_step });
+        const onSetupNext = vi.fn();
+        const onClose = vi.fn();
+        render(
+          <M3U
+            {...defaultProps({
+              m3uAccount: account,
+              setupMode: true,
+              onSetupNext,
+              onClose,
+            })}
+          />
+        );
+        expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'Save' })
+        ).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        await waitFor(() => expect(onSetupNext).toHaveBeenCalledOnce());
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
+          account,
+          expect.objectContaining({ name: account.name }),
+          null
+        );
+        expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+      }
+    );
+
+    it('keeps the form draft when going back from Content to Account', async () => {
+      setupStores();
+      const account = makeM3uAccount({ setup_step: 'content' });
+      const onSetupBack = vi.fn();
+      const props = defaultProps({
+        m3uAccount: account,
+        setupMode: true,
+        onSetupBack,
+      });
+      const { rerender } = render(<M3U {...props} />);
+      fireEvent.change(screen.getByTestId('text-input-name'), {
+        target: { value: 'Unsubmitted draft' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(onSetupBack).toHaveBeenCalledOnce();
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+      rerender(
+        <M3U {...props} m3uAccount={{ ...account, setup_step: 'account' }} />
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('button', { name: 'Back' })
+        ).not.toBeInTheDocument()
+      );
+      expect(screen.getByDisplayValue('Unsubmitted draft')).toBeInTheDocument();
+    });
+
     it('does not allow Content before validating Account', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
