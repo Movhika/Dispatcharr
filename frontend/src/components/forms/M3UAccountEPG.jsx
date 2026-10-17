@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  Anchor,
-  Badge,
-  Button,
-  Group,
-  Paper,
-  Stack,
-  Text,
-} from '@mantine/core';
-import { Link } from 'react-router-dom';
+import { Badge, Button, Group, Paper, Stack, Text } from '@mantine/core';
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
 import {
@@ -142,6 +133,7 @@ const M3UAccountEPG = ({
       setCanCreate(result.can_create === true);
       hideNotification(`m3u-epg-${account.id}`);
       fetchEPGs().catch(() => {});
+      if (isInitialSetup) await onNext?.();
     } catch (error) {
       showNotification({
         id: `m3u-epg-${account.id}`,
@@ -207,11 +199,6 @@ const M3UAccountEPG = ({
             )}
           </>
         )}
-        {!isInitialSetup && (
-          <Anchor component={Link} to="/sources/epg" size="sm">
-            Manage EPG sources
-          </Anchor>
-        )}
       </Stack>
     </Paper>
   );
@@ -222,40 +209,32 @@ const M3UAccountEPG = ({
       <div className={editorClasses.setupPanel}>
         <Stack gap="md">
           {card}
-          {!loading && !failed && (
+          {!loading && !failed && otherSources.length > 0 && (
             <section aria-label="Other configured EPG sources">
               <Stack gap="xs">
                 <Text fw={600} size="sm">
                   Other configured EPG sources
                 </Text>
-                {otherSources.length ? (
-                  <>
-                    <Text size="xs" c="dimmed">
-                      These sources may cover the channels you need. Matching
-                      depends on their channel IDs.
-                    </Text>
-                    {otherSources.map((other) => (
-                      <Paper
-                        key={other.id}
-                        component="article"
-                        aria-label={`EPG source ${other.name}`}
-                        className={cardClasses.card}
-                        withBorder
-                        radius="md"
-                        p="sm"
-                      >
-                        <EPGSourceSummary
-                          source={other}
-                          dateFormat={fullDateTimeFormat}
-                        />
-                      </Paper>
-                    ))}
-                  </>
-                ) : (
-                  <Text size="sm" c="dimmed">
-                    No other EPG sources configured.
-                  </Text>
-                )}
+                <Text size="xs" c="dimmed">
+                  These sources may cover the channels you need. Matching
+                  depends on their channel IDs.
+                </Text>
+                {otherSources.map((other) => (
+                  <Paper
+                    key={other.id}
+                    component="article"
+                    aria-label={`EPG source ${other.name}`}
+                    className={cardClasses.card}
+                    withBorder
+                    radius="md"
+                    p="sm"
+                  >
+                    <EPGSourceSummary
+                      source={other}
+                      dateFormat={fullDateTimeFormat}
+                    />
+                  </Paper>
+                ))}
               </Stack>
             </section>
           )}

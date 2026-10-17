@@ -27,7 +27,10 @@ import { TriangleAlert, Trash2, Plus, Search } from 'lucide-react';
 import { isNotEmpty, useForm } from '@mantine/form';
 import ScheduleInput from './ScheduleInput';
 import { addEPG, updateEPG } from '../../utils/forms/DummyEpgUtils.js';
-import { showNotification } from '../../utils/notificationUtils.js';
+import {
+  hideNotification,
+  showNotification,
+} from '../../utils/notificationUtils.js';
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
 import editorClasses from './AccountEditor.module.css';
@@ -709,10 +712,15 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
     validate: {
       name: isNotEmpty('Please select a name'),
       source_type: isNotEmpty('Source type cannot be empty'),
+      url: (value, values) =>
+        values.source_type === 'xmltv' && !value?.trim() && !epg?.file_path
+          ? 'Enter an XMLTV URL or upload a file.'
+          : null,
     },
   });
 
   const onSubmit = async () => {
+    hideNotification('epg-source-validation');
     const values = { ...form.getValues() };
 
     const hasCronExpression =
@@ -822,7 +830,20 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
           header: editorClasses.header,
         }}
       >
-        <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
+        <form
+          onSubmit={form.onSubmit(onSubmit, (errors) => {
+            if (errors.url) {
+              showNotification({
+                id: 'epg-source-validation',
+                title: 'EPG source was not saved',
+                message: errors.url,
+                color: 'red',
+                autoClose: false,
+              });
+            }
+          })}
+          className={editorClasses.form}
+        >
           <div className={editorClasses.panel}>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
               <Paper withBorder p="sm">
@@ -860,6 +881,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                       label="URL"
                       description="Direct URL to the XMLTV file or API endpoint"
                       {...form.getInputProps('url')}
+                      error={Boolean(form.errors?.url)}
                       key={form.key('url')}
                     />
                   )}
@@ -1017,7 +1039,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
                 Cancel
               </Button>
               <Button type="submit" variant="filled" disabled={form.submitting}>
-                {epg?.id || savedEpgId ? 'Update' : 'Create'} EPG Source
+                {epg?.id || savedEpgId ? 'Update EPG Source' : 'Create'}
               </Button>
             </Group>
           </Box>

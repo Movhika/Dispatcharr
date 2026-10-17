@@ -70,8 +70,8 @@ describe('EPG in the account editor', () => {
     await screen.findByText('Existing guide');
     expect(screen.getByText('Disabled')).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'Manage EPG sources' })
-    ).toHaveAttribute('href', '/sources/epg');
+      screen.queryByRole('link', { name: 'Manage EPG sources' })
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Create EPG' })
     ).not.toBeInTheDocument();
@@ -194,7 +194,8 @@ describe('EPG in the account editor', () => {
       can_create: true,
       other_sources: [alternate],
     });
-    show({ isInitialSetup: true });
+    const onNext = vi.fn();
+    show({ isInitialSetup: true, onNext });
     const region = await screen.findByRole('region', {
       name: 'Other configured EPG sources',
     });
@@ -218,11 +219,31 @@ describe('EPG in the account editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
     await screen.findByText('Account guide');
     expect(screen.getAllByText('Existing guide')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(onNext).toHaveBeenCalledOnce();
   });
 
-  it('shows an explicit empty state for other sources', async () => {
+  it('omits the entire alternative-source section when there are none', async () => {
     show({ isInitialSetup: true });
-    await screen.findByText('No other EPG sources configured.');
+    await screen.findByText('No matching EPG source configured.');
+    expect(
+      screen.queryByRole('region', { name: 'Other configured EPG sources' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a created guide when advancing fails and retries without creating twice', async () => {
+    const onNext = vi.fn().mockResolvedValue(false);
+    API.createM3UEPG.mockResolvedValue({
+      source: { id: 9, name: 'Saved guide', is_active: true },
+      can_create: false,
+    });
+    show({ isInitialSetup: true, onNext });
+    fireEvent.click(await screen.findByRole('button', { name: 'Create EPG' }));
+    await screen.findByText('Saved guide');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(onNext).toHaveBeenCalledTimes(2);
+    expect(API.createM3UEPG).toHaveBeenCalledOnce();
   });
 });

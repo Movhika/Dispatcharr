@@ -117,6 +117,15 @@ vi.mock('../M3USetupSteps.jsx', () => ({
 vi.mock('../M3UAccountEPG.jsx', () => ({
   default: () => <div data-testid="account-epg" />,
 }));
+vi.mock('../M3UAccountCategories.jsx', () => ({
+  default: ({ account, onEdit, refreshKey }) => (
+    <div data-testid="account-categories" data-refresh-key={refreshKey}>
+      <button type="button" onClick={() => onEdit(account)}>
+        Edit selection
+      </button>
+    </div>
+  ),
+}));
 vi.mock('../../ConfirmationDialog.jsx', () => ({
   default: ({
     opened,
@@ -221,10 +230,18 @@ vi.mock('@mantine/form', () => {
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  Tabs: ({ children }) => <div>{children}</div>,
+  Tabs: ({ children, onChange }) => (
+    <div
+      onClick={(event) => {
+        if (event.target.dataset.value) onChange?.(event.target.dataset.value);
+      }}
+    >
+      {children}
+    </div>
+  ),
   TabsList: ({ children }) => <div role="tablist">{children}</div>,
   TabsTab: ({ children, value, disabled }) => (
-    <button role="tab" data-value={value} disabled={disabled}>
+    <button type="button" role="tab" data-value={value} disabled={disabled}>
       {children}
     </button>
   ),
@@ -721,7 +738,7 @@ describe('M3U', () => {
         screen.queryByRole('button', { name: 'Filters' })
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Categories' })
+        screen.getByRole('tab', { name: 'Categories' })
       ).toBeInTheDocument();
     });
 
@@ -1248,7 +1265,8 @@ describe('M3U', () => {
         'data-close-on-escape',
         'true'
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Categories' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-close-on-escape',
         'false'
@@ -1259,8 +1277,12 @@ describe('M3U', () => {
         'true'
       );
       expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByTestId('account-categories')).toHaveAttribute(
+        'data-refresh-key',
+        '1'
+      );
     });
-    it('keeps only Categories and Save in the fixed footer', () => {
+    it('keeps only Save in the fixed footer and moves Categories into a tab', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       const footer = screen.getByRole('contentinfo', {
@@ -1268,8 +1290,8 @@ describe('M3U', () => {
       });
       expect(footer).toHaveClass(editorClasses.footer);
       expect(
-        within(footer).getByRole('button', { name: 'Categories' })
-      ).toBeInTheDocument();
+        within(footer).queryByRole('button', { name: 'Categories' })
+      ).not.toBeInTheDocument();
       expect(
         within(footer).getByRole('button', { name: 'Save' })
       ).toBeInTheDocument();
@@ -1293,7 +1315,25 @@ describe('M3U', () => {
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'EPG' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('tab', { name: 'Categories' })
+      ).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Profiles' })).toBeInTheDocument();
+    });
+
+    it('does not overwrite unsaved account fields when visiting Categories', () => {
+      setupStores();
+      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
+      fireEvent.change(screen.getByDisplayValue('Test M3U'), {
+        target: { value: 'Unsaved name' },
+      });
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      expect(
+        screen.getByRole('button', { name: 'Edit selection' })
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('tab', { name: 'Account' }));
+      expect(screen.getByDisplayValue('Unsaved name')).toBeInTheDocument();
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
     });
 
     it('keeps Live and VOD refresh controls in their own two-column content groups', () => {

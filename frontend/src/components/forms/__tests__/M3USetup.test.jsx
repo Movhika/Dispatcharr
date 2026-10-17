@@ -212,20 +212,12 @@ describe('persisted M3U setup', () => {
           can_create: false,
         });
         fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
-        await screen.findByText('Example guide');
-        expect(API.createM3UEPG).toHaveBeenCalledExactlyOnceWith(7);
-        expect(
-          screen.queryByRole('button', { name: 'Skip EPG' })
-        ).not.toBeInTheDocument();
-        expect(
-          screen.queryByRole('button', { name: 'Create EPG' })
-        ).not.toBeInTheDocument();
+      } else {
+        expect(API.advanceM3USetup).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Skip EPG' }));
       }
-      expect(API.advanceM3USetup).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole('button', { name: createEPG ? 'Next' : 'Skip EPG' })
-      );
       await screen.findByRole('button', { name: 'Select categories' });
+      expect(API.createM3UEPG).toHaveBeenCalledTimes(createEPG ? 1 : 0);
       expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
         7,
         'continue_categories'
@@ -290,6 +282,11 @@ describe('persisted M3U setup', () => {
         finish = resolve;
       })
     );
+    const categories = { ...account, setup_step: 'categories' };
+    API.advanceM3USetup.mockResolvedValue(categories);
+    API.getPlaylist
+      .mockResolvedValueOnce(account)
+      .mockResolvedValue(categories);
     const { onClose } = renderSetup();
     fireEvent.click(await screen.findByRole('button', { name: 'Create EPG' }));
     expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeDisabled();
@@ -300,9 +297,12 @@ describe('persisted M3U setup', () => {
       source: { id: 9, name: 'New guide', is_active: true, status: 'idle' },
       can_create: false,
     });
-    await screen.findByText('New guide');
-    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
-    expect(API.advanceM3USetup).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
+        7,
+        'continue_categories'
+      )
+    );
   });
 
   it('shows a resumable error and retries discovery', async () => {

@@ -18,6 +18,7 @@ vi.mock('../../../api.js', () => ({
 
 vi.mock('../../../utils/notificationUtils.js', () => ({
   showNotification: vi.fn(),
+  hideNotification: vi.fn(),
 }));
 
 vi.mock('../../../utils/forms/DummyEpgUtils.js', () => ({
@@ -326,7 +327,9 @@ describe('EPG', () => {
 
     it('renders submit button with "Create" title for a new EPG', () => {
       render(<EPG {...defaultProps()} />);
-      expect(screen.getByText('Create EPG Source')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Create' })
+      ).toBeInTheDocument();
     });
 
     it('renders submit button with "Update" title when editing an existing EPG', () => {
@@ -503,7 +506,7 @@ describe('EPG', () => {
   describe('form submission (add)', () => {
     it('calls addEPG when submitting a new EPG', async () => {
       render(<EPG {...defaultProps()} />);
-      fireEvent.click(screen.getByText('Create EPG Source'));
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
       await waitFor(() => {
         expect(DummyEpgUtils.addEPG).toHaveBeenCalled();
       });
@@ -511,7 +514,7 @@ describe('EPG', () => {
 
     it('does not call updateEPG when adding a new EPG', async () => {
       render(<EPG {...defaultProps()} />);
-      fireEvent.click(screen.getByText('Create EPG Source'));
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
       await waitFor(() => {
         expect(DummyEpgUtils.updateEPG).not.toHaveBeenCalled();
       });
@@ -520,7 +523,7 @@ describe('EPG', () => {
     it('calls onClose after successful add', async () => {
       const onClose = vi.fn();
       render(<EPG {...defaultProps({ onClose })} />);
-      fireEvent.click(screen.getByText('Create EPG Source'));
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
       await waitFor(() => {
         expect(onClose).toHaveBeenCalled();
       });
@@ -534,7 +537,7 @@ describe('EPG', () => {
       });
       render(<EPG {...defaultProps()} />);
       fireEvent.click(screen.getByTestId('set-interval'));
-      fireEvent.click(screen.getByText('Create EPG Source'));
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
       await waitFor(() => {
         expect(capturedValues?.cron_expression ?? '').toBe('');
       });
@@ -682,7 +685,7 @@ describe('EPG', () => {
         })),
       });
       render(<EPG {...defaultProps()} />);
-      fireEvent.click(screen.getByText('Create EPG Source'));
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
       await waitFor(() => {
         expect(mockReset).toHaveBeenCalled();
       });

@@ -31,7 +31,6 @@ import {
 } from '../SensitiveFields.jsx';
 import M3UGroupFilter from './M3UGroupFilter';
 import { isNotEmpty, useForm } from '@mantine/form';
-import useVODStore from '../../store/useVODStore';
 import ScheduleInput from './ScheduleInput';
 import { DateTimePicker } from '@mantine/dates';
 import {
@@ -57,6 +56,7 @@ import {
 } from '../../utils/forms/M3uSetupUtils.js';
 import { Upload } from 'lucide-react';
 import M3UAccountEPG from './M3UAccountEPG.jsx';
+import M3UAccountCategories from './M3UAccountCategories.jsx';
 
 const helpLabel = (label, help) => (
   <Group gap={5} wrap="nowrap">
@@ -109,12 +109,13 @@ const M3U = ({
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
   const serverGroups = useServerGroupsStore((s) => s.serverGroups);
-  const fetchCategories = useVODStore((s) => s.fetchCategories);
 
   const [playlist, setPlaylist] = useState(null);
   const [file, setFile] = useState(null);
   const [expDate, setExpDate] = useState(null);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
+  const [categoryPlaylist, setCategoryPlaylist] = useState(null);
+  const [categoryRevision, setCategoryRevision] = useState(0);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
@@ -195,6 +196,7 @@ const M3U = ({
     }
     initializedSetupAccount.current = setupMode ? m3uAccount?.id : null;
     setFile(null);
+    setCategoryPlaylist(null);
     setActiveTab(setupMode ? m3uAccount.setup_step : 'account');
     setContentAvailable(false);
     setDiscardOpen(false);
@@ -369,6 +371,7 @@ const M3U = ({
 
   const closeGroupFilter = () => {
     setGroupFilterModalOpen(false);
+    setCategoryRevision((value) => value + 1);
   };
 
   const requestClose = () => {
@@ -468,6 +471,7 @@ const M3U = ({
                 {accountType === 'XC' && playlist.account_type === 'XC' && (
                   <TabsTab value="epg">EPG</TabsTab>
                 )}
+                <TabsTab value="categories">Categories</TabsTab>
                 <TabsTab value="profiles" disabled={!playlist?.id}>
                   Profiles
                 </TabsTab>
@@ -962,6 +966,24 @@ const M3U = ({
                 activeTab === 'epg' && <M3UAccountEPG account={playlist} />}
             </TabsPanel>
             <TabsPanel
+              value="categories"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'categories'}
+              aria-hidden={activeTab !== 'categories'}
+              inert={activeTab !== 'categories'}
+            >
+              {playlist?.id && !setupMode && activeTab === 'categories' && (
+                <M3UAccountCategories
+                  account={playlist}
+                  refreshKey={categoryRevision}
+                  onEdit={(saved) => {
+                    setCategoryPlaylist(saved);
+                    setGroupFilterModalOpen(true);
+                  }}
+                />
+              )}
+            </TabsPanel>
+            <TabsPanel
               value="profiles"
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
               data-editor-active={activeTab === 'profiles'}
@@ -1005,27 +1027,6 @@ const M3U = ({
               </div>
             )}
             <Flex gap="xs" align="center">
-              {playlist && !setupMode && (
-                <>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => {
-                      // If this is an XC account with VOD enabled, fetch VOD categories
-                      if (
-                        m3uAccount?.account_type === 'XC' &&
-                        m3uAccount?.enable_vod
-                      ) {
-                        fetchCategories();
-                      }
-                      setGroupFilterModalOpen(true);
-                    }}
-                  >
-                    Categories
-                  </Button>
-                </>
-              )}
-
               {!playlist?.id && activeTab === 'account' ? (
                 <Button
                   key="next"
@@ -1085,7 +1086,7 @@ const M3U = ({
         <>
           <M3UGroupFilter
             isOpen={groupFilterModalOpen}
-            playlist={playlist}
+            playlist={categoryPlaylist || storedAccount || playlist}
             onClose={closeGroupFilter}
           />
         </>
