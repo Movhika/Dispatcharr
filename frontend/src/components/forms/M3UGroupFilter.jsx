@@ -33,8 +33,7 @@ const M3UGroupFilter = ({
   isOpen,
   onClose,
   isInitialSetup = false,
-  setupHeader,
-  onSetupComplete,
+  onSetupSave,
   onEditAccount,
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
@@ -117,7 +116,7 @@ const M3UGroupFilter = ({
     setActiveAction('save');
     try {
       const save =
-        isInitialSetup && !onSetupComplete
+        isInitialSetup && !onSetupSave
           ? saveAndRefreshPlaylist
           : savePlaylistGroupSettings;
       await save(
@@ -145,8 +144,8 @@ const M3UGroupFilter = ({
         }))
       );
 
-      if (onSetupComplete) {
-        await onSetupComplete();
+      if (onSetupSave) {
+        await onSetupSave();
         return;
       }
 
@@ -235,7 +234,7 @@ const M3UGroupFilter = ({
           JSON.stringify(row.custom_properties || {}) !==
             JSON.stringify(row.original_custom_properties || {})
       );
-    if (onSetupComplete && changed) setDiscardAction(() => action);
+    if (onSetupSave && changed) setDiscardAction(() => action);
     else action();
   };
 
@@ -269,7 +268,6 @@ const M3UGroupFilter = ({
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
       <Stack className={editorClasses.form} gap={0}>
-        {setupHeader}
         <Tabs
           className={editorClasses.tabs}
           value={activeTab}
@@ -281,13 +279,13 @@ const M3UGroupFilter = ({
             <TabsTab value="live">Live TV</TabsTab>
             <TabsTab
               value="vod-movie"
-              disabled={!!onSetupComplete && !playlist.enable_vod}
+              disabled={!!onSetupSave && !playlist.enable_vod}
             >
               VOD - Movies
             </TabsTab>
             <TabsTab
               value="vod-series"
-              disabled={!!onSetupComplete && !playlist.enable_vod}
+              disabled={!!onSetupSave && !playlist.enable_vod}
             >
               VOD - Series
             </TabsTab>
@@ -393,11 +391,7 @@ const M3UGroupFilter = ({
               loading={activeAction === 'save'}
               onClick={submit}
             >
-              {onSetupComplete
-                ? 'Finish and start import'
-                : isInitialSetup
-                  ? 'Save and Refresh'
-                  : 'Save'}
+              {isInitialSetup && !onSetupSave ? 'Save and Refresh' : 'Save'}
             </Button>
           </div>
         </Flex>

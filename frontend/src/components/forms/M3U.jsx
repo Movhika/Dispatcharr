@@ -56,6 +56,7 @@ import {
   validateNewM3UAccount,
 } from '../../utils/forms/M3uSetupUtils.js';
 import { Upload } from 'lucide-react';
+import M3UAccountEPG from './M3UAccountEPG.jsx';
 
 const helpLabel = (label, help) => (
   <Group gap={5} wrap="nowrap">
@@ -370,7 +371,7 @@ const M3U = ({
         title={m3uAccount?.id ? 'Edit M3U account' : 'Create M3U account'}
         closeButtonProps={{ 'aria-label': 'Close M3U account editor' }}
         classNames={{
-          content: `${editorClasses.content} ${editorClasses.accountContent}`,
+          content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
           body: editorClasses.body,
           header: editorClasses.header,
         }}
@@ -419,6 +420,7 @@ const M3U = ({
               <TabsList className={editorClasses.tabList}>
                 <TabsTab value="account">Account</TabsTab>
                 <TabsTab value="content">Content</TabsTab>
+                <TabsTab value="epg">EPG</TabsTab>
                 <TabsTab value="profiles" disabled={!playlist?.id}>
                   Profiles
                 </TabsTab>
@@ -432,6 +434,7 @@ const M3U = ({
               inert={activeTab !== 'account'}
             >
               <SimpleGrid
+                className={editorClasses.accountGrid}
                 cols={{ base: 1, sm: 2 }}
                 spacing="md"
                 verticalSpacing="xs"
@@ -901,6 +904,17 @@ const M3U = ({
               </SimpleGrid>
             </TabsPanel>
             <TabsPanel
+              value="epg"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'epg'}
+              aria-hidden={activeTab !== 'epg'}
+              inert={activeTab !== 'epg'}
+            >
+              {playlist?.id && activeTab === 'epg' && (
+                <M3UAccountEPG account={playlist} />
+              )}
+            </TabsPanel>
+            <TabsPanel
               value="profiles"
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
               data-editor-active={activeTab === 'profiles'}
@@ -979,7 +993,7 @@ const M3U = ({
                   loading={creating}
                   size="sm"
                 >
-                  {playlist?.id ? 'Save' : 'Create'}
+                  {playlist?.id ? 'Save' : 'Next'}
                 </Button>
               )}
             </Flex>

@@ -76,6 +76,22 @@
   max-height: 92dvh;
 }
 
+/* Match the Xtream account step, including shorter URL/file and setup panels. */
+.m3uContent.m3uContent {
+  height: min(36.5rem, 92dvh);
+}
+
+.accountGrid {
+  min-height: 100%;
+}
+
+.setupPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--mantine-spacing-md) 2px;
+}
+
 /* All panels share one grid cell, so the tallest panel sets a stable height. */
 .accountTabs.accountTabs {
   display: grid;

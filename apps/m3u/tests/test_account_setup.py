@@ -410,6 +410,64 @@ class AccountSetupTests(TestCase):
         operation = schema["paths"]["/api/m3u/accounts/{id}/setup/"]["post"]
         self.assertIn("requestBody", operation)
         self.assertIn("200", operation["responses"])
+        epg = schema["paths"]["/api/m3u/accounts/{id}/epg/"]
+        for method in ("get", "post"):
+            self.assertIn("200", epg[method]["responses"])
+
+    @patch("apps.epg.signals.refresh_epg_data.delay")
+    def test_epg_can_be_added_after_setup_without_restarting_it(self, refresh):
+        account = self.account(setup_step="")
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"source": None})
+        self.assertFalse(EPGSource.objects.exists())
+        for _ in range(2):
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.post(path, {}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(EPGSource.objects.count(), 1)
+        self.assertEqual(
+            set(response.data["source"]), {"id", "name", "is_active", "status"}
+        )
+        account.refresh_from_db()
+        self.assertEqual(account.setup_step, "")
+        refresh.assert_called_once_with(EPGSource.objects.get().id)
+
+    def test_matching_epg_read_is_credential_free_and_survives_renames(self):
+        account = self.account()
+        self.action(account, "create_epg")
+        source = EPGSource.objects.get()
+        source.name = "Renamed XMLTV guide"
+        source.save(update_fields=["name"])
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        response = self.client.get(path)
+        self.assertEqual(response.data["source"]["id"], source.id)
+        self.assertEqual(response.data["source"]["name"], source.name)
+        self.assertNotIn(account.username, str(response.data))
+        self.assertNotIn(account.password, str(response.data))
+        self.assertNotIn("url", response.data["source"])
+        response = self.client.post(path, {}, format="json")
+        self.assertEqual(response.data["source"]["id"], source.id)
+        self.assertEqual(EPGSource.objects.count(), 1)
+
+    def test_standard_accounts_cannot_use_automatic_epg_creation(self):
+        account = self.account(account_type="STD", setup_step="categories")
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        self.assertEqual(self.client.get(path).data, {"source": None})
+        self.assertEqual(self.client.post(path, {}, format="json").status_code, 400)
+        self.assertFalse(EPGSource.objects.exists())
+
+    def test_matching_epg_actions_require_admin(self):
+        account = self.account()
+        viewer = get_user_model().objects.create_user(
+            username="epg-viewer", user_level=1
+        )
+        self.client.force_authenticate(viewer)
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        self.assertEqual(self.client.get(path).status_code, 403)
+        self.assertEqual(self.client.post(path, {}, format="json").status_code, 403)
+        self.assertFalse(EPGSource.objects.exists())
 
     def test_standard_user_cannot_advance_setup(self):
         account = self.account()

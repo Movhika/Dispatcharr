@@ -48,6 +48,21 @@ describe('account import rule requests', () => {
     });
   });
   it.each([
+    ['GET', () => API.getM3UEPG(7)],
+    ['POST', () => API.createM3UEPG(7)],
+  ])(
+    'uses the credential-free account EPG endpoint with %s',
+    async (method, action) => {
+      await action();
+      const [url, options] = globalThis.fetch.mock.calls[0];
+      expect(new URL(url, 'http://example.invalid').pathname).toBe(
+        '/api/m3u/accounts/7/epg/'
+      );
+      expect(options.method || 'GET').toBe(method);
+      expect(options.body).toBeUndefined();
+    }
+  );
+  it.each([
     ['rules', () => API.getM3URules(7, 'group-rules', 'live')],
     ['library', () => API.getMovies()],
   ])(

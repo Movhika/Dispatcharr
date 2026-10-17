@@ -1551,6 +1551,16 @@ export default class API {
     return response;
   }
 
+  static async getM3UEPG(id) {
+    return await request(`${host}/api/m3u/accounts/${id}/epg/`);
+  }
+
+  static async createM3UEPG(id) {
+    return await request(`${host}/api/m3u/accounts/${id}/epg/`, {
+      method: 'POST',
+    });
+  }
+
   static async refreshPlaylist(id, includeVod) {
     try {
       const url = `${host}/api/m3u/refresh/${id}/`;

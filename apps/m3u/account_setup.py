@@ -102,10 +102,7 @@ def _queue_initial_import(account_id, include_vod):
         ) from exc
 
 
-def _create_matching_epg(account):
-    from apps.epg.models import EPGSource
-    from apps.epg.serializers import EPGSourceSerializer
-
+def _matching_epg_url(account):
     if account.account_type != M3UAccount.Types.XC:
         raise ValidationError("Automatic EPG setup requires Xtream Codes.")
     if not all((account.server_url, account.username, account.password)):
@@ -114,11 +111,29 @@ def _create_matching_epg(account):
     credentials = urlencode(
         {"username": account.username, "password": account.password}
     )
-    url = f"{base.rstrip('/')}/xmltv.php?{credentials}"
-    if EPGSource.objects.filter(
-        name=account.name, source_type="xmltv", url=url
-    ).exists():
-        return
+    return f"{base.rstrip('/')}/xmltv.php?{credentials}"
+
+
+def get_matching_epg(account):
+    from apps.epg.models import EPGSource
+
+    if account.account_type != M3UAccount.Types.XC or not all(
+        (account.server_url, account.username, account.password)
+    ):
+        return None
+    return EPGSource.objects.filter(
+        source_type="xmltv", url=_matching_epg_url(account)
+    ).first()
+
+
+def _create_matching_epg(account):
+    from apps.epg.models import EPGSource
+    from apps.epg.serializers import EPGSourceSerializer
+
+    url = _matching_epg_url(account)
+    existing = get_matching_epg(account)
+    if existing:
+        return existing
     serializer = EPGSourceSerializer(
         data={
             "name": account.name,
@@ -135,6 +150,14 @@ def _create_matching_epg(account):
     source._cron_expression = cron
     source._defer_initial_refresh = True
     source.save()
+    return source
+
+
+def create_account_epg(account_id):
+    """Create or find the matching guide without restarting completed setup."""
+    with transaction.atomic():
+        account = M3UAccount.objects.select_for_update().get(pk=account_id)
+        return _create_matching_epg(account)
 
 
 def advance_account_setup(account_id, action):

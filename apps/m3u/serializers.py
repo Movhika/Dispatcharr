@@ -342,6 +342,17 @@ class M3USetupActionSerializer(serializers.Serializer):
     )
 
 
+class M3UMatchingEPGSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    is_active = serializers.BooleanField()
+    status = serializers.CharField()
+
+
+class M3UMatchingEPGResponseSerializer(serializers.Serializer):
+    source = M3UMatchingEPGSerializer(allow_null=True)
+
+
 class M3UAccountSerializer(serializers.ModelSerializer):
     """Serializer for M3U Account"""
 

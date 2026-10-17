@@ -13,6 +13,7 @@ import { formatApiError } from '../../utils';
 import M3UGroupFilter from './M3UGroupFilter.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
 import editorClasses from './AccountEditor.module.css';
+import M3UAccountEPG from './M3UAccountEPG.jsx';
 
 const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
   const [account, setAccount] = useState(initialAccount);
@@ -21,6 +22,9 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
   const [slowLoading, setSlowLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  const [epgChoice, setEPGChoice] = useState('');
+  const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
+  const [categoriesSaved, setCategoriesSaved] = useState(false);
   const busyRef = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -99,6 +103,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
       setAccount(current);
       if (action === 'create_epg') fetchEPGs().catch(() => {});
       if (action === 'retry_categories') {
+        setReady(false);
         setLoadFailed(false);
         setSlowLoading(false);
         setReload((value) => value + 1);
@@ -131,11 +136,19 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
   };
 
   const categories = account.setup_step === 'categories';
-  const showCategories = categories && ready;
+  const saveCategories = async () => {
+    const current = await API.getPlaylist(account.id);
+    if (!current)
+      throw new Error('Category settings are saved. Reopen setup to continue.');
+    setAccount(current);
+    usePlaylistsStore.getState().updatePlaylist(current);
+    setCategoriesSaved(true);
+    setCategoryEditorOpen(false);
+  };
   return (
     <>
       <Modal
-        opened={!showCategories}
+        opened={!categoryEditorOpen}
         onClose={() => {
           if (!busy) onClose();
         }}
@@ -145,41 +158,69 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
         closeOnEscape={!busy}
         size="68vw"
         classNames={{
-          content: `${editorClasses.content} ${editorClasses.accountContent}`,
+          content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
           body: editorClasses.body,
           header: editorClasses.header,
         }}
         yOffset="2vh"
         xOffset="3vw"
       >
-        <Stack gap="md">
+        <Stack gap={0} className={editorClasses.form}>
           <M3USetupSteps
             stage={account.setup_step || 'categories'}
             accountType={account.account_type}
           />
-          <Paper withBorder p="md">
+          <div className={editorClasses.setupPanel}>
             {!categories ? (
-              <Stack gap="xs">
-                <Text fw={600}>Create matching EPG source?</Text>
-                <Text size="sm" c="dimmed">
-                  The account is created. Optionally add its XMLTV guide using
-                  the same provider credentials, or continue without EPG.
-                </Text>
-              </Stack>
+              <M3UAccountEPG
+                account={account}
+                choice={epgChoice}
+                onChoice={setEPGChoice}
+                disabled={busy}
+              />
             ) : (
-              <Stack gap="sm">
-                <Text fw={600}>Prepare categories</Text>
-                <Alert color={loadFailed ? 'red' : 'blue'}>
-                  {loadFailed
-                    ? 'Categories could not be loaded. Check the account settings, then retry. You can close this window and resume later.'
-                    : slowLoading
-                      ? 'Loading provider categories is taking longer than usual. You can keep waiting, close this window and resume later, or retry.'
-                      : 'Loading provider categories. Their selection opens here when the account is ready.'}
-                </Alert>
-              </Stack>
+              <Paper withBorder p="sm">
+                <Stack gap="sm">
+                  <Text fw={600}>Categories</Text>
+                  {ready && !loadFailed ? (
+                    <>
+                      <Text size="sm" c="dimmed">
+                        {categoriesSaved
+                          ? 'Category settings saved.'
+                          : 'Review which categories to import.'}{' '}
+                        Finish starts the initial import using the saved
+                        settings.
+                      </Text>
+                      <Group>
+                        <Button
+                          variant="default"
+                          onClick={() => setCategoryEditorOpen(true)}
+                          disabled={busy}
+                        >
+                          Edit categories
+                        </Button>
+                      </Group>
+                    </>
+                  ) : (
+                    <Alert color={loadFailed ? 'red' : 'blue'}>
+                      {loadFailed
+                        ? 'Categories could not be loaded. Check the account settings, then retry. You can close this window and resume later.'
+                        : slowLoading
+                          ? 'Loading provider categories is taking longer than usual. You can keep waiting, close this window and resume later, or retry.'
+                          : 'Loading provider categories. You can edit their selection when loading completes.'}
+                    </Alert>
+                  )}
+                </Stack>
+              </Paper>
             )}
-          </Paper>
-          <Group justify="space-between">
+          </div>
+          <Group
+            component="footer"
+            aria-label="M3U setup actions"
+            justify="space-between"
+            mih={50}
+            className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
+          >
             <Button
               variant="default"
               disabled={busy}
@@ -189,49 +230,44 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
             </Button>
             <Group>
               {categories ? (
-                <Button
-                  disabled={busy || (!loadFailed && !slowLoading)}
-                  loading={busy}
-                  onClick={() => advance('retry_categories')}
-                >
-                  Retry
-                </Button>
-              ) : (
                 <>
+                  {(!ready || loadFailed) && (
+                    <Button
+                      disabled={busy || (!loadFailed && !slowLoading)}
+                      loading={busy}
+                      onClick={() => advance('retry_categories')}
+                    >
+                      Retry
+                    </Button>
+                  )}
                   <Button
-                    variant="default"
-                    disabled={busy}
-                    onClick={() => advance('skip_epg')}
-                  >
-                    Skip EPG
-                  </Button>
-                  <Button
-                    disabled={busy}
+                    disabled={busy || !ready || loadFailed}
                     loading={busy}
-                    onClick={() => advance('create_epg')}
+                    onClick={() => advance('complete')}
                   >
-                    Create EPG
+                    Finish
                   </Button>
                 </>
+              ) : (
+                <Button
+                  disabled={busy || !epgChoice}
+                  loading={busy}
+                  onClick={() => advance(epgChoice)}
+                >
+                  Next
+                </Button>
               )}
             </Group>
           </Group>
         </Stack>
       </Modal>
-      {showCategories && (
+      {categoryEditorOpen && (
         <M3UGroupFilter
           playlist={account}
           isOpen
           isInitialSetup
-          setupHeader={
-            <M3USetupSteps
-              stage="categories"
-              accountType={account.account_type}
-            />
-          }
-          onSetupComplete={() => advance('complete')}
-          onEditAccount={() => onEditAccount(account)}
-          onClose={onClose}
+          onSetupSave={saveCategories}
+          onClose={() => setCategoryEditorOpen(false)}
         />
       )}
     </>

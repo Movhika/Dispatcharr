@@ -36,6 +36,7 @@ from .serializers import (
     ServerGroupSerializer,
     M3UAccountProfileSerializer,
     M3USetupActionSerializer,
+    M3UMatchingEPGResponseSerializer,
 )
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
@@ -83,6 +84,31 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             account.id, serializer.validated_data["action"]
         )
         return Response(self.get_serializer(account).data)
+
+    @extend_schema(
+        methods=["GET"],
+        responses={200: M3UMatchingEPGResponseSerializer},
+        description="Find the matching XMLTV source without returning provider credentials.",
+    )
+    @extend_schema(
+        methods=["POST"], request=None,
+        responses={200: M3UMatchingEPGResponseSerializer},
+        description="Create a matching XMLTV source after setup, or reuse the existing one.",
+    )
+    @action(
+        detail=True, methods=["get", "post"], url_path="epg",
+        permission_classes=[IsAdmin],
+    )
+    def matching_epg(self, request, pk=None):
+        from .account_setup import create_account_epg, get_matching_epg
+
+        account = self.get_object()
+        source = (
+            create_account_epg(account.id)
+            if request.method == "POST"
+            else get_matching_epg(account)
+        )
+        return Response(M3UMatchingEPGResponseSerializer({"source": source}).data)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

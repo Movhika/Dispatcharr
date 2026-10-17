@@ -235,7 +235,11 @@ const M3UTable = () => {
   );
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
 
-  const editPlaylist = async (playlist = null) => {
+  const editPlaylist = async (playlist = null, editConnection = false) => {
+    if (playlist?.setup_step && !editConnection) {
+      setSetupAccount(playlist);
+      return;
+    }
     setPlaylist(playlist);
     setPlaylistModalOpen(true);
   };
@@ -804,17 +808,6 @@ const M3UTable = () => {
                       />
                     </Group>
                   </Group>
-                  {account.setup_step && (
-                    <Group justify="flex-end">
-                      <Button
-                        size="xs"
-                        variant="light"
-                        onClick={() => setSetupAccount(account)}
-                      >
-                        Resume setup
-                      </Button>
-                    </Group>
-                  )}
                   <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="md">
                     <Box>
                       <Text size="xs" fw={600} mb={4}>
@@ -866,7 +859,7 @@ const M3UTable = () => {
           onClose={() => setSetupAccount(null)}
           onEditAccount={(account) => {
             setSetupAccount(null);
-            editPlaylist(account);
+            editPlaylist(account, true);
           }}
         />
       )}

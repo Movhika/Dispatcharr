@@ -178,16 +178,14 @@ describe('M3UGroupFilter', () => {
 
   it('saves wizard selections before completing setup without handoff toasts', async () => {
     setupStores();
-    const onSetupComplete = vi.fn().mockResolvedValue(true);
+    const onSetupSave = vi.fn().mockResolvedValue(true);
     render(
       <M3UGroupFilter
-        {...defaultProps({ isInitialSetup: true, onSetupComplete })}
+        {...defaultProps({ isInitialSetup: true, onSetupSave })}
       />
     );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Finish and start import' })
-    );
-    await waitFor(() => expect(onSetupComplete).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSetupSave).toHaveBeenCalledOnce());
     expect(
       M3uGroupFilterUtils.savePlaylistGroupSettings
     ).toHaveBeenCalledOnce();
@@ -202,7 +200,7 @@ describe('M3UGroupFilter', () => {
       <M3UGroupFilter
         {...defaultProps({
           isInitialSetup: true,
-          onSetupComplete: vi.fn(),
+          onSetupSave: vi.fn(),
           onClose,
         })}
       />

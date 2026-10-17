@@ -273,7 +273,10 @@ describe('M3U account cards', () => {
   it('resumes unfinished setup without reopening account creation', () => {
     setup({ playlists: [account({ setup_step: 'categories' })] });
     show();
-    fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+    expect(
+      screen.queryByRole('button', { name: 'Resume setup' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Provider One' }));
     expect(
       screen.getByRole('dialog', { name: 'Account setup' })
     ).toHaveTextContent('Provider One');
@@ -291,7 +294,9 @@ describe('M3U account cards', () => {
     (setup_step) => {
       setup({ playlists: [account({ setup_step })] });
       show();
-      fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit Provider One' })
+      );
       fireEvent.click(
         screen.getByRole('button', { name: 'Edit setup account' })
       );
@@ -311,7 +316,7 @@ describe('M3U account cards', () => {
   it('resumes the saved step after changing the account type', () => {
     setup({ playlists: [account({ setup_step: 'epg' })] });
     show();
-    fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Provider One' }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit setup account' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save as Standard' }));
     expect(

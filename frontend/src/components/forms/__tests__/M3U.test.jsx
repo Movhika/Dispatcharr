@@ -114,6 +114,9 @@ vi.mock('../M3USetupSteps.jsx', () => ({
     </div>
   ),
 }));
+vi.mock('../M3UAccountEPG.jsx', () => ({
+  default: () => <div data-testid="account-epg" />,
+}));
 vi.mock('../../ConfirmationDialog.jsx', () => ({
   default: ({ opened, title, onConfirm, onClose }) =>
     opened ? (
@@ -862,7 +865,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
       });
@@ -874,14 +877,14 @@ describe('M3U', () => {
       vi.mocked(M3uUtils.addPlaylist).mockResolvedValueOnce(undefined);
       render(<M3U {...defaultProps()} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() =>
         expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1)
       );
       expect(
         screen.queryByText('Create matching EPG source?')
       ).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
       expect(DummyEpgUtils.addEPG).not.toHaveBeenCalled();
     });
 
@@ -890,7 +893,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps({ onClose })} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() =>
         expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
       );
@@ -904,7 +907,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(M3uUtils.prepareSubmitValues).toHaveBeenCalled();
       });
@@ -915,7 +918,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps({ onClose })} />);
       fillRequiredFields();
-      fireEvent.click(screen.getByRole('button', { name: /add|create|save/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(onClose).toHaveBeenCalled();
       });
@@ -1275,6 +1278,7 @@ describe('M3U', () => {
       }
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'EPG' })).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Profiles' })).toBeInTheDocument();
     });
 
@@ -1293,7 +1297,7 @@ describe('M3U', () => {
       expect(screen.getByTestId('modal')).toHaveAttribute('data-size', '68vw');
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-content-class',
-        `${editorClasses.content} ${editorClasses.accountContent}`
+        `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`
       );
       expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
       const live = within(
