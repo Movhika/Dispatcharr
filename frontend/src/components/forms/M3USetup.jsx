@@ -24,12 +24,12 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   const [reload, setReload] = useState(0);
   const [epgBusy, setEPGBusy] = useState(false);
   const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
-  const [categoriesSaved, setCategoriesSaved] = useState(false);
   const busyRef = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
+  const vodCategories = useVODStore((s) => s.categories);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +70,10 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
             setLoadFailed(true);
             return;
           }
-          if (!cancelled) setReady(true);
+          if (!cancelled) {
+            setLoadFailed(false);
+            setReady(true);
+          }
         } else {
           setSlowLoading(++attempts >= 45);
           timer = setTimeout(load, 2000);
@@ -135,13 +138,28 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   };
 
   const categories = account.setup_step === 'categories';
+  const categoriesSaved = account.setup_categories_reviewed === true;
+  const selectionCounts = [
+    { label: 'Live TV', rows: account.channel_groups || [] },
+    ...(account.account_type === 'XC' && account.enable_vod
+      ? ['movie', 'series'].map((type) => ({
+          label: type === 'movie' ? 'Movies' : 'Series',
+          rows: Object.values(vodCategories || {})
+            .filter((category) => category.category_type === type)
+            .flatMap((category) =>
+              (category.m3u_accounts || []).filter(
+                (relation) => relation.m3u_account === account.id
+              )
+            ),
+        }))
+      : []),
+  ];
   const saveCategories = async () => {
-    const current = await API.getPlaylist(account.id);
-    if (!current)
-      throw new Error('Category settings are saved. Reopen setup to continue.');
+    const current = await API.advanceM3USetup(account.id, 'confirm_categories');
     setAccount(current);
     usePlaylistsStore.getState().updatePlaylist(current);
-    setCategoriesSaved(true);
+    if (account.account_type === 'XC' && account.enable_vod)
+      await fetchCategories();
     setCategoryEditorOpen(false);
   };
   if (['account', 'content'].includes(account.setup_step)) {
@@ -190,102 +208,111 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
             stage={account.setup_step || 'categories'}
             accountType={account.account_type}
           />
-          <div className={editorClasses.setupPanel}>
-            {!categories ? (
-              <M3UAccountEPG
-                account={account}
-                isInitialSetup
-                onBusyChange={setEPGBusy}
-                disabled={busy}
-              />
-            ) : (
-              <Paper withBorder p="sm">
-                <Stack gap="sm">
-                  <Text fw={600}>Categories</Text>
-                  {ready && !loadFailed ? (
-                    <>
-                      <Text size="sm" c="dimmed">
-                        {categoriesSaved
-                          ? 'Category settings saved.'
-                          : 'Review which categories to import.'}{' '}
-                        Finish starts the initial import using the saved
-                        settings.
-                      </Text>
-                      <Group>
-                        <Button
-                          variant="default"
-                          onClick={() => setCategoryEditorOpen(true)}
-                          disabled={busy}
-                        >
-                          Edit categories
-                        </Button>
-                      </Group>
-                    </>
-                  ) : (
-                    <Alert color={loadFailed ? 'red' : 'blue'}>
-                      {loadFailed
-                        ? 'Categories could not be loaded. Check the account settings, then retry. You can close this window and resume later.'
-                        : slowLoading
-                          ? 'Loading provider categories is taking longer than usual. You can keep waiting, close this window and resume later, or retry.'
-                          : 'Loading provider categories. You can edit their selection when loading completes.'}
-                    </Alert>
-                  )}
-                </Stack>
-              </Paper>
-            )}
-          </div>
-          <Group
-            component="footer"
-            aria-label="M3U setup actions"
-            justify="flex-end"
-            gap="xs"
-            mih={50}
-            className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
-          >
-            {categories && (!ready || loadFailed) && (
-              <Button
-                disabled={busy || (!loadFailed && !slowLoading)}
-                loading={busy}
-                onClick={() => advance('retry_categories')}
+          {!categories ? (
+            <M3UAccountEPG
+              account={account}
+              isInitialSetup
+              onBusyChange={setEPGBusy}
+              disabled={busy}
+              onBack={() => advance('back_to_content')}
+              onNext={() => advance('continue_categories')}
+            />
+          ) : (
+            <>
+              <div className={editorClasses.setupPanel}>
+                <Paper withBorder p="sm">
+                  <Stack gap="sm">
+                    <Text fw={600}>Categories</Text>
+                    {ready && !loadFailed ? (
+                      <>
+                        {selectionCounts.map(({ label, rows }) => (
+                          <Group key={label} justify="space-between">
+                            <Text size="sm">{label}</Text>
+                            <Text size="sm" c="dimmed">
+                              {rows.filter((row) => row.enabled).length} of{' '}
+                              {rows.length} categories selected
+                            </Text>
+                          </Group>
+                        ))}
+                        <Text size="sm" c="dimmed">
+                          {categoriesSaved
+                            ? 'Selection saved. Finish & import starts the initial import.'
+                            : 'Select the categories you want to import before finishing setup.'}
+                        </Text>
+                        {categoriesSaved && (
+                          <Group>
+                            <Button
+                              variant="default"
+                              onClick={() => setCategoryEditorOpen(true)}
+                              disabled={busy}
+                            >
+                              Edit selection
+                            </Button>
+                          </Group>
+                        )}
+                      </>
+                    ) : (
+                      <Alert color={loadFailed ? 'red' : 'blue'}>
+                        {loadFailed
+                          ? 'Categories could not be loaded. Check the account settings, then retry. You can close this window and resume later.'
+                          : slowLoading
+                            ? 'Loading provider categories is taking longer than usual. You can keep waiting, close this window and resume later, or retry.'
+                            : 'Loading provider categories. You can edit their selection when loading completes.'}
+                      </Alert>
+                    )}
+                  </Stack>
+                </Paper>
+              </div>
+              <Group
+                component="footer"
+                aria-label="M3U setup actions"
+                justify="space-between"
+                gap="xs"
+                mih={50}
+                className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
               >
-                Retry
-              </Button>
-            )}
-            <Button
-              variant="default"
-              disabled={busy || epgBusy}
-              onClick={() =>
-                advance(
-                  categories && account.account_type === 'XC'
-                    ? 'back_to_epg'
-                    : 'back_to_content'
-                )
-              }
-            >
-              Back
-            </Button>
-            <Group gap="xs">
-              {categories ? (
-                <>
-                  <Button
-                    disabled={busy || !ready || loadFailed}
-                    loading={busy}
-                    onClick={() => advance('complete')}
-                  >
-                    Finish
-                  </Button>
-                </>
-              ) : (
                 <Button
+                  variant="default"
                   disabled={busy || epgBusy}
-                  loading={busy}
-                  onClick={() => advance('continue_categories')}
+                  onClick={() =>
+                    advance(
+                      account.account_type === 'XC'
+                        ? 'back_to_epg'
+                        : 'back_to_content'
+                    )
+                  }
                 >
-                  Next
+                  Back
                 </Button>
-              )}
-            </Group>
-          </Group>
+                <Group gap="xs">
+                  {!ready || loadFailed ? (
+                    <Button
+                      disabled={busy || (!loadFailed && !slowLoading)}
+                      loading={busy}
+                      onClick={() => advance('retry_categories')}
+                    >
+                      Retry
+                    </Button>
+                  ) : categoriesSaved ? (
+                    <Button
+                      disabled={busy || !ready || loadFailed}
+                      loading={busy}
+                      onClick={() => advance('complete')}
+                    >
+                      Finish &amp; import
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={busy}
+                      onClick={() => setCategoryEditorOpen(true)}
+                    >
+                      Select categories
+                    </Button>
+                  )}
+                </Group>
+              </Group>
+            </>
+          )}
         </Stack>
       </Modal>
       {categoryEditorOpen && (

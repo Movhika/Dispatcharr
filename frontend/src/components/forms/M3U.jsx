@@ -977,11 +977,26 @@ const M3U = ({
             aria-label="M3U account actions"
             className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
             gap="md"
-            justify="flex-end"
+            justify={!playlist?.id || setupMode ? 'space-between' : 'flex-end'}
             align="center"
             wrap="nowrap"
             mih={50}
           >
+            {(!playlist?.id || setupMode) && (
+              <div>
+                {activeTab === 'content' && (
+                  <Button
+                    variant="default"
+                    onClick={() =>
+                      setupMode ? onSetupBack() : setActiveTab('account')
+                    }
+                    disabled={creating || setupBusy}
+                  >
+                    Back
+                  </Button>
+                )}
+              </div>
+            )}
             <Flex gap="xs" align="center">
               {playlist && !setupMode && (
                 <>
@@ -1004,17 +1019,6 @@ const M3U = ({
                 </>
               )}
 
-              {(!playlist?.id || setupMode) && activeTab === 'content' && (
-                <Button
-                  variant="default"
-                  onClick={() =>
-                    setupMode ? onSetupBack() : setActiveTab('account')
-                  }
-                  disabled={creating || setupBusy}
-                >
-                  Back
-                </Button>
-              )}
               {!playlist?.id && activeTab === 'account' ? (
                 <Button
                   key="next"

@@ -164,6 +164,21 @@ def create_account_epg(account_id):
         return _create_matching_epg(account)
 
 
+def _validate_setup_categories(account):
+    if account.setup_step != M3UAccount.SetupStep.CATEGORIES:
+        raise ValidationError("Finish the optional EPG step first.")
+    if not account.is_active:
+        raise ValidationError("Enable this account before completing setup.")
+    if not account.channel_group.exists():
+        raise ValidationError("Load the provider categories first.")
+    if account.status in {
+        M3UAccount.Status.ERROR,
+        M3UAccount.Status.FETCHING,
+        M3UAccount.Status.PARSING,
+    }:
+        raise ValidationError("Finish loading the provider categories first.")
+
+
 def advance_account_setup(account_id, action):
     with transaction.atomic():
         account = M3UAccount.objects.select_for_update().get(pk=account_id)
@@ -211,21 +226,27 @@ def advance_account_setup(account_id, action):
                 return account
             account.status = M3UAccount.Status.FETCHING
             account.last_message = "Loading provider categories for setup."
-            account.save(update_fields=["status", "last_message"])
+            account.custom_properties = {
+                **(account.custom_properties or {}),
+                "setup_categories_reviewed": False,
+            }
+            account.save(
+                update_fields=["status", "last_message", "custom_properties"]
+            )
             transaction.on_commit(lambda: queue_setup_categories(account.id))
+        elif action == "confirm_categories":
+            _validate_setup_categories(account)
+            account.custom_properties = {
+                **(account.custom_properties or {}),
+                "setup_categories_reviewed": True,
+            }
+            account.save(update_fields=["custom_properties"])
         elif action == "complete":
-            if account.setup_step != M3UAccount.SetupStep.CATEGORIES:
-                raise ValidationError("Finish the optional EPG step first.")
-            if not account.is_active:
-                raise ValidationError("Enable this account before completing setup.")
-            if not account.channel_group.exists():
-                raise ValidationError("Load the provider categories first.")
-            if account.status in {
-                M3UAccount.Status.ERROR,
-                M3UAccount.Status.FETCHING,
-                M3UAccount.Status.PARSING,
-            }:
-                raise ValidationError("Finish loading the provider categories first.")
+            _validate_setup_categories(account)
+            if not (account.custom_properties or {}).get("setup_categories_reviewed"):
+                raise ValidationError(
+                    "Select and save the categories before finishing setup."
+                )
             include_vod = (
                 account.account_type == M3UAccount.Types.XC
                 and bool((account.custom_properties or {}).get("enable_vod"))

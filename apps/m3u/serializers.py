@@ -342,6 +342,7 @@ class M3USetupActionSerializer(serializers.Serializer):
             "create_epg", "skip_epg", "retry_categories", "complete",
             "back_to_epg", "back_to_content", "back_to_account",
             "continue_content", "continue_epg", "continue_categories",
+            "confirm_categories",
         )
     )
 
@@ -366,6 +367,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     filters = serializers.SerializerMethodField()
     start_setup = serializers.BooleanField(write_only=True, required=False)
     setup_step = serializers.CharField(read_only=True)
+    setup_categories_reviewed = serializers.SerializerMethodField()
     earliest_expiration = serializers.SerializerMethodField()
     all_expirations = serializers.SerializerMethodField()
     live_refresh_schedule = serializers.SerializerMethodField()
@@ -459,6 +461,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "status",
             "start_setup",
             "setup_step",
+            "setup_categories_reviewed",
             "last_message",
             "enable_vod",
             "auto_enable_new_groups_live",
@@ -612,15 +615,16 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # so unrelated keys persist. The dedicated preference fields below
         # overwrite their corresponding keys; clients should set those via
         # the typed top-level fields rather than the custom_properties
-        # payload. Drop hash_key from the incoming blob so a raw write cannot
-        # bypass validation or the lock gate on the typed field.
+        # payload. Raw properties cannot bypass hash-key validation or mark
+        # the guided category selection as reviewed.
         incoming_custom = {}
         if "custom_properties" in validated_data:
             incoming_custom = validated_data["custom_properties"] or {}
             if not isinstance(incoming_custom, dict):
                 incoming_custom = ensure_custom_properties_dict(incoming_custom)
             incoming_custom = {
-                k: v for k, v in incoming_custom.items() if k != "hash_key"
+                k: v for k, v in incoming_custom.items()
+                if k not in {"hash_key", "setup_categories_reviewed"}
             }
         existing_custom = instance.custom_properties or {}
         if not isinstance(existing_custom, dict):
@@ -711,12 +715,15 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         auto_enable_new_groups_series = validated_data.pop("auto_enable_new_groups_series", True)
         hash_key = validated_data.pop("hash_key", None)
 
-        # Parse existing custom_properties or create new. Drop hash_key from
-        # the incoming blob so only the typed field can set the override.
+        # Only the typed hash-key field and the setup action may write their
+        # reserved properties.
         custom_props = validated_data.get("custom_properties") or {}
         if not isinstance(custom_props, dict):
             custom_props = ensure_custom_properties_dict(custom_props)
-        custom_props = {k: v for k, v in custom_props.items() if k != "hash_key"}
+        custom_props = {
+            k: v for k, v in custom_props.items()
+            if k not in {"hash_key", "setup_categories_reviewed"}
+        }
 
         # Set preferences (default to True for auto_enable_new_groups)
         custom_props["enable_vod"] = enable_vod
@@ -756,6 +763,10 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # per account (viewset prefetches "filters").
         filters = sorted(obj.filters.all(), key=lambda f: (f.order, f.id))
         return M3UFilterSerializer(filters, many=True).data
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_setup_categories_reviewed(self, obj):
+        return bool((obj.custom_properties or {}).get("setup_categories_reviewed"))
 
     @extend_schema_field(M3URefreshScheduleSerializer)
     def get_live_refresh_schedule(self, obj):

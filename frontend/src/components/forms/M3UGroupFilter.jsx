@@ -403,7 +403,11 @@ const M3UGroupFilter = ({
               loading={activeAction === 'save'}
               onClick={submit}
             >
-              {isInitialSetup && !onSetupSave ? 'Save and Refresh' : 'Save'}
+              {onSetupSave
+                ? 'Save selection'
+                : isInitialSetup
+                  ? 'Save and Refresh'
+                  : 'Save'}
             </Button>
           </div>
         </Flex>

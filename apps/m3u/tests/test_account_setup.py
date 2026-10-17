@@ -354,6 +354,7 @@ class AccountSetupTests(TestCase):
         account.refresh_from_db()
         self.assertFalse(account.refresh_task.enabled)
         self.group(account)
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
         self.assertEqual(self.action(account, "complete").status_code, 200)
         account.refresh_from_db()
         self.assertTrue(account.refresh_task.enabled)
@@ -375,6 +376,7 @@ class AccountSetupTests(TestCase):
             setup_step="categories", custom_properties={"enable_vod": True}
         )
         self.group(account)
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
         for _ in range(2):
             response = self.action(account, "complete")
             self.assertEqual(response.status_code, 200, response.data)
@@ -388,6 +390,7 @@ class AccountSetupTests(TestCase):
     def test_failed_import_dispatch_restores_category_step(self, refresh):
         account = self.account(setup_step="categories", refresh_interval=24)
         self.group(account)
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
         with (
             self.assertRaises(APIException),
             self.captureOnCommitCallbacks(execute=True),
@@ -396,6 +399,54 @@ class AccountSetupTests(TestCase):
         account.refresh_from_db()
         self.assertEqual(account.setup_step, "categories")
         self.assertFalse(account.refresh_task.enabled)
+        self.assertTrue(account.custom_properties["setup_categories_reviewed"])
+
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    def test_selection_review_persists_with_no_enabled_groups(self, refresh):
+        account = self.account(setup_step="categories")
+        group = self.group(account)
+        group.enabled = False
+        group.save(update_fields=["enabled"])
+        self.assertEqual(self.action(account, "complete").status_code, 400)
+        for _ in range(2):
+            response = self.action(account, "confirm_categories")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertTrue(response.data["setup_categories_reviewed"])
+            self.assertEqual(response.data["setup_step"], "categories")
+        refresh.assert_not_called()
+        self.action(account, "back_to_epg")
+        self.action(account, "continue_categories")
+        response = self.client.get(f"/api/m3u/accounts/{account.id}/")
+        self.assertTrue(response.data["setup_categories_reviewed"])
+        self.assertFalse(response.data["channel_groups"][0]["enabled"])
+        self.assertEqual(self.action(account, "complete").status_code, 200)
+        refresh.assert_called_once_with(account.id, include_vod=False)
+
+    def test_selection_review_cannot_be_set_by_generic_account_edits(self):
+        account = self.account(setup_step="categories")
+        self.group(account)
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {
+                "setup_categories_reviewed": True,
+                "custom_properties": {"setup_categories_reviewed": True},
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["setup_categories_reviewed"])
+
+    def test_review_requires_loaded_categories_and_retry_resets_it(self):
+        account = self.account(setup_step="epg")
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 400)
+        self.action(account, "continue_categories")
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 400)
+        self.group(account)
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
+        response = self.action(account, "retry_categories")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["setup_categories_reviewed"])
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 400)
 
     def test_completion_requires_epg_decision_and_loaded_categories(self):
         account = self.account()

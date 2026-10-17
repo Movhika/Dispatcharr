@@ -198,7 +198,7 @@ describe('M3UGroupFilter', () => {
         {...defaultProps({ isInitialSetup: true, onSetupSave })}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save selection' }));
     await waitFor(() => expect(onSetupSave).toHaveBeenCalledOnce());
     expect(
       M3uGroupFilterUtils.savePlaylistGroupSettings

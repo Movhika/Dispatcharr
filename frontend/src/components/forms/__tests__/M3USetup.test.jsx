@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   fetchCategories: vi.fn(),
   updatePlaylist: vi.fn(),
   channelGroups: { 1: { id: 1, name: 'Example category' } },
+  categories: {},
 }));
 vi.mock('../../../api.js', () => ({
   default: {
@@ -105,6 +106,7 @@ describe('persisted M3U setup', () => {
     mocks.fetchEPGs.mockResolvedValue(undefined);
     mocks.fetchChannelGroups.mockResolvedValue(undefined);
     mocks.fetchCategories.mockResolvedValue(undefined);
+    mocks.categories = {};
     API.getPlaylist.mockResolvedValue(account);
     API.getM3UEPG.mockResolvedValue({ source: null, can_create: true });
     API.createM3UEPG.mockReset();
@@ -149,31 +151,48 @@ describe('persisted M3U setup', () => {
         return current;
       });
       renderSetup({ account: current });
-      fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: stage === 'epg' ? 'Skip EPG' : 'Next',
+        })
+      );
       await waitFor(() =>
         expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(7, action)
       );
     }
   );
 
-  it('places Back immediately before the primary footer action', () => {
+  it('groups the EPG decisions on the right and Back separately on the left', async () => {
     renderSetup();
+    await screen.findByText('No matching EPG source configured.');
     const actions = within(
       screen.getByRole('contentinfo', { name: 'M3U setup actions' })
     );
     expect(
       actions.getAllByRole('button').map((button) => button.textContent)
-    ).toEqual(['Back', 'Next']);
+    ).toEqual(['Back', 'Skip EPG', 'Create EPG']);
+    expect(
+      actions.getByRole('button', { name: 'Back' }).parentElement
+    ).not.toBe(
+      actions.getByRole('button', { name: 'Create EPG' }).parentElement
+    );
   });
 
   it.each([false, true])(
-    'continues without a Skip choice (create EPG: %s)',
+    'continues after an explicit EPG decision (create EPG: %s)',
     async (createEPG) => {
       const { onClose } = renderSetup();
       await screen.findByText('No matching EPG source configured.');
-      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+      expect(
+        screen.queryByRole('button', { name: 'Next' })
+      ).not.toBeInTheDocument();
       expect(screen.queryByRole('radio')).not.toBeInTheDocument();
-      expect(screen.queryByText('Skip EPG')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeEnabled();
+      expect(
+        within(
+          screen.getByRole('contentinfo', { name: 'M3U setup actions' })
+        ).getByRole('button', { name: 'Create EPG' })
+      ).toBeInTheDocument();
       const categories = {
         ...account,
         setup_step: 'categories',
@@ -195,10 +214,18 @@ describe('persisted M3U setup', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
         await screen.findByText('Example guide');
         expect(API.createM3UEPG).toHaveBeenCalledExactlyOnceWith(7);
+        expect(
+          screen.queryByRole('button', { name: 'Skip EPG' })
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'Create EPG' })
+        ).not.toBeInTheDocument();
       }
       expect(API.advanceM3USetup).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-      await screen.findByRole('button', { name: 'Edit categories' });
+      fireEvent.click(
+        screen.getByRole('button', { name: createEPG ? 'Next' : 'Skip EPG' })
+      );
+      await screen.findByRole('button', { name: 'Select categories' });
       expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
         7,
         'continue_categories'
@@ -218,7 +245,7 @@ describe('persisted M3U setup', () => {
     };
     API.getPlaylist.mockResolvedValue(categories);
     renderSetup({ account: categories });
-    await screen.findByRole('button', { name: 'Edit categories' });
+    await screen.findByRole('button', { name: 'Select categories' });
     expect(API.advanceM3USetup).not.toHaveBeenCalled();
     expect(
       screen.queryByText('Create matching EPG source?')
@@ -265,7 +292,7 @@ describe('persisted M3U setup', () => {
     );
     const { onClose } = renderSetup();
     fireEvent.click(await screen.findByRole('button', { name: 'Create EPG' }));
-    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Close M3U setup' }));
     expect(onClose).not.toHaveBeenCalled();
@@ -291,7 +318,7 @@ describe('persisted M3U setup', () => {
     API.advanceM3USetup.mockResolvedValue(categories);
     API.getPlaylist.mockResolvedValue(categories);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByRole('button', { name: 'Edit categories' });
+    await screen.findByRole('button', { name: 'Select categories' });
     expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
       7,
       'retry_categories'
@@ -311,10 +338,10 @@ describe('persisted M3U setup', () => {
       )
     );
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeEnabled()
     );
     API.advanceM3USetup.mockResolvedValue(account);
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip EPG' }));
     await waitFor(() =>
       expect(API.advanceM3USetup).toHaveBeenLastCalledWith(
         7,
@@ -349,7 +376,7 @@ describe('persisted M3U setup', () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
       expect(
-        screen.getByRole('button', { name: 'Edit categories' })
+        screen.getByRole('button', { name: 'Select categories' })
       ).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -395,8 +422,8 @@ describe('persisted M3U setup', () => {
       setup_step: 'categories',
       channel_groups: [{ channel_group: 1 }],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByRole('button', { name: 'Edit categories' });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip EPG' }));
+    await screen.findByRole('button', { name: 'Select categories' });
     expect(API.advanceM3USetup).toHaveBeenCalledTimes(1);
   });
 
@@ -418,18 +445,19 @@ describe('persisted M3U setup', () => {
       ...account,
       setup_step: 'categories',
       channel_groups: [{ channel_group: 1 }],
+      setup_categories_reviewed: true,
     };
     API.getPlaylist.mockResolvedValue(categories);
     const { onClose } = renderSetup({ account: categories });
-    await screen.findByRole('button', { name: 'Edit categories' });
+    await screen.findByRole('button', { name: 'Edit selection' });
     let complete;
     API.advanceM3USetup.mockReturnValue(
       new Promise((resolve) => {
         complete = resolve;
       })
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish & import' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish & import' }));
     expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(7, 'complete');
     complete({ ...categories, setup_step: '' });
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
@@ -447,7 +475,7 @@ describe('persisted M3U setup', () => {
     API.getPlaylist.mockResolvedValue(categories);
     renderSetup({ account: categories });
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Edit categories' })
+      await screen.findByRole('button', { name: 'Select categories' })
     );
     expect(
       screen.getByRole('dialog', { name: 'Category setup' })
@@ -457,13 +485,22 @@ describe('persisted M3U setup', () => {
         screen.getByRole('dialog', { name: 'Category setup' })
       ).queryByLabelText('M3U setup progress')
     ).not.toBeInTheDocument();
+    API.advanceM3USetup.mockResolvedValue({
+      ...categories,
+      setup_categories_reviewed: true,
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save categories' }));
-    await screen.findByText(/Category settings saved/);
+    await screen.findByText(/Selection saved/);
     expect(
       screen.queryByRole('dialog', { name: 'Category setup' })
     ).not.toBeInTheDocument();
-    expect(API.advanceM3USetup).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+    expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
+      7,
+      'confirm_categories'
+    );
+    expect(
+      screen.getByRole('button', { name: 'Finish & import' })
+    ).toBeEnabled();
   });
 
   it('returns to the setup step when category editing is closed', async () => {
@@ -475,10 +512,13 @@ describe('persisted M3U setup', () => {
     API.getPlaylist.mockResolvedValue(categories);
     const { onClose } = renderSetup({ account: categories });
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Edit categories' })
+      await screen.findByRole('button', { name: 'Select categories' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Close categories' }));
-    await screen.findByRole('button', { name: 'Finish' });
+    await screen.findByRole('button', { name: 'Select categories' });
+    expect(
+      screen.queryByRole('button', { name: 'Finish & import' })
+    ).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -487,5 +527,58 @@ describe('persisted M3U setup', () => {
     const { onClose } = renderSetup();
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(API.advanceM3USetup).not.toHaveBeenCalled();
+  });
+
+  it('resumes a saved all-disabled selection with Finish & import', async () => {
+    const categories = {
+      ...account,
+      setup_step: 'categories',
+      setup_categories_reviewed: true,
+      channel_groups: [{ channel_group: 1, enabled: false }],
+    };
+    API.getPlaylist.mockResolvedValue(categories);
+    renderSetup({ account: categories });
+    expect(
+      await screen.findByText('0 of 1 categories selected')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Finish & import' })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Edit selection' })
+    ).toBeEnabled();
+    expect(API.advanceM3USetup).not.toHaveBeenCalled();
+  });
+
+  it('summarizes only this account and enabled content types', async () => {
+    const categories = {
+      ...account,
+      setup_step: 'categories',
+      enable_vod: true,
+      channel_groups: [{ channel_group: 1, enabled: true }],
+    };
+    mocks.categories = {
+      1: {
+        category_type: 'movie',
+        m3u_accounts: [{ m3u_account: 7, enabled: true }],
+      },
+      2: {
+        category_type: 'movie',
+        m3u_accounts: [{ m3u_account: 7, enabled: false }],
+      },
+      3: {
+        category_type: 'series',
+        m3u_accounts: [{ m3u_account: 99, enabled: true }],
+      },
+    };
+    API.getPlaylist.mockResolvedValue(categories);
+    renderSetup({ account: categories });
+    await screen.findByRole('button', { name: 'Select categories' });
+    expect(screen.getByText('1 of 1 categories selected')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 categories selected')).toBeInTheDocument();
+    expect(screen.getByText('0 of 0 categories selected')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Finish & import' })
+    ).not.toBeInTheDocument();
   });
 });

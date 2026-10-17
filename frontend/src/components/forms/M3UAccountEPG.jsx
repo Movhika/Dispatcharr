@@ -20,6 +20,7 @@ import { format, useDateTimeFormat } from '../../utils/dateTimeUtils.js';
 import { formatStatusText } from '../../utils/tables/EPGsTableUtils.js';
 import SourceStatus from '../SourceStatus.jsx';
 import cardClasses from '../tables/M3UsTable.module.css';
+import editorClasses from './AccountEditor.module.css';
 
 const M3UAccountEPG = ({
   account,
@@ -27,6 +28,8 @@ const M3UAccountEPG = ({
   isInitialSetup = false,
   disabled = false,
   onBusyChange,
+  onBack,
+  onNext,
 }) => {
   const [source, setSource] = useState(null);
   const [canCreate, setCanCreate] = useState(false);
@@ -119,7 +122,7 @@ const M3UAccountEPG = ({
       success: 'green.5',
     }[status] || 'gray.5';
 
-  return (
+  const card = (
     <Paper
       component={current ? 'article' : 'section'}
       aria-label={current ? `EPG source ${current.name}` : 'EPG source'}
@@ -173,7 +176,7 @@ const M3UAccountEPG = ({
                 ? 'No matching EPG source configured.'
                 : 'Complete and save the account connection before creating its EPG source.'}
             </Text>
-            {canCreate && (
+            {canCreate && !isInitialSetup && (
               <Group>
                 <Button onClick={create} loading={creating} disabled={disabled}>
                   Create EPG
@@ -189,6 +192,53 @@ const M3UAccountEPG = ({
         )}
       </Stack>
     </Paper>
+  );
+
+  if (!isInitialSetup) return card;
+  return (
+    <>
+      <div className={editorClasses.setupPanel}>{card}</div>
+      <Group
+        component="footer"
+        aria-label="M3U setup actions"
+        justify="space-between"
+        gap="xs"
+        mih={50}
+        className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
+      >
+        <Button
+          variant="default"
+          disabled={disabled || creating}
+          onClick={onBack}
+        >
+          Back
+        </Button>
+        <Group gap="xs">
+          {current ? (
+            <Button disabled={disabled || creating || loading} onClick={onNext}>
+              Next
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="default"
+                disabled={disabled || creating || loading}
+                onClick={onNext}
+              >
+                Skip EPG
+              </Button>
+              <Button
+                onClick={create}
+                loading={creating}
+                disabled={disabled || loading || failed || !canCreate}
+              >
+                Create EPG
+              </Button>
+            </>
+          )}
+        </Group>
+      </Group>
+    </>
   );
 };
 
