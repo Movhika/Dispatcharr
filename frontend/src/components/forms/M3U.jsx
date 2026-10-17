@@ -94,6 +94,7 @@ const M3U = ({
   m3uAccount = null,
   isOpen,
   onClose,
+  onSaved,
   playlistCreated = false,
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
@@ -281,10 +282,12 @@ const M3U = ({
     if (playlist?.id) {
       // Enabled is controlled in the overview, not by a stale editor snapshot.
       delete values.is_active;
-      await updatePlaylist(playlist, values, file);
+      const updatedPlaylist = await updatePlaylist(playlist, values, file);
+      if (!updatedPlaylist?.id) return;
       form.reset();
       setFile(null);
-      onClose();
+      if (onSaved) onSaved(updatedPlaylist);
+      else onClose();
       return;
     }
 

@@ -145,6 +145,15 @@ class M3UAccount(models.Model):
                 return keys
         return parse_m3u_hash_keys(CoreSettings.get_m3u_hash_key())
 
+    def update_setup_step_for_account_type(self, previous_account_type):
+        """Keep unfinished setup aligned with the edited connection type."""
+        if not self.setup_step:
+            return
+        if self.account_type != self.Types.XC:
+            self.setup_step = self.SetupStep.CATEGORIES
+        elif previous_account_type != self.Types.XC:
+            self.setup_step = self.SetupStep.EPG
+
     def get_refresh_schedule(self, *, vod=False):
         """Describe the existing Beat schedule without changing or running it."""
         task = self.vod_refresh_task if vod else self.refresh_task

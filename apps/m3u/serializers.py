@@ -634,8 +634,10 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         channel_group_data = validated_data.pop("channel_group", [])
 
         # First, update the M3UAccount itself
+        previous_account_type = instance.account_type
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        instance.update_setup_step_for_account_type(previous_account_type)
         instance.save()
 
         # Prepare a list of memberships to update

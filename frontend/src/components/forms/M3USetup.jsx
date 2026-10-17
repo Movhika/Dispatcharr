@@ -18,6 +18,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
   const [account, setAccount] = useState(initialAccount);
   const [ready, setReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [slowLoading, setSlowLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const busyRef = useRef(false);
@@ -46,7 +47,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
         setAccount(current);
         usePlaylistsStore.getState().updatePlaylist(current);
         if (current.setup_step !== 'categories') return;
-        if (current.status === 'error' || ++attempts >= 45) {
+        if (current.status === 'error') {
           setLoadFailed(true);
         } else if (
           current.channel_groups?.length &&
@@ -68,6 +69,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
           }
           if (!cancelled) setReady(true);
         } else {
+          setSlowLoading(++attempts >= 45);
           timer = setTimeout(load, 2000);
         }
       } catch {
@@ -98,6 +100,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
       if (action === 'create_epg') fetchEPGs().catch(() => {});
       if (action === 'retry_categories') {
         setLoadFailed(false);
+        setSlowLoading(false);
         setReload((value) => value + 1);
       }
       if (action === 'complete') {
@@ -169,7 +172,9 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
                 <Alert color={loadFailed ? 'red' : 'blue'}>
                   {loadFailed
                     ? 'Categories could not be loaded. Check the account settings, then retry. You can close this window and resume later.'
-                    : 'Loading provider categories. Their selection opens here when the account is ready.'}
+                    : slowLoading
+                      ? 'Loading provider categories is taking longer than usual. You can keep waiting, close this window and resume later, or retry.'
+                      : 'Loading provider categories. Their selection opens here when the account is ready.'}
                 </Alert>
               </Stack>
             )}
@@ -185,7 +190,7 @@ const M3USetup = ({ account: initialAccount, onClose, onEditAccount }) => {
             <Group>
               {categories ? (
                 <Button
-                  disabled={busy || !loadFailed}
+                  disabled={busy || (!loadFailed && !slowLoading)}
                   loading={busy}
                   onClick={() => advance('retry_categories')}
                 >

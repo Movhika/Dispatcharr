@@ -856,6 +856,7 @@ const M3UTable = () => {
         m3uAccount={playlist}
         isOpen={playlistModalOpen}
         onClose={closeModal}
+        onSaved={(account) => closeModal(account.setup_step ? account : null)}
         playlistCreated={playlistCreated}
       />
       {setupAccount && (

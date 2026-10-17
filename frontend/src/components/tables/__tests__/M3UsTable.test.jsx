@@ -35,7 +35,7 @@ vi.mock('../../../utils/tables/M3UsTableUtils.js', async (importOriginal) => ({
   updatePlaylist: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../forms/M3U', () => ({
-  default: ({ isOpen, m3uAccount, onClose, playlistCreated }) =>
+  default: ({ isOpen, m3uAccount, onClose, onSaved, playlistCreated }) =>
     isOpen ? (
       <div role="dialog" aria-label="Account editor">
         <span>{m3uAccount?.name || 'New account'}</span>
@@ -43,6 +43,22 @@ vi.mock('../../forms/M3U', () => ({
         <button onClick={() => onClose(null)}>Close editor</button>
         <button onClick={() => onClose({ id: 99, name: 'Created account' })}>
           Create account
+        </button>
+        <button
+          onClick={() => onSaved({ ...m3uAccount, name: 'Edited account' })}
+        >
+          Save account
+        </button>
+        <button
+          onClick={() =>
+            onSaved({
+              ...m3uAccount,
+              account_type: 'STD',
+              setup_step: 'categories',
+            })
+          }
+        >
+          Save as Standard
         </button>
       </div>
     ) : null,
@@ -59,6 +75,7 @@ vi.mock('../../forms/M3USetup.jsx', () => ({
   default: ({ account, onClose, onEditAccount }) => (
     <div role="dialog" aria-label="Account setup">
       <span>{account.name}</span>
+      <span>Step: {account.setup_step}</span>
       <button onClick={onClose}>Close setup</button>
       <button onClick={() => onEditAccount(account)}>Edit setup account</button>
     </div>
@@ -267,6 +284,49 @@ describe('M3U account cards', () => {
     expect(
       screen.getByRole('dialog', { name: 'Account editor' })
     ).toHaveTextContent('Provider One');
+  });
+
+  it.each(['epg', 'categories'])(
+    'continues %s setup immediately after saving account corrections',
+    (setup_step) => {
+      setup({ playlists: [account({ setup_step })] });
+      show();
+      fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit setup account' })
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Save account' }));
+      expect(
+        screen.getByRole('dialog', { name: 'Account setup' })
+      ).toHaveTextContent('Edited account');
+      expect(
+        screen.getByRole('dialog', { name: 'Account setup' })
+      ).toHaveTextContent(`Step: ${setup_step}`);
+      expect(
+        screen.queryByRole('dialog', { name: 'Account editor' })
+      ).not.toBeInTheDocument();
+    }
+  );
+
+  it('resumes the saved step after changing the account type', () => {
+    setup({ playlists: [account({ setup_step: 'epg' })] });
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume setup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit setup account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save as Standard' }));
+    expect(
+      screen.getByRole('dialog', { name: 'Account setup' })
+    ).toHaveTextContent('Step: categories');
+    expect(
+      screen.queryByRole('dialog', { name: 'Account editor' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not start setup after saving a completed account', () => {
+    show();
+    fireEvent.click(card().getByRole('button', { name: 'Edit Provider One' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save account' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('reactivates disabled accounts using a toggle-only patch', async () => {

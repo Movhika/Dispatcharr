@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3USetup from '../M3USetup.jsx';
@@ -168,6 +174,67 @@ describe('persisted M3U setup', () => {
     await waitFor(() =>
       expect(API.advanceM3USetup).toHaveBeenLastCalledWith(7, 'skip_epg')
     );
+  });
+
+  it('keeps waiting after slow discovery and opens categories when it completes', async () => {
+    vi.useFakeTimers();
+    try {
+      const loading = {
+        ...account,
+        setup_step: 'categories',
+        status: 'fetching',
+      };
+      API.getPlaylist.mockResolvedValue(loading);
+      renderSetup({ account: loading });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100000);
+      });
+      expect(screen.getByText(/taking longer than usual/)).toBeInTheDocument();
+      expect(screen.queryByText(/could not be loaded/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+      expect(API.advanceM3USetup).not.toHaveBeenCalled();
+      API.getPlaylist.mockResolvedValue({
+        ...loading,
+        status: 'pending_setup',
+        channel_groups: [{ channel_group: 1 }],
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(
+        screen.getByRole('dialog', { name: 'Category setup' })
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still shows an actual error after prolonged loading', async () => {
+    vi.useFakeTimers();
+    try {
+      const loading = {
+        ...account,
+        setup_step: 'categories',
+        status: 'parsing',
+      };
+      API.getPlaylist.mockResolvedValue(loading);
+      renderSetup({ account: loading });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100000);
+      });
+      API.getPlaylist.mockResolvedValue({ ...loading, status: 'error' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(
+        screen.getByText(/Categories could not be loaded/)
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/taking longer than usual/)
+      ).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refreshes persisted progress after an interrupted response', async () => {

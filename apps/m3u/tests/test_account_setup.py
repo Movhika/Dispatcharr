@@ -146,6 +146,50 @@ class AccountSetupTests(TestCase):
         )
         refresh.assert_called_once()
 
+    def test_account_type_edits_align_unfinished_setup(self):
+        for previous_type, step, new_type, expected_step in (
+            ("XC", "epg", "STD", "categories"),
+            ("XC", "categories", "STD", "categories"),
+            ("STD", "categories", "XC", "epg"),
+            ("XC", "categories", "XC", "categories"),
+            ("STD", "epg", "STD", "categories"),
+        ):
+            with self.subTest(previous_type=previous_type, step=step):
+                account = self.account(
+                    name=f"Type change {previous_type} {step} {new_type}",
+                    account_type=previous_type,
+                    setup_step=step,
+                    refresh_interval=24,
+                )
+                response = self.client.patch(
+                    f"/api/m3u/accounts/{account.id}/",
+                    {"account_type": new_type},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["setup_step"], expected_step)
+                account.refresh_from_db()
+                self.assertEqual(account.setup_step, expected_step)
+                self.assertFalse(account.refresh_task.enabled)
+        self.assertFalse(EPGSource.objects.exists())
+
+    def test_account_type_edits_do_not_restart_completed_setup(self):
+        for previous_type, new_type in (("XC", "STD"), ("STD", "XC")):
+            with self.subTest(previous_type=previous_type):
+                account = self.account(
+                    name=f"Completed {previous_type}",
+                    account_type=previous_type,
+                    setup_step="",
+                )
+                response = self.client.patch(
+                    f"/api/m3u/accounts/{account.id}/",
+                    {"account_type": new_type},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                account.refresh_from_db()
+                self.assertEqual(account.setup_step, "")
+
     def test_skipping_epg_is_persisted_without_creating_a_source(self):
         account = self.account()
         response = self.action(account, "skip_epg")

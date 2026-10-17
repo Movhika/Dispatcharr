@@ -908,6 +908,67 @@ describe('M3U', () => {
   // ── Updating a playlist ────────────────────────────────────────────────────
 
   describe('updating an existing playlist', () => {
+    it('passes the saved account to the continuation callback', async () => {
+      const onSaved = vi.fn();
+      const onClose = vi.fn();
+      const saved = makeM3uAccount({
+        account_type: 'STD',
+        setup_step: 'categories',
+      });
+      setupStores();
+      vi.mocked(M3uUtils.updatePlaylist).mockResolvedValueOnce(saved);
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ setup_step: 'epg' }),
+            onClose,
+            onSaved,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(onSaved).toHaveBeenCalledExactlyOnceWith(saved)
+      );
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('keeps failed corrections open without resuming setup', async () => {
+      const onSaved = vi.fn();
+      const onClose = vi.fn();
+      setupStores();
+      vi.mocked(M3uUtils.updatePlaylist)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined);
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ setup_step: 'epg' }),
+            onClose,
+            onSaved,
+          })}
+        />
+      );
+      fireEvent.change(screen.getByTestId('text-input-name'), {
+        target: { value: 'Corrected account' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledOnce()
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledTimes(2)
+      );
+      expect(onSaved).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(M3uUtils.updatePlaylist).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ name: 'Corrected account' }),
+        null
+      );
+    });
+
     it('does not write the editor snapshot of enabled state when saving', async () => {
       setupStores();
       render(
