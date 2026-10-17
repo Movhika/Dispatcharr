@@ -237,18 +237,29 @@ vi.mock('@mantine/core', () => ({
     </label>
   ),
   Divider: ({ label }) => <hr aria-label={label} />,
-  FileInput: ({ label, placeholder, onChange, accept, disabled }) => (
+  FileInput: ({
+    label,
+    placeholder,
+    onChange,
+    accept,
+    disabled,
+    description,
+    leftSection,
+    'aria-label': ariaLabel,
+  }) => (
     <div>
       <label>
         {label}
+        {leftSection}
         <input
           type="file"
-          aria-label={label || placeholder}
+          aria-label={ariaLabel || label || placeholder}
           accept={accept}
           disabled={disabled}
           onChange={(e) => onChange?.(e.target.files?.[0] ?? null)}
         />
       </label>
+      {description && <span>{description}</span>}
     </div>
   ),
   Flex: ({ children, className, component, 'aria-label': ariaLabel }) => (
@@ -1266,6 +1277,63 @@ describe('M3U', () => {
           'VOD scanning is available for Xtream Codes accounts only.'
         )
       ).toBeInTheDocument();
+      const schedule = within(
+        screen.getByRole('group', { name: 'VOD refresh schedule' })
+      );
+      expect(
+        schedule.getByText(
+          'VOD refresh is available for Xtream Codes accounts only.'
+        )
+      ).toBeInTheDocument();
+      expect(
+        schedule.queryByText(/Enable VOD scanning/)
+      ).not.toBeInTheDocument();
+      expect(
+        schedule
+          .getByRole('switch', { name: 'Enable separate VOD refresh schedule' })
+          .closest('[data-help]')
+      ).toHaveAttribute(
+        'data-help',
+        'VOD refresh is available for Xtream Codes accounts only.'
+      );
+    });
+
+    it('keeps the activation hint for XC accounts with VOD disabled', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ enable_vod: false }),
+          })}
+        />
+      );
+      expect(
+        within(
+          screen.getByRole('group', { name: 'VOD refresh schedule' })
+        ).getByText('Enable VOD scanning to configure automatic VOD refreshes.')
+      ).toBeInTheDocument();
+    });
+
+    it('shows an upload icon and keeps the URL-or-file hint in a tooltip', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ account_type: 'STD' }),
+          })}
+        />
+      );
+      const input = screen.getByLabelText('Playlist file');
+      expect(input).toHaveAttribute('type', 'file');
+      expect(
+        input.closest('label').querySelector('svg.lucide-upload')
+      ).toBeInTheDocument();
+      expect(
+        input.closest('label').querySelector('[data-help]')
+      ).toHaveAttribute('data-help', 'Use a playlist URL or upload a file.');
+      expect(
+        screen.queryByText('Use a playlist URL or upload a file.')
+      ).not.toBeInTheDocument();
     });
 
     it('updates content controls when the account type changes', () => {

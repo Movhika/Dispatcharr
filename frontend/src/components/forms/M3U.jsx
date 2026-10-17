@@ -51,6 +51,7 @@ import editorClasses from './AccountEditor.module.css';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
 import { validateNewM3UAccount } from '../../utils/forms/M3uSetupUtils.js';
+import { Upload } from 'lucide-react';
 
 const helpLabel = (label, help) => (
   <Group gap={5} wrap="nowrap">
@@ -496,10 +497,15 @@ const M3U = ({
                       <>
                         <FileInput
                           id="file"
-                          label="Upload files"
-                          description="Use a playlist URL or upload a file."
+                          label={helpLabel(
+                            'Playlist file',
+                            'Use a playlist URL or upload a file.'
+                          )}
+                          aria-label="Playlist file"
                           clearable
-                          placeholder="Upload files"
+                          placeholder="Choose a playlist file"
+                          leftSection={<Upload size={16} aria-hidden="true" />}
+                          leftSectionPointerEvents="none"
                           onChange={setFile}
                           styles={{
                             input: {
@@ -771,7 +777,13 @@ const M3U = ({
                     <Group justify="space-between">
                       <Text fw={600}>VOD refresh schedule</Text>
                       <Tooltip
-                        label="When disabled, VOD refresh runs after a successful scheduled Live TV refresh."
+                        label={
+                          accountType !== 'XC'
+                            ? 'VOD refresh is available for Xtream Codes accounts only.'
+                            : !vodEnabled
+                              ? 'Enable VOD scanning to configure automatic VOD refreshes.'
+                              : 'When disabled, VOD refresh runs after a successful scheduled Live TV refresh.'
+                        }
                         multiline
                         maw={320}
                         withArrow
@@ -826,8 +838,9 @@ const M3U = ({
                       )
                     ) : (
                       <Text size="sm" c="dimmed">
-                        Enable VOD scanning to configure automatic VOD
-                        refreshes.
+                        {accountType !== 'XC'
+                          ? 'VOD refresh is available for Xtream Codes accounts only.'
+                          : 'Enable VOD scanning to configure automatic VOD refreshes.'}
                       </Text>
                     )}
                     {playlist?.id && (
