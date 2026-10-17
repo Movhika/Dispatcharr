@@ -84,10 +84,20 @@ def discover_setup_categories(account_id):
 
 
 def _queue_initial_import(account_id, include_vod):
+    from apps.channels.models import ChannelGroupM3UAccount
     from .tasks import refresh_single_m3u_account
 
     try:
-        refresh_single_m3u_account.delay(account_id, include_vod=include_vod)
+        if include_vod and not ChannelGroupM3UAccount.objects.filter(
+            m3u_account_id=account_id, enabled=True
+        ).exists():
+            # A VOD-only selection must not wait for an empty Live import,
+            # which correctly aborts before the normal VOD continuation.
+            from apps.vod.tasks import refresh_vod_content
+
+            refresh_vod_content.delay(account_id)
+        else:
+            refresh_single_m3u_account.delay(account_id, include_vod=include_vod)
     except Exception as exc:
         # Settings are already saved. Leave a resumable step if dispatch fails.
         with transaction.atomic():
@@ -263,7 +273,12 @@ def advance_account_setup(account_id, action):
                 and bool((account.custom_properties or {}).get("enable_vod"))
             )
             account.setup_step = ""
-            account.save(update_fields=["setup_step"])
+            fields = ["setup_step"]
+            if account.status == M3UAccount.Status.PENDING_SETUP:
+                account.status = M3UAccount.Status.IDLE
+                account.last_message = ""
+                fields.extend(["status", "last_message"])
+            account.save(update_fields=fields)
             transaction.on_commit(
                 lambda: _queue_initial_import(account.id, include_vod)
             )

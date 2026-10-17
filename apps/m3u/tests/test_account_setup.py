@@ -383,6 +383,57 @@ class AccountSetupTests(TestCase):
             self.assertEqual(response.data["setup_step"], "")
         refresh.assert_called_once_with(account.id, include_vod=True)
 
+    @patch("apps.vod.tasks.refresh_vod_content.delay")
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    def test_vod_only_selection_imports_without_an_empty_live_refresh(
+        self, live, vod
+    ):
+        account = self.account(
+            setup_step="categories", status=M3UAccount.Status.PENDING_SETUP,
+            custom_properties={"enable_vod": True},
+        )
+        group = self.group(account)
+        group.enabled = False
+        group.save(update_fields=["enabled"])
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
+        for _ in range(2):
+            response = self.action(account, "complete")
+            self.assertEqual(response.status_code, 200, response.data)
+        live.assert_not_called()
+        vod.assert_called_once_with(account.id)
+        account.refresh_from_db()
+        self.assertEqual(account.setup_step, "")
+        self.assertEqual(account.status, M3UAccount.Status.IDLE)
+        self.assertEqual(account.last_message, "")
+
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    def test_failed_vod_only_dispatch_keeps_the_reviewed_selection_retryable(
+        self, live
+    ):
+        account = self.account(
+            setup_step="categories", custom_properties={"enable_vod": True},
+        )
+        group = self.group(account)
+        group.enabled = False
+        group.save(update_fields=["enabled"])
+        self.assertEqual(self.action(account, "confirm_categories").status_code, 200)
+        with patch(
+            "apps.vod.tasks.refresh_vod_content.delay",
+            side_effect=RuntimeError("broker unavailable"),
+        ):
+            with (
+                self.assertRaises(APIException),
+                self.captureOnCommitCallbacks(execute=True),
+            ):
+                advance_account_setup(account.id, "complete")
+        account.refresh_from_db()
+        self.assertEqual(account.setup_step, "categories")
+        self.assertTrue(account.custom_properties["setup_categories_reviewed"])
+        with patch("apps.vod.tasks.refresh_vod_content.delay") as vod:
+            self.assertEqual(self.action(account, "complete").status_code, 200)
+            vod.assert_called_once_with(account.id)
+        live.assert_not_called()
+
     @patch(
         "apps.m3u.tasks.refresh_single_m3u_account.delay",
         side_effect=RuntimeError("broker unavailable"),
