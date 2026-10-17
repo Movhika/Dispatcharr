@@ -31,6 +31,20 @@ vi.mock('../LiveGroupFilter', () => ({
     <div data-testid="live-group-filter">
       <span data-testid="live-group-count">{groupStates?.length ?? 0}</span>
       <button
+        data-testid="live-annotate-groups"
+        onClick={() =>
+          setGroupStates?.((rows) =>
+            rows.map((row) => ({
+              ...row,
+              original_enabled: row.enabled,
+              name: 'Updated display name',
+            }))
+          )
+        }
+      >
+        Annotate Groups
+      </button>
+      <button
         data-testid="live-change-groups"
         onClick={() => setGroupStates?.([{ id: 99, enabled: true }])}
       >
@@ -213,6 +227,29 @@ describe('M3UGroupFilter', () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('does not treat initialized display metadata as unsaved category changes', () => {
+    setupStores();
+    M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
+      { channel_group: 1, enabled: false, custom_properties: {} },
+    ]);
+    const onClose = vi.fn();
+    render(
+      <M3UGroupFilter
+        {...defaultProps({
+          isInitialSetup: true,
+          onSetupSave: vi.fn(),
+          onClose,
+        })}
+      />
+    );
+    fireEvent.click(screen.getByTestId('live-annotate-groups'));
+    fireEvent.click(screen.getByTestId('modal-close'));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole('dialog', { name: 'Discard category changes?' })
+    ).not.toBeInTheDocument();
   });
 
   describe('guard conditions', () => {

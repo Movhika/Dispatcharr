@@ -28,6 +28,18 @@ import editorClasses from './AccountEditor.module.css';
 import useCategoryPreviewAvailability from '../../hooks/useCategoryPreviewAvailability.jsx';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
 
+const groupSettingsSnapshot = (groups = []) =>
+  JSON.stringify(
+    groups.map((row) => ({
+      channel_group: row.channel_group,
+      enabled: !!row.enabled,
+      auto_channel_sync: !!row.auto_channel_sync,
+      auto_sync_channel_start: row.auto_sync_channel_start || 1,
+      auto_sync_channel_end: row.auto_sync_channel_end ?? null,
+      custom_properties: row.custom_properties || {},
+    }))
+  );
+
 const M3UGroupFilter = ({
   playlist = null,
   isOpen,
@@ -74,7 +86,7 @@ const M3UGroupFilter = ({
       return;
     groupsAccount.current = playlist.id;
     const groups = buildGroupStates(channelGroups, playlist.channel_groups);
-    savedGroups.current = JSON.stringify(groups);
+    savedGroups.current = groupSettingsSnapshot(groups);
     setGroupStates(groups);
   }, [playlist, channelGroups, isOpen]);
 
@@ -128,7 +140,7 @@ const M3UGroupFilter = ({
         isInitialSetup
       );
 
-      savedGroups.current = JSON.stringify(groupStates);
+      savedGroups.current = groupSettingsSnapshot(groupStates);
       setMovieCategoryStates((current) =>
         current.map((category) => ({
           ...category,
@@ -227,7 +239,7 @@ const M3UGroupFilter = ({
   const requestExit = (action) => {
     if (isLoading) return;
     const changed =
-      savedGroups.current !== JSON.stringify(groupStates) ||
+      savedGroups.current !== groupSettingsSnapshot(groupStates) ||
       [...movieCategoryStates, ...seriesCategoryStates].some(
         (row) =>
           row.enabled !== row.original_enabled ||
