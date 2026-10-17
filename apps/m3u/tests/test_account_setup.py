@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.exceptions import APIException
 from rest_framework.test import APIClient
 
@@ -114,6 +115,70 @@ class AccountSetupTests(TestCase):
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    @patch("apps.m3u.api_views.os.remove")
+    @patch("apps.m3u.api_views.os.path.exists", return_value=True)
+    @patch("apps.m3u.api_views.os.makedirs")
+    @patch("builtins.open")
+    def test_switch_to_uploaded_file_clears_old_url(
+        self, open_file, makedirs, exists, remove
+    ):
+        account = self.account(account_type="STD", setup_step="categories")
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {
+                "account_type": "STD",
+                "server_url": "",
+                "file": SimpleUploadedFile("example.m3u", b"#EXTM3U\n"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        account.refresh_from_db()
+        self.assertFalse(account.server_url)
+        self.assertEqual(account.file_path, "/data/uploads/m3us/example.m3u")
+        remove.assert_not_called()
+
+    @patch("apps.m3u.api_views.os.remove")
+    @patch("apps.m3u.api_views.os.path.exists", return_value=True)
+    @patch("apps.m3u.api_views.os.makedirs")
+    @patch("builtins.open")
+    def test_replacing_same_filename_does_not_delete_the_new_upload(
+        self, open_file, makedirs, exists, remove
+    ):
+        account = self.account(
+            account_type="STD", server_url="",
+            file_path="/data/uploads/m3us/example.m3u",
+        )
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {"file": SimpleUploadedFile("example.m3u", b"#EXTM3U\n")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        remove.assert_not_called()
+
+    def test_switch_to_url_clears_file_and_file_edits_keep_saved_source(self):
+        account = self.account(
+            account_type="STD", server_url="",
+            file_path="/data/uploads/m3us/example.m3u",
+        )
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {"name": "Renamed file", "server_url": ""}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        account.refresh_from_db()
+        self.assertEqual(account.file_path, "/data/uploads/m3us/example.m3u")
+        response = self.client.patch(
+            f"/api/m3u/accounts/{account.id}/",
+            {"server_url": "https://provider.example.invalid/playlist.m3u", "file_path": ""},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        account.refresh_from_db()
+        self.assertEqual(account.server_url, "https://provider.example.invalid/playlist.m3u")
+        self.assertFalse(account.file_path)
 
     def test_refresh_error_and_normal_edits_preserve_the_setup_step(self):
         account = self.account(status="error", last_message="Provider denied access")

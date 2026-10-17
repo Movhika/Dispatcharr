@@ -180,6 +180,9 @@ vi.mock('@mantine/form', () => {
         },
         submitting: false,
         setErrors: vi.fn(),
+        clearErrors: vi.fn(),
+        clearFieldError: vi.fn(),
+        errors: {},
         isDirty: () =>
           JSON.stringify(_values) !== JSON.stringify(initialValues),
         onSubmit: vi.fn((handler) => (e) => {
@@ -245,6 +248,7 @@ vi.mock('@mantine/core', () => ({
     disabled,
     description,
     leftSection,
+    error,
     'aria-label': ariaLabel,
   }) => (
     <div>
@@ -256,10 +260,12 @@ vi.mock('@mantine/core', () => ({
           aria-label={ariaLabel || label || placeholder}
           accept={accept}
           disabled={disabled}
+          placeholder={placeholder}
           onChange={(e) => onChange?.(e.target.files?.[0] ?? null)}
         />
       </label>
       {description && <span>{description}</span>}
+      {error && <span>{error}</span>}
     </div>
   ),
   Flex: ({ children, className, component, 'aria-label': ariaLabel }) => (
@@ -919,6 +925,81 @@ describe('M3U', () => {
   // ── Updating a playlist ────────────────────────────────────────────────────
 
   describe('updating an existing playlist', () => {
+    it('saves only the chosen file source instead of the old URL', async () => {
+      setupStores();
+      const account = makeM3uAccount();
+      render(<M3U {...defaultProps({ m3uAccount: account })} />);
+      fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
+        target: { value: 'M3U_FILE' },
+      });
+      expect(screen.queryByLabelText('URL')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
+      const file = new File(['#EXTM3U'], 'example.m3u');
+      fireEvent.change(screen.getByLabelText('Playlist file'), {
+        target: { files: [file] },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
+          account,
+          expect.objectContaining({
+            account_type: 'STD',
+            server_url: '',
+            username: '',
+            password: '',
+          }),
+          file
+        )
+      );
+    });
+
+    it('does not submit a hidden file after switching to URL input', async () => {
+      setupStores();
+      const account = makeM3uAccount({ account_type: 'STD' });
+      render(<M3U {...defaultProps({ m3uAccount: account })} />);
+      const type = screen.getByRole('combobox', { name: 'Account Type' });
+      expect(type).toHaveValue('M3U_URL');
+      expect(screen.queryByLabelText('Playlist file')).not.toBeInTheDocument();
+      fireEvent.change(type, { target: { value: 'M3U_FILE' } });
+      fireEvent.change(screen.getByLabelText('Playlist file'), {
+        target: { files: [new File(['#EXTM3U'], 'hidden.m3u')] },
+      });
+      fireEvent.change(type, { target: { value: 'M3U_URL' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
+          account,
+          expect.objectContaining({
+            account_type: 'STD',
+            server_url: account.server_url,
+            file_path: '',
+          }),
+          null
+        )
+      );
+    });
+
+    it('keeps the saved playlist file without uploading it again', async () => {
+      setupStores();
+      const account = makeM3uAccount({
+        account_type: 'STD',
+        server_url: '',
+        file_path: '/data/uploads/m3us/example.m3u',
+      });
+      render(<M3U {...defaultProps({ m3uAccount: account })} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
+          account,
+          expect.objectContaining({ account_type: 'STD', server_url: '' }),
+          null
+        )
+      );
+      expect(M3uUtils.updatePlaylist.mock.calls[0][1]).not.toHaveProperty(
+        'file_path'
+      );
+    });
+
     it('passes the saved account to the continuation callback', async () => {
       const onSaved = vi.fn();
       const onClose = vi.fn();
@@ -1314,12 +1395,16 @@ describe('M3U', () => {
       ).toBeInTheDocument();
     });
 
-    it('shows an upload icon and keeps the URL-or-file hint in a tooltip', () => {
+    it('shows only the upload input for an existing file account', () => {
       setupStores();
       render(
         <M3U
           {...defaultProps({
-            m3uAccount: makeM3uAccount({ account_type: 'STD' }),
+            m3uAccount: makeM3uAccount({
+              account_type: 'STD',
+              server_url: '',
+              file_path: '/data/uploads/m3us/example.m3u',
+            }),
           })}
         />
       );
@@ -1328,9 +1413,11 @@ describe('M3U', () => {
       expect(
         input.closest('label').querySelector('svg.lucide-upload')
       ).toBeInTheDocument();
+      expect(input).toHaveAttribute('placeholder', 'Current: example.m3u');
+      expect(screen.queryByLabelText('URL')).not.toBeInTheDocument();
       expect(
-        input.closest('label').querySelector('[data-help]')
-      ).toHaveAttribute('data-help', 'Use a playlist URL or upload a file.');
+        screen.getByRole('combobox', { name: 'Account Type' })
+      ).toHaveValue('M3U_FILE');
       expect(
         screen.queryByText('Use a playlist URL or upload a file.')
       ).not.toBeInTheDocument();
@@ -1340,7 +1427,7 @@ describe('M3U', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {
-        target: { value: 'STD' },
+        target: { value: 'M3U_URL' },
       });
       expect(screen.getByRole('switch', { name: 'Enable VOD' })).toBeDisabled();
       fireEvent.change(screen.getByRole('combobox', { name: 'Account Type' }), {

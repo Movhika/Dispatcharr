@@ -1653,18 +1653,11 @@ export default class API {
       // Original implementation for full updates
       let body = null;
       if (payload.file) {
-        delete payload.server_url;
-
         body = new FormData();
-        appendPlaylistFormData(body, values);
+        appendPlaylistFormData(body, payload);
       } else {
         delete payload.file;
-        if (!payload.server_url) {
-          delete payload.sever_url;
-        }
-
         body = { ...payload };
-        delete body.file;
       }
 
       const response = await request(`${host}/api/m3u/accounts/${id}/`, {

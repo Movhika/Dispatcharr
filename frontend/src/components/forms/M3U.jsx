@@ -50,7 +50,11 @@ import {
 import editorClasses from './AccountEditor.module.css';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
-import { validateNewM3UAccount } from '../../utils/forms/M3uSetupUtils.js';
+import {
+  getM3USourceType,
+  prepareM3USourceValues,
+  validateNewM3UAccount,
+} from '../../utils/forms/M3uSetupUtils.js';
 import { Upload } from 'lucide-react';
 
 const helpLabel = (label, help) => (
@@ -112,6 +116,7 @@ const M3U = ({
   const [vodEnabled, setVodEnabled] = useState(false);
   const [vodRefreshAfterLive, setVodRefreshAfterLive] = useState(true);
   const [accountType, setAccountType] = useState('XC');
+  const [sourceType, setSourceType] = useState('XC');
   const [serverGroupsManagerOpen, setServerGroupsManagerOpen] = useState(false);
   const [hasHashKeyOverride, setHasHashKeyOverride] = useState(false);
   const [activeTab, setActiveTab] = useState('account');
@@ -182,6 +187,7 @@ const M3U = ({
     if (m3uAccount) {
       setPlaylist(m3uAccount);
       setAccountType(m3uAccount.account_type);
+      setSourceType(getM3USourceType(m3uAccount));
       form.setValues({
         name: m3uAccount.name,
         server_url: m3uAccount.server_url,
@@ -237,6 +243,7 @@ const M3U = ({
     } else {
       setPlaylist(null);
       setAccountType('XC');
+      setSourceType('XC');
       form.reset();
       setScheduleType('interval');
       setVodScheduleType('interval');
@@ -255,7 +262,9 @@ const M3U = ({
   }, [storeExpDate]);
 
   const next = () => {
-    const errors = validateNewM3UAccount(form.getValues(), file);
+    const errors = validateNewM3UAccount(form.getValues(), file, {
+      sourceType,
+    });
     form.setErrors(errors);
     if (Object.keys(errors).length) return false;
     setContentAvailable(true);
@@ -269,21 +278,30 @@ const M3U = ({
       next();
       return;
     }
-    if (!playlist?.id) {
-      const errors = validateNewM3UAccount(form.getValues(), file);
-      form.setErrors(errors);
-      if (Object.keys(errors).length) {
-        setActiveTab('account');
-        return;
-      }
+    const errors = validateNewM3UAccount(form.getValues(), file, {
+      sourceType,
+      existingAccount: playlist,
+    });
+    form.setErrors(errors);
+    if (Object.keys(errors).length) {
+      setActiveTab('account');
+      return;
     }
     const rawValues = form.getValues();
-    const values = prepareSubmitValues(rawValues, expDate);
+    const values = prepareM3USourceValues(
+      prepareSubmitValues(rawValues, expDate),
+      sourceType
+    );
+    const selectedFile = sourceType === 'M3U_FILE' ? file : null;
 
     if (playlist?.id) {
       // Enabled is controlled in the overview, not by a stale editor snapshot.
       delete values.is_active;
-      const updatedPlaylist = await updatePlaylist(playlist, values, file);
+      const updatedPlaylist = await updatePlaylist(
+        playlist,
+        values,
+        selectedFile
+      );
       if (!updatedPlaylist?.id) return;
       form.reset();
       setFile(null);
@@ -297,7 +315,7 @@ const M3U = ({
     try {
       const newPlaylist = await addPlaylist(
         { ...values, start_setup: true },
-        file
+        selectedFile
       );
       if (!newPlaylist?.id) return;
       form.reset();
@@ -444,30 +462,38 @@ const M3U = ({
                       name="account_type"
                       label="Account Type"
                       data={[
-                        { value: 'STD', label: 'Standard' },
                         { value: 'XC', label: 'Xtream Codes' },
+                        { value: 'M3U_URL', label: 'M3U URL' },
+                        { value: 'M3U_FILE', label: 'M3U File' },
                       ]}
-                      key={form.key('account_type')}
-                      {...form.getInputProps('account_type')}
+                      allowDeselect={false}
+                      value={sourceType}
                       onChange={(value) => {
-                        form.setFieldValue('account_type', value);
-                        setAccountType(value);
+                        if (!value) return;
+                        const type = value === 'XC' ? 'XC' : 'STD';
+                        form.setFieldValue('account_type', type);
+                        form.clearErrors();
+                        setAccountType(type);
+                        setSourceType(value);
+                        setContentAvailable(false);
                       }}
                     />
 
-                    <TextInput
-                      id="server_url"
-                      name="server_url"
-                      label="URL"
-                      withAsterisk={!playlist?.id && accountType === 'XC'}
-                      placeholder={
-                        accountType === 'XC'
-                          ? 'Xtream Codes server URL'
-                          : 'M3U playlist URL'
-                      }
-                      {...form.getInputProps('server_url')}
-                      key={form.key('server_url')}
-                    />
+                    {sourceType !== 'M3U_FILE' && (
+                      <TextInput
+                        id="server_url"
+                        name="server_url"
+                        label="URL"
+                        withAsterisk
+                        placeholder={
+                          accountType === 'XC'
+                            ? 'Xtream Codes server URL'
+                            : 'M3U playlist URL'
+                        }
+                        {...form.getInputProps('server_url')}
+                        key={form.key('server_url')}
+                      />
+                    )}
 
                     {accountType === 'XC' && (
                       <>
@@ -493,42 +519,49 @@ const M3U = ({
                       </>
                     )}
 
+                    {sourceType === 'M3U_FILE' && (
+                      <FileInput
+                        id="file"
+                        label="Playlist file"
+                        aria-label="Playlist file"
+                        withAsterisk={!playlist?.file_path}
+                        clearable
+                        value={file}
+                        placeholder={
+                          playlist?.file_path
+                            ? `Current: ${playlist.file_path.split(/[\\/]/).pop()}`
+                            : 'Choose a playlist file'
+                        }
+                        leftSection={<Upload size={16} aria-hidden="true" />}
+                        leftSectionPointerEvents="none"
+                        onChange={(value) => {
+                          setFile(value);
+                          form.clearFieldError('file');
+                        }}
+                        error={form.errors.file}
+                        styles={{
+                          input: {
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            display: 'block',
+                          },
+                        }}
+                      />
+                    )}
                     {accountType !== 'XC' && (
-                      <>
-                        <FileInput
-                          id="file"
-                          label={helpLabel(
-                            'Playlist file',
-                            'Use a playlist URL or upload a file.'
-                          )}
-                          aria-label="Playlist file"
-                          clearable
-                          placeholder="Choose a playlist file"
-                          leftSection={<Upload size={16} aria-hidden="true" />}
-                          leftSectionPointerEvents="none"
-                          onChange={setFile}
-                          styles={{
-                            input: {
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              display: 'block',
-                            },
-                          }}
-                        />
-                        <DateTimePicker
-                          label={helpLabel(
-                            'Expiration Date',
-                            'Set an expiration date to receive a warning notification.'
-                          )}
-                          aria-label="Expiration Date"
-                          placeholder="No expiration"
-                          clearable
-                          valueFormat={`${dateYearFormat} ${timeformat}`}
-                          value={expDate}
-                          onChange={(v) => setExpDate(v ? new Date(v) : null)}
-                        />
-                      </>
+                      <DateTimePicker
+                        label={helpLabel(
+                          'Expiration Date',
+                          'Set an expiration date to receive a warning notification.'
+                        )}
+                        aria-label="Expiration Date"
+                        placeholder="No expiration"
+                        clearable
+                        valueFormat={`${dateYearFormat} ${timeformat}`}
+                        value={expDate}
+                        onChange={(v) => setExpDate(v ? new Date(v) : null)}
+                      />
                     )}
                   </Stack>
                 </Paper>

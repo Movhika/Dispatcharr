@@ -274,13 +274,16 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 if "user_agent" in request.data and request.data["user_agent"] == "null":
                     request.data["user_agent"] = None
 
-                # Handle server_url appropriately
-                if "server_url" in request.data and not request.data["server_url"]:
-                    request.data.pop("server_url")
+                # Keep an explicit empty URL so a switch to file input clears
+                # the old remote source instead of continuing to fetch it.
 
                 request.data._mutable = False  # Make the request data immutable again
 
-                if instance.file_path and os.path.exists(instance.file_path):
+                if (
+                    instance.file_path
+                    and instance.file_path != file_path
+                    and os.path.exists(instance.file_path)
+                ):
                     os.remove(instance.file_path)
 
             # Now call super().update() to update the instance

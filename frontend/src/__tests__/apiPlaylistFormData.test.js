@@ -231,10 +231,13 @@ describe('playlist FormData hash_key clearing', () => {
       id: 1,
       name: 'A',
       hash_key: null,
+      server_url: '',
       file: new Blob(['#EXTM3U'], { type: 'text/plain' }),
     });
 
     expect(appended).toContainEqual(['hash_key', '']);
+    expect(appended).toContainEqual(['server_url', '']);
+    expect(appended.some(([key]) => key === 'id')).toBe(false);
     vi.unstubAllGlobals();
   });
 
