@@ -114,12 +114,16 @@ def _matching_epg_url(account):
     return f"{base.rstrip('/')}/xmltv.php?{credentials}"
 
 
+def can_create_account_epg(account):
+    return account.account_type == M3UAccount.Types.XC and all(
+        (account.server_url, account.username, account.password)
+    )
+
+
 def get_matching_epg(account):
     from apps.epg.models import EPGSource
 
-    if account.account_type != M3UAccount.Types.XC or not all(
-        (account.server_url, account.username, account.password)
-    ):
+    if not can_create_account_epg(account):
         return None
     return EPGSource.objects.filter(
         source_type="xmltv", url=_matching_epg_url(account)
@@ -178,6 +182,7 @@ def advance_account_setup(account_id, action):
             navigation.update({
                 "back_to_epg": (step.CATEGORIES, step.EPG),
                 "continue_epg": (step.CONTENT, step.EPG),
+                "continue_categories": (step.EPG, step.CATEGORIES),
             })
         else:
             navigation["continue_categories"] = (step.CONTENT, step.CATEGORIES)

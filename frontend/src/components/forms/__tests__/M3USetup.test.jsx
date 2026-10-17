@@ -25,6 +25,7 @@ vi.mock('../../../api.js', () => ({
     getPlaylist: vi.fn(),
     advanceM3USetup: vi.fn(),
     getM3UEPG: vi.fn(),
+    createM3UEPG: vi.fn(),
   },
 }));
 vi.mock('../../../store/channels', () => ({
@@ -105,7 +106,8 @@ describe('persisted M3U setup', () => {
     mocks.fetchChannelGroups.mockResolvedValue(undefined);
     mocks.fetchCategories.mockResolvedValue(undefined);
     API.getPlaylist.mockResolvedValue(account);
-    API.getM3UEPG.mockResolvedValue({ source: null });
+    API.getM3UEPG.mockResolvedValue({ source: null, can_create: true });
+    API.createM3UEPG.mockReset();
   });
 
   it.each([
@@ -135,6 +137,7 @@ describe('persisted M3U setup', () => {
   it.each([
     ['XC', 'account', 'continue_content', 'content'],
     ['XC', 'content', 'continue_epg', 'epg'],
+    ['XC', 'epg', 'continue_categories', 'categories'],
     ['STD', 'content', 'continue_categories', 'categories'],
   ])(
     'continues %s %s to its next step',
@@ -163,12 +166,14 @@ describe('persisted M3U setup', () => {
     ).toEqual(['Back', 'Next']);
   });
 
-  it.each(['skip_epg', 'create_epg'])(
-    'advances the existing account with %s',
-    async (action) => {
+  it.each([false, true])(
+    'continues without a Skip choice (create EPG: %s)',
+    async (createEPG) => {
       const { onClose } = renderSetup();
       await screen.findByText('No matching EPG source configured.');
-      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+      expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+      expect(screen.queryByText('Skip EPG')).not.toBeInTheDocument();
       const categories = {
         ...account,
         setup_step: 'categories',
@@ -177,18 +182,28 @@ describe('persisted M3U setup', () => {
       };
       API.advanceM3USetup.mockResolvedValue(categories);
       API.getPlaylist.mockResolvedValue(categories);
-      fireEvent.click(
-        screen.getByRole('radio', {
-          name: action === 'create_epg' ? 'Create EPG' : 'Skip EPG',
-        })
-      );
+      if (createEPG) {
+        API.createM3UEPG.mockResolvedValue({
+          source: {
+            id: 9,
+            name: 'Example guide',
+            is_active: true,
+            status: 'idle',
+          },
+          can_create: false,
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
+        await screen.findByText('Example guide');
+        expect(API.createM3UEPG).toHaveBeenCalledExactlyOnceWith(7);
+      }
       expect(API.advanceM3USetup).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await screen.findByRole('button', { name: 'Edit categories' });
-      expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(7, action);
-      expect(mocks.fetchEPGs).toHaveBeenCalledTimes(
-        action === 'create_epg' ? 1 : 0
+      expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
+        7,
+        'continue_categories'
       );
+      expect(mocks.fetchEPGs).toHaveBeenCalledTimes(createEPG ? 1 : 0);
       expect(mocks.fetchCategories).toHaveBeenCalled();
       expect(showNotification).not.toHaveBeenCalled();
       expect(onClose).not.toHaveBeenCalled();
@@ -208,6 +223,42 @@ describe('persisted M3U setup', () => {
     expect(
       screen.queryByText('Create matching EPG source?')
     ).not.toBeInTheDocument();
+  });
+
+  it('does not show an EPG step for standard accounts', async () => {
+    const standard = {
+      ...account,
+      account_type: 'STD',
+      setup_step: 'categories',
+    };
+    API.getPlaylist.mockResolvedValue(standard);
+    renderSetup({ account: standard });
+    expect(
+      screen.queryByRole('button', { name: 'EPG' })
+    ).not.toBeInTheDocument();
+    expect(API.getM3UEPG).not.toHaveBeenCalled();
+  });
+
+  it('blocks navigation while an EPG source is being created', async () => {
+    let finish;
+    API.createM3UEPG.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const { onClose } = renderSetup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Create EPG' }));
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close M3U setup' }));
+    expect(onClose).not.toHaveBeenCalled();
+    finish({
+      source: { id: 9, name: 'New guide', is_active: true, status: 'idle' },
+      can_create: false,
+    });
+    await screen.findByText('New guide');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(API.advanceM3USetup).not.toHaveBeenCalled();
   });
 
   it('shows a resumable error and retries discovery', async () => {
@@ -230,27 +281,28 @@ describe('persisted M3U setup', () => {
     );
   });
 
-  it('retains the account after an EPG failure and allows skipping', async () => {
+  it('retains the account after an EPG failure and allows continuing', async () => {
     renderSetup();
     await screen.findByText('No matching EPG source configured.');
-    API.advanceM3USetup.mockRejectedValueOnce(
+    API.createM3UEPG.mockRejectedValueOnce(
       new Error('EPG name already exists')
     );
-    fireEvent.click(screen.getByRole('radio', { name: 'Create EPG' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
     await waitFor(() =>
       expect(showNotification).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'red', autoClose: false })
       )
     );
     await waitFor(() =>
-      expect(screen.getByRole('radio', { name: 'Skip EPG' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
     );
     API.advanceM3USetup.mockResolvedValue(account);
-    fireEvent.click(screen.getByRole('radio', { name: 'Skip EPG' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() =>
-      expect(API.advanceM3USetup).toHaveBeenLastCalledWith(7, 'skip_epg')
+      expect(API.advanceM3USetup).toHaveBeenLastCalledWith(
+        7,
+        'continue_categories'
+      )
     );
   });
 
@@ -326,7 +378,6 @@ describe('persisted M3U setup', () => {
       setup_step: 'categories',
       channel_groups: [{ channel_group: 1 }],
     });
-    fireEvent.click(screen.getByRole('radio', { name: 'Create EPG' }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByRole('button', { name: 'Edit categories' });
     expect(API.advanceM3USetup).toHaveBeenCalledTimes(1);

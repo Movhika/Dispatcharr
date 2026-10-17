@@ -1573,6 +1573,24 @@ describe('M3U', () => {
   });
 
   describe('guided creation', () => {
+    it.each(['M3U_URL', 'M3U_FILE'])(
+      'hides the EPG tab for %s accounts',
+      (source) => {
+        setupStores();
+        const account = makeM3uAccount({
+          account_type: 'STD',
+          server_url:
+            source === 'M3U_URL' ? 'https://example.invalid/playlist.m3u' : '',
+          file_path: source === 'M3U_FILE' ? '/data/playlist.m3u' : '',
+        });
+        render(<M3U {...defaultProps({ m3uAccount: account })} />);
+        expect(
+          screen.queryByRole('tab', { name: 'EPG' })
+        ).not.toBeInTheDocument();
+        expect(screen.queryByTestId('account-epg')).not.toBeInTheDocument();
+      }
+    );
+
     it.each(['account', 'content'])(
       'saves the existing %s step without creating another account',
       async (setup_step) => {

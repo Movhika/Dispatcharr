@@ -497,7 +497,7 @@ class AccountSetupTests(TestCase):
         path = f"/api/m3u/accounts/{account.id}/epg/"
         response = self.client.get(path)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, {"source": None})
+        self.assertEqual(response.data, {"source": None, "can_create": True})
         self.assertFalse(EPGSource.objects.exists())
         for _ in range(2):
             with self.captureOnCommitCallbacks(execute=True):
@@ -505,8 +505,11 @@ class AccountSetupTests(TestCase):
             self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(EPGSource.objects.count(), 1)
         self.assertEqual(
-            set(response.data["source"]), {"id", "name", "is_active", "status"}
+            set(response.data["source"]), {
+                "id", "name", "is_active", "status", "source_type", "updated_at",
+            }
         )
+        self.assertFalse(response.data["can_create"])
         account.refresh_from_db()
         self.assertEqual(account.setup_step, "")
         refresh.assert_called_once_with(EPGSource.objects.get().id)
@@ -531,8 +534,40 @@ class AccountSetupTests(TestCase):
     def test_standard_accounts_cannot_use_automatic_epg_creation(self):
         account = self.account(account_type="STD", setup_step="categories")
         path = f"/api/m3u/accounts/{account.id}/epg/"
-        self.assertEqual(self.client.get(path).data, {"source": None})
+        self.assertEqual(self.client.get(path).data, {
+            "source": None, "can_create": False,
+        })
         self.assertEqual(self.client.post(path, {}, format="json").status_code, 400)
+        self.assertFalse(EPGSource.objects.exists())
+
+    def test_epg_creation_requires_a_complete_saved_connection(self):
+        for field in ("server_url", "username", "password"):
+            account = self.account(name=f"Missing {field}", **{field: ""})
+            path = f"/api/m3u/accounts/{account.id}/epg/"
+            self.assertEqual(self.client.get(path).data, {
+                "source": None, "can_create": False,
+            })
+            self.assertEqual(self.client.post(path, {}, format="json").status_code, 400)
+        self.assertFalse(EPGSource.objects.exists())
+
+    def test_epg_creation_and_continuing_are_separate_idempotent_actions(self):
+        account = self.account()
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        for _ in range(2):
+            self.assertEqual(self.client.post(path, {}, format="json").status_code, 200)
+        account.refresh_from_db()
+        self.assertEqual(account.setup_step, "epg")
+        self.assertEqual(EPGSource.objects.count(), 1)
+        for _ in range(2):
+            response = self.action(account, "continue_categories")
+            self.assertEqual(response.data["setup_step"], "categories")
+        self.assertEqual(EPGSource.objects.count(), 1)
+
+    def test_epg_step_can_continue_without_creating_a_source(self):
+        account = self.account()
+        response = self.action(account, "continue_categories")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["setup_step"], "categories")
         self.assertFalse(EPGSource.objects.exists())
 
     def test_matching_epg_actions_require_admin(self):

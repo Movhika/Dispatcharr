@@ -100,7 +100,9 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAdmin],
     )
     def matching_epg(self, request, pk=None):
-        from .account_setup import create_account_epg, get_matching_epg
+        from .account_setup import (
+            can_create_account_epg, create_account_epg, get_matching_epg,
+        )
 
         account = self.get_object()
         source = (
@@ -108,7 +110,10 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             if request.method == "POST"
             else get_matching_epg(account)
         )
-        return Response(M3UMatchingEPGResponseSerializer({"source": source}).data)
+        return Response(M3UMatchingEPGResponseSerializer({
+            "source": source,
+            "can_create": source is None and can_create_account_epg(account),
+        }).data)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

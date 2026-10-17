@@ -458,7 +458,9 @@ const M3U = ({
               <TabsList className={editorClasses.tabList}>
                 <TabsTab value="account">Account</TabsTab>
                 <TabsTab value="content">Content</TabsTab>
-                <TabsTab value="epg">EPG</TabsTab>
+                {accountType === 'XC' && playlist.account_type === 'XC' && (
+                  <TabsTab value="epg">EPG</TabsTab>
+                )}
                 <TabsTab value="profiles" disabled={!playlist?.id}>
                   Profiles
                 </TabsTab>
@@ -948,9 +950,9 @@ const M3U = ({
               aria-hidden={activeTab !== 'epg'}
               inert={activeTab !== 'epg'}
             >
-              {playlist?.id && activeTab === 'epg' && (
-                <M3UAccountEPG account={playlist} />
-              )}
+              {playlist?.account_type === 'XC' &&
+                accountType === 'XC' &&
+                activeTab === 'epg' && <M3UAccountEPG account={playlist} />}
             </TabsPanel>
             <TabsPanel
               value="profiles"

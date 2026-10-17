@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Group, Modal, Paper, Stack, Text } from '@mantine/core';
 import API from '../../api.js';
 import useChannelsStore from '../../store/channels';
-import useEPGsStore from '../../store/epgs';
 import useVODStore from '../../store/useVODStore';
 import usePlaylistsStore from '../../store/playlists';
 import {
@@ -23,14 +22,13 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   const [slowLoading, setSlowLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
-  const [epgChoice, setEPGChoice] = useState('');
+  const [epgBusy, setEPGBusy] = useState(false);
   const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
   const [categoriesSaved, setCategoriesSaved] = useState(false);
   const busyRef = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
-  const fetchEPGs = useEPGsStore((s) => s.fetchEPGs);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
 
   useEffect(() => {
@@ -103,7 +101,6 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
       hideNotification(`m3u-setup-${account.id}`);
       setAccount(current);
       usePlaylistsStore.getState().updatePlaylist(current);
-      if (action === 'create_epg') fetchEPGs().catch(() => {});
       if (action === 'retry_categories') {
         setReady(false);
         setLoadFailed(false);
@@ -173,12 +170,12 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
       <Modal
         opened={!categoryEditorOpen}
         onClose={() => {
-          if (!busy) onClose();
+          if (!busy && !epgBusy) onClose();
         }}
         title={`Set up ${account.name}`}
         closeButtonProps={{ 'aria-label': 'Close M3U setup' }}
         closeOnClickOutside={false}
-        closeOnEscape={!busy}
+        closeOnEscape={!busy && !epgBusy}
         size="68vw"
         classNames={{
           content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
@@ -197,8 +194,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
             {!categories ? (
               <M3UAccountEPG
                 account={account}
-                choice={epgChoice}
-                onChoice={setEPGChoice}
+                onBusyChange={setEPGBusy}
                 disabled={busy}
               />
             ) : (
@@ -256,7 +252,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
             )}
             <Button
               variant="default"
-              disabled={busy}
+              disabled={busy || epgBusy}
               onClick={() =>
                 advance(
                   categories && account.account_type === 'XC'
@@ -280,9 +276,9 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
                 </>
               ) : (
                 <Button
-                  disabled={busy || !epgChoice}
+                  disabled={busy || epgBusy}
                   loading={busy}
-                  onClick={() => advance(epgChoice)}
+                  onClick={() => advance('continue_categories')}
                 >
                   Next
                 </Button>

@@ -351,10 +351,13 @@ class M3UMatchingEPGSerializer(serializers.Serializer):
     name = serializers.CharField()
     is_active = serializers.BooleanField()
     status = serializers.CharField()
+    source_type = serializers.CharField()
+    updated_at = serializers.DateTimeField(allow_null=True)
 
 
 class M3UMatchingEPGResponseSerializer(serializers.Serializer):
     source = M3UMatchingEPGSerializer(allow_null=True)
+    can_create = serializers.BooleanField()
 
 
 class M3UAccountSerializer(serializers.ModelSerializer):
