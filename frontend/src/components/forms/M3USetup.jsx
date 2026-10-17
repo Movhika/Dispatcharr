@@ -14,6 +14,7 @@ import M3USetupSteps from './M3USetupSteps.jsx';
 import editorClasses from './AccountEditor.module.css';
 import M3UAccountEPG from './M3UAccountEPG.jsx';
 import M3U from './M3U.jsx';
+import ConfirmationDialog from '../ConfirmationDialog.jsx';
 
 const M3USetup = ({ account: initialAccount, onClose }) => {
   const [account, setAccount] = useState(initialAccount);
@@ -24,6 +25,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   const [reload, setReload] = useState(0);
   const [epgBusy, setEPGBusy] = useState(false);
   const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
   const busyRef = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -188,12 +190,13 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
       <Modal
         opened={!categoryEditorOpen}
         onClose={() => {
-          if (!busy && !epgBusy) onClose();
+          if (!busy && !epgBusy) setExitOpen(true);
         }}
         title={`Set up ${account.name}`}
         closeButtonProps={{ 'aria-label': 'Close M3U setup' }}
         closeOnClickOutside={false}
-        closeOnEscape={!busy && !epgBusy}
+        closeOnEscape={!busy && !epgBusy && !exitOpen}
+        trapFocus={!exitOpen}
         size="68vw"
         classNames={{
           content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
@@ -324,6 +327,19 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
           onClose={() => setCategoryEditorOpen(false)}
         />
       )}
+      <ConfirmationDialog
+        opened={exitOpen}
+        onClose={() => setExitOpen(false)}
+        onConfirm={() => {
+          setExitOpen(false);
+          onClose();
+        }}
+        title="Continue setup later?"
+        message="Your account and saved setup progress will be kept. Use Continue setup to resume. The initial import starts only when you finish setup."
+        confirmLabel="Continue later"
+        confirmColor="blue"
+        cancelLabel="Keep editing"
+      />
     </>
   );
 };

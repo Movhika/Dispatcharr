@@ -88,7 +88,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
     @extend_schema(
         methods=["GET"],
         responses={200: M3UMatchingEPGResponseSerializer},
-        description="Find the matching XMLTV source without returning provider credentials.",
+        description="Find the matching XMLTV source and list other configured EPG sources without returning URLs or credentials.",
     )
     @extend_schema(
         methods=["POST"], request=None,
@@ -102,6 +102,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
     def matching_epg(self, request, pk=None):
         from .account_setup import (
             can_create_account_epg, create_account_epg, get_matching_epg,
+            get_other_epg_sources,
         )
 
         account = self.get_object()
@@ -113,6 +114,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
         return Response(M3UMatchingEPGResponseSerializer({
             "source": source,
             "can_create": source is None and can_create_account_epg(account),
+            "other_sources": get_other_epg_sources(source),
         }).data)
 
     def list(self, request, *args, **kwargs):
@@ -610,6 +612,14 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
         """Trigger VOD content refresh for XtreamCodes accounts"""
         account = self.get_object()
 
+        if account.setup_step:
+            return Response(
+                {"detail": (
+                    "Continue setup and finish selecting categories before refreshing."
+                )},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         if account.account_type != M3UAccount.Types.XC:
             return Response(
                 {"error": "VOD refresh is only available for XtreamCodes accounts"},
@@ -847,6 +857,13 @@ class RefreshSingleM3UAPIView(APIView):
         ],
     )
     def post(self, request, account_id, format=None):
+        if M3UAccount.objects.filter(pk=account_id).exclude(setup_step="").exists():
+            return Response(
+                {"detail": (
+                    "Continue setup and finish selecting categories before refreshing."
+                )},
+                status=status.HTTP_409_CONFLICT,
+            )
         include_vod = request.query_params.get("include_vod")
         if include_vod is not None:
             normalized = str(include_vod).strip().lower()

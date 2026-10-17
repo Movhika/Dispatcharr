@@ -130,6 +130,17 @@ def get_matching_epg(account):
     ).first()
 
 
+def get_other_epg_sources(matching_source):
+    from apps.epg.models import EPGSource
+
+    sources = EPGSource.objects.only(
+        "id", "name", "is_active", "status", "source_type", "updated_at"
+    ).order_by("name", "id")
+    if matching_source is not None:
+        sources = sources.exclude(pk=matching_source.pk)
+    return sources
+
+
 def _create_matching_epg(account):
     from apps.epg.models import EPGSource
     from apps.epg.serializers import EPGSourceSerializer

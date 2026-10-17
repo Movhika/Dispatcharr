@@ -359,6 +359,7 @@ class M3UMatchingEPGSerializer(serializers.Serializer):
 class M3UMatchingEPGResponseSerializer(serializers.Serializer):
     source = M3UMatchingEPGSerializer(allow_null=True)
     can_create = serializers.BooleanField()
+    other_sources = M3UMatchingEPGSerializer(many=True)
 
 
 class M3UAccountSerializer(serializers.ModelSerializer):

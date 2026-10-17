@@ -235,6 +235,7 @@ const M3U = ({
           ? m3uAccount.hash_key.split(',').filter(Boolean)
           : [],
       });
+      if (setupMode) form.resetDirty();
       setHasHashKeyOverride(
         !!(
           m3uAccount.hash_key &&
@@ -372,7 +373,7 @@ const M3U = ({
 
   const requestClose = () => {
     if (creating || setupBusy || form.submitting) return;
-    if (!playlist?.id && (form.isDirty() || file || expDate)) {
+    if (setupMode || (!playlist?.id && (form.isDirty() || file || expDate))) {
       setDiscardOpen(true);
       return;
     }
@@ -388,6 +389,12 @@ const M3U = ({
   if (!isOpen) {
     return <></>;
   }
+
+  const unsavedSetupChanges =
+    setupMode &&
+    (form.isDirty() ||
+      file ||
+      expDateKey(expDate) !== expDateKey(playlist?.exp_date));
 
   return (
     <>
@@ -1050,9 +1057,28 @@ const M3U = ({
         opened={discardOpen}
         onClose={() => setDiscardOpen(false)}
         onConfirm={close}
-        title="Discard new account?"
-        message="This account has not been created. Discard the unsaved entries?"
-        confirmLabel="Discard"
+        title={
+          setupMode
+            ? unsavedSetupChanges
+              ? 'Discard unsaved changes?'
+              : 'Continue setup later?'
+            : 'Discard new account?'
+        }
+        message={
+          setupMode
+            ? unsavedSetupChanges
+              ? 'Only the unsaved changes in this editor will be discarded. Your account, EPG sources and saved setup progress will be kept. Use Continue setup to resume later.'
+              : 'Your account and saved setup progress will be kept. Use Continue setup to resume. The initial import starts only when you finish setup.'
+            : 'This account has not been created. Discard the unsaved entries?'
+        }
+        confirmLabel={
+          setupMode
+            ? unsavedSetupChanges
+              ? 'Discard changes & close'
+              : 'Continue later'
+            : 'Discard'
+        }
+        confirmColor={setupMode && !unsavedSetupChanges ? 'blue' : 'red'}
         cancelLabel="Keep editing"
       />
       {playlist && (

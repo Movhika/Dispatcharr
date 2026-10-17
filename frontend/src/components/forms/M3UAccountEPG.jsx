@@ -22,6 +22,49 @@ import SourceStatus from '../SourceStatus.jsx';
 import cardClasses from '../tables/M3UsTable.module.css';
 import editorClasses from './AccountEditor.module.css';
 
+const EPGSourceSummary = ({ source, dateFormat, matching = false }) => {
+  const status = source.is_active === false ? 'disabled' : source.status;
+  const statusColor =
+    {
+      fetching: 'blue.5',
+      parsing: 'indigo.5',
+      error: 'red.5',
+      success: 'green.5',
+    }[status] || 'gray.5';
+  const type =
+    {
+      xmltv: 'XMLTV',
+      schedules_direct: 'Schedules Direct',
+      dummy: 'Custom Dummy',
+    }[source.source_type] ||
+    source.source_type ||
+    'XMLTV';
+  return (
+    <Stack gap="sm">
+      {matching && (
+        <Text size="xs" c="dimmed">
+          Matching EPG source
+        </Text>
+      )}
+      <Group gap="xs">
+        <Text fw={700} truncate className={cardClasses.name}>
+          {source.name}
+        </Text>
+        <Badge variant="light">{type}</Badge>
+        <SourceStatus label={formatStatusText(status)} color={statusColor} />
+      </Group>
+      <div>
+        <Text size="xs" fw={600} mb={4}>
+          Last refresh
+        </Text>
+        <Text size="xs" c="dimmed">
+          {source.updated_at ? format(source.updated_at, dateFormat) : 'Never'}
+        </Text>
+      </div>
+    </Stack>
+  );
+};
+
 const M3UAccountEPG = ({
   account,
   active = true,
@@ -32,6 +75,7 @@ const M3UAccountEPG = ({
   onNext,
 }) => {
   const [source, setSource] = useState(null);
+  const [otherSources, setOtherSources] = useState([]);
   const [canCreate, setCanCreate] = useState(false);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -60,6 +104,7 @@ const M3UAccountEPG = ({
           sourceSnapshotRef.current =
             useEPGsStore.getState().epgs?.[result.source?.id];
           setSource(result.source);
+          setOtherSources(result.other_sources || []);
           setCanCreate(result.can_create === true);
           hideNotification(`m3u-epg-${account.id}`);
         }
@@ -93,6 +138,7 @@ const M3UAccountEPG = ({
       sourceSnapshotRef.current =
         useEPGsStore.getState().epgs?.[result.source?.id];
       setSource(result.source);
+      setOtherSources(result.other_sources || []);
       setCanCreate(result.can_create === true);
       hideNotification(`m3u-epg-${account.id}`);
       fetchEPGs().catch(() => {});
@@ -112,15 +158,6 @@ const M3UAccountEPG = ({
   };
 
   if (account.account_type !== 'XC') return null;
-
-  const status = current?.is_active === false ? 'disabled' : current?.status;
-  const statusColor =
-    {
-      fetching: 'blue.5',
-      parsing: 'indigo.5',
-      error: 'red.5',
-      success: 'green.5',
-    }[status] || 'gray.5';
 
   const card = (
     <Paper
@@ -146,31 +183,16 @@ const M3UAccountEPG = ({
             </Button>
           </Group>
         ) : current ? (
-          <>
-            <Group gap="xs">
-              <Text fw={700} truncate className={cardClasses.name}>
-                {current.name}
-              </Text>
-              <Badge variant="light">XMLTV</Badge>
-              <SourceStatus
-                label={formatStatusText(status)}
-                color={statusColor}
-              />
-            </Group>
-            <div>
-              <Text size="xs" fw={600} mb={4}>
-                Last refresh
-              </Text>
-              <Text size="xs" c="dimmed">
-                {current.updated_at
-                  ? format(current.updated_at, fullDateTimeFormat)
-                  : 'Never'}
-              </Text>
-            </div>
-          </>
+          <EPGSourceSummary
+            source={current}
+            dateFormat={fullDateTimeFormat}
+            matching={isInitialSetup}
+          />
         ) : (
           <>
-            <Text fw={600}>EPG source</Text>
+            <Text fw={600}>
+              {isInitialSetup ? 'Matching EPG source' : 'EPG source'}
+            </Text>
             <Text size="sm" c="dimmed">
               {canCreate
                 ? 'No matching EPG source configured.'
@@ -197,7 +219,48 @@ const M3UAccountEPG = ({
   if (!isInitialSetup) return card;
   return (
     <>
-      <div className={editorClasses.setupPanel}>{card}</div>
+      <div className={editorClasses.setupPanel}>
+        <Stack gap="md">
+          {card}
+          {!loading && !failed && (
+            <section aria-label="Other configured EPG sources">
+              <Stack gap="xs">
+                <Text fw={600} size="sm">
+                  Other configured EPG sources
+                </Text>
+                {otherSources.length ? (
+                  <>
+                    <Text size="xs" c="dimmed">
+                      These sources may cover the channels you need. Matching
+                      depends on their channel IDs.
+                    </Text>
+                    {otherSources.map((other) => (
+                      <Paper
+                        key={other.id}
+                        component="article"
+                        aria-label={`EPG source ${other.name}`}
+                        className={cardClasses.card}
+                        withBorder
+                        radius="md"
+                        p="sm"
+                      >
+                        <EPGSourceSummary
+                          source={other}
+                          dateFormat={fullDateTimeFormat}
+                        />
+                      </Paper>
+                    ))}
+                  </>
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    No other EPG sources configured.
+                  </Text>
+                )}
+              </Stack>
+            </section>
+          )}
+        </Stack>
+      </div>
       <Group
         component="footer"
         aria-label="M3U setup actions"

@@ -529,6 +529,33 @@ describe('persisted M3U setup', () => {
     expect(API.advanceM3USetup).not.toHaveBeenCalled();
   });
 
+  it.each(['epg', 'categories'])(
+    'offers Continue later without changing the saved %s setup',
+    async (setup_step) => {
+      const current = { ...account, setup_step };
+      API.getPlaylist.mockResolvedValue(current);
+      const { onClose } = renderSetup({ account: current });
+      await screen.findByRole('button', { name: 'Close M3U setup' });
+      fireEvent.click(screen.getByRole('button', { name: 'Close M3U setup' }));
+      const dialog = await screen.findByRole('dialog', {
+        name: 'Continue setup later?',
+      });
+      expect(dialog).toHaveTextContent(
+        'Your account and saved setup progress will be kept.'
+      );
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Keep editing' })
+      );
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Close M3U setup' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Continue later' }));
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(API.advanceM3USetup).not.toHaveBeenCalled();
+      expect(API.createM3UEPG).not.toHaveBeenCalled();
+    }
+  );
+
   it('resumes a saved all-disabled selection with Finish & import', async () => {
     const categories = {
       ...account,

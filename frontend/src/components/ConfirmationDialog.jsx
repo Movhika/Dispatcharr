@@ -14,6 +14,7 @@ import { ScreenshotText } from './SensitiveFields.jsx';
  * @param {string} props.message - Dialog message
  * @param {string} props.confirmLabel - Text for the confirm button
  * @param {string} props.cancelLabel - Text for the cancel button
+ * @param {string} [props.confirmColor='red'] - Color of the confirm action
  * @param {string} props.actionKey - Unique key for this type of action (used for suppression)
  * @param {Function} props.onSuppressChange - Called when "don't show again" option changes
  * @param {string} [props.size='md'] - Size of the modal
@@ -31,6 +32,7 @@ const ConfirmationDialog = ({
   message = 'Are you sure you want to proceed?',
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  confirmColor = 'red',
   actionKey,
   onSuppressChange,
   size = 'md',
@@ -145,7 +147,7 @@ const ConfirmationDialog = ({
           {cancelLabel}
         </Button>
         <Button
-          color="red"
+          color={confirmColor}
           onClick={handleConfirm}
           loading={loading}
           disabled={loading}

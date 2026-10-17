@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -172,5 +178,51 @@ describe('EPG in the account editor', () => {
       </MemoryRouter>
     );
     expect(screen.getByText('Fetching')).toBeInTheDocument();
+  });
+
+  it('shows other sources inside initial setup without offering assignment or navigation', async () => {
+    const alternate = {
+      id: 12,
+      name: 'Existing guide',
+      source_type: 'schedules_direct',
+      is_active: false,
+      status: 'idle',
+      updated_at: null,
+    };
+    API.getM3UEPG.mockResolvedValue({
+      source: null,
+      can_create: true,
+      other_sources: [alternate],
+    });
+    show({ isInitialSetup: true });
+    const region = await screen.findByRole('region', {
+      name: 'Other configured EPG sources',
+    });
+    expect(within(region).getByText('Existing guide')).toBeInTheDocument();
+    expect(within(region).getByText('Schedules Direct')).toBeInTheDocument();
+    expect(within(region).getByText('Disabled')).toBeInTheDocument();
+    expect(within(region).getByText('Never')).toBeInTheDocument();
+    expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeEnabled();
+    API.createM3UEPG.mockResolvedValue({
+      source: {
+        id: 9,
+        name: 'Account guide',
+        source_type: 'xmltv',
+        is_active: true,
+      },
+      can_create: false,
+      other_sources: [alternate],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
+    await screen.findByText('Account guide');
+    expect(screen.getAllByText('Existing guide')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+
+  it('shows an explicit empty state for other sources', async () => {
+    show({ isInitialSetup: true });
+    await screen.findByText('No other EPG sources configured.');
   });
 });

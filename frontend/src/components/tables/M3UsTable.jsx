@@ -33,6 +33,7 @@ import {
   Filter,
   Square,
   SquareCheck,
+  ArrowRight,
 } from 'lucide-react';
 import useBrowserStorage from '../../hooks/useBrowserStorage';
 import {
@@ -133,45 +134,58 @@ const RowActions = ({
       aria-label={`Actions for ${row.original.name}`}
     >
       <Flex gap={4} align="center" wrap="nowrap">
-        <Tooltip label="Refresh Live TV">
-          <ActionIcon
-            aria-label={`Refresh Live TV for ${row.original.name}`}
-            variant="subtle"
-            size="md"
-            color="blue.5"
-            onClick={() => handleRefreshPlaylist(row.original.id)}
-            disabled={!row.original.is_active}
+        {row.original.setup_step ? (
+          <Button
+            size="compact-sm"
+            leftSection={<ArrowRight size={16} />}
+            aria-label={`Continue setup for ${row.original.name}`}
+            onClick={() => editPlaylist(row.original)}
           >
-            <RefreshCw size={17} />
-          </ActionIcon>
-        </Tooltip>
-        {row.original.account_type === 'XC' && (
-          <Tooltip label="Refresh VOD">
-            <ActionIcon
-              aria-label={`Refresh VOD for ${row.original.name}`}
-              variant="subtle"
-              size="md"
-              color="blue.5"
-              onClick={() => handleRefreshVOD(row.original.id)}
-              disabled={!row.original.is_active || !row.original.enable_vod}
-            >
-              <Film size={17} />
-            </ActionIcon>
-          </Tooltip>
+            Continue setup
+          </Button>
+        ) : (
+          <>
+            <Tooltip label="Refresh Live TV">
+              <ActionIcon
+                aria-label={`Refresh Live TV for ${row.original.name}`}
+                variant="subtle"
+                size="md"
+                color="blue.5"
+                onClick={() => handleRefreshPlaylist(row.original.id)}
+                disabled={!row.original.is_active}
+              >
+                <RefreshCw size={17} />
+              </ActionIcon>
+            </Tooltip>
+            {row.original.account_type === 'XC' && (
+              <Tooltip label="Refresh VOD">
+                <ActionIcon
+                  aria-label={`Refresh VOD for ${row.original.name}`}
+                  variant="subtle"
+                  size="md"
+                  color="blue.5"
+                  onClick={() => handleRefreshVOD(row.original.id)}
+                  disabled={!row.original.is_active || !row.original.enable_vod}
+                >
+                  <Film size={17} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+            <Tooltip label="Edit account">
+              <ActionIcon
+                aria-label={`Edit ${row.original.name}`}
+                variant="subtle"
+                size="md"
+                color="yellow"
+                onClick={() => {
+                  editPlaylist(row.original);
+                }}
+              >
+                <SquarePen size={17} />
+              </ActionIcon>
+            </Tooltip>
+          </>
         )}
-        <Tooltip label="Edit account">
-          <ActionIcon
-            aria-label={`Edit ${row.original.name}`}
-            variant="subtle"
-            size="md"
-            color="yellow"
-            onClick={() => {
-              editPlaylist(row.original);
-            }}
-          >
-            <SquarePen size={17} />
-          </ActionIcon>
-        </Tooltip>
         <Tooltip label="Delete account">
           <ActionIcon
             aria-label={`Delete ${row.original.name}`}

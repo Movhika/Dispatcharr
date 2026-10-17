@@ -18,8 +18,8 @@ vi.mock('@mantine/core', async () => {
         </div>
       ) : null,
     Group: ({ children }) => <div>{children}</div>,
-    Button: ({ children, onClick, disabled }) => (
-      <button onClick={onClick} disabled={disabled}>
+    Button: ({ children, onClick, disabled, color }) => (
+      <button onClick={onClick} disabled={disabled} data-color={color}>
         {children}
       </button>
     ),
@@ -91,6 +91,27 @@ describe('ConfirmationDialog', () => {
       screen.getByText('Are you sure you want to proceed?')
     ).toBeInTheDocument();
   });
+
+  it.each([
+    ['red', undefined],
+    ['blue', 'blue'],
+  ])(
+    'uses %s for the confirm action without changing the destructive default',
+    (expected, confirmColor) => {
+      render(
+        <ConfirmationDialog
+          opened
+          onClose={mockOnClose}
+          onConfirm={mockOnConfirm}
+          confirmColor={confirmColor}
+        />
+      );
+      expect(screen.getByRole('button', { name: 'Confirm' })).toHaveAttribute(
+        'data-color',
+        expected
+      );
+    }
+  );
 
   it('should not render when closed', () => {
     render(

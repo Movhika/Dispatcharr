@@ -720,8 +720,8 @@ def iter_m3u_entries(lines):
 
 @shared_task
 def refresh_m3u_accounts():
-    """Queue background parse for all active M3UAccounts."""
-    active_accounts = M3UAccount.objects.filter(is_active=True)
+    """Queue background parse for active accounts whose setup is complete."""
+    active_accounts = M3UAccount.objects.filter(is_active=True, setup_step="")
     count = 0
     for account in active_accounts:
         refresh_single_m3u_account.delay(account.id)

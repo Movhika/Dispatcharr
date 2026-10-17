@@ -548,7 +548,9 @@ class AccountSetupTests(TestCase):
         path = f"/api/m3u/accounts/{account.id}/epg/"
         response = self.client.get(path)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, {"source": None, "can_create": True})
+        self.assertEqual(response.data, {
+            "source": None, "can_create": True, "other_sources": [],
+        })
         self.assertFalse(EPGSource.objects.exists())
         for _ in range(2):
             with self.captureOnCommitCallbacks(execute=True):
@@ -586,7 +588,7 @@ class AccountSetupTests(TestCase):
         account = self.account(account_type="STD", setup_step="categories")
         path = f"/api/m3u/accounts/{account.id}/epg/"
         self.assertEqual(self.client.get(path).data, {
-            "source": None, "can_create": False,
+            "source": None, "can_create": False, "other_sources": [],
         })
         self.assertEqual(self.client.post(path, {}, format="json").status_code, 400)
         self.assertFalse(EPGSource.objects.exists())
@@ -596,7 +598,7 @@ class AccountSetupTests(TestCase):
             account = self.account(name=f"Missing {field}", **{field: ""})
             path = f"/api/m3u/accounts/{account.id}/epg/"
             self.assertEqual(self.client.get(path).data, {
-                "source": None, "can_create": False,
+                "source": None, "can_create": False, "other_sources": [],
             })
             self.assertEqual(self.client.post(path, {}, format="json").status_code, 400)
         self.assertFalse(EPGSource.objects.exists())
@@ -631,6 +633,65 @@ class AccountSetupTests(TestCase):
         self.assertEqual(self.client.get(path).status_code, 403)
         self.assertEqual(self.client.post(path, {}, format="json").status_code, 403)
         self.assertFalse(EPGSource.objects.exists())
+
+    def test_epg_overview_lists_only_safe_metadata_and_excludes_the_matching_source(self):
+        account = self.account()
+        other = EPGSource.objects.create(
+            name="Other guide", source_type="xmltv", is_active=False,
+            url="https://other.example.invalid/xmltv?token=private-test-token",
+            username="private-test-user", password="private-test-password",
+        )
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["source"])
+        self.assertEqual(response.data["other_sources"][0]["id"], other.id)
+        self.assertFalse(response.data["other_sources"][0]["is_active"])
+        created = self.client.post(path, {}, format="json")
+        self.assertEqual(created.status_code, 200, created.data)
+        for result in (created, self.client.get(path)):
+            self.assertEqual(
+                [row["id"] for row in result.data["other_sources"]], [other.id]
+            )
+            self.assertNotIn(result.data["source"]["id"], [other.id])
+            for row in [result.data["source"], *result.data["other_sources"]]:
+                self.assertEqual(set(row), {
+                    "id", "name", "is_active", "status", "source_type", "updated_at",
+                })
+            self.assertNotIn("private-test", str(result.data))
+            self.assertNotIn(account.username, str(result.data))
+            self.assertNotIn(account.password, str(result.data))
+
+    @patch("apps.m3u.api_views.refresh_single_m3u_account.delay")
+    @patch("apps.vod.tasks.refresh_vod_content.delay")
+    def test_unfinished_setup_blocks_manual_live_and_vod_refresh(self, vod, live):
+        for step in M3UAccount.SetupStep.values:
+            account = self.account(
+                name=f"Pending {step}", setup_step=step,
+                custom_properties={"enable_vod": True},
+            )
+            for path in (
+                f"/api/m3u/refresh/{account.id}/",
+                f"/api/m3u/accounts/{account.id}/refresh-vod/",
+            ):
+                response = self.client.post(path, {}, format="json")
+                self.assertEqual(response.status_code, 409, response.data)
+                self.assertIn("Continue setup", response.data["detail"])
+            account.refresh_from_db()
+            self.assertEqual(account.setup_step, step)
+        live.assert_not_called()
+        vod.assert_not_called()
+
+    @patch("apps.m3u.tasks.refresh_single_m3u_account.delay")
+    def test_bulk_refresh_skips_unfinished_accounts(self, refresh):
+        from apps.m3u.tasks import refresh_m3u_accounts
+
+        pending = self.account(name="Pending", setup_step="categories")
+        complete = self.account(name="Complete", setup_step="")
+        refresh_m3u_accounts()
+        called_ids = [call.args[0] for call in refresh.call_args_list]
+        self.assertIn(complete.id, called_ids)
+        self.assertNotIn(pending.id, called_ids)
 
     def test_standard_user_cannot_advance_setup(self):
         account = self.account()

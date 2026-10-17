@@ -275,7 +275,18 @@ describe('M3U account cards', () => {
     expect(
       screen.queryByRole('button', { name: 'Resume setup' })
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Provider One' }));
+    expect(
+      screen.queryByRole('button', { name: 'Edit Provider One' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Refresh Live TV for Provider One' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Refresh VOD for Provider One' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Continue setup for Provider One' })
+    );
     expect(
       screen.getByRole('dialog', { name: 'Account setup' })
     ).toHaveTextContent('Provider One');
@@ -285,16 +296,16 @@ describe('M3U account cards', () => {
   });
 
   it.each(['account', 'content', 'epg', 'categories'])(
-    'resumes persisted %s setup through Edit, including after closing',
+    'resumes persisted %s setup through Continue setup, including after closing',
     (setup_step) => {
       setup({ playlists: [account({ setup_step })] });
       show();
       fireEvent.click(
-        screen.getByRole('button', { name: 'Edit Provider One' })
+        screen.getByRole('button', { name: 'Continue setup for Provider One' })
       );
       fireEvent.click(screen.getByRole('button', { name: 'Close setup' }));
       fireEvent.click(
-        screen.getByRole('button', { name: 'Edit Provider One' })
+        screen.getByRole('button', { name: 'Continue setup for Provider One' })
       );
       expect(
         screen.getByRole('dialog', { name: 'Account setup' })

@@ -118,10 +118,18 @@ vi.mock('../M3UAccountEPG.jsx', () => ({
   default: () => <div data-testid="account-epg" />,
 }));
 vi.mock('../../ConfirmationDialog.jsx', () => ({
-  default: ({ opened, title, onConfirm, onClose }) =>
+  default: ({
+    opened,
+    title,
+    message,
+    confirmLabel = 'Discard',
+    onConfirm,
+    onClose,
+  }) =>
     opened ? (
       <div role="dialog" aria-label={title}>
-        <button onClick={onConfirm}>Discard</button>
+        <p>{message}</p>
+        <button onClick={onConfirm}>{confirmLabel}</button>
         <button onClick={onClose}>Keep editing</button>
       </div>
     ) : null,
@@ -158,11 +166,13 @@ vi.mock('@mantine/dates', () => ({
 // ── Mantine form ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/form', () => {
   let _values = null;
+  let _dirtyValues = null;
 
   return {
     isNotEmpty: vi.fn(() => (val) => (val ? null : 'Required')),
     __resetFormState: () => {
       _values = null;
+      _dirtyValues = null;
     },
     useForm: vi.fn(({ initialValues = {} } = {}) => {
       if (_values === null) {
@@ -181,14 +191,17 @@ vi.mock('@mantine/form', () => {
         reset: () => {
           _values = { ...initialValues };
         },
-        resetDirty: vi.fn(),
+        resetDirty: vi.fn(() => {
+          _dirtyValues = { ..._values };
+        }),
         submitting: false,
         setErrors: vi.fn(),
         clearErrors: vi.fn(),
         clearFieldError: vi.fn(),
         errors: {},
         isDirty: () =>
-          JSON.stringify(_values) !== JSON.stringify(initialValues),
+          JSON.stringify(_values) !==
+          JSON.stringify(_dirtyValues || initialValues),
         onSubmit: vi.fn((handler) => (e) => {
           e?.preventDefault?.();
           if (_values?.name) handler();
@@ -1573,6 +1586,63 @@ describe('M3U', () => {
   });
 
   describe('guided creation', () => {
+    it.each(['account', 'content'])(
+      'keeps the saved %s step when continuing later',
+      (setup_step) => {
+        setupStores();
+        const onClose = vi.fn();
+        render(
+          <M3U
+            {...defaultProps({
+              m3uAccount: makeM3uAccount({ setup_step }),
+              setupMode: true,
+              onClose,
+            })}
+          />
+        );
+        fireEvent.click(screen.getByTestId('modal-close'));
+        expect(
+          screen.getByRole('dialog', { name: 'Continue setup later?' })
+        ).toBeInTheDocument();
+        expect(onClose).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Continue later' }));
+        expect(onClose).toHaveBeenCalledOnce();
+        expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+        expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
+      }
+    );
+
+    it('confirms discarding only unsaved edits of an existing setup account', () => {
+      setupStores();
+      const onClose = vi.fn();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ setup_step: 'account' }),
+            setupMode: true,
+            onClose,
+          })}
+        />
+      );
+      fireEvent.change(screen.getByTestId('text-input-name'), {
+        target: { value: 'Unsaved name' },
+      });
+      fireEvent.click(screen.getByTestId('modal-close'));
+      expect(
+        screen.getByText(
+          /Your account, EPG sources and saved setup progress will be kept/
+        )
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+      expect(screen.getByDisplayValue('Unsaved name')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('modal-close'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Discard changes & close' })
+      );
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+    });
+
     it.each(['M3U_URL', 'M3U_FILE'])(
       'hides the EPG tab for %s accounts',
       (source) => {
