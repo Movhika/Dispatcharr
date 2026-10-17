@@ -194,6 +194,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
             {!categories ? (
               <M3UAccountEPG
                 account={account}
+                isInitialSetup
                 onBusyChange={setEPGBusy}
                 disabled={busy}
               />

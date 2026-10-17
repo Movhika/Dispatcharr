@@ -24,6 +24,7 @@ import cardClasses from '../tables/M3UsTable.module.css';
 const M3UAccountEPG = ({
   account,
   active = true,
+  isInitialSetup = false,
   disabled = false,
   onBusyChange,
 }) => {
@@ -181,9 +182,11 @@ const M3UAccountEPG = ({
             )}
           </>
         )}
-        <Anchor component={Link} to="/sources/epg" size="sm">
-          Manage EPG sources
-        </Anchor>
+        {!isInitialSetup && (
+          <Anchor component={Link} to="/sources/epg" size="sm">
+            Manage EPG sources
+          </Anchor>
+        )}
       </Stack>
     </Paper>
   );

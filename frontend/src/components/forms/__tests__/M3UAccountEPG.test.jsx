@@ -70,6 +70,21 @@ describe('EPG in the account editor', () => {
       screen.queryByRole('button', { name: 'Create EPG' })
     ).not.toBeInTheDocument();
   });
+  it.each([
+    null,
+    { id: 9, name: 'Setup guide', is_active: true, status: 'idle' },
+  ])(
+    'keeps initial setup inside the dialog, with or without a source (%s)',
+    async (source) => {
+      API.getM3UEPG.mockResolvedValue({ source, can_create: !source });
+      show({ isInitialSetup: true });
+      await screen.findByText(
+        source ? source.name : 'No matching EPG source configured.'
+      );
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+      expect(screen.queryByText('Manage EPG sources')).not.toBeInTheDocument();
+    }
+  );
   it('keeps failed late creation retryable', async () => {
     API.createM3UEPG.mockRejectedValueOnce(new Error('Name already exists'));
     show();

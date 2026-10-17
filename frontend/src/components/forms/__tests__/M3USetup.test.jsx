@@ -224,6 +224,23 @@ describe('persisted M3U setup', () => {
       screen.queryByText('Create matching EPG source?')
     ).not.toBeInTheDocument();
   });
+  it('shows the existing EPG card without a route out of guided setup', async () => {
+    API.getM3UEPG.mockResolvedValue({
+      source: {
+        id: 9,
+        name: 'Existing setup guide',
+        is_active: true,
+        status: 'success',
+      },
+      can_create: false,
+    });
+    renderSetup();
+    await screen.findByRole('article', {
+      name: 'EPG source Existing setup guide',
+    });
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
 
   it('does not show an EPG step for standard accounts', async () => {
     const standard = {
