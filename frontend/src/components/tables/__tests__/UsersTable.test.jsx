@@ -377,16 +377,39 @@ describe('UsersTable', () => {
   });
 
   describe('Edit user via actions column', () => {
+    it('names each row action with its target username without invoking it', () => {
+      const users = [
+        makeUser({ id: 1, username: 'alice' }),
+        makeUser({ id: 2, username: 'bob' }),
+      ];
+      setupMocks({ users });
+      render(<UsersTable />);
+
+      const actionsCol = getActionsCell();
+      users.forEach((user) => {
+        render(actionsCol.cell({ row: { original: user } }));
+        expect(
+          screen.getByRole('button', { name: `Edit user ${user.username}` })
+        ).toBeEnabled();
+        expect(
+          screen.getByRole('button', { name: `Delete user ${user.username}` })
+        ).toBeEnabled();
+      });
+
+      expect(screen.queryByTestId('user-form')).not.toBeInTheDocument();
+      expect(API.deleteUser).not.toHaveBeenCalled();
+    });
+
     it('opens the form populated with the user when edit icon is clicked', () => {
       const user = makeUser({ username: 'janedoe' });
       setupMocks({ users: [user] });
       render(<UsersTable />);
 
       const actionsCol = getActionsCell();
-      const { getByTestId } = render(
-        actionsCol.cell({ row: { original: user } })
+      render(actionsCol.cell({ row: { original: user } }));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit user janedoe' })
       );
-      fireEvent.click(getByTestId('icon-square-pen').closest('button'));
 
       expect(screen.getByTestId('user-form')).toBeInTheDocument();
       expect(screen.getByTestId('form-user-name')).toHaveTextContent('janedoe');
@@ -446,10 +469,10 @@ describe('UsersTable', () => {
       render(<UsersTable />);
 
       const actionsCol = getActionsCell();
-      const { getByTestId } = render(
-        actionsCol.cell({ row: { original: user } })
+      render(actionsCol.cell({ row: { original: user } }));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Delete user testuser' })
       );
-      fireEvent.click(getByTestId('icon-square-minus').closest('button'));
 
       expect(screen.getByTestId('confirm-dialog')).toBeInTheDocument();
       expect(screen.getByTestId('confirm-title')).toHaveTextContent(

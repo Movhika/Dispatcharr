@@ -138,6 +138,7 @@ const UserRowActions = ({ theme, row, editUser, handleDeleteUser }) => {
         size={iconSize}
         variant="transparent"
         color={theme.tailwind.yellow[3]}
+        aria-label={`Edit user ${row.original.username}`}
         onClick={onEdit}
         disabled={authUser.user_level !== USER_LEVELS.ADMIN}
       >
@@ -148,6 +149,7 @@ const UserRowActions = ({ theme, row, editUser, handleDeleteUser }) => {
         size={iconSize}
         variant="transparent"
         color={theme.tailwind.red[6]}
+        aria-label={`Delete user ${row.original.username}`}
         onClick={onDelete}
         disabled={
           authUser.user_level !== USER_LEVELS.ADMIN ||
