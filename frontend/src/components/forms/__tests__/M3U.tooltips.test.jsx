@@ -56,7 +56,7 @@ const renderContent = (values = {}) => {
       />
     </MantineProvider>
   );
-  fireEvent.click(screen.getByRole('tab', { name: 'Content' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
 };
 
 const tabTo = async (target) => {
@@ -94,16 +94,16 @@ describe('M3U content switch tooltips with Mantine controls', () => {
     );
   });
 
-  it.each([
-    [{ account_type: 'STD' }, 'Enable VOD'],
-    [{ enable_vod: false }, 'Enable separate VOD refresh schedule'],
-  ])('keeps disabled-switch help accessible (%j)', async (values, name) => {
-    renderContent(values);
-    const input = screen.getByRole('switch', { name });
-    expect(input).toBeDisabled();
-    const target = input.closest('.mantine-Switch-root').parentElement;
-    expect(target).toHaveAttribute('tabindex', '0');
-    fireEvent.mouseEnter(target);
-    expect(await screen.findByRole('tooltip')).toBeInTheDocument();
-  });
+  it.each([[{ enable_vod: false }, 'Enable separate VOD refresh schedule']])(
+    'keeps disabled-switch help accessible (%j)',
+    async (values, name) => {
+      renderContent(values);
+      const input = screen.getByRole('switch', { name });
+      expect(input).toBeDisabled();
+      const target = input.closest('.mantine-Switch-root').parentElement;
+      expect(target).toHaveAttribute('tabindex', '0');
+      fireEvent.mouseEnter(target);
+      expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+    }
+  );
 });

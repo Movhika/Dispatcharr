@@ -319,6 +319,9 @@ describe('persisted M3U setup', () => {
     API.getPlaylist.mockResolvedValue(categories);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByRole('button', { name: 'Select categories' });
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Content')).not.toBeInTheDocument();
     expect(API.advanceM3USetup).toHaveBeenCalledExactlyOnceWith(
       7,
       'retry_categories'

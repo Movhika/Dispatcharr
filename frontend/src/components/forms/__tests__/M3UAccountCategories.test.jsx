@@ -217,7 +217,7 @@ describe('immediate saved category selection', () => {
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
     await waitFor(() =>
-      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account)
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'all')
     );
     expect(mocks.fetchChannelGroups).toHaveBeenCalledOnce();
   });
@@ -226,7 +226,7 @@ describe('immediate saved category selection', () => {
     const onEdit = vi.fn();
     show({ onEdit });
     fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
-    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account);
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'all');
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
   });
 
@@ -261,18 +261,15 @@ describe('immediate saved category selection', () => {
   });
 
   it.each([
-    ['Live TV', 50, '20 / 8', 'streams'],
-    ['Movies', 50, '40 / 12', 'movies'],
-    ['Series', 100, '60 / 16', 'series'],
+    ['Live TV', '20 / 8', 'streams'],
+    ['Movies', '40 / 12', 'movies'],
+    ['Series', '60 / 16', 'series'],
   ])(
     'shows %s selection and imported counts in a read-only card',
-    (label, percent, entries, unit) => {
+    (label, entries, unit) => {
       show();
       const card = screen.getByRole('article', { name: `${label} categories` });
-      expect(within(card).getByRole('progressbar')).toHaveAttribute(
-        'aria-valuenow',
-        String(percent)
-      );
+      expect(within(card).queryByRole('progressbar')).not.toBeInTheDocument();
       expect(
         within(card).getByText(`Provider / imported ${unit}`)
       ).toBeInTheDocument();
@@ -291,7 +288,7 @@ describe('immediate saved category selection', () => {
     fireEvent.click(
       within(actions).getByRole('button', { name: 'Edit selection' })
     );
-    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account);
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'all');
   });
 
   it('shows unknown entry counts as unavailable, not as a zero or loading state', () => {
@@ -301,6 +298,28 @@ describe('immediate saved category selection', () => {
     expect(API.getPlaylist).not.toHaveBeenCalled();
     expect(API.getVODCategories).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['live', ['Live TV categories']],
+    ['vod', ['Movies categories', 'Series categories']],
+  ])(
+    'shows only %s summaries with one scoped selection action',
+    (scope, labels) => {
+      const onEdit = vi.fn();
+      mocks.channelGroups = {};
+      if (scope === 'live') mocks.channelGroups = { 1: {}, 2: {} };
+      show({ scope, onEdit });
+      expect(
+        screen
+          .getAllByRole('article')
+          .map((card) => card.getAttribute('aria-label'))
+      ).toEqual(labels);
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, scope);
+      expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
+    }
+  );
 
   it('preserves known zero totals from the last refresh', () => {
     const zero = { provider_total: 0, selected_total: 0 };
@@ -334,7 +353,7 @@ describe('immediate saved category selection', () => {
     mocks.channelGroups = { 1: {}, 2: {} };
     finish();
     await waitFor(() =>
-      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account)
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'all')
     );
     expect(
       screen.getByRole('button', { name: 'Edit selection' })

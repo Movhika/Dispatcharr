@@ -8,7 +8,7 @@ const M3USetupSteps = ({
 }) => {
   const steps = [
     ['account', 'Account'],
-    ['content', 'Content'],
+    ['content', 'Settings'],
     ...(accountType === 'XC' ? [['epg', 'EPG']] : []),
     ['categories', 'Categories'],
   ];

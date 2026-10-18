@@ -57,6 +57,36 @@ describe('EPG in the account editor', () => {
       screen.queryByRole('button', { name: 'Create EPG' })
     ).not.toBeInTheDocument();
   });
+
+  it.each([false, true])(
+    'shows saved EPG channel totals, including zero, in setup: %s',
+    async (isInitialSetup) => {
+      const guide = {
+        id: 9,
+        name: 'Counted guide',
+        is_active: true,
+        epg_data_count: 42,
+      };
+      API.getM3UEPG.mockResolvedValue({ source: guide, can_create: false });
+      const view = show({ isInitialSetup });
+      await screen.findByText('Counted guide');
+      expect(screen.getByText('EPG channels').parentElement).toHaveTextContent(
+        '42'
+      );
+      mocks.epgs = { 9: { ...guide, epg_data_count: 0 } };
+      view.rerender(
+        <MemoryRouter>
+          <MantineProvider>
+            <M3UAccountEPG account={account} isInitialSetup={isInitialSetup} />
+          </MantineProvider>
+        </MemoryRouter>
+      );
+      expect(screen.getByText('EPG channels').parentElement).toHaveTextContent(
+        '0'
+      );
+      expect(API.getM3UEPG).toHaveBeenCalledOnce();
+    }
+  );
   it('shows an existing matching guide instead of another create action', async () => {
     API.getM3UEPG.mockResolvedValue({
       source: { id: 9, name: 'Existing guide', is_active: false },

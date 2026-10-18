@@ -129,6 +129,46 @@ class CategorySelectionCountsTests(TestCase):
             self.other.category_relations.filter(enabled=True).count(), 4,
         )
 
+    def test_live_only_save_preserves_every_vod_selection(self):
+        self.add_selections()
+        vod_before = list(self.account.category_relations.order_by("pk").values())
+        live = self.account.channel_group.get(enabled=True)
+        response = self.client.patch(
+            f"{self.url}group-settings/",
+            {"group_settings": [{
+                "channel_group": live.channel_group_id, "enabled": False,
+            }], "category_settings": []},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        live.refresh_from_db()
+        self.assertFalse(live.enabled)
+        self.assertEqual(
+            list(self.account.category_relations.order_by("pk").values()),
+            vod_before,
+        )
+
+    def test_vod_only_save_preserves_every_live_selection_and_sync_setting(self):
+        self.add_selections()
+        live_before = list(self.account.channel_group.order_by("pk").values())
+        movie = self.account.category_relations.get(
+            category__category_type="movie", enabled=True,
+        )
+        response = self.client.patch(
+            f"{self.url}group-settings/",
+            {"group_settings": [], "category_settings": [{
+                "id": movie.category_id, "enabled": False,
+            }]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        movie.refresh_from_db()
+        self.assertFalse(movie.enabled)
+        self.assertEqual(
+            list(self.account.channel_group.order_by("pk").values()),
+            live_before,
+        )
+
     def test_count_field_cannot_be_written_by_clients(self):
         self.add_selections()
         response = self.client.patch(

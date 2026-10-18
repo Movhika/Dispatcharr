@@ -182,6 +182,58 @@ describe('M3UGroupFilter', () => {
 
   // ── Guard conditions ───────────────────────────────────────────────────────
 
+  it('limits Live selection and saving to Live without loading VOD categories', async () => {
+    const { fetchCategories } = setupStores();
+    const props = defaultProps({ scope: 'live' });
+    render(<M3UGroupFilter {...props} />);
+    expect(screen.getByTestId('modal-title')).toHaveTextContent(
+      'Live TV categories'
+    );
+    expect(
+      screen.queryByTestId('vod-category-filter-movie')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('vod-category-filter-series')
+    ).not.toBeInTheDocument();
+    expect(fetchCategories).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('live-change-groups'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).toHaveBeenCalledOnce()
+    );
+    expect(
+      M3uGroupFilterUtils.savePlaylistGroupSettings.mock.calls[0].slice(1, 4)
+    ).toEqual([[{ id: 99, enabled: true }], [], []]);
+  });
+
+  it('limits VOD selection and saving to Movies and Series without touching Live', async () => {
+    const { fetchCategories } = setupStores();
+    render(<M3UGroupFilter {...defaultProps({ scope: 'vod' })} />);
+    expect(screen.getByTestId('modal-title')).toHaveTextContent(
+      'VOD categories'
+    );
+    expect(screen.getByTestId('tabs')).toHaveAttribute(
+      'data-value',
+      'vod-movie'
+    );
+    expect(screen.queryByTestId('live-group-filter')).not.toBeInTheDocument();
+    expect(M3uGroupFilterUtils.buildGroupStates).not.toHaveBeenCalled();
+    expect(fetchCategories).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByTestId('vod-change-movie'));
+    fireEvent.click(screen.getByTestId('vod-change-series'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).toHaveBeenCalledOnce()
+    );
+    expect(
+      M3uGroupFilterUtils.savePlaylistGroupSettings.mock.calls[0].slice(1, 4)
+    ).toEqual([[], [{ id: 55, enabled: true }], [{ id: 55, enabled: true }]]);
+  });
+
   it('keeps category actions without a separate divider', () => {
     setupStores();
     render(<M3UGroupFilter {...defaultProps()} />);

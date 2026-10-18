@@ -367,8 +367,14 @@ class M3UMatchingEPGSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(allow_null=True)
 
 
+class M3UAccountEPGSerializer(M3UMatchingEPGSerializer):
+    epg_data_count = serializers.IntegerField(
+        source="epgs.count", read_only=True, min_value=0,
+    )
+
+
 class M3UMatchingEPGResponseSerializer(serializers.Serializer):
-    source = M3UMatchingEPGSerializer(allow_null=True)
+    source = M3UAccountEPGSerializer(allow_null=True)
     can_create = serializers.BooleanField()
     other_sources = M3UMatchingEPGSerializer(many=True)
 

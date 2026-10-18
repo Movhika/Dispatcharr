@@ -10,7 +10,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.test import APIClient
 
 from apps.channels.models import ChannelGroup, ChannelGroupM3UAccount
-from apps.epg.models import EPGSource
+from apps.epg.models import EPGData, EPGSource
 from apps.m3u.account_setup import (
     advance_account_setup,
     discover_setup_categories,
@@ -611,6 +611,7 @@ class AccountSetupTests(TestCase):
         self.assertEqual(
             set(response.data["source"]), {
                 "id", "name", "is_active", "status", "source_type", "updated_at",
+                "epg_data_count",
             }
         )
         self.assertFalse(response.data["can_create"])
@@ -634,6 +635,28 @@ class AccountSetupTests(TestCase):
         response = self.client.post(path, {}, format="json")
         self.assertEqual(response.data["source"]["id"], source.id)
         self.assertEqual(EPGSource.objects.count(), 1)
+
+    def test_matching_epg_count_uses_saved_channels_not_programmes(self):
+        account = self.account()
+        path = f"/api/m3u/accounts/{account.id}/epg/"
+        created = self.client.post(path, {}, format="json")
+        self.assertEqual(created.data["source"]["epg_data_count"], 0)
+        source = EPGSource.objects.get(pk=created.data["source"]["id"])
+        EPGData.objects.bulk_create([
+            EPGData(
+                epg_source=source, tvg_id=f"test-{index}",
+                name=f"Channel {index}",
+            )
+            for index in range(3)
+        ])
+        responses = (
+            self.client.get(path), self.client.post(path, {}, format="json"),
+        )
+        for response in responses:
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["source"]["epg_data_count"], 3)
+        source.epgs.all().delete()
+        self.assertEqual(self.client.get(path).data["source"]["epg_data_count"], 0)
 
     def test_standard_accounts_cannot_use_automatic_epg_creation(self):
         account = self.account(account_type="STD", setup_step="categories")
@@ -706,9 +729,12 @@ class AccountSetupTests(TestCase):
             )
             self.assertNotIn(result.data["source"]["id"], [other.id])
             for row in [result.data["source"], *result.data["other_sources"]]:
-                self.assertEqual(set(row), {
+                expected = {
                     "id", "name", "is_active", "status", "source_type", "updated_at",
-                })
+                }
+                if row["id"] == result.data["source"]["id"]:
+                    expected.add("epg_data_count")
+                self.assertEqual(set(row), expected)
             self.assertNotIn("private-test", str(result.data))
             self.assertNotIn(account.username, str(result.data))
             self.assertNotIn(account.password, str(result.data))

@@ -698,15 +698,25 @@ const EPGsTable = () => {
                       />
                     </Group>
                   </Group>
-                  <Box>
-                    <Text size="xs" fw={600} mb={4}>
-                      Last refresh
-                    </Text>
-                    <Stack gap={4}>
-                      {renderDetail(source, 'updated_at')}
-                      <EPGStatusCell epg={source} />
-                    </Stack>
-                  </Box>
+                  <Group gap="xl" align="flex-start">
+                    <Box>
+                      <Text size="xs" fw={600} mb={4}>
+                        EPG channels
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {source.epg_data_count ?? '—'}
+                      </Text>
+                    </Box>
+                    <Box>
+                      <Text size="xs" fw={600} mb={4}>
+                        Last refresh
+                      </Text>
+                      <Stack gap={4}>
+                        {renderDetail(source, 'updated_at')}
+                        <EPGStatusCell epg={source} />
+                      </Stack>
+                    </Box>
+                  </Group>
                 </Stack>
               </Paper>
             ))}

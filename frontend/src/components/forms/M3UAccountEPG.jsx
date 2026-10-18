@@ -49,14 +49,26 @@ const EPGSourceSummary = ({ source, dateFormat }) => {
         <Badge variant="light">{type}</Badge>
         <SourceStatus label={formatStatusText(status)} color={statusColor} />
       </Group>
-      <div>
-        <Text size="xs" fw={600} mb={4}>
-          Last refresh
-        </Text>
-        <Text size="xs" c="dimmed">
-          {source.updated_at ? format(source.updated_at, dateFormat) : 'Never'}
-        </Text>
-      </div>
+      <Group gap="xl" align="flex-start">
+        <div>
+          <Text size="xs" fw={600} mb={4}>
+            EPG channels
+          </Text>
+          <Text size="xs" c="dimmed">
+            {source.epg_data_count ?? '—'}
+          </Text>
+        </div>
+        <div>
+          <Text size="xs" fw={600} mb={4}>
+            Last refresh
+          </Text>
+          <Text size="xs" c="dimmed">
+            {source.updated_at
+              ? format(source.updated_at, dateFormat)
+              : 'Never'}
+          </Text>
+        </div>
+      </Group>
     </Stack>
   );
 };

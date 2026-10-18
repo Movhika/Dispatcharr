@@ -3,7 +3,6 @@ import {
   Button,
   Group,
   Paper,
-  Progress,
   Stack,
   Text,
   ThemeIcon,
@@ -14,6 +13,7 @@ import classes from './M3UAccountSummary.module.css';
 
 const M3UCategorySummary = ({
   account,
+  scope = 'all',
   showCounts = true,
   onEdit,
   opening = false,
@@ -47,11 +47,14 @@ const M3UCategorySummary = ({
           ...(savedCounts?.[type] || { selected: 0, total: 0 }),
         }))
       : []),
-  ];
+  ].filter(
+    ({ tab }) =>
+      scope === 'all' || (scope === 'live' ? tab === 'live' : tab !== 'live')
+  );
 
   return (
     <section aria-label="Category selection">
-      <Stack gap="sm">
+      <Stack gap={4}>
         {showCounts ? (
           <div className={classes.categoryGrid}>
             {counts.map(
@@ -62,26 +65,20 @@ const M3UCategorySummary = ({
                   aria-label={`${label} categories`}
                   withBorder
                   radius="md"
-                  p="md"
+                  p="sm"
                   className={`${classes.card} ${classes.categoryCard}`}
                 >
                   <Group gap="sm" wrap="nowrap">
-                    <ThemeIcon variant="light" size="lg" radius="md">
+                    <ThemeIcon variant="light" size="md" radius="md">
                       {createElement(icon, { size: 20, 'aria-hidden': true })}
                     </ThemeIcon>
                     <Text fw={600} className={classes.cardHeading}>
                       {label}
                     </Text>
                   </Group>
-                  <Text size="lg" fw={600} className={classes.count}>
+                  <Text size="md" fw={600} className={classes.count}>
                     {selected} of {total} categories selected
                   </Text>
-                  <Progress
-                    value={total > 0 ? (selected / total) * 100 : 0}
-                    size={5}
-                    radius="xl"
-                    aria-label={`Selected ${label} categories`}
-                  />
                   <Tooltip
                     label={
                       entries
@@ -113,7 +110,7 @@ const M3UCategorySummary = ({
           <Paper
             withBorder
             radius="md"
-            p="sm"
+            p={6}
             component="section"
             aria-label="Category selection actions"
             className={classes.selectionActions}

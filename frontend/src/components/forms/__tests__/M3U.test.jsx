@@ -65,9 +65,10 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange, isInitialSetup, isOpen, onClose }) => (
+  default: ({ onChange, isInitialSetup, isOpen, onClose, scope }) => (
     <div
       data-testid="m3u-group-filter"
+      data-scope={scope}
       data-initial-setup={String(isInitialSetup)}
       data-open={String(isOpen)}
     >
@@ -118,9 +119,13 @@ vi.mock('../M3UAccountEPG.jsx', () => ({
   default: () => <div data-testid="account-epg" />,
 }));
 vi.mock('../M3UAccountCategories.jsx', () => ({
-  default: ({ account, onEdit }) => (
-    <div data-testid="account-categories" data-saved-name={account.name}>
-      <button type="button" onClick={() => onEdit(account)}>
+  default: ({ account, onEdit, scope }) => (
+    <div
+      data-testid="account-categories"
+      data-saved-name={account.name}
+      data-scope={scope}
+    >
+      <button type="button" onClick={() => onEdit(account, scope)}>
         Edit selection
       </button>
     </div>
@@ -737,9 +742,7 @@ describe('M3U', () => {
       expect(
         screen.queryByRole('button', { name: 'Filters' })
       ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole('tab', { name: 'Categories' })
-      ).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'Live TV' })).toBeInTheDocument();
     });
 
     it('renders ScheduleInput sub-component', () => {
@@ -889,6 +892,7 @@ describe('M3U', () => {
       fireEvent.change(document.querySelector('input[type="password"]'), {
         target: { value: 'example-password' },
       });
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     };
 
@@ -1255,6 +1259,46 @@ describe('M3U', () => {
   });
 
   describe('account and content tabs', () => {
+    it('groups Live settings, categories and EPG separately from VOD', () => {
+      setupStores();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ enable_vod: true }),
+          })}
+        />
+      );
+      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+        'Account',
+        'Live TV',
+        'VOD',
+        'Profiles',
+      ]);
+      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
+      expect(screen.getByTestId('account-epg')).toBeInTheDocument();
+      expect(screen.getByTestId('account-categories')).toHaveAttribute(
+        'data-scope',
+        'live'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
+      expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
+        'data-scope',
+        'live'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Close groups' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
+      expect(screen.queryByTestId('account-epg')).not.toBeInTheDocument();
+      expect(screen.getByTestId('account-categories')).toHaveAttribute(
+        'data-scope',
+        'vod'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
+      expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
+        'data-scope',
+        'vod'
+      );
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+    });
     it('keeps the account editor open while a nested groups dialog handles Escape', () => {
       const onClose = vi.fn();
       setupStores();
@@ -1265,7 +1309,7 @@ describe('M3U', () => {
         'data-close-on-escape',
         'true'
       );
-      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
       fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-close-on-escape',
@@ -1279,7 +1323,7 @@ describe('M3U', () => {
       expect(onClose).not.toHaveBeenCalled();
       expect(screen.getByTestId('account-categories')).toBeInTheDocument();
     });
-    it('keeps only Save in the fixed footer and moves Categories into a tab', () => {
+    it('keeps only Save in the fixed footer and category actions in their topic', () => {
       setupStores();
       render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
       const footer = screen.getByRole('contentinfo', {
@@ -1310,11 +1354,10 @@ describe('M3U', () => {
         ).toBeInTheDocument();
       }
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Content' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'EPG' })).toBeInTheDocument();
-      expect(
-        screen.getByRole('tab', { name: 'Categories' })
-      ).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'Live TV' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'VOD' })).toBeInTheDocument();
+      for (const name of ['Content', 'EPG', 'Categories'])
+        expect(screen.queryByRole('tab', { name })).not.toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Profiles' })).toBeInTheDocument();
     });
 
@@ -1324,7 +1367,7 @@ describe('M3U', () => {
       fireEvent.change(screen.getByDisplayValue('Test M3U'), {
         target: { value: 'Unsaved name' },
       });
-      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
       expect(
         screen.getByRole('button', { name: 'Edit selection' })
       ).toBeInTheDocument();
@@ -1340,7 +1383,7 @@ describe('M3U', () => {
       fireEvent.change(screen.getByDisplayValue('Test M3U'), {
         target: { value: 'Unsaved name' },
       });
-      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
       setupStores({
         playlists: [{ ...original, name: 'Latest saved account' }],
       });
@@ -1370,7 +1413,7 @@ describe('M3U', () => {
         'data-content-class',
         `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`
       );
-      expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
+      expect(screen.getAllByTestId('account-columns')).toHaveLength(3);
       const live = within(
         screen.getByRole('group', { name: 'Live TV settings' })
       );
@@ -1735,11 +1778,20 @@ describe('M3U', () => {
             })}
           />
         );
-        expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+        if (setup_step === 'account')
+          expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+        else
+          expect(
+            screen.getByRole('tab', { name: 'Live TV' })
+          ).toBeInTheDocument();
         expect(
           screen.queryByRole('button', { name: 'Save' })
         ).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        if (setup_step === 'content') {
+          expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+          fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        }
         await waitFor(() => expect(onSetupNext).toHaveBeenCalledOnce());
         expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
           account,
@@ -1776,6 +1828,35 @@ describe('M3U', () => {
         ).not.toBeInTheDocument()
       );
       expect(screen.getByDisplayValue('Unsubmitted draft')).toBeInTheDocument();
+    });
+
+    it('moves back from VOD to Live settings without saving or leaving setup', () => {
+      setupStores();
+      const onSetupBack = vi.fn();
+      const onSetupNext = vi.fn();
+      render(
+        <M3U
+          {...defaultProps({
+            m3uAccount: makeM3uAccount({ setup_step: 'content' }),
+            setupMode: true,
+            onSetupBack,
+            onSetupNext,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      expect(screen.getByRole('tab', { name: 'VOD' })).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText('VOD Priority'), {
+        target: { value: '27' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(onSetupBack).not.toHaveBeenCalled();
+      expect(onSetupNext).not.toHaveBeenCalled();
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+      expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('VOD Priority')).toHaveValue(27);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      expect(onSetupBack).toHaveBeenCalledOnce();
     });
 
     it('does not allow Content before validating Account', () => {

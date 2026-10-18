@@ -189,6 +189,18 @@ describe('EPG source cards', () => {
     expect(screen.getByText('EPG Sources')).toBeInTheDocument();
     expect(screen.queryByText('EPGs')).not.toBeInTheDocument();
   });
+
+  it.each([0, 1234, undefined])(
+    'shows saved EPG channels without confusing missing data with zero (%s)',
+    (count) => {
+      setup([source({ epg_data_count: count })]);
+      show();
+      expect(card().getByText('EPG channels').parentElement).toHaveTextContent(
+        count === undefined ? '—' : String(count)
+      );
+      expect(actions.refreshEpg).not.toHaveBeenCalled();
+    }
+  );
   it('uses matching cards and control blocks without a table', () => {
     show();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
