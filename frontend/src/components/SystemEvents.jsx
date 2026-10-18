@@ -286,6 +286,10 @@ const SystemEvents = () => {
           )}
           <ActionIcon
             variant="subtle"
+            aria-label={
+              isExpanded ? 'Collapse system events' : 'Expand system events'
+            }
+            aria-expanded={isExpanded}
             onClick={() => setIsExpanded(!isExpanded)}
           >
             <ChevronDown

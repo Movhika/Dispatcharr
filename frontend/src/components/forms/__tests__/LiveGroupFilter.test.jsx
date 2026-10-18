@@ -155,7 +155,7 @@ vi.mock('@mantine/core', async () => ({
   TableThead: ({ children }) => <thead>{children}</thead>,
   TableTbody: ({ children }) => <tbody>{children}</tbody>,
   TableTr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
-  TableTh: ({ children }) => <th>{children}</th>,
+  TableTh: ({ children, w }) => <th style={{ width: w }}>{children}</th>,
   TableTd: ({ children }) => <td>{children}</td>,
   ScrollArea: ({ children }) => <div>{children}</div>,
   Select: ({ value, onChange, data, disabled, label, ...props }) => (
@@ -386,6 +386,16 @@ describe('LiveGroupFilter', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
+    it('reserves enough status-column width for the full badge label', () => {
+      renderWith({ initialGroups: [makeGroup({ enabled: false })] });
+      expect(screen.getByRole('columnheader', { name: 'Status' })).toHaveStyle({
+        width: '100px',
+      });
+      expect(
+        within(screen.getByRole('table')).getByText('Disabled')
+      ).toBeInTheDocument();
+    });
+
     it('keeps auto-sync help available without a large info banner', () => {
       renderWith();
       expect(screen.queryByTestId('alert')).not.toBeInTheDocument();

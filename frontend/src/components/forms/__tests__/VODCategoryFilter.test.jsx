@@ -32,7 +32,7 @@ vi.mock('@mantine/core', () => ({
   TableThead: ({ children }) => <thead>{children}</thead>,
   TableTbody: ({ children }) => <tbody>{children}</tbody>,
   TableTr: ({ children }) => <tr>{children}</tr>,
-  TableTh: ({ children }) => <th>{children}</th>,
+  TableTh: ({ children, w }) => <th style={{ width: w }}>{children}</th>,
   TableTd: ({ children }) => <td>{children}</td>,
   ScrollArea: ({ children }) => <div>{children}</div>,
   Tooltip: ({ children }) => <>{children}</>,
@@ -221,6 +221,16 @@ describe('VODCategoryFilter', () => {
   // ── Rendering ─────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
+    it('reserves enough status-column width for the full badge label', () => {
+      render(<VODCategoryFilter {...defaultProps()} />);
+      expect(screen.getByRole('columnheader', { name: 'Status' })).toHaveStyle({
+        width: '100px',
+      });
+      expect(
+        within(screen.getByRole('table')).getByText('Disabled')
+      ).toBeInTheDocument();
+    });
+
     it('renders without crashing', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
       expect(screen.getByRole('table')).toBeInTheDocument();

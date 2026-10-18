@@ -958,7 +958,7 @@ const LiveGroupFilter = ({
                 />
               </TableTh>
               <TableTh>Category</TableTh>
-              <TableTh w="10%" ta="center">
+              <TableTh w={100} ta="center">
                 Status
               </TableTh>
               <TableTh w="12%">

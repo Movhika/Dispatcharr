@@ -480,7 +480,7 @@ const VODCategoryFilter = ({
                 />
               </TableTh>
               <TableTh>Category</TableTh>
-              <TableTh w="12%" ta="center">
+              <TableTh w={100} ta="center">
                 Status
               </TableTh>
               <TableTh w="20%">Language</TableTh>
