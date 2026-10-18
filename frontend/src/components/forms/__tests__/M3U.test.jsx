@@ -208,6 +208,7 @@ vi.mock('@mantine/form', () => {
         },
         reset: () => {
           _values = { ...initialValues };
+          _dirtyValues = { ...initialValues };
         },
         resetDirty: vi.fn(() => {
           _dirtyValues = { ..._values };

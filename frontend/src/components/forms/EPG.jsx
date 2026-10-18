@@ -1,5 +1,5 @@
 // Modal.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Button,
   Checkbox,
@@ -34,6 +34,8 @@ import {
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
 import editorClasses from './AccountEditor.module.css';
+import ConfirmationDialog from '../ConfirmationDialog.jsx';
+import { formatApiError } from '../../utils';
 
 // Countries are fetched with lineups from the backend on component mount.
 // Fallback list used if the API call fails.
@@ -694,6 +696,9 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
   const [scheduleType, setScheduleType] = useState('interval');
   const [savedEpgId, setSavedEpgId] = useState(null);
   const [sdCustomProps, setSdCustomProps] = useState(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const form = useForm({
     mode: 'uncontrolled',
@@ -720,6 +725,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
   });
 
   const onSubmit = async () => {
+    if (savingRef.current) return;
     hideNotification('epg-source-validation');
     const values = { ...form.getValues() };
 
@@ -733,35 +739,49 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
     }
 
     const existingId = epg?.id || savedEpgId;
-
-    if (existingId) {
-      // Enabled is controlled in the overview, not by this editor snapshot.
-      delete values.is_active;
-      const epgObj = epg || { id: existingId };
-      await updateEPG(values, epgObj);
-      onClose();
-    } else {
-      const payload = { ...values };
-      if (payload.source_type === 'schedules_direct') {
-        payload.custom_properties = {
-          logo_style: 'dark',
-          poster_style: 'sd_recommended',
-        };
-      }
-      const result = await addEPG(payload);
-      if (result?.id) {
-        setSavedEpgId(result.id);
-        setSdCustomProps(
-          result.custom_properties || payload.custom_properties || {}
-        );
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      if (existingId) {
+        // Enabled is controlled in the overview, not by this editor snapshot.
+        delete values.is_active;
+        const epgObj = epg || { id: existingId };
+        const result = await updateEPG(values, epgObj);
+        if (!result?.id) return;
+        close();
       } else {
-        form.reset();
-        onClose();
+        const payload = { ...values };
+        if (payload.source_type === 'schedules_direct') {
+          payload.custom_properties = {
+            logo_style: 'dark',
+            poster_style: 'sd_recommended',
+          };
+        }
+        const result = await addEPG(payload);
+        if (result?.id) {
+          setSavedEpgId(result.id);
+          setSdCustomProps(
+            result.custom_properties || payload.custom_properties || {}
+          );
+          form.resetDirty();
+        }
       }
+    } catch (error) {
+      showNotification({
+        title: 'EPG source was not saved',
+        message: formatApiError(error),
+        color: 'red',
+        autoClose: false,
+      });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
   useEffect(() => {
+    if (!isOpen) return;
+    setDiscardOpen(false);
     if (epg) {
       const storedEpg = useEPGsStore.getState().epgs[epg.id] || epg;
       const values = {
@@ -776,6 +796,7 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
         priority: storedEpg.priority ?? 0,
       };
       form.setValues(values);
+      form.resetDirty();
       setSourceType(storedEpg.source_type);
       setSavedEpgId(storedEpg.id);
       setSdCustomProps(storedEpg.custom_properties || {});
@@ -792,20 +813,27 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
       setSdCustomProps(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [epg]);
+  }, [epg, isOpen]);
 
   const handleSourceTypeChange = (value) => {
     form.setFieldValue('source_type', value);
     setSourceType(value);
   };
 
-  const handleClose = () => {
+  const close = () => {
     form.reset();
     setSavedEpgId(null);
     setSdCustomProps(null);
     setSourceType('xmltv');
     setScheduleType('interval');
+    setDiscardOpen(false);
     onClose();
+  };
+
+  const requestClose = () => {
+    if (savingRef.current || form.submitting) return;
+    if (form.isDirty()) setDiscardOpen(true);
+    else close();
   };
 
   if (!isOpen) {
@@ -819,9 +847,15 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
     <>
       <Modal
         opened={isOpen}
-        onClose={handleClose}
+        onClose={requestClose}
         title="EPG Source"
-        closeButtonProps={{ 'aria-label': 'Close EPG source editor' }}
+        closeButtonProps={{
+          'aria-label': 'Close EPG source editor',
+          disabled: saving,
+        }}
+        closeOnEscape={!discardOpen && !saving}
+        closeOnClickOutside={!discardOpen && !saving}
+        trapFocus={!discardOpen}
         size="68vw"
         yOffset="2vh"
         classNames={{
@@ -844,7 +878,11 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
           })}
           className={editorClasses.form}
         >
-          <div className={editorClasses.panel}>
+          <div
+            className={editorClasses.panel}
+            inert={saving}
+            aria-busy={saving}
+          >
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
               <Paper withBorder p="sm">
                 <Stack gap="xs" role="group" aria-label="EPG source settings">
@@ -1035,16 +1073,38 @@ const EPG = ({ epg = null, isOpen, onClose }) => {
             )}
 
             <Group justify="end">
-              <Button variant="outline" onClick={handleClose}>
+              <Button
+                variant="outline"
+                onClick={requestClose}
+                disabled={saving || form.submitting}
+              >
                 Cancel
               </Button>
-              <Button type="submit" variant="filled" disabled={form.submitting}>
+              <Button
+                type="submit"
+                variant="filled"
+                disabled={saving || form.submitting}
+                loading={saving}
+              >
                 {epg?.id || savedEpgId ? 'Update EPG Source' : 'Create'}
               </Button>
             </Group>
           </Box>
         </form>
       </Modal>
+      <ConfirmationDialog
+        opened={discardOpen}
+        onClose={() => setDiscardOpen(false)}
+        onConfirm={close}
+        title="Discard unsaved changes?"
+        message={
+          epg?.id || savedEpgId
+            ? 'These EPG changes have not been saved. Discard them and close? Your saved source and directly saved EPG options will be kept.'
+            : 'This EPG source has not been created. Discard the unsaved entries?'
+        }
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+      />
     </>
   );
 };

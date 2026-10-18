@@ -26,6 +26,8 @@ vi.mock('../../../utils/forms/DummyEpgUtils.js', () => ({
   updateEPG: vi.fn(),
 }));
 
+vi.mock('../../ConfirmationDialog.jsx', () => ({ default: () => null }));
+
 // ── Mantine form ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/form', () => ({
   isNotEmpty: vi.fn(() => (val) => (val ? null : 'Required')),
@@ -49,6 +51,8 @@ vi.mock('@mantine/form', () => ({
         values[field] = value;
       }),
       reset: vi.fn(),
+      resetDirty: vi.fn(),
+      isDirty: () => false,
       submitting: false,
       onSubmit: vi.fn((handler) => (e) => {
         e?.preventDefault?.();
@@ -309,7 +313,7 @@ describe('EPG', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(DummyEpgUtils.addEPG).mockResolvedValue(undefined);
-    vi.mocked(DummyEpgUtils.updateEPG).mockResolvedValue(undefined);
+    vi.mocked(DummyEpgUtils.updateEPG).mockResolvedValue({ id: 1 });
   });
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -384,6 +388,8 @@ describe('EPG', () => {
           epg[field] = value;
         }),
         reset: vi.fn(),
+        resetDirty: vi.fn(),
+        isDirty: () => false,
         submitting: false,
         onSubmit: vi.fn((h) => (e) => {
           e?.preventDefault?.();
@@ -410,6 +416,8 @@ describe('EPG', () => {
         setValues: mockSetValues,
         setFieldValue: vi.fn(() => {}),
         reset: vi.fn(),
+        resetDirty: vi.fn(),
+        isDirty: () => false,
         submitting: false,
         onSubmit: vi.fn((h) => (e) => {
           e?.preventDefault?.();
@@ -520,13 +528,12 @@ describe('EPG', () => {
       });
     });
 
-    it('calls onClose after successful add', async () => {
+    it('keeps a failed add open rather than discarding the draft', async () => {
       const onClose = vi.fn();
       render(<EPG {...defaultProps({ onClose })} />);
       fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-      await waitFor(() => {
-        expect(onClose).toHaveBeenCalled();
-      });
+      await waitFor(() => expect(DummyEpgUtils.addEPG).toHaveBeenCalled());
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('clears cron_expression when schedule type is interval on submit', async () => {
@@ -583,6 +590,8 @@ describe('EPG', () => {
           epg[field] = value;
         }),
         reset: vi.fn(),
+        resetDirty: vi.fn(),
+        isDirty: () => false,
         submitting: false,
         onSubmit: vi.fn((h) => (e) => {
           e?.preventDefault?.();
@@ -614,6 +623,8 @@ describe('EPG', () => {
           epg[field] = value;
         }),
         reset: vi.fn(),
+        resetDirty: vi.fn(),
+        isDirty: () => false,
         submitting: false,
         onSubmit: vi.fn((h) => (e) => {
           e?.preventDefault?.();
@@ -665,7 +676,7 @@ describe('EPG', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('resets the form on close', async () => {
+    it('resets the form on an unchanged close', async () => {
       const mockReset = vi.fn();
       vi.mocked(useForm).mockReturnValueOnce({
         key: vi.fn(),
@@ -673,6 +684,8 @@ describe('EPG', () => {
         setValues: vi.fn(),
         setFieldValue: vi.fn(() => {}),
         reset: mockReset,
+        resetDirty: vi.fn(),
+        isDirty: () => false,
         submitting: false,
         onSubmit: vi.fn((h) => (e) => {
           e?.preventDefault?.();
@@ -685,7 +698,7 @@ describe('EPG', () => {
         })),
       });
       render(<EPG {...defaultProps()} />);
-      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
       await waitFor(() => {
         expect(mockReset).toHaveBeenCalled();
       });

@@ -27,9 +27,12 @@ vi.mock('../../../utils/forms/M3uGroupFilterUtils.js', () => ({
 
 // ── Sub-component mocks ────────────────────────────────────────────────────────
 vi.mock('../LiveGroupFilter', () => ({
-  default: ({ groupStates, setGroupStates }) => (
+  default: ({ groupStates, setGroupStates, onOpenRules }) => (
     <div data-testid="live-group-filter">
       <span data-testid="live-group-count">{groupStates?.length ?? 0}</span>
+      <button data-testid="live-open-rules" onClick={onOpenRules}>
+        Import rules
+      </button>
       <button
         data-testid="live-annotate-groups"
         onClick={() =>
@@ -52,6 +55,20 @@ vi.mock('../LiveGroupFilter', () => ({
       </button>
     </div>
   ),
+}));
+
+vi.mock('../M3URulesModal.jsx', () => ({
+  default: ({ opened, onApplied, onClose }) =>
+    opened ? (
+      <button
+        onClick={() => {
+          onApplied({ scope: 'live', target_ids: [1], enabled: true });
+          onClose();
+        }}
+      >
+        Apply saved rule
+      </button>
+    ) : null,
 }));
 
 vi.mock('../VODCategoryFilter', () => ({
@@ -362,6 +379,44 @@ describe('M3UGroupFilter', () => {
   // ── Close / cancel behaviour ───────────────────────────────────────────────
 
   describe('close / cancel behaviour', () => {
+    it('protects unsaved selections during ordinary editing', () => {
+      setupStores();
+      const onClose = vi.fn();
+      render(<M3UGroupFilter {...defaultProps({ onClose })} />);
+      fireEvent.click(screen.getByTestId('live-change-groups'));
+      fireEvent.click(screen.getByTestId('modal-close'));
+      expect(onClose).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole('dialog', { name: 'Discard category changes?' })
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+      expect(screen.getByTestId('live-group-count')).toHaveTextContent('1');
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('modal-close'));
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).not.toHaveBeenCalled();
+      expect(M3uGroupFilterUtils.saveAndRefreshPlaylist).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for changes already persisted by applying a saved rule', () => {
+      setupStores();
+      M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
+        { channel_group: 1, enabled: false, custom_properties: {} },
+      ]);
+      const onClose = vi.fn();
+      render(<M3UGroupFilter {...defaultProps({ onClose })} />);
+      fireEvent.click(screen.getByTestId('live-open-rules'));
+      fireEvent.click(screen.getByRole('button', { name: 'Apply saved rule' }));
+      fireEvent.click(screen.getByTestId('modal-close'));
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(
+        screen.queryByRole('dialog', { name: 'Discard category changes?' })
+      ).not.toBeInTheDocument();
+    });
+
     it('calls onClose when modal X is clicked', () => {
       const onClose = vi.fn();
       setupStores();
@@ -418,6 +473,80 @@ describe('M3UGroupFilter', () => {
   // ── Save ───────────────────────────────────────────────────────────────────
 
   describe('saving', () => {
+    it('allows saving with all categories deliberately disabled', async () => {
+      setupStores();
+      M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
+        { channel_group: 1, enabled: false, custom_properties: {} },
+      ]);
+      render(<M3UGroupFilter {...defaultProps()} />);
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Save', exact: true })
+      );
+      await waitFor(() =>
+        expect(
+          M3uGroupFilterUtils.savePlaylistGroupSettings
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          [expect.objectContaining({ enabled: false })],
+          [],
+          [],
+          {},
+          false
+        )
+      );
+    });
+
+    it.each([
+      { account_type: 'XC', enable_vod: false },
+      { account_type: 'STD', enable_vod: true },
+    ])('hides and does not load unavailable VOD selections (%j)', (account) => {
+      const { fetchCategories } = setupStores();
+      render(
+        <M3UGroupFilter
+          {...defaultProps({ playlist: makePlaylist(account) })}
+        />
+      );
+      expect(screen.getByTestId('tab-live')).toBeInTheDocument();
+      expect(screen.queryByTestId('tab-vod-movie')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('tab-vod-series')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('vod-category-filter-movie')
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('vod-category-filter-series')
+      ).not.toBeInTheDocument();
+      expect(fetchCategories).not.toHaveBeenCalled();
+    });
+
+    it('does not submit hidden VOD selections after VOD is disabled', async () => {
+      setupStores();
+      const props = defaultProps();
+      const { rerender } = render(<M3UGroupFilter {...props} />);
+      fireEvent.click(screen.getByTestId('vod-change-movie'));
+      fireEvent.click(screen.getByTestId('vod-change-series'));
+      rerender(
+        <M3UGroupFilter
+          {...props}
+          playlist={makePlaylist({ enable_vod: false })}
+        />
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Save', exact: true })
+      );
+      await waitFor(() =>
+        expect(
+          M3uGroupFilterUtils.savePlaylistGroupSettings
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({ enable_vod: false }),
+          [],
+          [],
+          [],
+          {},
+          false
+        )
+      );
+    });
+
     it('saves current states without refreshing on an ordinary Save click', async () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);

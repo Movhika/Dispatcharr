@@ -50,6 +50,8 @@ const M3UGroupFilter = ({
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
+  const vodAvailable =
+    playlist?.account_type === 'XC' && !!playlist?.enable_vod;
 
   const [groupStates, setGroupStates] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -75,6 +77,13 @@ const M3UGroupFilter = ({
       groupsAccount.current = null;
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!vodAvailable) {
+      setActiveTab('live');
+      setRulesScope(null);
+    }
+  }, [vodAvailable]);
 
   useEffect(() => {
     if (
@@ -134,8 +143,8 @@ const M3UGroupFilter = ({
       await save(
         playlist,
         groupStates,
-        movieCategoryStates,
-        seriesCategoryStates,
+        vodAvailable ? movieCategoryStates : [],
+        vodAvailable ? seriesCategoryStates : [],
         {},
         isInitialSetup
       );
@@ -231,8 +240,12 @@ const M3UGroupFilter = ({
             }
           : row
       );
-    if (result.scope === 'live') setGroupStates(update);
-    else if (result.scope === 'movie') setMovieCategoryStates(update);
+    if (result.scope === 'live') {
+      savedGroups.current = groupSettingsSnapshot(
+        update(JSON.parse(savedGroups.current))
+      );
+      setGroupStates(update);
+    } else if (result.scope === 'movie') setMovieCategoryStates(update);
     else setSeriesCategoryStates(update);
   };
 
@@ -240,13 +253,16 @@ const M3UGroupFilter = ({
     if (isLoading) return;
     const changed =
       savedGroups.current !== groupSettingsSnapshot(groupStates) ||
-      [...movieCategoryStates, ...seriesCategoryStates].some(
+      (vodAvailable
+        ? [...movieCategoryStates, ...seriesCategoryStates]
+        : []
+      ).some(
         (row) =>
           row.enabled !== row.original_enabled ||
           JSON.stringify(row.custom_properties || {}) !==
             JSON.stringify(row.original_custom_properties || {})
       );
-    if (onSetupSave && changed) setDiscardAction(() => action);
+    if (changed) setDiscardAction(() => action);
     else action();
   };
 
@@ -289,18 +305,12 @@ const M3UGroupFilter = ({
         >
           <TabsList className={editorClasses.tabList}>
             <TabsTab value="live">Live TV</TabsTab>
-            <TabsTab
-              value="vod-movie"
-              disabled={!!onSetupSave && !playlist.enable_vod}
-            >
-              VOD - Movies
-            </TabsTab>
-            <TabsTab
-              value="vod-series"
-              disabled={!!onSetupSave && !playlist.enable_vod}
-            >
-              VOD - Series
-            </TabsTab>
+            {vodAvailable && (
+              <>
+                <TabsTab value="vod-movie">VOD - Movies</TabsTab>
+                <TabsTab value="vod-series">VOD - Series</TabsTab>
+              </>
+            )}
           </TabsList>
 
           <TabsPanel
@@ -320,41 +330,44 @@ const M3UGroupFilter = ({
             />
           </TabsPanel>
 
-          <TabsPanel
-            value="vod-movie"
-            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
-          >
-            <VODCategoryFilter
-              playlist={playlist}
-              categoryStates={movieCategoryStates}
-              setCategoryStates={setMovieCategoryStates}
-              type="movie"
-              onOpenRules={() => setRulesScope('movie')}
-              onOverlayChange={setChildOverlayOpen}
-              paginationContainer={paginationContainer}
-              paginationVisible={activeTab === 'vod-movie'}
-              previewAvailableIds={availability?.movie ?? null}
-              previewUnavailableHint={previewHint}
-            />
-          </TabsPanel>
-
-          <TabsPanel
-            value="vod-series"
-            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
-          >
-            <VODCategoryFilter
-              playlist={playlist}
-              categoryStates={seriesCategoryStates}
-              setCategoryStates={setSeriesCategoryStates}
-              type="series"
-              onOpenRules={() => setRulesScope('series')}
-              onOverlayChange={setChildOverlayOpen}
-              paginationContainer={paginationContainer}
-              paginationVisible={activeTab === 'vod-series'}
-              previewAvailableIds={availability?.series ?? null}
-              previewUnavailableHint={previewHint}
-            />
-          </TabsPanel>
+          {vodAvailable && (
+            <>
+              <TabsPanel
+                value="vod-movie"
+                className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+              >
+                <VODCategoryFilter
+                  playlist={playlist}
+                  categoryStates={movieCategoryStates}
+                  setCategoryStates={setMovieCategoryStates}
+                  type="movie"
+                  onOpenRules={() => setRulesScope('movie')}
+                  onOverlayChange={setChildOverlayOpen}
+                  paginationContainer={paginationContainer}
+                  paginationVisible={activeTab === 'vod-movie'}
+                  previewAvailableIds={availability?.movie ?? null}
+                  previewUnavailableHint={previewHint}
+                />
+              </TabsPanel>
+              <TabsPanel
+                value="vod-series"
+                className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+              >
+                <VODCategoryFilter
+                  playlist={playlist}
+                  categoryStates={seriesCategoryStates}
+                  setCategoryStates={setSeriesCategoryStates}
+                  type="series"
+                  onOpenRules={() => setRulesScope('series')}
+                  onOverlayChange={setChildOverlayOpen}
+                  paginationContainer={paginationContainer}
+                  paginationVisible={activeTab === 'vod-series'}
+                  previewAvailableIds={availability?.series ?? null}
+                  previewUnavailableHint={previewHint}
+                />
+              </TabsPanel>
+            </>
+          )}
         </Tabs>
 
         <Flex
@@ -429,7 +442,7 @@ const M3UGroupFilter = ({
           action?.();
         }}
         title="Discard category changes?"
-        message="These category changes have not been saved. The account remains available to resume setup later."
+        message="These category changes have not been saved. Previously saved selections will be kept."
         confirmLabel="Discard"
         cancelLabel="Keep editing"
       />

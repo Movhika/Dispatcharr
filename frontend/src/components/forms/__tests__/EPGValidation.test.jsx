@@ -10,6 +10,7 @@ import {
 
 vi.mock('../../SensitiveFields.jsx', () => ({
   SensitiveTextInput: (props) => <TextInput {...props} />,
+  ScreenshotText: ({ children }) => <>{children}</>,
 }));
 vi.mock('../ScheduleInput', () => ({ default: () => null }));
 vi.mock('../../../api.js', () => ({ default: {} }));

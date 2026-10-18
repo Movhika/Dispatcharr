@@ -131,6 +131,8 @@ const M3U = ({
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
   const initializedSetupAccount = useRef(null);
+  const savedSourceType = useRef('XC');
+  const savedExpiration = useRef(null);
   const [serverGroupsCreateOnOpen, setServerGroupsCreateOnOpen] =
     useState(false);
 
@@ -208,6 +210,8 @@ const M3U = ({
     );
     setContentAvailable(false);
     setDiscardOpen(false);
+    savedSourceType.current = m3uAccount ? getM3USourceType(m3uAccount) : 'XC';
+    savedExpiration.current = expDateKey(m3uAccount?.exp_date);
     if (m3uAccount) {
       setPlaylist(m3uAccount);
       setAccountType(m3uAccount.account_type);
@@ -245,7 +249,7 @@ const M3U = ({
           ? m3uAccount.hash_key.split(',').filter(Boolean)
           : [],
       });
-      if (setupMode) form.resetDirty();
+      form.resetDirty();
       setHasHashKeyOverride(
         !!(
           m3uAccount.hash_key &&
@@ -283,6 +287,7 @@ const M3U = ({
   useEffect(() => {
     if (storeExpDate === undefined) return;
     const next = expDateFromPlaylist(storeExpDate);
+    savedExpiration.current = expDateKey(next);
     setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
   }, [storeExpDate]);
 
@@ -344,6 +349,8 @@ const M3U = ({
         if (setupMode) {
           setPlaylist(updatedPlaylist);
           form.resetDirty();
+          savedSourceType.current = sourceType;
+          savedExpiration.current = expDateKey(expDate);
           await onSetupNext(updatedPlaylist);
         } else {
           form.reset();
@@ -391,13 +398,19 @@ const M3U = ({
   };
 
   const requestClose = () => {
-    if (creating || setupBusy || form.submitting) return;
-    if (setupMode || (!playlist?.id && (form.isDirty() || file || expDate))) {
+    if (creatingRef.current || creating || setupBusy || form.submitting) return;
+    if (setupMode || hasUnsavedChanges()) {
       setDiscardOpen(true);
       return;
     }
     close();
   };
+
+  const hasUnsavedChanges = () =>
+    form.isDirty() ||
+    !!file ||
+    sourceType !== savedSourceType.current ||
+    expDateKey(expDate) !== savedExpiration.current;
 
   useEffect(() => {
     if (playlistCreated) {
@@ -416,11 +429,7 @@ const M3U = ({
       : 'live'
     : 'content';
 
-  const unsavedSetupChanges =
-    setupMode &&
-    (form.isDirty() ||
-      file ||
-      expDateKey(expDate) !== expDateKey(playlist?.exp_date));
+  const unsavedSetupChanges = setupMode && hasUnsavedChanges();
 
   return (
     <>
@@ -1134,14 +1143,18 @@ const M3U = ({
             ? unsavedSetupChanges
               ? 'Discard unsaved changes?'
               : 'Continue setup later?'
-            : 'Discard new account?'
+            : playlist?.id
+              ? 'Discard unsaved changes?'
+              : 'Discard new account?'
         }
         message={
           setupMode
             ? unsavedSetupChanges
               ? 'Only the unsaved changes in this editor will be discarded. Your account, EPG sources and saved setup progress will be kept. Use Continue setup to resume later.'
               : 'Your account and saved setup progress will be kept. Use Continue setup to resume. The initial import starts only when you finish setup.'
-            : 'This account has not been created. Discard the unsaved entries?'
+            : playlist?.id
+              ? 'These account changes have not been saved. Discard them and close? Previously saved settings will be kept.'
+              : 'This account has not been created. Discard the unsaved entries?'
         }
         confirmLabel={
           setupMode
