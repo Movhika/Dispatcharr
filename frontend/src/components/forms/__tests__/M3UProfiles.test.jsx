@@ -23,7 +23,6 @@ vi.mock('../../../utils/forms/M3uProfileUtils.js', () => ({
 vi.mock('../../../utils/forms/M3uProfilesUtils.js', async (original) => ({
   ...(await original()),
   parseExpirationDate: vi.fn(() => new Date('2027-01-01T12:00:00Z')),
-  isAccountExpired: vi.fn(),
   profileSortComparator: vi.fn(),
 }));
 vi.mock('../../../utils/tables/M3UsTableUtils.js', () => ({
@@ -187,7 +186,9 @@ vi.mock('@mantine/core', () => ({
       />
     </div>
   ),
-  Stack: ({ children }) => <div>{children}</div>,
+  Stack: ({ children, className }) => (
+    <div className={className}>{children}</div>
+  ),
   Switch: ({ label, checked, onChange, disabled, 'aria-label': ariaLabel }) => (
     <label>
       {label}
@@ -201,8 +202,14 @@ vi.mock('@mantine/core', () => ({
       />
     </label>
   ),
-  Text: ({ children, size, c, fw }) => (
-    <span data-size={size} data-color={c} data-fw={fw}>
+  Text: ({ children, size, c, fw, truncate, tabIndex }) => (
+    <span
+      data-size={size}
+      data-color={c}
+      data-fw={fw}
+      data-truncate={!!truncate}
+      tabIndex={tabIndex}
+    >
       {children}
     </span>
   ),
@@ -268,7 +275,6 @@ describe('M3UProfiles', () => {
       label: null,
       color: null,
     });
-    vi.mocked(M3uProfilesUtils.isAccountExpired).mockReturnValue(false);
     vi.mocked(M3uProfilesUtils.profileSortComparator).mockImplementation(
       () => 0
     );
@@ -463,6 +469,41 @@ describe('M3UProfiles', () => {
         'dimmed'
       );
     });
+
+    it('places a truncated, keyboard-focusable note after Expires and keeps its full tooltip', () => {
+      const notes =
+        'A long profile note with details that must remain available in full even when the overview only has room for a short excerpt.';
+      setupStores({
+        profiles: { 1: [makeProfile({ custom_properties: { notes } })] },
+      });
+      render(<M3UProfiles {...defaultProps()} />);
+      const content = screen.getByText(notes);
+      expect(content).toHaveAttribute('data-truncate', 'true');
+      expect(content).toHaveAttribute('tabindex', '0');
+      expect(screen.getByTitle(notes)).toContainElement(content);
+      const details = content.closest(`.${summaryClasses.profileDetails}`);
+      expect(details.children).toHaveLength(3);
+      expect(details.children[1]).toHaveTextContent('Expires');
+      expect(details.children[2]).toHaveClass(summaryClasses.profileNotes);
+      expect(details.children[2]).toHaveTextContent('Notes');
+      expect(M3uProfileUtils.updateM3UProfile).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, '', '  \n  ', null, {}])(
+      'omits the note column for an empty or invalid note (%s)',
+      (notes) => {
+        setupStores({
+          profiles: { 1: [makeProfile({ custom_properties: { notes } })] },
+        });
+        render(<M3UProfiles {...defaultProps()} />);
+        expect(screen.queryByText('Notes')).not.toBeInTheDocument();
+        expect(
+          screen
+            .getByTestId('profile-card')
+            .querySelector(`.${summaryClasses.profileDetails}`).children
+        ).toHaveLength(2);
+      }
+    );
 
     it('renders the modal when isOpen is true with a valid playlist', () => {
       setupStores();
@@ -780,12 +821,24 @@ describe('M3UProfiles', () => {
   // ── Expiration / expired styling ───────────────────────────────────────────
 
   describe('expiration display', () => {
-    it('applies expired styling when isAccountExpired returns true', () => {
-      vi.mocked(M3uProfilesUtils.isAccountExpired).mockReturnValue(true);
-      setupStores();
-      render(<M3UProfiles {...defaultProps()} />);
-      expect(screen.getByTestId('profile-card')).toBeInTheDocument();
-    });
+    it.each([
+      ['Active', 'green'],
+      ['Expired', 'red'],
+      ['Disabled', 'red'],
+      ['Banned', 'red'],
+      ['Unknown provider status', 'gray'],
+    ])(
+      'uses the account-info color for provider status %s',
+      (status, color) => {
+        setupStores({
+          profiles: {
+            1: [makeProfile({ custom_properties: { user_info: { status } } })],
+          },
+        });
+        render(<M3UProfiles {...defaultProps()} />);
+        expect(screen.getByText(status)).toHaveAttribute('data-color', color);
+      }
+    );
 
     it('renders expiration badge with correct color', () => {
       vi.mocked(expirationUtils.getExpirationInfo).mockReturnValue({

@@ -6,8 +6,10 @@ import {
   within,
 } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3U from '../M3U.jsx';
+import M3UProfiles from '../M3UProfiles.jsx';
 import API from '../../../api.js';
 import { updatePlaylist } from '../../../utils/forms/M3uUtils.js';
 
@@ -108,6 +110,51 @@ const openProfile = async (existing = false) => {
 };
 
 describe('profile submissions inside the M3U editor', () => {
+  it.each(['keyboard focus', 'hover'])(
+    'shows the complete profile note in a tooltip on %s',
+    async (trigger) => {
+      const notes =
+        'Complete synthetic profile note: the overview excerpt must not replace or change this saved content.';
+      state.profiles = {
+        7: [
+          {
+            id: 71,
+            name: 'Additional connection',
+            max_streams: 1,
+            is_active: true,
+            custom_properties: { notes },
+          },
+        ],
+      };
+      render(
+        <MantineProvider>
+          <M3UProfiles embedded playlist={account} />
+        </MantineProvider>
+      );
+      const note = await screen.findByText(notes);
+      const matches = note.matches.bind(note);
+      // jsdom does not infer keyboard :focus-visible for a focusable paragraph.
+      const focusVisible = vi
+        .spyOn(note, 'matches')
+        .mockImplementation((selector) =>
+          selector === ':focus-visible' ? true : matches(selector)
+        );
+      try {
+        if (trigger === 'keyboard focus') {
+          const user = userEvent.setup();
+          await user.tab();
+          expect(note).toHaveFocus();
+        } else {
+          fireEvent.mouseEnter(note);
+        }
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(notes);
+        expect(API.updateM3UProfile).not.toHaveBeenCalled();
+        expect(API.addM3UProfile).not.toHaveBeenCalled();
+      } finally {
+        focusVisible.mockRestore();
+      }
+    }
+  );
   it('preserves a saved advanced replacement that cannot be represented as simple credentials', async () => {
     const { dialog } = await openProfile('advanced');
     expect(within(dialog).getByLabelText('Replace Pattern')).toHaveValue('$1');

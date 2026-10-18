@@ -23,7 +23,6 @@ import {
   updateM3UProfile,
 } from '../../utils/forms/M3uProfileUtils.js';
 import {
-  isAccountExpired,
   isTrialProfile,
   parseExpirationDate,
   profileSortComparator,
@@ -47,6 +46,10 @@ const M3uProfileCard = ({
   onChangeActive,
 }) => {
   const accountStatus = item.custom_properties?.user_info?.status ?? null;
+  const notes =
+    typeof item.custom_properties?.notes === 'string'
+      ? item.custom_properties.notes
+      : '';
   const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
   const expiration = parseExpirationDate(item);
   const expirationInfo = expiration
@@ -56,7 +59,6 @@ const M3uProfileCard = ({
         fullDateFormat
       )
     : null;
-  const expired = isAccountExpired(item);
 
   return (
     <Paper
@@ -84,7 +86,9 @@ const M3uProfileCard = ({
                   color={
                     accountStatus === 'Active'
                       ? 'green'
-                      : expired
+                      : ['Expired', 'Disabled', 'Banned'].includes(
+                            accountStatus
+                          )
                         ? 'red'
                         : 'gray'
                   }
@@ -99,12 +103,7 @@ const M3uProfileCard = ({
               </Badge>
             )}
           </Group>
-          {item.custom_properties?.notes && (
-            <Text size="xs" c="dimmed">
-              {item.custom_properties.notes}
-            </Text>
-          )}
-          <Group gap="xl" align="flex-start" mt={4}>
+          <div className={summaryClasses.profileDetails}>
             <Stack gap={4}>
               <Text size="sm" fw={500}>
                 Max Streams
@@ -143,7 +142,25 @@ const M3uProfileCard = ({
                 </Badge>
               </Tooltip>
             </Stack>
-          </Group>
+            {notes.trim() && (
+              <Stack gap={4} className={summaryClasses.profileNotes}>
+                <Text size="sm" fw={500}>
+                  Notes
+                </Text>
+                <Tooltip
+                  label={notes}
+                  multiline
+                  classNames={{ tooltip: cardClasses.detailTooltip }}
+                  withArrow
+                  events={{ hover: true, focus: true, touch: true }}
+                >
+                  <Text size="sm" c="dimmed" truncate tabIndex={0}>
+                    {notes}
+                  </Text>
+                </Tooltip>
+              </Stack>
+            )}
+          </div>
         </Stack>
         <div className={summaryClasses.profileControls}>
           <Tooltip

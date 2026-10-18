@@ -50,6 +50,19 @@
   flex: 1 1 14rem;
 }
 
+.profileDetails {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--mantine-spacing-xs) var(--mantine-spacing-xl);
+  margin-top: 4px;
+}
+
+.profileNotes {
+  min-width: 0;
+  flex: 1 1 8rem;
+}
+
 .profileControls {
   display: flex;
   align-items: center;
