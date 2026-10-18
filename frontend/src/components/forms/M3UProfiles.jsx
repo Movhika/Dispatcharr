@@ -8,17 +8,17 @@ import {
   ActionIcon,
   Badge,
   Button,
-  Card,
-  Flex,
   Group,
   Modal,
   NumberInput,
+  Paper,
   Stack,
   Switch,
   Text,
-  useMantineTheme,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
-import { Info, SquareMinus, SquarePen } from 'lucide-react';
+import { Info, Network, SquarePen, Trash2 } from 'lucide-react';
 import {
   deleteM3UProfile,
   updateM3UProfile,
@@ -28,6 +28,8 @@ import {
   isAccountExpired,
   profileSortComparator,
 } from '../../utils/forms/M3uProfilesUtils.js';
+import cardClasses from '../tables/M3UsTable.module.css';
+import summaryClasses from './M3UAccountSummary.module.css';
 
 const M3uProfileCard = ({
   item,
@@ -38,124 +40,147 @@ const M3uProfileCard = ({
   onChangeMaxStreams,
   onChangeActive,
 }) => {
-  const theme = useMantineTheme();
   const accountStatus = item.custom_properties?.user_info?.status ?? null;
   const expirationInfo = getExpirationInfo(item);
   const expired = isAccountExpired(item);
 
   return (
-    <Card>
-      <Stack spacing="sm">
-        {/* Header with name and status badges */}
-        <Group justify="space-between" align="center">
-          <Group spacing="sm" align="center">
-            <Stack spacing={2}>
-              <Text fw={600}>{item.name}</Text>
-              {/* Show notes if they exist */}
-              {item.custom_properties?.notes && (
-                <Text size="xs" c="dimmed" style={{ fontStyle: 'italic' }}>
-                  {item.custom_properties.notes}
-                </Text>
-              )}
-            </Stack>
-            {accountType === 'XC' && item.custom_properties && (
-              <Group spacing="xs">
-                {/* Account status badge */}
-                {accountStatus && (
-                  <Badge
-                    size="sm"
-                    color={
-                      accountStatus === 'Active'
-                        ? 'green'
-                        : expired
-                          ? 'red'
-                          : 'gray'
-                    }
-                    variant="light"
-                  >
-                    {accountStatus}
-                  </Badge>
-                )}
-                {/* Expiration badge */}
-                {expirationInfo && (
-                  <Badge
-                    size="sm"
-                    color={expirationInfo.color}
-                    variant="outline"
-                  >
-                    {expirationInfo.text}
-                  </Badge>
-                )}
-                {/* Info button next to badges */}
-                <ActionIcon
-                  size="sm"
-                  variant="filled"
-                  color="blue"
-                  onClick={onClickInfo}
-                  title="View account information"
-                  style={{
-                    backgroundColor: 'rgba(34, 139, 230, 0.1)',
-                    color: '#228be6',
-                  }}
-                >
-                  <Info size="16" />
-                </ActionIcon>
-              </Group>
+    <Paper
+      component="article"
+      aria-label={`Connection profile ${item.name}`}
+      className={summaryClasses.card}
+      withBorder
+      radius="md"
+      p="md"
+    >
+      <div className={summaryClasses.profileRow}>
+        <Stack gap={4} className={summaryClasses.profileIdentity}>
+          <Group gap="xs">
+            <Text fw={600}>{item.name}</Text>
+            {item.is_default && (
+              <Badge variant="light" color="gray">
+                Default
+              </Badge>
             )}
+            {accountType === 'XC' &&
+              item.custom_properties &&
+              accountStatus && (
+                <Badge
+                  size="sm"
+                  color={
+                    accountStatus === 'Active'
+                      ? 'green'
+                      : expired
+                        ? 'red'
+                        : 'gray'
+                  }
+                  variant="light"
+                >
+                  {accountStatus}
+                </Badge>
+              )}
+            {accountType === 'XC' &&
+              item.custom_properties &&
+              expirationInfo && (
+                <Badge size="sm" color={expirationInfo.color} variant="light">
+                  {expirationInfo.text}
+                </Badge>
+              )}
           </Group>
-        </Group>
-
-        {/* Max Streams and Actions */}
-        <Flex gap="sm" align="flex-end">
+          {item.custom_properties?.notes && (
+            <Text size="xs" c="dimmed">
+              {item.custom_properties.notes}
+            </Text>
+          )}
+        </Stack>
+        <div className={summaryClasses.profileControls}>
           <NumberInput
             label="Max Streams"
+            aria-label={`Max Streams for ${item.name}`}
             value={item.max_streams}
             disabled={item.is_default}
             onChange={onChangeMaxStreams}
-            style={{ flex: 1 }}
+            size="sm"
+            w={104}
           />
-
-          <Group spacing="xs" style={{ paddingBottom: 8 }}>
-            {/* Toggle switch */}
-            <Switch
-              checked={item.is_active}
-              onChange={onChangeActive}
-              disabled={item.is_default}
-              label="Active"
-              labelPosition="left"
-              size="sm"
-            />
-
-            {/* Always show edit button, but limit what can be edited for default profiles */}
-            <ActionIcon
-              size="sm"
-              variant="transparent"
-              color={theme.tailwind.yellow[3]}
-              onClick={onClickEdit}
-              title={
-                item.is_default ? 'Edit profile name and notes' : 'Edit profile'
-              }
-            >
-              <SquarePen size="20" />
-            </ActionIcon>
-
-            {!item.is_default && (
-              <>
-                <ActionIcon
-                  color={theme.tailwind.red[6]}
-                  onClick={onClickDelete}
-                  size="sm"
-                  variant="transparent"
-                  title="Delete profile"
+          <Paper
+            className={cardClasses.controls}
+            withBorder
+            px={6}
+            py={4}
+            radius="md"
+            w={212}
+            maw="100%"
+            h="auto"
+            mih={38}
+            style={{ flexShrink: 1 }}
+            role="group"
+            aria-label={`Actions for ${item.name}`}
+          >
+            <Group gap="xs" justify="space-between" w="100%">
+              <Switch
+                checked={item.is_active}
+                onChange={onChangeActive}
+                disabled={item.is_default}
+                label="Active"
+                aria-label={`Active ${item.name}`}
+                labelPosition="left"
+                size="sm"
+              />
+              <Group gap={4} wrap="nowrap">
+                {accountType === 'XC' && item.custom_properties && (
+                  <Tooltip label="View account information">
+                    <ActionIcon
+                      variant="subtle"
+                      size="md"
+                      color="blue"
+                      onClick={onClickInfo}
+                      aria-label={`View account information for ${item.name}`}
+                    >
+                      <Info size={17} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+                <Tooltip
+                  label={
+                    item.is_default
+                      ? 'Edit profile name and notes'
+                      : 'Edit profile'
+                  }
                 >
-                  <SquareMinus size="20" />
-                </ActionIcon>
-              </>
-            )}
-          </Group>
-        </Flex>
-      </Stack>
-    </Card>
+                  <ActionIcon
+                    variant="subtle"
+                    size="md"
+                    color="yellow"
+                    onClick={onClickEdit}
+                    aria-label={
+                      item.is_default
+                        ? `Edit ${item.name} name and notes`
+                        : `Edit ${item.name}`
+                    }
+                  >
+                    <SquarePen size={17} />
+                  </ActionIcon>
+                </Tooltip>
+                {!item.is_default && (
+                  <Tooltip label="Delete profile">
+                    <ActionIcon
+                      color="red"
+                      onClick={onClickDelete}
+                      size="md"
+                      variant="subtle"
+                      aria-label={`Delete ${item.name}`}
+                    >
+                      <Trash2 size={17} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </Group>
+            </Group>
+          </Paper>
+        </div>
+      </div>
+    </Paper>
   );
 };
 
@@ -300,28 +325,49 @@ const M3UProfiles = ({
   const profilesArray = Array.isArray(profiles) ? profiles : [];
 
   const profileList = (
-    <Stack gap="sm">
-      {[...profilesArray].sort(profileSortComparator).map((item) => {
-        return (
-          <M3uProfileCard
-            key={item.id}
-            item={item}
-            accountType={playlist?.account_type}
-            onClickInfo={() => showAccountInfo(item)}
-            onChangeMaxStreams={(value) => modifyMaxStreams(value, item)}
-            onChangeActive={() => toggleActive(item)}
-            onClickEdit={() => editProfile(item)}
-            onClickDelete={() => deleteProfile(item.id)}
-          />
-        );
-      })}
-
-      <Flex justify="flex-end">
-        <Button variant="light" size="sm" onClick={() => editProfile()}>
-          Add connection profile
-        </Button>
-      </Flex>
-    </Stack>
+    <Paper
+      component="section"
+      aria-label="Connection profiles"
+      className={summaryClasses.card}
+      withBorder
+      radius="md"
+      p="md"
+    >
+      <Stack gap="md">
+        <Group gap="sm" wrap="nowrap">
+          <ThemeIcon variant="light" size="lg" radius="md">
+            <Network size={20} aria-hidden="true" />
+          </ThemeIcon>
+          <Text fw={600} className={summaryClasses.cardHeading}>
+            Connection profiles
+          </Text>
+        </Group>
+        <Stack gap="sm">
+          {[...profilesArray].sort(profileSortComparator).map((item) => {
+            return (
+              <M3uProfileCard
+                key={item.id}
+                item={item}
+                accountType={playlist?.account_type}
+                onClickInfo={() => showAccountInfo(item)}
+                onChangeMaxStreams={(value) => modifyMaxStreams(value, item)}
+                onChangeActive={() => toggleActive(item)}
+                onClickEdit={() => editProfile(item)}
+                onClickDelete={() => deleteProfile(item.id)}
+              />
+            );
+          })}
+        </Stack>
+        <section
+          aria-label="Connection profile actions"
+          className={summaryClasses.selectionActions}
+        >
+          <Button variant="filled" onClick={() => editProfile()}>
+            Add connection profile
+          </Button>
+        </section>
+      </Stack>
+    </Paper>
   );
 
   return (

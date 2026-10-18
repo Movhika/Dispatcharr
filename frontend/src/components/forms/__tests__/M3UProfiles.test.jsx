@@ -1,6 +1,14 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { createElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import M3UProfiles from '../M3UProfiles';
+import summaryClasses from '../M3UAccountSummary.module.css';
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/playlists', () => ({ default: vi.fn() }));
@@ -66,18 +74,26 @@ vi.mock('../../ConfirmationDialog', () => ({
 // ── lucide-react mocks ─────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   Info: () => <svg data-testid="icon-info" />,
-  SquareMinus: () => <svg data-testid="icon-square-minus" />,
+  Network: () => <svg data-testid="icon-network" />,
+  Trash2: () => <svg data-testid="icon-trash" />,
   SquarePen: () => <svg data-testid="icon-square-pen" />,
 }));
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  ActionIcon: ({ children, onClick, disabled, color }) => (
+  ActionIcon: ({
+    children,
+    onClick,
+    disabled,
+    color,
+    'aria-label': ariaLabel,
+  }) => (
     <button
       data-testid="action-icon"
       data-color={color}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
     >
       {children}
     </button>
@@ -98,12 +114,29 @@ vi.mock('@mantine/core', () => ({
       {children}
     </button>
   ),
-  Card: ({ children, style }) => (
-    <div data-testid="profile-card" style={style}>
-      {children}
-    </div>
-  ),
-  Flex: ({ children }) => <div>{children}</div>,
+  Paper: ({
+    children,
+    component = 'div',
+    className,
+    role,
+    withBorder,
+    radius,
+    'aria-label': ariaLabel,
+  }) =>
+    createElement(
+      component,
+      {
+        className,
+        role,
+        'aria-label': ariaLabel,
+        'data-testid': component === 'article' ? 'profile-card' : undefined,
+        'data-with-border': String(!!withBorder),
+        'data-radius': radius,
+      },
+      children
+    ),
+  ThemeIcon: ({ children }) => <div>{children}</div>,
+  Tooltip: ({ children }) => children,
   Group: ({ children }) => <div>{children}</div>,
   Modal: ({ children, opened, onClose, title }) =>
     opened ? (
@@ -115,7 +148,16 @@ vi.mock('@mantine/core', () => ({
         {children}
       </div>
     ) : null,
-  NumberInput: ({ label, value, onChange, disabled, min, max }) => (
+  NumberInput: ({
+    label,
+    value,
+    onChange,
+    disabled,
+    min,
+    max,
+    w,
+    'aria-label': ariaLabel,
+  }) => (
     <div>
       <label>{label}</label>
       <input
@@ -125,12 +167,14 @@ vi.mock('@mantine/core', () => ({
         disabled={disabled}
         min={min}
         max={max}
+        aria-label={ariaLabel}
+        style={{ width: w }}
         onChange={(e) => onChange?.(Number(e.target.value))}
       />
     </div>
   ),
   Stack: ({ children }) => <div>{children}</div>,
-  Switch: ({ label, checked, onChange, disabled }) => (
+  Switch: ({ label, checked, onChange, disabled, 'aria-label': ariaLabel }) => (
     <label>
       {label}
       <input
@@ -138,6 +182,7 @@ vi.mock('@mantine/core', () => ({
         type="checkbox"
         checked={!!checked}
         disabled={disabled}
+        aria-label={ariaLabel}
         onChange={(e) => onChange?.(e)}
       />
     </label>
@@ -234,6 +279,121 @@ describe('M3UProfiles', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
+    it('uses the shared bordered section and compact profile cards in the embedded tab', () => {
+      setupStores();
+      render(<M3UProfiles {...defaultProps({ embedded: true })} />);
+      const section = screen.getByRole('region', {
+        name: 'Connection profiles',
+      });
+      const card = screen.getByRole('article', {
+        name: 'Connection profile Test Profile',
+      });
+      expect(section).toHaveClass(summaryClasses.card);
+      expect(section).toHaveAttribute('data-with-border', 'true');
+      expect(section).toHaveAttribute('data-radius', 'md');
+      expect(card).toHaveClass(summaryClasses.card);
+      expect(card).toHaveAttribute('data-with-border', 'true');
+      expect(card).toHaveAttribute('data-radius', 'md');
+      expect(section).toContainElement(card);
+      expect(screen.queryByTestId('modal')).not.toBeInTheDocument();
+      expect(M3uProfileUtils.updateM3UProfile).not.toHaveBeenCalled();
+    });
+
+    it('centers a single filled add action like category selection', () => {
+      setupStores();
+      render(<M3UProfiles {...defaultProps()} />);
+      const actions = screen.getByRole('region', {
+        name: 'Connection profile actions',
+      });
+      const add = within(actions).getByRole('button', {
+        name: 'Add connection profile',
+      });
+      expect(actions).toHaveClass(summaryClasses.selectionActions);
+      expect(add).toHaveAttribute('data-variant', 'filled');
+      expect(within(actions).getAllByRole('button')).toHaveLength(1);
+    });
+
+    it('groups the named profile actions and keeps Max Streams compact', () => {
+      setupStores();
+      render(<M3UProfiles {...defaultProps()} />);
+      const actions = screen.getByRole('group', {
+        name: 'Actions for Test Profile',
+      });
+      expect(
+        within(actions).getByRole('button', {
+          name: 'View account information for Test Profile',
+        })
+      ).toBeEnabled();
+      expect(
+        within(actions).getByRole('button', { name: 'Edit Test Profile' })
+      ).toBeEnabled();
+      expect(
+        within(actions).getByRole('button', { name: 'Delete Test Profile' })
+      ).toBeEnabled();
+      expect(
+        within(actions).getByRole('checkbox', { name: 'Active Test Profile' })
+      ).toBeEnabled();
+      const maxStreams = screen.getByRole('spinbutton', {
+        name: 'Max Streams for Test Profile',
+      });
+      expect(maxStreams).toHaveStyle({ width: '104px' });
+      expect(actions).not.toContainElement(maxStreams);
+    });
+
+    it('marks the default profile while preserving its protected controls', () => {
+      setupStores({ profiles: { 1: [makeProfile({ is_default: true })] } });
+      render(<M3UProfiles {...defaultProps()} />);
+      const card = screen.getByRole('article', {
+        name: 'Connection profile Test Profile',
+      });
+      expect(within(card).getByText('Default')).toBeInTheDocument();
+      expect(within(card).getByRole('spinbutton')).toBeDisabled();
+      expect(within(card).getByRole('checkbox')).toBeDisabled();
+      expect(
+        within(card).getByRole('button', {
+          name: 'Edit Test Profile name and notes',
+        })
+      ).toBeEnabled();
+      expect(
+        within(card).queryByRole('button', { name: 'Delete Test Profile' })
+      ).not.toBeInTheDocument();
+    });
+
+    it('keeps provider-only information hidden for standard M3U profiles', () => {
+      setupStores();
+      render(
+        <M3UProfiles
+          {...defaultProps({ playlist: makePlaylist({ account_type: 'STD' }) })}
+        />
+      );
+      expect(
+        screen.queryByRole('button', { name: /View account information/ })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Edit Test Profile' })
+      ).toBeEnabled();
+      expect(
+        screen.getByRole('button', { name: 'Delete Test Profile' })
+      ).toBeEnabled();
+    });
+
+    it('retains profile notes in subdued text', () => {
+      setupStores({
+        profiles: {
+          1: [
+            makeProfile({
+              custom_properties: { notes: 'Extra connection for fallback' },
+            }),
+          ],
+        },
+      });
+      render(<M3UProfiles {...defaultProps()} />);
+      expect(screen.getByText('Extra connection for fallback')).toHaveAttribute(
+        'data-color',
+        'dimmed'
+      );
+    });
+
     it('renders the modal when isOpen is true with a valid playlist', () => {
       setupStores();
       render(<M3UProfiles {...defaultProps()} />);
@@ -271,7 +431,7 @@ describe('M3UProfiles', () => {
     it('renders a delete icon for each profile', () => {
       setupStores();
       render(<M3UProfiles {...defaultProps()} />);
-      expect(screen.getByTestId('icon-square-minus')).toBeInTheDocument();
+      expect(screen.getByTestId('icon-trash')).toBeInTheDocument();
     });
 
     it('renders an info icon for each profile', () => {
@@ -421,9 +581,7 @@ describe('M3UProfiles', () => {
     it('shows ConfirmationDialog when delete icon is clicked and warning not suppressed', () => {
       setupStores({ isWarningSuppressed: vi.fn().mockReturnValue(false) });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       expect(screen.getByTestId('confirmation-dialog')).toBeInTheDocument();
     });
@@ -435,9 +593,7 @@ describe('M3UProfiles', () => {
         profiles,
       });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       await waitFor(() => {
         expect(M3uProfileUtils.deleteM3UProfile).toHaveBeenCalledWith(
@@ -455,9 +611,7 @@ describe('M3UProfiles', () => {
       });
       setupStores({ isWarningSuppressed: vi.fn().mockReturnValue(false) });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       fireEvent.click(screen.getByTestId('confirm-ok'));
       await waitFor(() => {
@@ -471,9 +625,7 @@ describe('M3UProfiles', () => {
     it('closes ConfirmationDialog after confirming', async () => {
       setupStores({ isWarningSuppressed: vi.fn().mockReturnValue(false) });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       fireEvent.click(screen.getByTestId('confirm-ok'));
       await waitFor(() => {
@@ -486,9 +638,7 @@ describe('M3UProfiles', () => {
     it('closes ConfirmationDialog when cancel is clicked', () => {
       setupStores({ isWarningSuppressed: vi.fn().mockReturnValue(false) });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       fireEvent.click(screen.getByTestId('confirm-cancel'));
       expect(
@@ -499,9 +649,7 @@ describe('M3UProfiles', () => {
     it('does not call deleteM3UProfile when cancel is clicked', async () => {
       setupStores({ isWarningSuppressed: vi.fn().mockReturnValue(false) });
       render(<M3UProfiles {...defaultProps()} />);
-      const deleteBtn = screen
-        .getByTestId('icon-square-minus')
-        .closest('button');
+      const deleteBtn = screen.getByTestId('icon-trash').closest('button');
       fireEvent.click(deleteBtn);
       fireEvent.click(screen.getByTestId('confirm-cancel'));
       expect(M3uProfileUtils.deleteM3UProfile).not.toHaveBeenCalled();
@@ -511,6 +659,40 @@ describe('M3UProfiles', () => {
   // ── Max streams / Switch ───────────────────────────────────────────────────
 
   describe('profile-level controls', () => {
+    it('still saves max streams immediately with the existing profile payload', async () => {
+      const profile = makeProfile({ id: 42, max_streams: 2 });
+      setupStores({ profiles: { 1: [profile] } });
+      render(<M3UProfiles {...defaultProps()} />);
+      fireEvent.change(
+        screen.getByRole('spinbutton', {
+          name: 'Max Streams for Test Profile',
+        }),
+        { target: { value: '5' } }
+      );
+      await waitFor(() =>
+        expect(
+          M3uProfileUtils.updateM3UProfile
+        ).toHaveBeenCalledExactlyOnceWith(1, { ...profile, max_streams: 5 })
+      );
+    });
+
+    it('still saves activation immediately without waiting for the parent account Save', async () => {
+      const profile = makeProfile({ id: 42, is_active: true });
+      setupStores({ profiles: { 1: [profile] } });
+      render(<M3UProfiles {...defaultProps()} />);
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: 'Active Test Profile' })
+      );
+      await waitFor(() =>
+        expect(
+          M3uProfileUtils.updateM3UProfile
+        ).toHaveBeenCalledExactlyOnceWith(1, { ...profile, is_active: false })
+      );
+      expect(
+        screen.queryByRole('button', { name: 'Save', exact: true })
+      ).not.toBeInTheDocument();
+    });
+
     it('renders NumberInput for max_streams on a profile card', () => {
       const profiles = { 1: [makeProfile({ max_streams: 3 })] };
       setupStores({ profiles });
