@@ -287,12 +287,12 @@ describe('immediate saved category selection', () => {
     const section = screen.getByRole('region', { name: 'Category selection' });
     expect(section).toContainElement(actions);
     expect(section.style.getPropertyValue('--paper-radius')).toBe(
-      'var(--mantine-radius-sm)'
+      'var(--mantine-radius-md)'
     );
     for (const card of screen.getAllByRole('article')) {
       expect(section).toContainElement(card);
       expect(card.style.getPropertyValue('--paper-radius')).toBe(
-        'var(--mantine-radius-sm)'
+        'var(--mantine-radius-md)'
       );
     }
     expect(within(actions).getByRole('button')).toHaveAttribute(

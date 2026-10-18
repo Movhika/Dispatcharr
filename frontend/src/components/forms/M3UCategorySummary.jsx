@@ -53,7 +53,7 @@ const M3UCategorySummary = ({
       component="section"
       aria-label="Category selection"
       withBorder
-      radius="sm"
+      radius="md"
       p="md"
       className={classes.card}
     >
@@ -67,7 +67,7 @@ const M3UCategorySummary = ({
                   component="article"
                   aria-label={`${label} categories`}
                   withBorder
-                  radius="sm"
+                  radius="md"
                   p="md"
                   className={`${classes.card} ${classes.categoryCard}`}
                 >

@@ -239,7 +239,7 @@ const SDSettings = ({ sourceId, customProperties }) => {
                 logoStyle === style.value
                   ? '2px solid var(--mantine-color-blue-5)'
                   : '2px solid var(--mantine-color-default-border)',
-              borderRadius: 'var(--mantine-radius-sm)',
+              borderRadius: 'var(--mantine-radius-default)',
               padding: 3,
               opacity: saving ? 0.6 : 1,
               cursor: saving ? 'wait' : 'pointer',
@@ -507,7 +507,7 @@ const SDLineupManager = ({ sourceId }) => {
               style={{
                 background: 'var(--mantine-color-default)',
                 border: '1px solid var(--mantine-color-default-border)',
-                borderRadius: 'var(--mantine-radius-sm)',
+                borderRadius: 'var(--mantine-radius-default)',
               }}
             >
               <Box>
@@ -640,7 +640,7 @@ const SDLineupManager = ({ sourceId }) => {
           h={180}
           style={{
             border: '1px solid var(--mantine-color-default-border)',
-            borderRadius: 'var(--mantine-radius-sm)',
+            borderRadius: 'var(--mantine-radius-default)',
           }}
         >
           <Table striped highlightOnHover withRowBorders={false} fz="xs">

@@ -18,7 +18,7 @@
   color: #d4d4d8;
   background: #202025;
   border: 1px solid #3d3d42;
-  border-radius: 6px;
+  border-radius: var(--mantine-radius-default);
 }
 
 .dispatcharr-sidebar .sidebar-section-heading {
@@ -35,7 +35,7 @@
   gap: 12px;
   min-height: 38px;
   padding: 7px 10px !important;
-  border-radius: 6px;
+  border-radius: var(--mantine-radius-default);
   background-color: transparent; /* Default background when not active */
   border: 1px solid transparent;
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;

@@ -70,7 +70,7 @@ const RegexPreviewBox = ({ group, kind, regexPreviewState }) => {
     <Box
       style={{
         border: '1px solid #3F3F46',
-        borderRadius: 6,
+        borderRadius: 'var(--mantine-radius-default)',
         padding: 8,
         backgroundColor: '#1E1E22',
         overflow: 'hidden',

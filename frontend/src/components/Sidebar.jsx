@@ -479,7 +479,7 @@ const Sidebar = ({ collapsed, toggleDrawer, drawerWidth, miniDrawerWidth }) => {
               environment.ip_lookup_pending && (
                 <Box>
                   <Text size="xs" fw={500} mb={4}>Public IP</Text>
-                  <Skeleton height={36} radius="sm" />
+                  <Skeleton height={36} radius="md" />
                 </Box>
               )}
 
@@ -495,7 +495,7 @@ const Sidebar = ({ collapsed, toggleDrawer, drawerWidth, miniDrawerWidth }) => {
                       display: 'flex',
                       alignItems: 'center',
                       border: '1px solid var(--mantine-color-default-border)',
-                      borderRadius: 'var(--mantine-radius-sm)',
+                      borderRadius: 'var(--mantine-radius-default)',
                       backgroundColor: 'var(--mantine-color-dark-6)',
                       height: '36px',
                       paddingLeft: '10px',

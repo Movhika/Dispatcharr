@@ -71,10 +71,10 @@ describe('EPG in the account editor', () => {
     const section = screen.getByRole('region', { name: 'EPG source' });
     expect(section).toContainElement(card);
     expect(section.style.getPropertyValue('--paper-radius')).toBe(
-      'var(--mantine-radius-sm)'
+      'var(--mantine-radius-md)'
     );
     expect(card.style.getPropertyValue('--paper-radius')).toBe(
-      'var(--mantine-radius-sm)'
+      'var(--mantine-radius-md)'
     );
     expect(
       within(card).getByRole('button', { name: 'Edit Matching guide' })

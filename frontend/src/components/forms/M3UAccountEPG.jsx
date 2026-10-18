@@ -61,7 +61,7 @@ const EPGSourceSummary = ({
       aria-label={`EPG source ${source.name}`}
       className={summaryClasses.card}
       withBorder
-      radius="sm"
+      radius="md"
       p="md"
     >
       <Stack gap="md">
@@ -94,7 +94,7 @@ const EPGSourceSummary = ({
             withBorder
             px={6}
             py={4}
-            radius="sm"
+            radius="md"
             role="group"
             aria-label={`Actions for ${source.name}`}
           >
@@ -317,7 +317,7 @@ const M3UAccountEPG = ({
       aria-label="EPG source"
       className={summaryClasses.card}
       withBorder
-      radius="sm"
+      radius="md"
       p="md"
     >
       <Stack gap="md">

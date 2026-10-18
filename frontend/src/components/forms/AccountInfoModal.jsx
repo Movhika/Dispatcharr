@@ -257,7 +257,7 @@ const AccountInfoModal = ({ isOpen, onClose, profile, onRefresh }) => {
                 style={{
                   backgroundColor: 'rgba(134, 142, 150, 0.08)',
                   border: '1px solid rgba(134, 142, 150, 0.2)',
-                  borderRadius: 6,
+                  borderRadius: 'var(--mantine-radius-default)',
                 }}
               >
                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
@@ -393,7 +393,7 @@ const AccountInfoModal = ({ isOpen, onClose, profile, onRefresh }) => {
           style={{
             backgroundColor: 'rgba(134, 142, 150, 0.08)',
             border: '1px solid rgba(134, 142, 150, 0.2)',
-            borderRadius: 6,
+            borderRadius: 'var(--mantine-radius-default)',
           }}
         >
           <Group spacing="xs" align="center" position="apart">

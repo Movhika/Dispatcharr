@@ -904,7 +904,7 @@ This action cannot be undone.`}
                   style={{
                     background: 'rgba(234,179,8,0.08)',
                     border: '1px solid rgba(234,179,8,0.3)',
-                    borderRadius: 4,
+                    borderRadius: 'var(--mantine-radius-default)',
                     padding: 10,
                     marginTop: 6,
                   }}
@@ -920,7 +920,7 @@ This action cannot be undone.`}
                   style={{
                     background: 'rgba(234,179,8,0.08)',
                     border: '1px solid rgba(234,179,8,0.3)',
-                    borderRadius: 4,
+                    borderRadius: 'var(--mantine-radius-default)',
                     padding: 10,
                     marginTop: 6,
                   }}

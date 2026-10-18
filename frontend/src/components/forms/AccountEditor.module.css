@@ -120,6 +120,7 @@
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-default);
 }
 
 /* Separate cell borders keep scrolled rows from showing above the sticky header. */
