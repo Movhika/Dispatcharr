@@ -583,6 +583,11 @@ describe('persisted M3U setup', () => {
       setup_step: 'categories',
       enable_vod: true,
       channel_groups: [{ channel_group: 1, enabled: true }],
+      category_selection_counts: {
+        live: { selected: 1, total: 1 },
+        movie: { selected: 1, total: 2 },
+        series: { selected: 0, total: 0 },
+      },
     };
     mocks.categories = {
       1: {

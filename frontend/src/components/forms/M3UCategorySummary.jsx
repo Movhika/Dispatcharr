@@ -1,25 +1,20 @@
 import { Group, Paper, Stack, Text } from '@mantine/core';
 
-const M3UCategorySummary = ({
-  account,
-  vodCategories,
-  showCounts = true,
-  vodReady = true,
-  children,
-}) => {
+const M3UCategorySummary = ({ account, showCounts = true, children }) => {
+  const savedCounts = account.category_selection_counts;
+  const live = account.channel_groups || [];
   const counts = [
-    { label: 'Live TV', rows: account.channel_groups || [] },
+    {
+      label: 'Live TV',
+      ...(savedCounts?.live || {
+        selected: live.filter((row) => row.enabled).length,
+        total: live.length,
+      }),
+    },
     ...(account.account_type === 'XC' && account.enable_vod
       ? ['movie', 'series'].map((type) => ({
           label: type === 'movie' ? 'Movies' : 'Series',
-          pending: !vodReady,
-          rows: Object.values(vodCategories || {})
-            .filter((category) => category.category_type === type)
-            .flatMap((category) =>
-              (category.m3u_accounts || []).filter(
-                (relation) => relation.m3u_account === account.id
-              )
-            ),
+          ...(savedCounts?.[type] || { selected: 0, total: 0 }),
         }))
       : []),
   ];
@@ -34,18 +29,11 @@ const M3UCategorySummary = ({
       <Stack gap="sm">
         <Text fw={600}>Categories</Text>
         {showCounts &&
-          counts.map(({ label, rows, pending }) => (
+          counts.map(({ label, selected, total }) => (
             <Group key={label} justify="space-between">
               <Text size="sm">{label}</Text>
-              <Text size="sm" c="dimmed" aria-busy={pending || undefined}>
-                {pending ? (
-                  '…'
-                ) : (
-                  <>
-                    {rows.filter((row) => row.enabled).length} of {rows.length}{' '}
-                    categories selected
-                  </>
-                )}
+              <Text size="sm" c="dimmed">
+                {selected} of {total} categories selected
               </Text>
             </Group>
           ))}

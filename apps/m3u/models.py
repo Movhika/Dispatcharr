@@ -184,6 +184,45 @@ class M3UAccount(models.Model):
             "next_run_at": next_run,
         }
 
+    @classmethod
+    def get_vod_category_selection_counts(cls, account_ids):
+        """Count saved selections for multiple accounts without loading categories."""
+        from apps.vod.models import M3UVODCategoryRelation
+
+        rows = (
+            M3UVODCategoryRelation.objects.filter(m3u_account_id__in=account_ids)
+            .order_by()
+            .values("m3u_account_id", "category__category_type")
+            .annotate(
+                total=models.Count("id"),
+                selected=models.Count("id", filter=models.Q(enabled=True)),
+            )
+        )
+        counts = {}
+        for row in rows:
+            counts.setdefault(row["m3u_account_id"], {})[
+                row["category__category_type"]
+            ] = {"selected": row["selected"], "total": row["total"]}
+        return counts
+
+    def get_category_selection_counts(self, *, vod_counts=None):
+        """Summarize saved account memberships, including disabled categories."""
+        if vod_counts is None:
+            vod_counts = self.get_vod_category_selection_counts([self.pk]).get(
+                self.pk, {}
+            )
+        live = list(self.channel_group.all())
+        return {
+            "live": {
+                "selected": sum(row.enabled for row in live),
+                "total": len(live),
+            },
+            **{
+                scope: vod_counts.get(scope, {"selected": 0, "total": 0})
+                for scope in ("movie", "series")
+            },
+        }
+
     def clean(self):
         if self.max_streams < 0:
             raise ValidationError("Max streams cannot be negative.")

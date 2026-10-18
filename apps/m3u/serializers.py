@@ -336,6 +336,17 @@ class M3URefreshScheduleSerializer(serializers.Serializer):
     next_run_at = serializers.DateTimeField(allow_null=True)
 
 
+class M3UCategorySelectionCountSerializer(serializers.Serializer):
+    selected = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0)
+
+
+class M3UCategorySelectionCountsSerializer(serializers.Serializer):
+    live = M3UCategorySelectionCountSerializer()
+    movie = M3UCategorySelectionCountSerializer()
+    series = M3UCategorySelectionCountSerializer()
+
+
 class M3USetupActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(
         choices=(
@@ -373,6 +384,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
     all_expirations = serializers.SerializerMethodField()
     live_refresh_schedule = serializers.SerializerMethodField()
     vod_refresh_schedule = serializers.SerializerMethodField()
+    category_selection_counts = serializers.SerializerMethodField()
     exp_date = serializers.DateTimeField(
         required=False, allow_null=True, write_only=True,
         help_text="Expiration date for the default profile (write-through)",
@@ -444,6 +456,7 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             "profiles",
             "locked",
             "channel_groups",
+            "category_selection_counts",
             "refresh_interval",
             "xc_live_refresh_min_age_minutes",
             "cron_expression",
@@ -764,6 +777,13 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         # per account (viewset prefetches "filters").
         filters = sorted(obj.filters.all(), key=lambda f: (f.order, f.id))
         return M3UFilterSerializer(filters, many=True).data
+
+    @extend_schema_field(M3UCategorySelectionCountsSerializer)
+    def get_category_selection_counts(self, obj):
+        counts = self.context.get("vod_category_selection_counts")
+        return obj.get_category_selection_counts(
+            vod_counts=counts.get(obj.pk, {}) if counts is not None else None
+        )
 
     @extend_schema_field(serializers.BooleanField)
     def get_setup_categories_reviewed(self, obj):

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 
+const mocks = vi.hoisted(() => ({ updatePlaylist: vi.fn() }));
+
 vi.mock('../store/auth', () => ({
   default: { getState: () => ({ getToken: () => Promise.resolve('token') }) },
 }));
@@ -12,7 +14,7 @@ vi.mock('../store/playlists', () => ({
   default: {
     getState: () => ({
       addPlaylist: vi.fn(),
-      updatePlaylist: vi.fn(),
+      updatePlaylist: mocks.updatePlaylist,
     }),
   },
 }));
@@ -215,6 +217,32 @@ describe('account import rule requests', () => {
       text: async () => 'invalid settings',
     });
     await expect(API.updateM3UGroupSettings(7, [], [])).rejects.toThrow();
+  });
+  it('publishes authoritative account counts after saving VOD category selections', async () => {
+    const saved = {
+      id: 7,
+      category_selection_counts: {
+        live: { selected: 2, total: 3 },
+        movie: { selected: 1, total: 4 },
+        series: { selected: 0, total: 2 },
+      },
+    };
+    globalThis.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ message: 'Saved' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify(saved),
+      });
+    await API.updateM3UGroupSettings(7, [], [{ id: 10, enabled: true }]);
+    expect(mocks.updatePlaylist).toHaveBeenCalledExactlyOnceWith(saved);
+    expect(
+      globalThis.fetch.mock.calls.map(
+        ([url]) => new URL(url, 'https://example.invalid').pathname
+      )
+    ).toEqual(['/api/m3u/accounts/7/group-settings/', '/api/m3u/accounts/7/']);
   });
 });
 

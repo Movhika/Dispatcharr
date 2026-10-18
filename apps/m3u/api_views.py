@@ -137,18 +137,22 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
             (row["m3u_account_id"], row["channel_group_id"]): row["c"]
             for row in counts_qs
         }
+        selection_counts = M3UAccount.get_vod_category_selection_counts(account_ids)
+        context = {
+            **self.get_serializer_context(),
+            "stream_counts": stream_counts,
+            "vod_category_selection_counts": selection_counts,
+        }
 
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(
-                page, many=True,
-                context={**self.get_serializer_context(), "stream_counts": stream_counts},
+                page, many=True, context=context,
             )
             return self.get_paginated_response(serializer.data)
 
         serializer = self.get_serializer(
-            queryset, many=True,
-            context={**self.get_serializer_context(), "stream_counts": stream_counts},
+            queryset, many=True, context=context,
         )
         return Response(serializer.data)
 

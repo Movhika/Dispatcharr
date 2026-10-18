@@ -1,10 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,6 +35,11 @@ const account = {
     { channel_group: 1, enabled: true },
     { channel_group: 2, enabled: false },
   ],
+  category_selection_counts: {
+    live: { selected: 1, total: 2 },
+    movie: { selected: 1, total: 2 },
+    series: { selected: 1, total: 1 },
+  },
 };
 const cached = {
   10: {
@@ -83,7 +82,7 @@ describe('immediate saved category selection', () => {
     });
   });
 
-  it('shows cached selections synchronously without any data request or hint', () => {
+  it('shows account selection counts synchronously without a catalog request or hint', () => {
     show();
     expect(screen.getAllByText('1 of 2 categories selected')).toHaveLength(2);
     expect(screen.getByText('1 of 1 categories selected')).toBeInTheDocument();
@@ -95,34 +94,36 @@ describe('immediate saved category selection', () => {
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
   });
 
-  it('keeps Live TV visible while only missing VOD data is loaded', async () => {
+  it('shows all counts immediately even when no VOD categories have been loaded', () => {
     useVODStore.setState({ categories: {}, categoriesLoaded: false });
-    let finish;
-    API.getVODCategories.mockReturnValue(
-      new Promise((resolve) => {
-        finish = resolve;
-      })
-    );
     show();
-    expect(screen.getByText('1 of 2 categories selected')).toBeInTheDocument();
-    expect(screen.getAllByText('…')).toHaveLength(2);
+    expect(screen.getAllByText('1 of 2 categories selected')).toHaveLength(2);
+    expect(screen.getByText('1 of 1 categories selected')).toBeInTheDocument();
+    expect(screen.queryByText('…')).toBeNull();
     expect(screen.queryByText('0 of 0 categories selected')).toBeNull();
     expect(
       screen.getByRole('button', { name: 'Edit selection' })
     ).toBeEnabled();
-    await act(async () => finish(Object.values(cached)));
-    expect(screen.getAllByText('1 of 2 categories selected')).toHaveLength(2);
-    expect(API.getVODCategories).toHaveBeenCalledOnce();
+    expect(API.getVODCategories).not.toHaveBeenCalled();
     expect(API.getPlaylist).not.toHaveBeenCalled();
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
   });
 
-  it('does not reload successfully loaded empty categories when reopened', () => {
-    useVODStore.setState({ categories: {}, categoriesLoaded: true });
-    const first = show();
-    expect(screen.getAllByText('0 of 0 categories selected')).toHaveLength(2);
+  it('shows empty saved selections immediately when reopened', () => {
+    useVODStore.setState({ categories: {}, categoriesLoaded: false });
+    const empty = {
+      ...account,
+      category_selection_counts: {
+        live: { selected: 0, total: 0 },
+        movie: { selected: 0, total: 0 },
+        series: { selected: 0, total: 0 },
+      },
+    };
+    const first = show({ account: empty });
+    expect(screen.getAllByText('0 of 0 categories selected')).toHaveLength(3);
     first.unmount();
-    show();
+    show({ account: empty });
+    expect(screen.queryByText('…')).toBeNull();
     expect(API.getVODCategories).not.toHaveBeenCalled();
   });
 
@@ -134,17 +135,11 @@ describe('immediate saved category selection', () => {
     });
     show();
     expect(API.getVODCategories).not.toHaveBeenCalled();
-    expect(screen.getByText('1 of 2 categories selected')).toBeInTheDocument();
+    expect(screen.getAllByText('1 of 2 categories selected')).toHaveLength(2);
   });
 
-  it('does not duplicate a missing-data request during Strict Mode effect replay', async () => {
+  it('does not fetch the catalog during Strict Mode effect replay', () => {
     useVODStore.setState({ categories: {}, categoriesLoaded: false });
-    let finish;
-    API.getVODCategories.mockReturnValue(
-      new Promise((resolve) => {
-        finish = resolve;
-      })
-    );
     render(
       <StrictMode>
         <MantineProvider>
@@ -152,8 +147,8 @@ describe('immediate saved category selection', () => {
         </MantineProvider>
       </StrictMode>
     );
-    expect(API.getVODCategories).toHaveBeenCalledOnce();
-    await act(async () => finish(Object.values(cached)));
+    expect(API.getVODCategories).not.toHaveBeenCalled();
+    expect(screen.getByText('1 of 1 categories selected')).toBeInTheDocument();
   });
 
   it('keeps cached data visible during a background refresh', () => {
@@ -164,7 +159,7 @@ describe('immediate saved category selection', () => {
     expect(API.getVODCategories).not.toHaveBeenCalled();
   });
 
-  it('updates saved Live and VOD selections directly without reloading', () => {
+  it('updates Live and VOD counts from refreshed account data even with a stale category cache', () => {
     const view = show();
     const changed = {
       ...account,
@@ -172,12 +167,12 @@ describe('immediate saved category selection', () => {
         ...row,
         enabled: false,
       })),
+      category_selection_counts: {
+        ...account.category_selection_counts,
+        live: { selected: 0, total: 2 },
+        movie: { selected: 0, total: 2 },
+      },
     };
-    act(() =>
-      useVODStore
-        .getState()
-        .updateCategorySelections(7, [{ id: 10, enabled: false }])
-    );
     view.rerender(
       <MantineProvider>
         <M3UAccountCategories account={changed} onEdit={vi.fn()} />
@@ -238,19 +233,17 @@ describe('immediate saved category selection', () => {
     ).toBeEnabled();
   });
 
-  it('keeps Live visible and retries only missing VOD data after an error', async () => {
+  it('keeps account counts visible even if the separate VOD catalog is unavailable', () => {
     useVODStore.setState({
       categories: {},
       categoriesLoaded: false,
       categoriesError: 'VOD unavailable',
     });
-    API.getVODCategories.mockResolvedValue([]);
     show();
-    expect(screen.getByText('1 of 2 categories selected')).toBeInTheDocument();
+    expect(screen.getAllByText('1 of 2 categories selected')).toHaveLength(2);
+    expect(screen.getByText('1 of 1 categories selected')).toBeInTheDocument();
+    expect(screen.queryByText('…')).toBeNull();
     expect(API.getVODCategories).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findAllByText('0 of 0 categories selected');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(API.getVODCategories).toHaveBeenCalledOnce();
   });
 });

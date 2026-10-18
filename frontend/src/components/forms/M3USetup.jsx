@@ -32,7 +32,6 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   onCloseRef.current = onClose;
   const fetchChannelGroups = useChannelsStore((s) => s.fetchChannelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
-  const vodCategories = useVODStore((s) => s.categories);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +210,6 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
               <div className={editorClasses.setupPanel}>
                 <M3UCategorySummary
                   account={account}
-                  vodCategories={vodCategories}
                   showCounts={ready && !loadFailed}
                 >
                   {ready && !loadFailed ? (

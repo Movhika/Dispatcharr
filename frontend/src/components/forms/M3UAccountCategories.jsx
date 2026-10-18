@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Group } from '@mantine/core';
 import useChannelsStore from '../../store/channels';
-import useVODStore from '../../store/useVODStore';
 import {
   hideNotification,
   showNotification,
@@ -12,12 +11,6 @@ import M3UCategorySummary from './M3UCategorySummary.jsx';
 const M3UAccountCategories = ({ account, onEdit }) => {
   const [opening, setOpening] = useState(false);
   const mounted = useRef(true);
-  const fetchCategories = useVODStore((s) => s.fetchCategories);
-  const vodCategories = useVODStore((s) => s.categories);
-  const loaded = useVODStore((s) => s.categoriesLoaded);
-  const loading = useVODStore((s) => s.categoriesLoading);
-  const error = useVODStore((s) => s.categoriesError);
-  const hasVOD = account.account_type === 'XC' && account.enable_vod;
 
   useEffect(() => {
     mounted.current = true;
@@ -25,17 +18,6 @@ const M3UAccountCategories = ({ account, onEdit }) => {
       mounted.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    const state = useVODStore.getState();
-    if (
-      hasVOD &&
-      !state.categoriesLoaded &&
-      !state.categoriesLoading &&
-      !state.categoriesError
-    )
-      state.fetchCategories();
-  }, [hasVOD, loaded, loading, error, fetchCategories]);
 
   const edit = async () => {
     if (opening) return;
@@ -69,24 +51,11 @@ const M3UAccountCategories = ({ account, onEdit }) => {
   };
 
   return (
-    <M3UCategorySummary
-      account={account}
-      vodCategories={vodCategories}
-      vodReady={loaded}
-    >
+    <M3UCategorySummary account={account}>
       <Group>
         <Button variant="default" onClick={edit} loading={opening}>
           Edit selection
         </Button>
-        {hasVOD && !loaded && error && (
-          <Button
-            variant="default"
-            onClick={fetchCategories}
-            disabled={loading}
-          >
-            Retry
-          </Button>
-        )}
       </Group>
     </M3UCategorySummary>
   );
