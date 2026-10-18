@@ -224,13 +224,12 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
                   editDisabled={busy}
                 >
                   {ready && !loadFailed ? (
-                    <>
+                    !categoriesSaved && (
                       <Text size="sm" c="dimmed">
-                        {categoriesSaved
-                          ? 'Selection saved. Finish & import starts the initial import.'
-                          : 'Select the categories you want to import before finishing setup.'}
+                        Select the categories you want to import before
+                        finishing setup.
                       </Text>
-                    </>
+                    )
                   ) : (
                     <Alert color={loadFailed ? 'red' : 'blue'}>
                       {loadFailed

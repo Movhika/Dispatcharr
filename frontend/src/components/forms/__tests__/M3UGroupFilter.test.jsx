@@ -515,7 +515,13 @@ describe('M3UGroupFilter', () => {
   // ── Save ───────────────────────────────────────────────────────────────────
 
   describe('saving', () => {
-    it('allows saving with all categories deliberately disabled', async () => {
+    beforeEach(() => {
+      M3uGroupFilterUtils.buildGroupStates.mockReturnValue([
+        { channel_group: 1, enabled: true },
+      ]);
+    });
+
+    it('allows saving with all categories deliberately disabled after confirmation', async () => {
       setupStores();
       M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
         { channel_group: 1, enabled: false, custom_properties: {} },
@@ -524,6 +530,10 @@ describe('M3UGroupFilter', () => {
       fireEvent.click(
         screen.getByRole('button', { name: 'Save', exact: true })
       );
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
       await waitFor(() =>
         expect(
           M3uGroupFilterUtils.savePlaylistGroupSettings
@@ -580,7 +590,7 @@ describe('M3UGroupFilter', () => {
           M3uGroupFilterUtils.savePlaylistGroupSettings
         ).toHaveBeenCalledWith(
           expect.objectContaining({ enable_vod: false }),
-          [],
+          [expect.objectContaining({ enabled: true })],
           [],
           [],
           {},
@@ -756,7 +766,7 @@ describe('M3UGroupFilter', () => {
       expect(showNotification).not.toHaveBeenCalled();
     });
 
-    it('does not ask again after saving the same empty wizard selection', async () => {
+    it('requires a fresh confirmation for each empty wizard save', async () => {
       setupStores();
       const onSetupSave = vi.fn();
       render(
@@ -768,11 +778,17 @@ describe('M3UGroupFilter', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
       await waitFor(() => expect(onSetupSave).toHaveBeenCalledOnce());
       fireEvent.click(screen.getByRole('button', { name: 'Save selection' }));
+      expect(warning()).toBeInTheDocument();
+      expect(onSetupSave).toHaveBeenCalledOnce();
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
       await waitFor(() => expect(onSetupSave).toHaveBeenCalledTimes(2));
       expect(warning()).not.toBeInTheDocument();
     });
 
-    it('keeps a persisted reviewed empty wizard selection confirmed after reopening', async () => {
+    it('requires confirmation even when an empty wizard selection was previously reviewed', async () => {
       setupStores();
       const onSetupSave = vi.fn();
       render(
@@ -785,6 +801,9 @@ describe('M3UGroupFilter', () => {
         />
       );
       fireEvent.click(screen.getByRole('button', { name: 'Save selection' }));
+      expect(warning()).toBeInTheDocument();
+      expect(onSetupSave).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
       await waitFor(() => expect(onSetupSave).toHaveBeenCalledOnce());
       expect(warning()).not.toBeInTheDocument();
     });
@@ -816,6 +835,11 @@ describe('M3UGroupFilter', () => {
         M3uGroupFilterUtils.savePlaylistGroupSettings.mock.lastCall[1]
       ).toEqual([expect.objectContaining({ enabled: false })]);
       save();
+      expect(warning()).toBeInTheDocument();
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
       await waitFor(() =>
         expect(
           M3uGroupFilterUtils.savePlaylistGroupSettings
@@ -824,20 +848,66 @@ describe('M3UGroupFilter', () => {
       expect(warning()).not.toBeInTheDocument();
     });
 
-    it('does not warn for unchanged empty selections or display metadata edits', async () => {
-      setupStores();
-      M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
-        { channel_group: 1, enabled: false },
-      ]);
-      render(<M3UGroupFilter {...defaultProps()} />);
-      fireEvent.click(screen.getByTestId('live-annotate-groups'));
-      save();
-      await waitFor(() =>
+    it.each([false, true])(
+      'confirms an already empty selection on every ordinary save (metadata edit: %s)',
+      async (editMetadata) => {
+        setupStores();
+        M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
+          { channel_group: 1, enabled: false },
+        ]);
+        render(<M3UGroupFilter {...defaultProps()} />);
+        if (editMetadata)
+          fireEvent.click(screen.getByTestId('live-annotate-groups'));
+        save();
+        expect(warning()).toBeInTheDocument();
         expect(
           M3uGroupFilterUtils.savePlaylistGroupSettings
+        ).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
+        await waitFor(() =>
+          expect(
+            M3uGroupFilterUtils.savePlaylistGroupSettings
+          ).toHaveBeenCalledOnce()
+        );
+        expect(warning()).not.toBeInTheDocument();
+      }
+    );
+
+    it('requires confirmation again after reopening an empty category selection', () => {
+      setupStores();
+      const props = defaultProps();
+      const { rerender } = render(<M3UGroupFilter {...props} />);
+      save();
+      expect(warning()).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Back to selection' })
+      );
+      rerender(<M3UGroupFilter {...props} isOpen={false} />);
+      rerender(<M3UGroupFilter {...props} />);
+      save();
+      expect(warning()).toBeInTheDocument();
+      expect(
+        M3uGroupFilterUtils.savePlaylistGroupSettings
+      ).not.toHaveBeenCalled();
+    });
+
+    it('checks the legacy Save and Refresh action before saving or importing', async () => {
+      setupStores();
+      const onClose = vi.fn();
+      render(
+        <M3UGroupFilter {...defaultProps({ isInitialSetup: true, onClose })} />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Save and Refresh' }));
+      expect(warning()).toBeInTheDocument();
+      expect(M3uGroupFilterUtils.saveAndRefreshPlaylist).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Save anyway' }));
+      await waitFor(() =>
+        expect(
+          M3uGroupFilterUtils.saveAndRefreshPlaylist
         ).toHaveBeenCalledOnce()
       );
-      expect(warning()).not.toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledOnce();
     });
 
     it.each(['movie', 'series'])(
@@ -1009,6 +1079,9 @@ describe('M3UGroupFilter', () => {
           })
       );
       setupStores();
+      M3uGroupFilterUtils.buildGroupStates.mockReturnValueOnce([
+        { channel_group: 1, enabled: true },
+      ]);
       render(<M3UGroupFilter {...defaultProps()} />);
       await waitFor(() => screen.getByRole('button', { name: /save/i }));
 

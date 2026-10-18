@@ -502,7 +502,8 @@ describe('persisted M3U setup', () => {
       setup_categories_reviewed: true,
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save categories' }));
-    await screen.findByText(/Selection saved/);
+    await screen.findByRole('button', { name: 'Edit selection' });
+    expect(screen.queryByText(/Selection saved/)).not.toBeInTheDocument();
     expect(
       screen.queryByRole('dialog', { name: 'Category setup' })
     ).not.toBeInTheDocument();
@@ -586,6 +587,7 @@ describe('persisted M3U setup', () => {
     expect(
       screen.getByRole('button', { name: 'Edit selection' })
     ).toBeEnabled();
+    expect(screen.queryByText(/Selection saved/)).not.toBeInTheDocument();
     expect(API.advanceM3USetup).not.toHaveBeenCalled();
   });
 

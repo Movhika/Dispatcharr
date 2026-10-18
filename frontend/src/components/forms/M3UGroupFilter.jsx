@@ -66,7 +66,6 @@ const M3UGroupFilter = ({
   const savedGroups = useRef('[]');
   const [discardAction, setDiscardAction] = useState(null);
   const [emptySelectionOpen, setEmptySelectionOpen] = useState(false);
-  const setupSelectionSaved = useRef(false);
   const saving = useRef(false);
   const { availability, hint: previewHint } = useCategoryPreviewAvailability(
     playlist?.id,
@@ -79,13 +78,11 @@ const M3UGroupFilter = ({
       setRulesScope(null);
       groupsAccount.current = null;
       setEmptySelectionOpen(false);
-      setupSelectionSaved.current = false;
     }
   }, [isOpen]);
 
   useEffect(() => {
     setEmptySelectionOpen(false);
-    setupSelectionSaved.current = false;
   }, [playlist?.id]);
 
   useEffect(() => {
@@ -162,7 +159,6 @@ const M3UGroupFilter = ({
       );
 
       savedGroups.current = groupSettingsSnapshot(groupStates);
-      setupSelectionSaved.current = true;
       setMovieCategoryStates((current) =>
         current.map((category) => ({
           ...category,
@@ -216,10 +212,9 @@ const M3UGroupFilter = ({
     }
   };
 
-  const hasSelectedCategories = (saved = false) => {
-    const live = saved ? JSON.parse(savedGroups.current) : groupStates;
+  const hasSelectedCategories = () => {
     if (
-      (live.length ? live : playlist.channel_groups || []).some(
+      (groupStates.length ? groupStates : playlist.channel_groups || []).some(
         (row) => row.enabled
       )
     )
@@ -231,21 +226,14 @@ const M3UGroupFilter = ({
       [seriesCategoryStates, 'series'],
     ].some(([rows, scope]) =>
       rows.length
-        ? rows.some((row) => (saved ? row.original_enabled : row.enabled))
+        ? rows.some((row) => row.enabled)
         : (playlist.category_selection_counts?.[scope]?.selected || 0) > 0
     );
   };
 
   const requestSave = () => {
     if (isLoading || saving.current || emptySelectionOpen) return;
-    const unreviewedSetup =
-      isInitialSetup &&
-      !playlist.setup_categories_reviewed &&
-      !setupSelectionSaved.current;
-    if (
-      !hasSelectedCategories() &&
-      (unreviewedSetup || hasSelectedCategories(true))
-    ) {
+    if (!hasSelectedCategories()) {
       setEmptySelectionOpen(true);
       return;
     }
