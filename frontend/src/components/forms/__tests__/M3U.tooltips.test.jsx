@@ -56,7 +56,7 @@ const renderContent = (values = {}) => {
       />
     </MantineProvider>
   );
-  fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
 };
 
 const tabTo = async (target) => {
@@ -72,6 +72,43 @@ const tabTo = async (target) => {
 };
 
 describe('M3U content switch tooltips with Mantine controls', () => {
+  it('keeps guided Live and VOD settings separate without losing drafts', () => {
+    render(
+      <MantineProvider>
+        <M3U
+          isOpen
+          setupMode
+          onClose={vi.fn()}
+          m3uAccount={{
+            id: 1,
+            name: 'Example account',
+            server_url: 'https://example.invalid',
+            account_type: 'XC',
+            is_active: true,
+            enable_vod: true,
+            setup_step: 'content',
+          }}
+        />
+      </MantineProvider>
+    );
+    expect(
+      screen.getByRole('group', { name: 'Live TV settings' })
+    ).toBeVisible();
+    expect(screen.queryByRole('group', { name: 'VOD settings' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Stale Stream Retention (days)'), {
+      target: { value: '14' },
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
+    expect(screen.getByRole('group', { name: 'VOD settings' })).toBeVisible();
+    expect(
+      screen.queryByRole('group', { name: 'Live TV settings' })
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByLabelText('Stale Stream Retention (days)')).toHaveValue(
+      '14'
+    );
+  });
+
   it.each([
     ['Enable VOD', 'Import movies and series from this Xtream Codes account.'],
     [
@@ -94,16 +131,16 @@ describe('M3U content switch tooltips with Mantine controls', () => {
     );
   });
 
-  it.each([[{ enable_vod: false }, 'Enable separate VOD refresh schedule']])(
-    'keeps disabled-switch help accessible (%j)',
-    async (values, name) => {
-      renderContent(values);
-      const input = screen.getByRole('switch', { name });
-      expect(input).toBeDisabled();
-      const target = input.closest('.mantine-Switch-root').parentElement;
-      expect(target).toHaveAttribute('tabindex', '0');
-      fireEvent.mouseEnter(target);
-      expect(await screen.findByRole('tooltip')).toBeInTheDocument();
-    }
-  );
+  it.each([
+    [{ account_type: 'STD' }, 'Enable VOD'],
+    [{ enable_vod: false }, 'Enable separate VOD refresh schedule'],
+  ])('keeps disabled-switch help accessible (%j)', async (values, name) => {
+    renderContent(values);
+    const input = screen.getByRole('switch', { name });
+    expect(input).toBeDisabled();
+    const target = input.closest('.mantine-Switch-root').parentElement;
+    expect(target).toHaveAttribute('tabindex', '0');
+    fireEvent.mouseEnter(target);
+    expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+  });
 });

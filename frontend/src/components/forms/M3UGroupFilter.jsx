@@ -47,7 +47,6 @@ const M3UGroupFilter = ({
   isInitialSetup = false,
   onSetupSave,
   onEditAccount,
-  scope = 'all',
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
@@ -56,9 +55,7 @@ const M3UGroupFilter = ({
   const [isLoading, setIsLoading] = useState(false);
   const [movieCategoryStates, setMovieCategoryStates] = useState([]);
   const [seriesCategoryStates, setSeriesCategoryStates] = useState([]);
-  const [activeTab, setActiveTab] = useState(
-    scope === 'vod' ? 'vod-movie' : 'live'
-  );
+  const [activeTab, setActiveTab] = useState('live');
   const [rulesScope, setRulesScope] = useState(null);
   const [childOverlayOpen, setChildOverlayOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
@@ -73,16 +70,15 @@ const M3UGroupFilter = ({
 
   useEffect(() => {
     if (!isOpen) {
-      setActiveTab(scope === 'vod' ? 'vod-movie' : 'live');
+      setActiveTab('live');
       setRulesScope(null);
       groupsAccount.current = null;
     }
-  }, [isOpen, scope]);
+  }, [isOpen]);
 
   useEffect(() => {
     if (
       !isOpen ||
-      scope === 'vod' ||
       !playlist ||
       groupsAccount.current === playlist.id ||
       Object.keys(channelGroups).length === 0
@@ -92,20 +88,19 @@ const M3UGroupFilter = ({
     const groups = buildGroupStates(channelGroups, playlist.channel_groups);
     savedGroups.current = groupSettingsSnapshot(groups);
     setGroupStates(groups);
-  }, [playlist, channelGroups, isOpen, scope]);
+  }, [playlist, channelGroups, isOpen]);
 
   // Fetch VOD categories when modal opens for XC accounts with VOD enabled
   useEffect(() => {
     if (
       isOpen &&
-      scope !== 'live' &&
       playlist &&
       playlist.account_type === 'XC' &&
       playlist.enable_vod
     ) {
       fetchCategories();
     }
-  }, [isOpen, playlist, fetchCategories, scope]);
+  }, [isOpen, playlist, fetchCategories]);
 
   const submit = async () => {
     const refreshIncludesVod =
@@ -138,9 +133,9 @@ const M3UGroupFilter = ({
           : savePlaylistGroupSettings;
       await save(
         playlist,
-        scope === 'vod' ? [] : groupStates,
-        scope === 'live' ? [] : movieCategoryStates,
-        scope === 'live' ? [] : seriesCategoryStates,
+        groupStates,
+        movieCategoryStates,
+        seriesCategoryStates,
         {},
         isInitialSetup
       );
@@ -263,13 +258,7 @@ const M3UGroupFilter = ({
     <Modal
       opened={isOpen}
       onClose={() => requestExit(onClose)}
-      title={
-        scope === 'live'
-          ? 'Live TV categories'
-          : scope === 'vod'
-            ? 'VOD categories'
-            : 'Categories'
-      }
+      title="Categories"
       closeButtonProps={{ 'aria-label': 'Close categories' }}
       size="94vw"
       classNames={{
@@ -298,82 +287,74 @@ const M3UGroupFilter = ({
             if (!isLoading) setActiveTab(value);
           }}
         >
-          {scope !== 'live' && (
-            <TabsList className={editorClasses.tabList}>
-              {scope !== 'vod' && <TabsTab value="live">Live TV</TabsTab>}
-              <TabsTab
-                value="vod-movie"
-                disabled={!!onSetupSave && !playlist.enable_vod}
-              >
-                {scope === 'vod' ? 'Movies' : 'VOD - Movies'}
-              </TabsTab>
-              <TabsTab
-                value="vod-series"
-                disabled={!!onSetupSave && !playlist.enable_vod}
-              >
-                {scope === 'vod' ? 'Series' : 'VOD - Series'}
-              </TabsTab>
-            </TabsList>
-          )}
-
-          {scope !== 'vod' && (
-            <TabsPanel
-              value="live"
-              className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
-            >
-              <LiveGroupFilter
-                playlist={playlist}
-                groupStates={groupStates}
-                setGroupStates={setGroupStates}
-                onOpenRules={() => setRulesScope('live')}
-                onOverlayChange={setChildOverlayOpen}
-                paginationContainer={paginationContainer}
-                paginationVisible={activeTab === 'live'}
-                previewAvailableIds={availability?.live ?? null}
-                previewUnavailableHint={previewHint}
-              />
-            </TabsPanel>
-          )}
-
-          {scope !== 'live' && (
-            <TabsPanel
+          <TabsList className={editorClasses.tabList}>
+            <TabsTab value="live">Live TV</TabsTab>
+            <TabsTab
               value="vod-movie"
-              className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+              disabled={!!onSetupSave && !playlist.enable_vod}
             >
-              <VODCategoryFilter
-                playlist={playlist}
-                categoryStates={movieCategoryStates}
-                setCategoryStates={setMovieCategoryStates}
-                type="movie"
-                onOpenRules={() => setRulesScope('movie')}
-                onOverlayChange={setChildOverlayOpen}
-                paginationContainer={paginationContainer}
-                paginationVisible={activeTab === 'vod-movie'}
-                previewAvailableIds={availability?.movie ?? null}
-                previewUnavailableHint={previewHint}
-              />
-            </TabsPanel>
-          )}
-
-          {scope !== 'live' && (
-            <TabsPanel
+              VOD - Movies
+            </TabsTab>
+            <TabsTab
               value="vod-series"
-              className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+              disabled={!!onSetupSave && !playlist.enable_vod}
             >
-              <VODCategoryFilter
-                playlist={playlist}
-                categoryStates={seriesCategoryStates}
-                setCategoryStates={setSeriesCategoryStates}
-                type="series"
-                onOpenRules={() => setRulesScope('series')}
-                onOverlayChange={setChildOverlayOpen}
-                paginationContainer={paginationContainer}
-                paginationVisible={activeTab === 'vod-series'}
-                previewAvailableIds={availability?.series ?? null}
-                previewUnavailableHint={previewHint}
-              />
-            </TabsPanel>
-          )}
+              VOD - Series
+            </TabsTab>
+          </TabsList>
+
+          <TabsPanel
+            value="live"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
+            <LiveGroupFilter
+              playlist={playlist}
+              groupStates={groupStates}
+              setGroupStates={setGroupStates}
+              onOpenRules={() => setRulesScope('live')}
+              onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'live'}
+              previewAvailableIds={availability?.live ?? null}
+              previewUnavailableHint={previewHint}
+            />
+          </TabsPanel>
+
+          <TabsPanel
+            value="vod-movie"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
+            <VODCategoryFilter
+              playlist={playlist}
+              categoryStates={movieCategoryStates}
+              setCategoryStates={setMovieCategoryStates}
+              type="movie"
+              onOpenRules={() => setRulesScope('movie')}
+              onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'vod-movie'}
+              previewAvailableIds={availability?.movie ?? null}
+              previewUnavailableHint={previewHint}
+            />
+          </TabsPanel>
+
+          <TabsPanel
+            value="vod-series"
+            className={`${editorClasses.panel} ${editorClasses.categoryPanel}`}
+          >
+            <VODCategoryFilter
+              playlist={playlist}
+              categoryStates={seriesCategoryStates}
+              setCategoryStates={setSeriesCategoryStates}
+              type="series"
+              onOpenRules={() => setRulesScope('series')}
+              onOverlayChange={setChildOverlayOpen}
+              paginationContainer={paginationContainer}
+              paginationVisible={activeTab === 'vod-series'}
+              previewAvailableIds={availability?.series ?? null}
+              previewUnavailableHint={previewHint}
+            />
+          </TabsPanel>
         </Tabs>
 
         <Flex

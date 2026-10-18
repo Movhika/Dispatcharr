@@ -7,7 +7,7 @@ import {
 import { formatApiError } from '../../utils';
 import M3UCategorySummary from './M3UCategorySummary.jsx';
 
-const M3UAccountCategories = ({ account, scope = 'all', onEdit }) => {
+const M3UAccountCategories = ({ account, onEdit }) => {
   const [opening, setOpening] = useState(false);
   const mounted = useRef(true);
 
@@ -24,7 +24,6 @@ const M3UAccountCategories = ({ account, scope = 'all', onEdit }) => {
     try {
       // Names are needed by the selection editor, not by this count summary.
       const missingNames = () =>
-        scope !== 'vod' &&
         (account.channel_groups || []).some(
           (row) => !useChannelsStore.getState().channelGroups[row.channel_group]
         );
@@ -34,7 +33,7 @@ const M3UAccountCategories = ({ account, scope = 'all', onEdit }) => {
         throw new Error('Category names could not be loaded. Please retry.');
       if (mounted.current) {
         hideNotification(`m3u-categories-${account.id}`);
-        onEdit(account, scope);
+        onEdit(account);
       }
     } catch (failure) {
       if (!mounted.current) return;
@@ -51,12 +50,7 @@ const M3UAccountCategories = ({ account, scope = 'all', onEdit }) => {
   };
 
   return (
-    <M3UCategorySummary
-      account={account}
-      scope={scope}
-      onEdit={edit}
-      opening={opening}
-    />
+    <M3UCategorySummary account={account} onEdit={edit} opening={opening} />
   );
 };
 

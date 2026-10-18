@@ -65,10 +65,9 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange, isInitialSetup, isOpen, onClose, scope }) => (
+  default: ({ onChange, isInitialSetup, isOpen, onClose }) => (
     <div
       data-testid="m3u-group-filter"
-      data-scope={scope}
       data-initial-setup={String(isInitialSetup)}
       data-open={String(isOpen)}
     >
@@ -119,13 +118,9 @@ vi.mock('../M3UAccountEPG.jsx', () => ({
   default: () => <div data-testid="account-epg" />,
 }));
 vi.mock('../M3UAccountCategories.jsx', () => ({
-  default: ({ account, onEdit, scope }) => (
-    <div
-      data-testid="account-categories"
-      data-saved-name={account.name}
-      data-scope={scope}
-    >
-      <button type="button" onClick={() => onEdit(account, scope)}>
+  default: ({ account, onEdit }) => (
+    <div data-testid="account-categories" data-saved-name={account.name}>
+      <button type="button" onClick={() => onEdit(account)}>
         Edit selection
       </button>
     </div>
@@ -742,7 +737,9 @@ describe('M3U', () => {
       expect(
         screen.queryByRole('button', { name: 'Filters' })
       ).not.toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Live TV' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('tab', { name: 'Categories' })
+      ).toBeInTheDocument();
     });
 
     it('renders ScheduleInput sub-component', () => {
@@ -1259,7 +1256,7 @@ describe('M3U', () => {
   });
 
   describe('account and content tabs', () => {
-    it('groups Live settings, categories and EPG separately from VOD', () => {
+    it('keeps Settings, EPG and the shared category selection in separate tabs', () => {
       setupStores();
       render(
         <M3U
@@ -1270,32 +1267,25 @@ describe('M3U', () => {
       );
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
         'Account',
-        'Live TV',
-        'VOD',
+        'Settings',
+        'EPG',
+        'Categories',
         'Profiles',
       ]);
-      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
-      expect(screen.getByTestId('account-epg')).toBeInTheDocument();
-      expect(screen.getByTestId('account-categories')).toHaveAttribute(
-        'data-scope',
-        'live'
-      );
-      fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
-      expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-        'data-scope',
-        'live'
-      );
-      fireEvent.click(screen.getByRole('button', { name: 'Close groups' }));
-      fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
       expect(screen.queryByTestId('account-epg')).not.toBeInTheDocument();
-      expect(screen.getByTestId('account-categories')).toHaveAttribute(
-        'data-scope',
-        'vod'
-      );
+      expect(
+        screen.queryByTestId('account-categories')
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('tab', { name: 'EPG' }));
+      expect(screen.getByTestId('account-epg')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      expect(screen.queryByTestId('account-epg')).not.toBeInTheDocument();
+      expect(screen.getByTestId('account-categories')).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
       expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-        'data-scope',
-        'vod'
+        'data-open',
+        'true'
       );
       expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
     });
@@ -1309,7 +1299,7 @@ describe('M3U', () => {
         'data-close-on-escape',
         'true'
       );
-      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
       fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-close-on-escape',
@@ -1354,9 +1344,9 @@ describe('M3U', () => {
         ).toBeInTheDocument();
       }
       expect(screen.getByRole('tab', { name: 'Account' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Live TV' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'VOD' })).toBeInTheDocument();
-      for (const name of ['Content', 'EPG', 'Categories'])
+      for (const name of ['Settings', 'EPG', 'Categories'])
+        expect(screen.getByRole('tab', { name })).toBeInTheDocument();
+      for (const name of ['Content', 'Live TV', 'VOD'])
         expect(screen.queryByRole('tab', { name })).not.toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Profiles' })).toBeInTheDocument();
     });
@@ -1367,7 +1357,7 @@ describe('M3U', () => {
       fireEvent.change(screen.getByDisplayValue('Test M3U'), {
         target: { value: 'Unsaved name' },
       });
-      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
       expect(
         screen.getByRole('button', { name: 'Edit selection' })
       ).toBeInTheDocument();
@@ -1383,7 +1373,7 @@ describe('M3U', () => {
       fireEvent.change(screen.getByDisplayValue('Test M3U'), {
         target: { value: 'Unsaved name' },
       });
-      fireEvent.click(screen.getByRole('tab', { name: 'Live TV' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
       setupStores({
         playlists: [{ ...original, name: 'Latest saved account' }],
       });
@@ -1413,7 +1403,7 @@ describe('M3U', () => {
         'data-content-class',
         `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`
       );
-      expect(screen.getAllByTestId('account-columns')).toHaveLength(3);
+      expect(screen.getAllByTestId('account-columns')).toHaveLength(2);
       const live = within(
         screen.getByRole('group', { name: 'Live TV settings' })
       );

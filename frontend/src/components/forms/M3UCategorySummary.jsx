@@ -13,7 +13,6 @@ import classes from './M3UAccountSummary.module.css';
 
 const M3UCategorySummary = ({
   account,
-  scope = 'all',
   showCounts = true,
   onEdit,
   opening = false,
@@ -47,14 +46,11 @@ const M3UCategorySummary = ({
           ...(savedCounts?.[type] || { selected: 0, total: 0 }),
         }))
       : []),
-  ].filter(
-    ({ tab }) =>
-      scope === 'all' || (scope === 'live' ? tab === 'live' : tab !== 'live')
-  );
+  ];
 
   return (
     <section aria-label="Category selection">
-      <Stack gap={4}>
+      <Stack gap="sm">
         {showCounts ? (
           <div className={classes.categoryGrid}>
             {counts.map(
@@ -65,18 +61,18 @@ const M3UCategorySummary = ({
                   aria-label={`${label} categories`}
                   withBorder
                   radius="md"
-                  p="sm"
+                  p="md"
                   className={`${classes.card} ${classes.categoryCard}`}
                 >
                   <Group gap="sm" wrap="nowrap">
-                    <ThemeIcon variant="light" size="md" radius="md">
+                    <ThemeIcon variant="light" size="lg" radius="md">
                       {createElement(icon, { size: 20, 'aria-hidden': true })}
                     </ThemeIcon>
                     <Text fw={600} className={classes.cardHeading}>
                       {label}
                     </Text>
                   </Group>
-                  <Text size="md" fw={600} className={classes.count}>
+                  <Text size="lg" fw={600} className={classes.count}>
                     {selected} of {total} categories selected
                   </Text>
                   <Tooltip
@@ -110,7 +106,7 @@ const M3UCategorySummary = ({
           <Paper
             withBorder
             radius="md"
-            p={6}
+            p="sm"
             component="section"
             aria-label="Category selection actions"
             className={classes.selectionActions}

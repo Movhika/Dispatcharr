@@ -115,7 +115,6 @@ const M3U = ({
   const [expDate, setExpDate] = useState(null);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [categoryPlaylist, setCategoryPlaylist] = useState(null);
-  const [categoryScope, setCategoryScope] = useState('all');
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
@@ -409,6 +408,13 @@ const M3U = ({
     return <></>;
   }
 
+  const guidedSettings = !playlist?.id || setupMode;
+  const settingsTab = guidedSettings
+    ? activeTab === 'vod'
+      ? 'vod'
+      : 'live'
+    : 'content';
+
   const unsavedSetupChanges =
     setupMode &&
     (form.isDirty() ||
@@ -485,13 +491,21 @@ const M3U = ({
             {((playlist?.id && !setupMode) ||
               ['live', 'vod'].includes(activeTab)) && (
               <TabsList className={editorClasses.tabList}>
-                {playlist?.id && !setupMode && (
-                  <TabsTab value="account">Account</TabsTab>
-                )}
-                <TabsTab value="live">Live TV</TabsTab>
-                {accountType === 'XC' && <TabsTab value="vod">VOD</TabsTab>}
-                {playlist?.id && !setupMode && (
-                  <TabsTab value="profiles">Profiles</TabsTab>
+                {guidedSettings ? (
+                  <>
+                    <TabsTab value="live">Live TV</TabsTab>
+                    {accountType === 'XC' && <TabsTab value="vod">VOD</TabsTab>}
+                  </>
+                ) : (
+                  <>
+                    <TabsTab value="account">Account</TabsTab>
+                    <TabsTab value="content">Settings</TabsTab>
+                    {accountType === 'XC' && playlist.account_type === 'XC' && (
+                      <TabsTab value="epg">EPG</TabsTab>
+                    )}
+                    <TabsTab value="categories">Categories</TabsTab>
+                    <TabsTab value="profiles">Profiles</TabsTab>
+                  </>
                 )}
               </TabsList>
             )}
@@ -739,14 +753,22 @@ const M3U = ({
               </SimpleGrid>
             </TabsPanel>
             <TabsPanel
-              value="live"
+              value={settingsTab}
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
-              data-editor-active={activeTab === 'live'}
-              aria-hidden={activeTab !== 'live'}
-              inert={activeTab !== 'live'}
+              data-editor-active={activeTab === settingsTab}
+              aria-hidden={activeTab !== settingsTab}
+              inert={activeTab !== settingsTab}
             >
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                <Paper withBorder p="sm">
+                <Paper
+                  withBorder
+                  p="sm"
+                  display={
+                    guidedSettings && settingsTab !== 'live'
+                      ? 'none'
+                      : undefined
+                  }
+                >
                   <Stack
                     gap={4}
                     style={{ minWidth: 0 }}
@@ -783,78 +805,13 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="sm">
-                  <Stack
-                    gap={4}
-                    role="group"
-                    aria-label="Live TV refresh schedule"
-                  >
-                    <Text fw={600}>Live TV refresh schedule</Text>
-                    <ScheduleInput
-                      scheduleType={scheduleType}
-                      onScheduleTypeChange={setScheduleType}
-                      intervalValue={form.getValues().refresh_interval}
-                      onIntervalChange={(value) =>
-                        form.setFieldValue('refresh_interval', value)
-                      }
-                      cronValue={form.getValues().cron_expression}
-                      onCronChange={(value) =>
-                        form.setFieldValue('cron_expression', value)
-                      }
-                      intervalLabel="Live TV refresh interval (hours)"
-                      intervalDescription="Use 0 to disable automatic Live TV refreshes."
-                    />
-                    {playlist?.id && (
-                      <ScheduleStatus
-                        schedule={statusPlaylist?.live_refresh_schedule}
-                        lastCompleted={
-                          statusPlaylist?.custom_properties?.refresh_timings
-                            ?.live_completed_at || statusPlaylist?.updated_at
-                        }
-                        formatDate={(value) =>
-                          toUserTime(value).format(fullDateTimeFormat)
-                        }
-                      />
-                    )}
-                  </Stack>
-                </Paper>
-              </SimpleGrid>
-              {playlist?.id && !setupMode && activeTab === 'live' && (
-                <SimpleGrid
-                  cols={{
-                    base: 1,
-                    sm:
-                      accountType === 'XC' && playlist.account_type === 'XC'
-                        ? 2
-                        : 1,
-                  }}
-                  spacing="md"
-                  mt="md"
+                <Paper
+                  withBorder
+                  p="sm"
+                  display={
+                    guidedSettings && settingsTab !== 'vod' ? 'none' : undefined
+                  }
                 >
-                  <M3UAccountCategories
-                    account={storedAccount || playlist}
-                    scope="live"
-                    onEdit={(saved, scope) => {
-                      setCategoryPlaylist(saved);
-                      setCategoryScope(scope);
-                      setGroupFilterModalOpen(true);
-                    }}
-                  />
-                  {accountType === 'XC' && playlist.account_type === 'XC' && (
-                    <M3UAccountEPG account={storedAccount || playlist} />
-                  )}
-                </SimpleGrid>
-              )}
-            </TabsPanel>
-            <TabsPanel
-              value="vod"
-              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
-              data-editor-active={activeTab === 'vod'}
-              aria-hidden={activeTab !== 'vod'}
-              inert={activeTab !== 'vod'}
-            >
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                <Paper withBorder p="sm">
                   <Stack
                     gap={4}
                     style={{ minWidth: 0 }}
@@ -912,7 +869,57 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper withBorder p="sm">
+                <Paper
+                  withBorder
+                  p="sm"
+                  display={
+                    guidedSettings && settingsTab !== 'live'
+                      ? 'none'
+                      : undefined
+                  }
+                >
+                  <Stack
+                    gap={4}
+                    role="group"
+                    aria-label="Live TV refresh schedule"
+                  >
+                    <Text fw={600}>Live TV refresh schedule</Text>
+                    <ScheduleInput
+                      scheduleType={scheduleType}
+                      onScheduleTypeChange={setScheduleType}
+                      intervalValue={form.getValues().refresh_interval}
+                      onIntervalChange={(value) =>
+                        form.setFieldValue('refresh_interval', value)
+                      }
+                      cronValue={form.getValues().cron_expression}
+                      onCronChange={(value) =>
+                        form.setFieldValue('cron_expression', value)
+                      }
+                      intervalLabel="Live TV refresh interval (hours)"
+                      intervalDescription="Use 0 to disable automatic Live TV refreshes."
+                    />
+                    {playlist?.id && (
+                      <ScheduleStatus
+                        schedule={statusPlaylist?.live_refresh_schedule}
+                        lastCompleted={
+                          statusPlaylist?.custom_properties?.refresh_timings
+                            ?.live_completed_at || statusPlaylist?.updated_at
+                        }
+                        formatDate={(value) =>
+                          toUserTime(value).format(fullDateTimeFormat)
+                        }
+                      />
+                    )}
+                  </Stack>
+                </Paper>
+
+                <Paper
+                  withBorder
+                  p="sm"
+                  display={
+                    guidedSettings && settingsTab !== 'vod' ? 'none' : undefined
+                  }
+                >
                   <Stack gap={4} role="group" aria-label="VOD refresh schedule">
                     <Group justify="space-between">
                       <Text fw={600}>VOD refresh schedule</Text>
@@ -1006,24 +1013,34 @@ const M3U = ({
                   </Stack>
                 </Paper>
               </SimpleGrid>
-              {playlist?.id &&
-                !setupMode &&
-                activeTab === 'vod' &&
+            </TabsPanel>
+            <TabsPanel
+              value="epg"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'epg'}
+              aria-hidden={activeTab !== 'epg'}
+              inert={activeTab !== 'epg'}
+            >
+              {playlist?.account_type === 'XC' &&
                 accountType === 'XC' &&
-                playlist.enable_vod &&
-                vodEnabled && (
-                  <Stack gap="md" mt="md">
-                    <M3UAccountCategories
-                      account={storedAccount || playlist}
-                      scope="vod"
-                      onEdit={(saved, scope) => {
-                        setCategoryPlaylist(saved);
-                        setCategoryScope(scope);
-                        setGroupFilterModalOpen(true);
-                      }}
-                    />
-                  </Stack>
-                )}
+                activeTab === 'epg' && <M3UAccountEPG account={playlist} />}
+            </TabsPanel>
+            <TabsPanel
+              value="categories"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'categories'}
+              aria-hidden={activeTab !== 'categories'}
+              inert={activeTab !== 'categories'}
+            >
+              {playlist?.id && !setupMode && activeTab === 'categories' && (
+                <M3UAccountCategories
+                  account={storedAccount || playlist}
+                  onEdit={(saved) => {
+                    setCategoryPlaylist(saved);
+                    setGroupFilterModalOpen(true);
+                  }}
+                />
+              )}
             </TabsPanel>
             <TabsPanel
               value="profiles"
@@ -1131,10 +1148,8 @@ const M3U = ({
       {playlist && (
         <>
           <M3UGroupFilter
-            key={categoryScope}
             isOpen={groupFilterModalOpen}
             playlist={categoryPlaylist || storedAccount || playlist}
-            scope={categoryScope}
             onClose={closeGroupFilter}
           />
         </>

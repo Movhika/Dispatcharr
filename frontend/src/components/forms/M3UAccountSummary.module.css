@@ -12,7 +12,8 @@
 .categoryCard {
   display: flex;
   flex-direction: column;
-  gap: var(--mantine-spacing-xs);
+  gap: var(--mantine-spacing-md);
+  min-height: 13rem;
 }
 
 .cardHeading {
@@ -29,5 +30,5 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 3rem;
+  min-height: 4.5rem;
 }
