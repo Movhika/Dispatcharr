@@ -136,7 +136,7 @@ vi.mock('@mantine/core', () => ({
       children
     ),
   ThemeIcon: ({ children }) => <div>{children}</div>,
-  Tooltip: ({ children }) => children,
+  Tooltip: ({ children, label }) => <span title={label}>{children}</span>,
   Group: ({ children }) => <div>{children}</div>,
   Modal: ({ children, opened, onClose, title }) =>
     opened ? (
@@ -330,9 +330,19 @@ describe('M3UProfiles', () => {
       expect(
         within(actions).getByRole('button', { name: 'Delete Test Profile' })
       ).toBeEnabled();
+      expect(within(actions).queryByRole('checkbox')).not.toBeInTheDocument();
+      const enabled = screen.getByRole('group', {
+        name: 'Enabled state for Test Profile',
+      });
       expect(
-        within(actions).getByRole('checkbox', { name: 'Active Test Profile' })
+        within(enabled).getByRole('checkbox', { name: 'Enable Test Profile' })
       ).toBeEnabled();
+      expect(enabled.parentElement).toHaveAttribute(
+        'title',
+        'Enable or disable this connection profile'
+      );
+      expect(within(enabled).queryByText('Active')).not.toBeInTheDocument();
+      expect(actions).not.toContainElement(enabled);
       const maxStreams = screen.getByRole('spinbutton', {
         name: 'Max Streams for Test Profile',
       });
@@ -349,6 +359,13 @@ describe('M3UProfiles', () => {
       expect(within(card).getByText('Default')).toBeInTheDocument();
       expect(within(card).getByRole('spinbutton')).toBeDisabled();
       expect(within(card).getByRole('checkbox')).toBeDisabled();
+      expect(
+        screen.getByRole('group', { name: 'Enabled state for Test Profile' })
+          .parentElement
+      ).toHaveAttribute(
+        'title',
+        'The default profile cannot be enabled or disabled here'
+      );
       expect(
         within(card).getByRole('button', {
           name: 'Edit Test Profile name and notes',
@@ -681,7 +698,7 @@ describe('M3UProfiles', () => {
       setupStores({ profiles: { 1: [profile] } });
       render(<M3UProfiles {...defaultProps()} />);
       fireEvent.click(
-        screen.getByRole('checkbox', { name: 'Active Test Profile' })
+        screen.getByRole('checkbox', { name: 'Enable Test Profile' })
       );
       await waitFor(() =>
         expect(

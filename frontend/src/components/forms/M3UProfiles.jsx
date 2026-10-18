@@ -103,13 +103,40 @@ const M3uProfileCard = ({
             size="sm"
             w={104}
           />
+          <Tooltip
+            label={
+              item.is_default
+                ? 'The default profile cannot be enabled or disabled here'
+                : 'Enable or disable this connection profile'
+            }
+            withArrow
+            events={{ hover: true, focus: true, touch: true }}
+          >
+            <Paper
+              className={cardClasses.controls}
+              withBorder
+              px={6}
+              py={4}
+              radius="md"
+              role="group"
+              aria-label={`Enabled state for ${item.name}`}
+            >
+              <Switch
+                checked={item.is_active}
+                onChange={onChangeActive}
+                disabled={item.is_default}
+                aria-label={`Enable ${item.name}`}
+                size="sm"
+              />
+            </Paper>
+          </Tooltip>
           <Paper
             className={cardClasses.controls}
             withBorder
             px={6}
             py={4}
             radius="md"
-            w={212}
+            w={104}
             maw="100%"
             h="auto"
             mih={38}
@@ -117,65 +144,54 @@ const M3uProfileCard = ({
             role="group"
             aria-label={`Actions for ${item.name}`}
           >
-            <Group gap="xs" justify="space-between" w="100%">
-              <Switch
-                checked={item.is_active}
-                onChange={onChangeActive}
-                disabled={item.is_default}
-                label="Active"
-                aria-label={`Active ${item.name}`}
-                labelPosition="left"
-                size="sm"
-              />
-              <Group gap={4} wrap="nowrap">
-                {accountType === 'XC' && item.custom_properties && (
-                  <Tooltip label="View account information">
-                    <ActionIcon
-                      variant="subtle"
-                      size="md"
-                      color="blue"
-                      onClick={onClickInfo}
-                      aria-label={`View account information for ${item.name}`}
-                    >
-                      <Info size={17} />
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-                <Tooltip
-                  label={
-                    item.is_default
-                      ? 'Edit profile name and notes'
-                      : 'Edit profile'
-                  }
-                >
+            <Group gap={4} wrap="nowrap">
+              {accountType === 'XC' && item.custom_properties && (
+                <Tooltip label="View account information">
                   <ActionIcon
                     variant="subtle"
                     size="md"
-                    color="yellow"
-                    onClick={onClickEdit}
-                    aria-label={
-                      item.is_default
-                        ? `Edit ${item.name} name and notes`
-                        : `Edit ${item.name}`
-                    }
+                    color="blue"
+                    onClick={onClickInfo}
+                    aria-label={`View account information for ${item.name}`}
                   >
-                    <SquarePen size={17} />
+                    <Info size={17} />
                   </ActionIcon>
                 </Tooltip>
-                {!item.is_default && (
-                  <Tooltip label="Delete profile">
-                    <ActionIcon
-                      color="red"
-                      onClick={onClickDelete}
-                      size="md"
-                      variant="subtle"
-                      aria-label={`Delete ${item.name}`}
-                    >
-                      <Trash2 size={17} />
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-              </Group>
+              )}
+              <Tooltip
+                label={
+                  item.is_default
+                    ? 'Edit profile name and notes'
+                    : 'Edit profile'
+                }
+              >
+                <ActionIcon
+                  variant="subtle"
+                  size="md"
+                  color="yellow"
+                  onClick={onClickEdit}
+                  aria-label={
+                    item.is_default
+                      ? `Edit ${item.name} name and notes`
+                      : `Edit ${item.name}`
+                  }
+                >
+                  <SquarePen size={17} />
+                </ActionIcon>
+              </Tooltip>
+              {!item.is_default && (
+                <Tooltip label="Delete profile">
+                  <ActionIcon
+                    color="red"
+                    onClick={onClickDelete}
+                    size="md"
+                    variant="subtle"
+                    aria-label={`Delete ${item.name}`}
+                  >
+                    <Trash2 size={17} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
             </Group>
           </Paper>
         </div>
