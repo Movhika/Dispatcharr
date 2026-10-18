@@ -367,11 +367,14 @@ const M3UAccountEPG = ({
                 : 'Complete and save the account connection before creating its EPG source.'}
             </Text>
             {canCreate && !isInitialSetup && (
-              <Group>
+              <section
+                aria-label="EPG source actions"
+                className={summaryClasses.selectionActions}
+              >
                 <Button onClick={create} loading={creating} disabled={disabled}>
                   Create EPG
                 </Button>
-              </Group>
+              </section>
             )}
           </>
         )}

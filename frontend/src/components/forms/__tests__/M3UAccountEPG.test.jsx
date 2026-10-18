@@ -213,6 +213,17 @@ describe('EPG in the account editor', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('centers late creation using the same action layout as category selection', async () => {
+    show();
+    const button = await screen.findByRole('button', { name: 'Create EPG' });
+    const actions = screen.getByRole('region', { name: 'EPG source actions' });
+    expect(actions).toContainElement(button);
+    expect(actions).toHaveClass(summaryClasses.selectionActions);
+    expect(screen.getByRole('region', { name: 'EPG source' })).toContainElement(
+      actions
+    );
+  });
+
   it.each([false, true])(
     'shows saved EPG channel totals, including zero, in setup: %s',
     async (isInitialSetup) => {
