@@ -65,6 +65,9 @@ const M3UGroupFilter = ({
   const groupsAccount = useRef(null);
   const savedGroups = useRef('[]');
   const [discardAction, setDiscardAction] = useState(null);
+  const [emptySelectionOpen, setEmptySelectionOpen] = useState(false);
+  const setupSelectionSaved = useRef(false);
+  const saving = useRef(false);
   const { availability, hint: previewHint } = useCategoryPreviewAvailability(
     playlist?.id,
     isOpen
@@ -75,8 +78,15 @@ const M3UGroupFilter = ({
       setActiveTab('live');
       setRulesScope(null);
       groupsAccount.current = null;
+      setEmptySelectionOpen(false);
+      setupSelectionSaved.current = false;
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    setEmptySelectionOpen(false);
+    setupSelectionSaved.current = false;
+  }, [playlist?.id]);
 
   useEffect(() => {
     if (!vodAvailable) {
@@ -112,6 +122,8 @@ const M3UGroupFilter = ({
   }, [isOpen, playlist, fetchCategories]);
 
   const submit = async () => {
+    if (saving.current) return;
+    saving.current = true;
     const refreshIncludesVod =
       playlist.account_type === 'XC' &&
       playlist.enable_vod &&
@@ -150,6 +162,7 @@ const M3UGroupFilter = ({
       );
 
       savedGroups.current = groupSettingsSnapshot(groupStates);
+      setupSelectionSaved.current = true;
       setMovieCategoryStates((current) =>
         current.map((category) => ({
           ...category,
@@ -197,9 +210,46 @@ const M3UGroupFilter = ({
         color: 'red',
       });
     } finally {
+      saving.current = false;
       setIsLoading(false);
       setActiveAction(null);
     }
+  };
+
+  const hasSelectedCategories = (saved = false) => {
+    const live = saved ? JSON.parse(savedGroups.current) : groupStates;
+    if (
+      (live.length ? live : playlist.channel_groups || []).some(
+        (row) => row.enabled
+      )
+    )
+      return true;
+    if (!vodAvailable) return false;
+    // Keep saved counts until the VOD panels have initialized their rows.
+    return [
+      [movieCategoryStates, 'movie'],
+      [seriesCategoryStates, 'series'],
+    ].some(([rows, scope]) =>
+      rows.length
+        ? rows.some((row) => (saved ? row.original_enabled : row.enabled))
+        : (playlist.category_selection_counts?.[scope]?.selected || 0) > 0
+    );
+  };
+
+  const requestSave = () => {
+    if (isLoading || saving.current || emptySelectionOpen) return;
+    const unreviewedSetup =
+      isInitialSetup &&
+      !playlist.setup_categories_reviewed &&
+      !setupSelectionSaved.current;
+    if (
+      !hasSelectedCategories() &&
+      (unreviewedSetup || hasSelectedCategories(true))
+    ) {
+      setEmptySelectionOpen(true);
+      return;
+    }
+    void submit();
   };
 
   const refresh = async () => {
@@ -250,7 +300,7 @@ const M3UGroupFilter = ({
   };
 
   const requestExit = (action) => {
-    if (isLoading) return;
+    if (isLoading || emptySelectionOpen) return;
     const changed =
       savedGroups.current !== groupSettingsSnapshot(groupStates) ||
       (vodAvailable
@@ -287,15 +337,24 @@ const M3UGroupFilter = ({
       }}
       lockScroll={false}
       withinPortal={true}
-      trapFocus={!rulesScope && !childOverlayOpen && !discardAction}
+      trapFocus={
+        !rulesScope &&
+        !childOverlayOpen &&
+        !discardAction &&
+        !emptySelectionOpen
+      }
       closeOnEscape={
-        !rulesScope && !childOverlayOpen && !discardAction && !isLoading
+        !rulesScope &&
+        !childOverlayOpen &&
+        !discardAction &&
+        !emptySelectionOpen &&
+        !isLoading
       }
       yOffset="2vh"
       xOffset="3vw"
     >
       <LoadingOverlay visible={isLoading} overlayBlur={2} />
-      <Stack className={editorClasses.form} gap={0}>
+      <Stack className={editorClasses.form} gap={0} inert={emptySelectionOpen}>
         <Tabs
           className={editorClasses.tabs}
           value={activeTab}
@@ -414,7 +473,7 @@ const M3UGroupFilter = ({
               color="blue"
               disabled={isLoading}
               loading={activeAction === 'save'}
-              onClick={submit}
+              onClick={requestSave}
             >
               {onSetupSave
                 ? 'Save selection'
@@ -425,6 +484,19 @@ const M3UGroupFilter = ({
           </div>
         </Flex>
       </Stack>
+      <ConfirmationDialog
+        opened={emptySelectionOpen}
+        onClose={() => setEmptySelectionOpen(false)}
+        onConfirm={() => {
+          setEmptySelectionOpen(false);
+          void submit();
+        }}
+        title="No categories selected"
+        message="No categories are selected across the available content types. No content from this account is selected for import. Save this empty selection anyway?"
+        confirmLabel="Save anyway"
+        cancelLabel="Back to selection"
+        confirmColor="orange"
+      />
       <M3URulesModal
         opened={!!rulesScope}
         onClose={() => setRulesScope(null)}
