@@ -115,7 +115,16 @@ vi.mock('../M3USetupSteps.jsx', () => ({
   ),
 }));
 vi.mock('../M3UAccountEPG.jsx', () => ({
-  default: () => <div data-testid="account-epg" />,
+  default: ({ onOverlayChange }) => (
+    <div data-testid="account-epg">
+      <button type="button" onClick={() => onOverlayChange?.(true)}>
+        Open EPG editor
+      </button>
+      <button type="button" onClick={() => onOverlayChange?.(false)}>
+        Close EPG editor
+      </button>
+    </div>
+  ),
 }));
 vi.mock('../M3UAccountCategories.jsx', () => ({
   default: ({ account, onEdit }) => (
@@ -1256,6 +1265,22 @@ describe('M3U', () => {
   });
 
   describe('account and content tabs', () => {
+    it('leaves Escape to nested EPG dialogs', () => {
+      setupStores();
+      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
+      fireEvent.click(screen.getByRole('tab', { name: 'EPG' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open EPG editor' }));
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-close-on-escape',
+        'false'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Close EPG editor' }));
+      expect(screen.getByTestId('modal')).toHaveAttribute(
+        'data-close-on-escape',
+        'true'
+      );
+      expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+    });
     it('keeps Settings, EPG and the shared category selection in separate tabs', () => {
       setupStores();
       render(

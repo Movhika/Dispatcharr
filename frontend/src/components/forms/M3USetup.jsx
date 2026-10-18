@@ -25,6 +25,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [epgBusy, setEPGBusy] = useState(false);
+  const [epgOverlayOpen, setEPGOverlayOpen] = useState(false);
   const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
   const busyRef = useRef(false);
@@ -175,13 +176,13 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
       <Modal
         opened={!categoryEditorOpen}
         onClose={() => {
-          if (!busy && !epgBusy) setExitOpen(true);
+          if (!busy && !epgBusy && !epgOverlayOpen) setExitOpen(true);
         }}
         title={`Set up ${account.name}`}
         closeButtonProps={{ 'aria-label': 'Close M3U setup' }}
         closeOnClickOutside={false}
-        closeOnEscape={!busy && !epgBusy && !exitOpen}
-        trapFocus={!exitOpen}
+        closeOnEscape={!busy && !epgBusy && !epgOverlayOpen && !exitOpen}
+        trapFocus={!epgOverlayOpen && !exitOpen}
         size="68vw"
         classNames={{
           content: `${editorClasses.content} ${editorClasses.accountContent} ${editorClasses.m3uContent}`,
@@ -201,6 +202,7 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
               account={account}
               isInitialSetup
               onBusyChange={setEPGBusy}
+              onOverlayChange={setEPGOverlayOpen}
               disabled={busy}
               onBack={() => advance('back_to_content')}
               onNext={() => advance('continue_categories')}

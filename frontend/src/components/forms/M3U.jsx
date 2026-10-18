@@ -116,6 +116,7 @@ const M3U = ({
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [categoryPlaylist, setCategoryPlaylist] = useState(null);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
+  const [epgOverlayOpen, setEPGOverlayOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
   const [vodEnabled, setVodEnabled] = useState(false);
@@ -446,12 +447,14 @@ const M3U = ({
           !groupFilterModalOpen &&
           !serverGroupsManagerOpen &&
           !profileOverlayOpen &&
+          !epgOverlayOpen &&
           !discardOpen
         }
         closeOnEscape={
           !groupFilterModalOpen &&
           !serverGroupsManagerOpen &&
           !profileOverlayOpen &&
+          !epgOverlayOpen &&
           !discardOpen &&
           !creating &&
           !setupBusy
@@ -1023,7 +1026,12 @@ const M3U = ({
             >
               {playlist?.account_type === 'XC' &&
                 accountType === 'XC' &&
-                activeTab === 'epg' && <M3UAccountEPG account={playlist} />}
+                activeTab === 'epg' && (
+                  <M3UAccountEPG
+                    account={playlist}
+                    onOverlayChange={setEPGOverlayOpen}
+                  />
+                )}
             </TabsPanel>
             <TabsPanel
               value="categories"

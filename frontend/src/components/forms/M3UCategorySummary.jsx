@@ -49,8 +49,15 @@ const M3UCategorySummary = ({
   ];
 
   return (
-    <section aria-label="Category selection">
-      <Stack gap="sm">
+    <Paper
+      component="section"
+      aria-label="Category selection"
+      withBorder
+      radius="sm"
+      p="md"
+      className={classes.card}
+    >
+      <Stack gap="md">
         {showCounts ? (
           <div className={classes.categoryGrid}>
             {counts.map(
@@ -60,7 +67,7 @@ const M3UCategorySummary = ({
                   component="article"
                   aria-label={`${label} categories`}
                   withBorder
-                  radius="md"
+                  radius="sm"
                   p="md"
                   className={`${classes.card} ${classes.categoryCard}`}
                 >
@@ -72,7 +79,7 @@ const M3UCategorySummary = ({
                       {label}
                     </Text>
                   </Group>
-                  <Text size="lg" fw={600} className={classes.count}>
+                  <Text size="sm" fw={500} className={classes.count}>
                     {selected} of {total} categories selected
                   </Text>
                   <Tooltip
@@ -84,11 +91,11 @@ const M3UCategorySummary = ({
                     multiline
                     w={280}
                   >
-                    <div>
+                    <div className={classes.catalogCounts}>
                       <Text size="xs" c="dimmed">
                         Provider / imported {unit}
                       </Text>
-                      <Text size="sm" className={classes.count}>
+                      <Text size="sm" fw={500} className={classes.count}>
                         {entries
                           ? `${entries.provider_total} / ${entries.selected_total}`
                           : '— / —'}
@@ -103,27 +110,23 @@ const M3UCategorySummary = ({
           <Text fw={600}>Categories</Text>
         )}
         {onEdit && (
-          <Paper
-            withBorder
-            radius="md"
-            p="sm"
-            component="section"
+          <section
             aria-label="Category selection actions"
             className={classes.selectionActions}
           >
             <Button
-              variant="default"
+              variant="filled"
               onClick={onEdit}
               loading={opening}
               disabled={editDisabled}
             >
               {editLabel}
             </Button>
-          </Paper>
+          </section>
         )}
         {children}
       </Stack>
-    </section>
+    </Paper>
   );
 };
 

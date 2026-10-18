@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +15,15 @@ import summaryClasses from '../M3UAccountSummary.module.css';
 
 const mocks = vi.hoisted(() => ({ fetchEPGs: vi.fn(), epgs: {} }));
 vi.mock('../../../api.js', () => ({
-  default: { getM3UEPG: vi.fn(), createM3UEPG: vi.fn() },
+  default: { getM3UEPG: vi.fn(), createM3UEPG: vi.fn(), deleteEPG: vi.fn() },
+}));
+vi.mock('../EPG.jsx', () => ({
+  default: ({ epg, onClose }) => (
+    <div role="dialog" aria-label="EPG editor">
+      <span>{epg.url}</span>
+      <button onClick={onClose}>Close guide editor</button>
+    </div>
+  ),
 }));
 vi.mock('../../../store/epgs', () => ({
   default: Object.assign((selector) => selector(mocks), {
@@ -36,8 +50,149 @@ describe('EPG in the account editor', () => {
     vi.clearAllMocks();
     API.getM3UEPG.mockResolvedValue({ source: null, can_create: true });
     API.createM3UEPG.mockReset();
+    API.deleteEPG.mockReset();
     mocks.fetchEPGs.mockResolvedValue(undefined);
     mocks.epgs = {};
+  });
+
+  it('wraps the compact matching source and its actions in the shared section', async () => {
+    API.getM3UEPG.mockResolvedValue({
+      source: {
+        id: 9,
+        name: 'Matching guide',
+        source_type: 'xmltv',
+        status: 'success',
+      },
+    });
+    show();
+    const card = await screen.findByRole('article', {
+      name: 'EPG source Matching guide',
+    });
+    const section = screen.getByRole('region', { name: 'EPG source' });
+    expect(section).toContainElement(card);
+    expect(section.style.getPropertyValue('--paper-radius')).toBe(
+      'var(--mantine-radius-sm)'
+    );
+    expect(card.style.getPropertyValue('--paper-radius')).toBe(
+      'var(--mantine-radius-sm)'
+    );
+    expect(
+      within(card).getByRole('button', { name: 'Edit Matching guide' })
+    ).toBeEnabled();
+    expect(
+      within(card).getByRole('button', { name: 'Delete Matching guide' })
+    ).toBeEnabled();
+  });
+
+  it('loads complete saved details before editing and rechecks the match when closed', async () => {
+    const guide = {
+      id: 9,
+      name: 'Matching guide',
+      source_type: 'xmltv',
+      status: 'success',
+    };
+    API.getM3UEPG.mockResolvedValue({ source: guide });
+    mocks.fetchEPGs.mockImplementationOnce(async () => {
+      mocks.epgs = {
+        9: { ...guide, url: 'https://example.invalid/guide.xml' },
+      };
+    });
+    const onOverlayChange = vi.fn();
+    show({ onOverlayChange });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit Matching guide' })
+    );
+    const editor = await screen.findByRole('dialog', { name: 'EPG editor' });
+    expect(editor).toHaveTextContent('https://example.invalid/guide.xml');
+    expect(mocks.fetchEPGs).toHaveBeenCalledOnce();
+    expect(onOverlayChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Close guide editor' }));
+    await waitFor(() => expect(API.getM3UEPG).toHaveBeenCalledTimes(2));
+    expect(onOverlayChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does not open an editor with incomplete source details', async () => {
+    API.getM3UEPG.mockResolvedValue({
+      source: { id: 9, name: 'Matching guide' },
+    });
+    show();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit Matching guide' })
+    );
+    await waitFor(() =>
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'EPG source could not be opened',
+          color: 'red',
+        })
+      )
+    );
+    expect(
+      screen.queryByRole('dialog', { name: 'EPG editor' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('requires confirmation and keeps the source when deletion is cancelled', async () => {
+    API.getM3UEPG.mockResolvedValue({
+      source: { id: 9, name: 'Matching guide' },
+    });
+    const onOverlayChange = vi.fn();
+    show({ onOverlayChange });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Matching guide' })
+    );
+    expect(
+      await screen.findByRole('dialog', { name: 'Confirm EPG Source Deletion' })
+    ).toHaveTextContent('all accounts using this source');
+    expect(API.deleteEPG).not.toHaveBeenCalled();
+    expect(onOverlayChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Cancel', exact: true })
+    );
+    expect(onOverlayChange).toHaveBeenLastCalledWith(false);
+    expect(API.deleteEPG).not.toHaveBeenCalled();
+    expect(screen.getByRole('article')).toHaveTextContent('Matching guide');
+  });
+
+  it('rechecks the matching source after a confirmed deletion', async () => {
+    API.getM3UEPG
+      .mockResolvedValueOnce({ source: { id: 9, name: 'Matching guide' } })
+      .mockResolvedValue({ source: null, can_create: true });
+    API.deleteEPG.mockResolvedValue(undefined);
+    const onBusyChange = vi.fn();
+    show({ onBusyChange });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Matching guide' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete', exact: true })
+    );
+    await screen.findByRole('button', { name: 'Create EPG' });
+    expect(API.deleteEPG).toHaveBeenCalledExactlyOnceWith(9);
+    expect(onBusyChange).toHaveBeenCalledWith(true);
+    expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  });
+
+  it('does not optimistically remove a source when the shared API reports a failed deletion', async () => {
+    API.getM3UEPG.mockResolvedValue({
+      source: { id: 9, name: 'Matching guide' },
+    });
+    API.deleteEPG.mockResolvedValue(undefined);
+    show();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete Matching guide' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete', exact: true })
+    );
+    await waitFor(() => expect(API.getM3UEPG).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('article')).toHaveTextContent(
+      'Matching guide'
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Create EPG' })
+    ).not.toBeInTheDocument();
   });
   it('does not request a guide from an inactive tab', () => {
     show({ active: false });
@@ -190,10 +345,15 @@ describe('EPG in the account editor', () => {
       is_active: true,
       status: 'success',
     };
-    mocks.epgs = { 9: { ...guide, status: 'idle' } };
+    mocks.epgs = {
+      9: { ...guide, status: 'idle', last_message: 'Outdated source message' },
+    };
     API.getM3UEPG.mockResolvedValue({ source: guide, can_create: false });
     const view = show();
     await screen.findByText('Success');
+    expect(
+      screen.queryByText('Outdated source message')
+    ).not.toBeInTheDocument();
     mocks.epgs = { 9: { ...guide, status: 'fetching' } };
     view.rerender(
       <MemoryRouter>

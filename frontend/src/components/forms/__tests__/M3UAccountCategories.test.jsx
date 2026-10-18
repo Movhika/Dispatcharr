@@ -284,6 +284,25 @@ describe('immediate saved category selection', () => {
     const actions = screen.getByRole('region', {
       name: 'Category selection actions',
     });
+    const section = screen.getByRole('region', { name: 'Category selection' });
+    expect(section).toContainElement(actions);
+    expect(section.style.getPropertyValue('--paper-radius')).toBe(
+      'var(--mantine-radius-sm)'
+    );
+    for (const card of screen.getAllByRole('article')) {
+      expect(section).toContainElement(card);
+      expect(card.style.getPropertyValue('--paper-radius')).toBe(
+        'var(--mantine-radius-sm)'
+      );
+    }
+    expect(within(actions).getByRole('button')).toHaveAttribute(
+      'data-variant',
+      'filled'
+    );
+    expect(screen.getAllByText(/of .* categories selected/)[0]).toHaveAttribute(
+      'data-size',
+      'sm'
+    );
     expect(screen.getAllByRole('button')).toHaveLength(1);
     fireEvent.click(
       within(actions).getByRole('button', { name: 'Edit selection' })

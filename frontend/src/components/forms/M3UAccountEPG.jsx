@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActionIcon,
   Badge,
   Button,
   Group,
@@ -7,8 +8,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, SquarePen, Trash2 } from 'lucide-react';
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
 import {
@@ -17,13 +19,26 @@ import {
 } from '../../utils/notificationUtils.js';
 import { formatApiError } from '../../utils';
 import { format, useDateTimeFormat } from '../../utils/dateTimeUtils.js';
-import { formatStatusText } from '../../utils/tables/EPGsTableUtils.js';
+import {
+  deleteEpg,
+  formatStatusText,
+} from '../../utils/tables/EPGsTableUtils.js';
 import SourceStatus from '../SourceStatus.jsx';
+import { SensitiveValue } from '../SensitiveFields.jsx';
+import ConfirmationDialog from '../ConfirmationDialog.jsx';
+import EPG from './EPG.jsx';
 import cardClasses from '../tables/M3UsTable.module.css';
 import editorClasses from './AccountEditor.module.css';
 import summaryClasses from './M3UAccountSummary.module.css';
 
-const EPGSourceSummary = ({ source, dateFormat }) => {
+const EPGSourceSummary = ({
+  source,
+  dateFormat,
+  onEdit,
+  onDelete,
+  disabled,
+  opening,
+}) => {
   const status = source.is_active === false ? 'disabled' : source.status;
   const statusColor =
     {
@@ -41,35 +56,99 @@ const EPGSourceSummary = ({ source, dateFormat }) => {
     source.source_type ||
     'XMLTV';
   return (
-    <Stack gap="sm">
-      <Text fw={700} truncate className={cardClasses.name}>
-        {source.name}
-      </Text>
-      <Group gap="xs">
-        <Badge variant="light">{type}</Badge>
-        <SourceStatus label={formatStatusText(status)} color={statusColor} />
-      </Group>
-      <Group gap="xl" align="flex-start">
-        <div>
-          <Text size="xs" fw={600} mb={4}>
-            EPG channels
-          </Text>
-          <Text size="xs" c="dimmed">
-            {source.epg_data_count ?? '—'}
-          </Text>
-        </div>
-        <div>
-          <Text size="xs" fw={600} mb={4}>
-            Last refresh
-          </Text>
-          <Text size="xs" c="dimmed">
-            {source.updated_at
-              ? format(source.updated_at, dateFormat)
-              : 'Never'}
-          </Text>
-        </div>
-      </Group>
-    </Stack>
+    <Paper
+      component="article"
+      aria-label={`EPG source ${source.name}`}
+      className={summaryClasses.card}
+      withBorder
+      radius="sm"
+      p="md"
+    >
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
+          <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+            <Group gap="xs">
+              <Text fw={600} truncate className={cardClasses.name}>
+                {source.name}
+              </Text>
+              <Badge variant="light">{type}</Badge>
+              <SourceStatus
+                label={formatStatusText(status)}
+                color={statusColor}
+                messages={
+                  ['error', 'idle', 'success'].includes(status)
+                    ? [source.last_message]
+                    : []
+                }
+                messageColor={status === 'error' ? 'red.4' : undefined}
+              />
+            </Group>
+            {(source.url || source.file_path) && (
+              <SensitiveValue size="sm" c="dimmed" truncate>
+                {source.url || source.file_path}
+              </SensitiveValue>
+            )}
+          </Stack>
+          <Paper
+            className={cardClasses.controls}
+            withBorder
+            px={6}
+            py={4}
+            radius="sm"
+            role="group"
+            aria-label={`Actions for ${source.name}`}
+          >
+            <Group gap={4} wrap="nowrap">
+              <Tooltip label="Edit EPG">
+                <ActionIcon
+                  variant="subtle"
+                  size="md"
+                  color="yellow"
+                  aria-label={`Edit ${source.name}`}
+                  onClick={onEdit}
+                  disabled={disabled}
+                  loading={opening}
+                >
+                  <SquarePen size={17} />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label="Delete EPG">
+                <ActionIcon
+                  variant="subtle"
+                  size="md"
+                  color="red"
+                  aria-label={`Delete ${source.name}`}
+                  onClick={onDelete}
+                  disabled={disabled || opening}
+                >
+                  <Trash2 size={17} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          </Paper>
+        </Group>
+        <Group gap="xl" align="flex-start">
+          <div>
+            <Text size="xs" fw={600} mb={4}>
+              EPG channels
+            </Text>
+            <Text size="xs" c="dimmed">
+              {source.epg_data_count ?? '—'}
+            </Text>
+          </div>
+          <div>
+            <Text size="xs" fw={600} mb={4}>
+              Last refresh
+            </Text>
+            <Text size="xs" c="dimmed">
+              {source.updated_at
+                ? format(source.updated_at, dateFormat)
+                : 'Never'}
+            </Text>
+          </div>
+        </Group>
+      </Stack>
+    </Paper>
   );
 };
 
@@ -81,6 +160,7 @@ const M3UAccountEPG = ({
   onBusyChange,
   onBack,
   onNext,
+  onOverlayChange,
 }) => {
   const [source, setSource] = useState(null);
   const [canCreate, setCanCreate] = useState(false);
@@ -88,6 +168,12 @@ const M3UAccountEPG = ({
   const [failed, setFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const [reload, setReload] = useState(0);
+  const [editingSource, setEditingSource] = useState(null);
+  const [openingEditor, setOpeningEditor] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const openingRef = useRef(false);
+  const deletingRef = useRef(false);
   const creatingRef = useRef(false);
   const sourceSnapshotRef = useRef(null);
   const fetchEPGs = useEPGsStore((s) => s.fetchEPGs);
@@ -99,6 +185,66 @@ const M3UAccountEPG = ({
       ? liveSource
       : source;
   const { fullDateTimeFormat } = useDateTimeFormat();
+
+  useEffect(() => {
+    onOverlayChange?.(!!editingSource || deleteOpen);
+    return () => onOverlayChange?.(false);
+  }, [editingSource, deleteOpen, onOverlayChange]);
+
+  const edit = async () => {
+    if (openingRef.current || !current) return;
+    openingRef.current = true;
+    setOpeningEditor(true);
+    try {
+      // The matching-source response deliberately omits connection details.
+      // Only open the existing editor with the complete saved source.
+      if (!useEPGsStore.getState().epgs?.[current.id]) await fetchEPGs();
+      const saved = useEPGsStore.getState().epgs?.[current.id];
+      if (!saved)
+        throw new Error(
+          'EPG source details could not be loaded. Please retry.'
+        );
+      hideNotification(`m3u-epg-edit-${account.id}`);
+      setEditingSource(saved);
+    } catch (error) {
+      showNotification({
+        id: `m3u-epg-edit-${account.id}`,
+        title: 'EPG source could not be opened',
+        message: formatApiError(error),
+        color: 'red',
+        autoClose: false,
+      });
+    } finally {
+      openingRef.current = false;
+      setOpeningEditor(false);
+    }
+  };
+
+  const remove = async () => {
+    if (deletingRef.current || !current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    onBusyChange?.(true);
+    try {
+      await deleteEpg(current.id);
+      // Re-read the matching source: the shared API reports deletion failures
+      // through notifications rather than rejecting its promise.
+      setReload((value) => value + 1);
+    } catch (error) {
+      showNotification({
+        id: `m3u-epg-delete-${account.id}`,
+        title: 'EPG source was not deleted',
+        message: formatApiError(error),
+        color: 'red',
+        autoClose: false,
+      });
+    } finally {
+      setDeleteOpen(false);
+      deletingRef.current = false;
+      setDeleting(false);
+      onBusyChange?.(false);
+    }
+  };
 
   useEffect(() => {
     if (!active || !account?.id || account.account_type !== 'XC') return;
@@ -167,11 +313,11 @@ const M3UAccountEPG = ({
 
   const card = (
     <Paper
-      component={current ? 'article' : 'section'}
-      aria-label={current ? `EPG source ${current.name}` : 'EPG source'}
+      component="section"
+      aria-label="EPG source"
       className={summaryClasses.card}
       withBorder
-      radius="md"
+      radius="sm"
       p="md"
     >
       <Stack gap="md">
@@ -197,7 +343,22 @@ const M3UAccountEPG = ({
             </Button>
           </Group>
         ) : current ? (
-          <EPGSourceSummary source={current} dateFormat={fullDateTimeFormat} />
+          <EPGSourceSummary
+            source={{
+              ...liveSource,
+              ...current,
+              last_message:
+                current.last_message ??
+                (liveSource?.status === current.status
+                  ? liveSource?.last_message
+                  : undefined),
+            }}
+            dateFormat={fullDateTimeFormat}
+            onEdit={edit}
+            onDelete={() => setDeleteOpen(true)}
+            disabled={disabled || creating || deleting}
+            opening={openingEditor}
+          />
         ) : (
           <>
             <Text size="sm" c="dimmed">
@@ -218,7 +379,40 @@ const M3UAccountEPG = ({
     </Paper>
   );
 
-  if (!isInitialSetup) return card;
+  const overlays = (
+    <>
+      {editingSource && (
+        <EPG
+          epg={editingSource}
+          isOpen
+          onClose={() => {
+            setEditingSource(null);
+            setReload((value) => value + 1);
+          }}
+        />
+      )}
+      <ConfirmationDialog
+        opened={deleteOpen}
+        onClose={() => {
+          if (!deleting) setDeleteOpen(false);
+        }}
+        onConfirm={remove}
+        loading={deleting}
+        title="Confirm EPG Source Deletion"
+        message={`Delete EPG source "${current?.name}"? This removes its program information and channel associations for all accounts using this source. This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+      />
+    </>
+  );
+
+  if (!isInitialSetup)
+    return (
+      <>
+        {card}
+        {overlays}
+      </>
+    );
   return (
     <>
       <div className={editorClasses.setupPanel}>{card}</div>
@@ -232,21 +426,24 @@ const M3UAccountEPG = ({
       >
         <Button
           variant="default"
-          disabled={disabled || creating}
+          disabled={disabled || creating || deleting}
           onClick={onBack}
         >
           Back
         </Button>
         <Group gap="xs">
           {current ? (
-            <Button disabled={disabled || creating || loading} onClick={onNext}>
+            <Button
+              disabled={disabled || creating || deleting || loading}
+              onClick={onNext}
+            >
               Next
             </Button>
           ) : (
             <>
               <Button
                 variant="default"
-                disabled={disabled || creating || loading}
+                disabled={disabled || creating || deleting || loading}
                 onClick={onNext}
               >
                 Skip EPG
@@ -262,6 +459,7 @@ const M3UAccountEPG = ({
           )}
         </Group>
       </Group>
+      {overlays}
     </>
   );
 };

@@ -9,11 +9,16 @@
   overflow-wrap: anywhere;
 }
 
-.categoryCard {
+.categoryCard.categoryCard {
   display: flex;
   flex-direction: column;
   gap: var(--mantine-spacing-md);
-  min-height: 13rem;
+  min-height: 11rem;
+}
+
+.catalogCounts {
+  margin-top: auto;
+  padding-top: var(--mantine-spacing-sm);
 }
 
 .cardHeading {
@@ -30,5 +35,4 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 4.5rem;
 }
