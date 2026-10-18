@@ -115,7 +115,6 @@ const M3U = ({
   const [expDate, setExpDate] = useState(null);
   const [groupFilterModalOpen, setGroupFilterModalOpen] = useState(false);
   const [categoryPlaylist, setCategoryPlaylist] = useState(null);
-  const [categoryRevision, setCategoryRevision] = useState(0);
   const [profileOverlayOpen, setProfileOverlayOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('interval');
   const [vodScheduleType, setVodScheduleType] = useState('interval');
@@ -371,7 +370,7 @@ const M3U = ({
 
   const closeGroupFilter = () => {
     setGroupFilterModalOpen(false);
-    setCategoryRevision((value) => value + 1);
+    setCategoryPlaylist(null);
   };
 
   const requestClose = () => {
@@ -974,8 +973,7 @@ const M3U = ({
             >
               {playlist?.id && !setupMode && activeTab === 'categories' && (
                 <M3UAccountCategories
-                  account={playlist}
-                  refreshKey={categoryRevision}
+                  account={storedAccount || playlist}
                   onEdit={(saved) => {
                     setCategoryPlaylist(saved);
                     setGroupFilterModalOpen(true);

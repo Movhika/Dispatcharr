@@ -17,6 +17,7 @@ describe('useVODStore', () => {
       error: null,
       categoriesError: null,
       categoriesLoading: false,
+      categoriesLoaded: false,
       filters: {
         type: 'all',
         search: '',
@@ -35,6 +36,7 @@ describe('useVODStore', () => {
     expect(result.current.currentPageContent).toEqual([]);
     expect(result.current.episodes).toEqual({});
     expect(result.current.categories).toEqual({});
+    expect(result.current.categoriesLoaded).toBe(false);
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBe(null);
     expect(result.current.filters).toEqual({
@@ -531,6 +533,96 @@ describe('useVODStore', () => {
     });
   });
 
+  it('distinguishes a loaded empty category list from missing data', async () => {
+    api.getVODCategories.mockResolvedValue([]);
+    await act(async () => useVODStore.getState().fetchCategories());
+    expect(useVODStore.getState().categories).toEqual({});
+    expect(useVODStore.getState().categoriesLoaded).toBe(true);
+  });
+
+  it('updates only the saved account selection while preserving relation metadata', () => {
+    const other = { id: 90, m3u_account: 8, enabled: true };
+    useVODStore.setState({
+      categoriesLoaded: true,
+      categories: {
+        1: {
+          id: 1,
+          name: 'Example',
+          m3u_accounts: [
+            {
+              id: 80,
+              m3u_account: 7,
+              enabled: true,
+              custom_properties: { language: 'en' },
+            },
+            other,
+          ],
+        },
+      },
+    });
+    act(() =>
+      useVODStore
+        .getState()
+        .updateCategorySelections(7, [
+          { id: 1, enabled: false, custom_properties: undefined },
+        ])
+    );
+    expect(useVODStore.getState().categories[1].m3u_accounts).toEqual([
+      {
+        id: 80,
+        m3u_account: 7,
+        enabled: false,
+        custom_properties: { language: 'en' },
+      },
+      other,
+    ]);
+    expect(useVODStore.getState().categoriesLoaded).toBe(true);
+  });
+
+  it('does not mark an incomplete category cache as loaded after a selection save', () => {
+    act(() =>
+      useVODStore
+        .getState()
+        .updateCategorySelections(7, [{ id: 1, enabled: true }])
+    );
+    expect(useVODStore.getState().categories).toEqual({});
+    expect(useVODStore.getState().categoriesLoaded).toBe(false);
+  });
+
+  it('ignores a category response requested before a selection was saved', async () => {
+    const category = {
+      id: 1,
+      m3u_accounts: [{ m3u_account: 7, enabled: true }],
+    };
+    useVODStore.setState({
+      categories: { 1: category },
+      categoriesLoaded: true,
+    });
+    let finish;
+    api.getVODCategories.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    let pending;
+    act(() => {
+      pending = useVODStore.getState().fetchCategories();
+    });
+    act(() =>
+      useVODStore
+        .getState()
+        .updateCategorySelections(7, [{ id: 1, enabled: false }])
+    );
+    await act(async () => {
+      finish([category]);
+      await pending;
+    });
+    expect(useVODStore.getState().categories[1].m3u_accounts[0].enabled).toBe(
+      false
+    );
+    expect(useVODStore.getState().categoriesLoading).toBe(false);
+  });
+
   it('ignores an older category failure after a newer request succeeds', async () => {
     let rejectOlder;
     api.getVODCategories.mockImplementationOnce(
@@ -589,6 +681,7 @@ describe('useVODStore', () => {
       categories: cached,
       error: 'Failed to load content.',
       categoriesError: 'Failed to load categories.',
+      categoriesLoaded: true,
     });
     let resolveCategories;
     api.getVODCategories.mockReturnValue(
@@ -602,6 +695,7 @@ describe('useVODStore', () => {
     });
     expect(useVODStore.getState().categoriesLoading).toBe(true);
     expect(useVODStore.getState().categories).toEqual(cached);
+    expect(useVODStore.getState().categoriesLoaded).toBe(true);
     expect(useVODStore.getState().error).toBe('Failed to load content.');
     expect(useVODStore.getState().categoriesError).toBe(
       'Failed to load categories.'

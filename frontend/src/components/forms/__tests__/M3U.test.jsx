@@ -118,8 +118,8 @@ vi.mock('../M3UAccountEPG.jsx', () => ({
   default: () => <div data-testid="account-epg" />,
 }));
 vi.mock('../M3UAccountCategories.jsx', () => ({
-  default: ({ account, onEdit, refreshKey }) => (
-    <div data-testid="account-categories" data-refresh-key={refreshKey}>
+  default: ({ account, onEdit }) => (
+    <div data-testid="account-categories" data-saved-name={account.name}>
       <button type="button" onClick={() => onEdit(account)}>
         Edit selection
       </button>
@@ -1277,10 +1277,7 @@ describe('M3U', () => {
         'true'
       );
       expect(onClose).not.toHaveBeenCalled();
-      expect(screen.getByTestId('account-categories')).toHaveAttribute(
-        'data-refresh-key',
-        '1'
-      );
+      expect(screen.getByTestId('account-categories')).toBeInTheDocument();
     });
     it('keeps only Save in the fixed footer and moves Categories into a tab', () => {
       setupStores();
@@ -1334,6 +1331,26 @@ describe('M3U', () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Account' }));
       expect(screen.getByDisplayValue('Unsaved name')).toBeInTheDocument();
       expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
+    });
+
+    it('uses the latest saved account in Categories without resetting the form', () => {
+      const original = makeM3uAccount();
+      setupStores({ playlists: [original] });
+      const view = render(<M3U {...defaultProps({ m3uAccount: original })} />);
+      fireEvent.change(screen.getByDisplayValue('Test M3U'), {
+        target: { value: 'Unsaved name' },
+      });
+      fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
+      setupStores({
+        playlists: [{ ...original, name: 'Latest saved account' }],
+      });
+      view.rerender(<M3U {...defaultProps({ m3uAccount: original })} />);
+      expect(screen.getByTestId('account-categories')).toHaveAttribute(
+        'data-saved-name',
+        'Latest saved account'
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'Account' }));
+      expect(screen.getByDisplayValue('Unsaved name')).toBeInTheDocument();
     });
 
     it('keeps Live and VOD refresh controls in their own two-column content groups', () => {

@@ -132,6 +132,7 @@ const useVODStore = create((set, get) => ({
   error: null,
   categoriesError: null,
   categoriesLoading: false,
+  categoriesLoaded: false,
   filters: {
     type: 'all', // 'all', 'movies', 'series'
     search: '',
@@ -300,6 +301,7 @@ const useVODStore = create((set, get) => ({
       set({
         categoriesError: null,
         categoriesLoading: false,
+        categoriesLoaded: true,
         categories: results.reduce((acc, category) => {
           acc[category.id] = category;
           return acc;
@@ -313,6 +315,38 @@ const useVODStore = create((set, get) => ({
         categoriesLoading: false,
       });
     }
+  },
+
+  updateCategorySelections: (accountId, selections) => {
+    if (!selections.length) return;
+    // A response requested before this save must not replace the saved selection.
+    categoriesRequestId += 1;
+    const updates = new Map(selections.map((row) => [String(row.id), row]));
+    set((state) => ({
+      categoriesLoading: false,
+      categories: Object.fromEntries(
+        Object.entries(state.categories).map(([id, category]) => {
+          const update = updates.get(id);
+          if (!update) return [id, category];
+          const selection = Object.fromEntries(
+            Object.entries(update).filter(
+              ([key, value]) => key !== 'id' && value !== undefined
+            )
+          );
+          return [
+            id,
+            {
+              ...category,
+              m3u_accounts: (category.m3u_accounts || []).map((relation) =>
+                relation.m3u_account === accountId
+                  ? { ...relation, ...selection }
+                  : relation
+              ),
+            },
+          ];
+        })
+      ),
+    }));
   },
 
   addMovie: (movie) =>

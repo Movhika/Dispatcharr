@@ -1,5 +1,6 @@
 import API from '../../api.js';
 import { refreshPlaylist, updatePlaylist } from './M3uUtils.js';
+import useVODStore from '../../store/useVODStore';
 
 const updateM3UGroupSettings = async (
   playlist,
@@ -50,6 +51,9 @@ export const savePlaylistGroupSettings = async (
 
   await updatePlaylist(playlist, autoEnableSettings);
   await updateM3UGroupSettings(playlist, groupSettings, categorySettings);
+  useVODStore
+    .getState()
+    .updateCategorySelections(playlist.id, categorySettings);
 };
 
 export const saveAndRefreshPlaylist = async (

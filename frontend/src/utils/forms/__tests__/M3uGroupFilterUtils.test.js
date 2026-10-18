@@ -21,6 +21,7 @@ vi.mock('../M3uUtils.js', () => ({
 
 import API from '../../../api.js';
 import { refreshPlaylist, updatePlaylist } from '../M3uUtils.js';
+import useVODStore from '../../../store/useVODStore';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const makePlaylist = (overrides = {}) => ({
@@ -78,6 +79,50 @@ describe('M3uGroupFilterUtils', () => {
     vi.mocked(updatePlaylist).mockResolvedValue(undefined);
     vi.mocked(API.updateM3UGroupSettings).mockResolvedValue(undefined);
     vi.mocked(refreshPlaylist).mockResolvedValue(undefined);
+    useVODStore.setState({ categories: {}, categoriesLoaded: false });
+  });
+
+  it('updates the cached selection only after a successful save', async () => {
+    useVODStore.setState({
+      categoriesLoaded: true,
+      categories: {
+        'cat-1': {
+          id: 'cat-1',
+          m3u_accounts: [{ m3u_account: 'playlist-1', enabled: false }],
+        },
+      },
+    });
+    await savePlaylistGroupSettings(
+      makePlaylist(),
+      [],
+      [makeCategoryState()],
+      [],
+      {}
+    );
+    expect(
+      useVODStore.getState().categories['cat-1'].m3u_accounts[0].enabled
+    ).toBe(true);
+  });
+
+  it('keeps cached selections unchanged when saving fails', async () => {
+    const categories = {
+      'cat-1': {
+        id: 'cat-1',
+        m3u_accounts: [{ m3u_account: 'playlist-1', enabled: false }],
+      },
+    };
+    useVODStore.setState({ categories, categoriesLoaded: true });
+    API.updateM3UGroupSettings.mockRejectedValueOnce(new Error('Save failed'));
+    await expect(
+      savePlaylistGroupSettings(
+        makePlaylist(),
+        [],
+        [makeCategoryState()],
+        [],
+        {}
+      )
+    ).rejects.toThrow('Save failed');
+    expect(useVODStore.getState().categories).toBe(categories);
   });
 
   // ── buildGroupStates ───────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ const M3UCategorySummary = ({
   account,
   vodCategories,
   showCounts = true,
+  vodReady = true,
   children,
 }) => {
   const counts = [
@@ -11,6 +12,7 @@ const M3UCategorySummary = ({
     ...(account.account_type === 'XC' && account.enable_vod
       ? ['movie', 'series'].map((type) => ({
           label: type === 'movie' ? 'Movies' : 'Series',
+          pending: !vodReady,
           rows: Object.values(vodCategories || {})
             .filter((category) => category.category_type === type)
             .flatMap((category) =>
@@ -32,12 +34,18 @@ const M3UCategorySummary = ({
       <Stack gap="sm">
         <Text fw={600}>Categories</Text>
         {showCounts &&
-          counts.map(({ label, rows }) => (
+          counts.map(({ label, rows, pending }) => (
             <Group key={label} justify="space-between">
               <Text size="sm">{label}</Text>
-              <Text size="sm" c="dimmed">
-                {rows.filter((row) => row.enabled).length} of {rows.length}{' '}
-                categories selected
+              <Text size="sm" c="dimmed" aria-busy={pending || undefined}>
+                {pending ? (
+                  '…'
+                ) : (
+                  <>
+                    {rows.filter((row) => row.enabled).length} of {rows.length}{' '}
+                    categories selected
+                  </>
+                )}
               </Text>
             </Group>
           ))}
