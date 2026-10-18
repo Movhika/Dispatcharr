@@ -10,10 +10,13 @@ vi.mock('../../store/warnings');
 // Mock Mantine components
 vi.mock('@mantine/core', async () => {
   return {
-    Modal: ({ children, opened, title }) =>
+    Modal: ({ children, opened, title, onClose, closeButtonProps }) =>
       opened ? (
         <div data-testid="modal">
           <div data-testid="modal-title">{title}</div>
+          <button {...closeButtonProps} onClick={onClose}>
+            ×
+          </button>
           {children}
         </div>
       ) : null,
@@ -90,6 +93,23 @@ describe('ConfirmationDialog', () => {
     expect(
       screen.getByText('Are you sure you want to proceed?')
     ).toBeInTheDocument();
+  });
+
+  it('names the close button for screen readers and cancels without confirming', () => {
+    render(
+      <ConfirmationDialog
+        opened
+        onClose={mockOnClose}
+        onConfirm={mockOnConfirm}
+      />
+    );
+    const close = screen.getByRole('button', {
+      name: 'Close confirmation dialog',
+    });
+    expect(close).toHaveAccessibleName('Close confirmation dialog');
+    fireEvent.click(close);
+    expect(mockOnClose).toHaveBeenCalledOnce();
+    expect(mockOnConfirm).not.toHaveBeenCalled();
   });
 
   it.each([

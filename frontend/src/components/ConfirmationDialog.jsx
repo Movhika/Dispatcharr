@@ -107,6 +107,7 @@ const ConfirmationDialog = ({
       opened={opened}
       onClose={handleClose}
       title={title}
+      closeButtonProps={{ 'aria-label': 'Close confirmation dialog' }}
       size={size}
       centered
       zIndex={zIndex}
