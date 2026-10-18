@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -102,7 +108,7 @@ describe('immediate saved category selection', () => {
     expect(screen.queryByText('…')).toBeNull();
     expect(screen.queryByText('0 of 0 categories selected')).toBeNull();
     expect(
-      screen.getByRole('button', { name: 'Edit selection' })
+      screen.getByRole('button', { name: 'Edit Live TV categories' })
     ).toBeEnabled();
     expect(API.getVODCategories).not.toHaveBeenCalled();
     expect(API.getPlaylist).not.toHaveBeenCalled();
@@ -202,9 +208,11 @@ describe('immediate saved category selection', () => {
     const onEdit = vi.fn();
     show({ onEdit });
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit Live TV categories' })
+    );
     await waitFor(() =>
-      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account)
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'live')
     );
     expect(mocks.fetchChannelGroups).toHaveBeenCalledOnce();
   });
@@ -212,8 +220,10 @@ describe('immediate saved category selection', () => {
   it('opens the editor immediately with cached names', () => {
     const onEdit = vi.fn();
     show({ onEdit });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
-    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit Live TV categories' })
+    );
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'live');
     expect(mocks.fetchChannelGroups).not.toHaveBeenCalled();
   });
 
@@ -221,7 +231,9 @@ describe('immediate saved category selection', () => {
     mocks.channelGroups = {};
     const onEdit = vi.fn();
     show({ onEdit });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit Live TV categories' })
+    );
     await waitFor(() =>
       expect(showNotification).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'red', autoClose: false })
@@ -229,7 +241,7 @@ describe('immediate saved category selection', () => {
     );
     expect(onEdit).not.toHaveBeenCalled();
     expect(
-      screen.getByRole('button', { name: 'Edit selection' })
+      screen.getByRole('button', { name: 'Edit Live TV categories' })
     ).toBeEnabled();
   });
 
@@ -245,5 +257,49 @@ describe('immediate saved category selection', () => {
     expect(screen.queryByText('…')).toBeNull();
     expect(API.getVODCategories).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it.each([
+    ['Live TV', 'live', 50],
+    ['Movies', 'vod-movie', 50],
+    ['Series', 'vod-series', 100],
+  ])('opens %s directly from its own summary card', (label, tab, percent) => {
+    const onEdit = vi.fn();
+    show({ onEdit });
+    const card = screen.getByRole('article', { name: `${label} categories` });
+    expect(within(card).getByRole('progressbar')).toHaveAttribute(
+      'aria-valuenow',
+      String(percent)
+    );
+    fireEvent.click(
+      within(card).getByRole('button', { name: `Edit ${label} categories` })
+    );
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, tab);
+    expect(API.getVODCategories).not.toHaveBeenCalled();
+  });
+
+  it('keeps every card action disabled while the selected card loads missing names', async () => {
+    mocks.channelGroups = {};
+    let finish;
+    mocks.fetchChannelGroups.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const onEdit = vi.fn();
+    show({ onEdit });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit Movies categories' })
+    );
+    for (const button of screen.getAllByRole('button'))
+      expect(button).toBeDisabled();
+    mocks.channelGroups = { 1: {}, 2: {} };
+    finish();
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledExactlyOnceWith(account, 'vod-movie')
+    );
+    expect(
+      screen.getByRole('button', { name: 'Edit Movies categories' })
+    ).toBeEnabled();
   });
 });

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import M3UAccountEPG from '../M3UAccountEPG.jsx';
 import API from '../../../api.js';
 import { showNotification } from '../../../utils/notificationUtils.js';
+import summaryClasses from '../M3UAccountSummary.module.css';
 
 const mocks = vi.hoisted(() => ({ fetchEPGs: vi.fn(), epgs: {} }));
 vi.mock('../../../api.js', () => ({
@@ -245,5 +246,58 @@ describe('EPG in the account editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onNext).toHaveBeenCalledTimes(2);
     expect(API.createM3UEPG).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    'places matching and alternative cards in the shared grid (setup: %s)',
+    async (isInitialSetup) => {
+      API.getM3UEPG.mockResolvedValue({
+        source: {
+          id: 9,
+          name: 'Matching guide',
+          source_type: 'xmltv',
+          is_active: true,
+          status: 'success',
+        },
+        can_create: false,
+        other_sources: [
+          {
+            id: 10,
+            name: 'Alternative guide',
+            source_type: 'xmltv',
+            is_active: true,
+            status: 'idle',
+          },
+        ],
+      });
+      show({ isInitialSetup });
+      const matching = await screen.findByRole('article', {
+        name: 'EPG source Matching guide',
+      });
+      const alternatives = screen.getByRole('region', {
+        name: 'Other configured EPG sources',
+      });
+      expect(matching.parentElement).toHaveClass(summaryClasses.epgGrid);
+      expect(alternatives.parentElement).toBe(matching.parentElement);
+      expect(
+        within(alternatives).getByRole('article', {
+          name: 'EPG source Alternative guide',
+        })
+      ).toHaveClass(summaryClasses.card);
+      expect(screen.getAllByText('Matching EPG source')).toHaveLength(1);
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+      expect(API.createM3UEPG).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not leave an empty alternative column in the normal editor', async () => {
+    show();
+    await screen.findByText('No matching EPG source configured.');
+    expect(
+      screen.queryByRole('region', { name: 'Other configured EPG sources' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('region', { name: 'EPG source' }).parentElement.children
+    ).toHaveLength(1);
   });
 });

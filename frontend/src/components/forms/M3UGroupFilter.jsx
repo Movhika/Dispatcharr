@@ -47,6 +47,7 @@ const M3UGroupFilter = ({
   isInitialSetup = false,
   onSetupSave,
   onEditAccount,
+  initialTab = 'live',
 }) => {
   const channelGroups = useChannelsStore((s) => s.channelGroups);
   const fetchCategories = useVODStore((s) => s.fetchCategories);
@@ -55,7 +56,7 @@ const M3UGroupFilter = ({
   const [isLoading, setIsLoading] = useState(false);
   const [movieCategoryStates, setMovieCategoryStates] = useState([]);
   const [seriesCategoryStates, setSeriesCategoryStates] = useState([]);
-  const [activeTab, setActiveTab] = useState('live');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [rulesScope, setRulesScope] = useState(null);
   const [childOverlayOpen, setChildOverlayOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
@@ -73,8 +74,10 @@ const M3UGroupFilter = ({
       setActiveTab('live');
       setRulesScope(null);
       groupsAccount.current = null;
+    } else {
+      setActiveTab(initialTab);
     }
-  }, [isOpen]);
+  }, [isOpen, initialTab]);
 
   useEffect(() => {
     if (

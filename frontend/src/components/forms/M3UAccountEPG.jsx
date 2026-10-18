@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Badge, Button, Group, Paper, Stack, Text } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
+import { CalendarDays } from 'lucide-react';
 import API from '../../api.js';
 import useEPGsStore from '../../store/epgs';
 import {
@@ -12,8 +21,9 @@ import { formatStatusText } from '../../utils/tables/EPGsTableUtils.js';
 import SourceStatus from '../SourceStatus.jsx';
 import cardClasses from '../tables/M3UsTable.module.css';
 import editorClasses from './AccountEditor.module.css';
+import summaryClasses from './M3UAccountSummary.module.css';
 
-const EPGSourceSummary = ({ source, dateFormat, matching = false }) => {
+const EPGSourceSummary = ({ source, dateFormat }) => {
   const status = source.is_active === false ? 'disabled' : source.status;
   const statusColor =
     {
@@ -32,15 +42,10 @@ const EPGSourceSummary = ({ source, dateFormat, matching = false }) => {
     'XMLTV';
   return (
     <Stack gap="sm">
-      {matching && (
-        <Text size="xs" c="dimmed">
-          Matching EPG source
-        </Text>
-      )}
+      <Text fw={700} truncate className={cardClasses.name}>
+        {source.name}
+      </Text>
       <Group gap="xs">
-        <Text fw={700} truncate className={cardClasses.name}>
-          {source.name}
-        </Text>
         <Badge variant="light">{type}</Badge>
         <SourceStatus label={formatStatusText(status)} color={statusColor} />
       </Group>
@@ -155,12 +160,20 @@ const M3UAccountEPG = ({
     <Paper
       component={current ? 'article' : 'section'}
       aria-label={current ? `EPG source ${current.name}` : 'EPG source'}
-      className={cardClasses.card}
+      className={summaryClasses.card}
       withBorder
       radius="md"
-      p="sm"
+      p="md"
     >
-      <Stack gap="sm">
+      <Stack gap="md">
+        <Group gap="sm" wrap="nowrap">
+          <ThemeIcon variant="light" size="lg" radius="md">
+            <CalendarDays size={20} aria-hidden="true" />
+          </ThemeIcon>
+          <Text fw={600} className={summaryClasses.cardHeading}>
+            Matching EPG source
+          </Text>
+        </Group>
         {loading ? (
           <Text size="sm" c="dimmed">
             Loading EPG source…
@@ -175,16 +188,9 @@ const M3UAccountEPG = ({
             </Button>
           </Group>
         ) : current ? (
-          <EPGSourceSummary
-            source={current}
-            dateFormat={fullDateTimeFormat}
-            matching={isInitialSetup}
-          />
+          <EPGSourceSummary source={current} dateFormat={fullDateTimeFormat} />
         ) : (
           <>
-            <Text fw={600}>
-              {isInitialSetup ? 'Matching EPG source' : 'EPG source'}
-            </Text>
             <Text size="sm" c="dimmed">
               {canCreate
                 ? 'No matching EPG source configured.'
@@ -203,43 +209,45 @@ const M3UAccountEPG = ({
     </Paper>
   );
 
-  if (!isInitialSetup) return card;
+  const cards = (
+    <div className={summaryClasses.epgGrid}>
+      {card}
+      {!loading && !failed && otherSources.length > 0 && (
+        <section aria-label="Other configured EPG sources">
+          <Stack gap="sm">
+            <Text fw={600} size="sm">
+              Other configured EPG sources
+            </Text>
+            <Text size="xs" c="dimmed">
+              These sources may cover the channels you need. Matching depends on
+              their channel IDs.
+            </Text>
+            {otherSources.map((other) => (
+              <Paper
+                key={other.id}
+                component="article"
+                aria-label={`EPG source ${other.name}`}
+                className={summaryClasses.card}
+                withBorder
+                radius="md"
+                p="md"
+              >
+                <EPGSourceSummary
+                  source={other}
+                  dateFormat={fullDateTimeFormat}
+                />
+              </Paper>
+            ))}
+          </Stack>
+        </section>
+      )}
+    </div>
+  );
+
+  if (!isInitialSetup) return cards;
   return (
     <>
-      <div className={editorClasses.setupPanel}>
-        <Stack gap="md">
-          {card}
-          {!loading && !failed && otherSources.length > 0 && (
-            <section aria-label="Other configured EPG sources">
-              <Stack gap="xs">
-                <Text fw={600} size="sm">
-                  Other configured EPG sources
-                </Text>
-                <Text size="xs" c="dimmed">
-                  These sources may cover the channels you need. Matching
-                  depends on their channel IDs.
-                </Text>
-                {otherSources.map((other) => (
-                  <Paper
-                    key={other.id}
-                    component="article"
-                    aria-label={`EPG source ${other.name}`}
-                    className={cardClasses.card}
-                    withBorder
-                    radius="md"
-                    p="sm"
-                  >
-                    <EPGSourceSummary
-                      source={other}
-                      dateFormat={fullDateTimeFormat}
-                    />
-                  </Paper>
-                ))}
-              </Stack>
-            </section>
-          )}
-        </Stack>
-      </div>
+      <div className={editorClasses.setupPanel}>{cards}</div>
       <Group
         component="footer"
         aria-label="M3U setup actions"
