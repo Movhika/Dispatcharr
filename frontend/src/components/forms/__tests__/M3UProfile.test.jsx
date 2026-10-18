@@ -279,8 +279,8 @@ describe('M3UProfile', () => {
       timeFormat: 'HH:mm',
       dateYearFormat: 'MMM D, YYYY',
     });
-    vi.mocked(M3uProfileUtils.addM3UProfile).mockResolvedValue(undefined);
-    vi.mocked(M3uProfileUtils.updateM3UProfile).mockResolvedValue(undefined);
+    vi.mocked(M3uProfileUtils.addM3UProfile).mockResolvedValue({ id: 10 });
+    vi.mocked(M3uProfileUtils.updateM3UProfile).mockResolvedValue({ id: 10 });
     vi.mocked(M3uProfileUtils.buildProfileSchema).mockReturnValue({});
     vi.mocked(M3uProfileUtils.buildSubmitValues).mockReturnValue({});
     vi.mocked(M3uProfileUtils.getDetectedMode).mockReturnValue('simple');

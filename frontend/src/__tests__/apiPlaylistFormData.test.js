@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 
-const mocks = vi.hoisted(() => ({ updatePlaylist: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  updatePlaylist: vi.fn(),
+  updateProfiles: vi.fn(),
+}));
 
 vi.mock('../store/auth', () => ({
   default: { getState: () => ({ getToken: () => Promise.resolve('token') }) },
@@ -15,6 +18,7 @@ vi.mock('../store/playlists', () => ({
     getState: () => ({
       addPlaylist: vi.fn(),
       updatePlaylist: mocks.updatePlaylist,
+      updateProfiles: mocks.updateProfiles,
     }),
   },
 }));
@@ -39,6 +43,51 @@ import API from '../api';
 import { notifications } from '@mantine/notifications';
 import { formatApiError } from '../utils';
 import useScreenshotMode from '../store/useScreenshotMode.js';
+
+describe('profile save results', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it.each([
+    ['add', () => API.addM3UProfile(7, { name: 'Example profile' })],
+    [
+      'update',
+      () => API.updateM3UProfile(7, { id: 71, name: 'Example profile' }),
+    ],
+  ])('returns the %s result after updating the store', async (_kind, save) => {
+    const saved = { id: 71, name: 'Example profile' };
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify(saved),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ id: 7, profiles: [saved] }),
+      });
+    expect(await save()).toEqual(saved);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    ['add', () => API.addM3UProfile(7, { name: 'Example profile' })],
+    [
+      'update',
+      () => API.updateM3UProfile(7, { id: 71, name: 'Example profile' }),
+    ],
+  ])(
+    'returns no success and notifies once when %s fails',
+    async (_kind, save) => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => 'Invalid profile',
+      });
+      await expect(save()).rejects.toMatchObject({ status: 400 });
+      expect(notifications.show).toHaveBeenCalledOnce();
+      expect(mocks.updatePlaylist).not.toHaveBeenCalled();
+      expect(mocks.updateProfiles).not.toHaveBeenCalled();
+    }
+  );
+});
 
 describe('account import rule requests', () => {
   beforeEach(() => {

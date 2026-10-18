@@ -473,7 +473,13 @@ const M3U = ({
       >
         <LoadingOverlay visible={form.submitting || creating} overlayBlur={2} />
 
-        <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
+        <form
+          onSubmit={(event) => {
+            if (event.target !== event.currentTarget) return;
+            return form.onSubmit(onSubmit)(event);
+          }}
+          className={editorClasses.form}
+        >
           {(!playlist?.id || setupMode) && (
             <M3USetupSteps
               stage={

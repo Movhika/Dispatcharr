@@ -24,10 +24,18 @@ import {
   updateM3UProfile,
 } from '../../utils/forms/M3uProfileUtils.js';
 import {
-  getExpirationInfo,
   isAccountExpired,
+  isTrialProfile,
+  parseExpirationDate,
   profileSortComparator,
 } from '../../utils/forms/M3uProfilesUtils.js';
+import { getExpirationInfo } from '../../utils/tables/M3UsTableUtils.js';
+import {
+  diff,
+  format,
+  getNow,
+  useDateTimeFormat,
+} from '../../utils/dateTimeUtils.js';
 import cardClasses from '../tables/M3UsTable.module.css';
 import summaryClasses from './M3UAccountSummary.module.css';
 
@@ -41,7 +49,15 @@ const M3uProfileCard = ({
   onChangeActive,
 }) => {
   const accountStatus = item.custom_properties?.user_info?.status ?? null;
-  const expirationInfo = getExpirationInfo(item);
+  const { fullDateFormat, fullDateTimeFormat } = useDateTimeFormat();
+  const expiration = parseExpirationDate(item);
+  const expirationInfo = expiration
+    ? getExpirationInfo(
+        diff(expiration, getNow(), 'day'),
+        expiration,
+        fullDateFormat
+      )
+    : null;
   const expired = isAccountExpired(item);
 
   return (
@@ -79,13 +95,11 @@ const M3uProfileCard = ({
                   {accountStatus}
                 </Badge>
               )}
-            {accountType === 'XC' &&
-              item.custom_properties &&
-              expirationInfo && (
-                <Badge size="sm" color={expirationInfo.color} variant="light">
-                  {expirationInfo.text}
-                </Badge>
-              )}
+            {accountType === 'XC' && isTrialProfile(item) && (
+              <Badge variant="light" color="orange">
+                Trial
+              </Badge>
+            )}
           </Group>
           {item.custom_properties?.notes && (
             <Text size="xs" c="dimmed">
@@ -94,15 +108,6 @@ const M3uProfileCard = ({
           )}
         </Stack>
         <div className={summaryClasses.profileControls}>
-          <NumberInput
-            label="Max Streams"
-            aria-label={`Max Streams for ${item.name}`}
-            value={item.max_streams}
-            disabled={item.is_default}
-            onChange={onChangeMaxStreams}
-            size="sm"
-            w={104}
-          />
           <Tooltip
             label={
               item.is_default
@@ -136,11 +141,6 @@ const M3uProfileCard = ({
             px={6}
             py={4}
             radius="md"
-            w={104}
-            maw="100%"
-            h="auto"
-            mih={38}
-            style={{ flexShrink: 1 }}
             role="group"
             aria-label={`Actions for ${item.name}`}
           >
@@ -196,6 +196,34 @@ const M3uProfileCard = ({
           </Paper>
         </div>
       </div>
+      <Group gap="xl" align="flex-start" mt="md">
+        <NumberInput
+          label="Max Streams"
+          aria-label={`Max Streams for ${item.name}`}
+          value={item.max_streams}
+          disabled={item.is_default}
+          onChange={onChangeMaxStreams}
+          size="sm"
+          w={104}
+        />
+        <Stack gap={4}>
+          <Text size="sm" fw={500}>
+            Expires
+          </Text>
+          <Tooltip
+            label={
+              expiration
+                ? format(expiration, fullDateTimeFormat)
+                : 'No expiration date available'
+            }
+            withArrow
+          >
+            <Badge variant="light" color={expirationInfo?.color || 'gray'}>
+              {expirationInfo?.label || '—'}
+            </Badge>
+          </Tooltip>
+        </Stack>
+      </Group>
     </Paper>
   );
 };

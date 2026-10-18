@@ -58,6 +58,7 @@ import {
 import tableClasses from './M3UsTable.module.css';
 import { SensitiveValue } from '../SensitiveFields.jsx';
 import SourceStatus from '../SourceStatus.jsx';
+import { isTrialProfile } from '../../utils/forms/M3uProfilesUtils.js';
 
 const ALL_ACCOUNT_TYPES = ['STD', 'XC'];
 
@@ -804,6 +805,16 @@ const M3UTable = () => {
                         <Badge variant="light">
                           {account.account_type === 'XC' ? 'XC' : 'M3U'}
                         </Badge>
+                        {account.account_type === 'XC' &&
+                          isTrialProfile(
+                            account.profiles?.find(
+                              (profile) => profile.is_default
+                            )
+                          ) && (
+                            <Badge variant="light" color="orange">
+                              Trial
+                            </Badge>
+                          )}
                         <AccountStatus
                           account={account}
                           progress={refreshProgress[account.id]}

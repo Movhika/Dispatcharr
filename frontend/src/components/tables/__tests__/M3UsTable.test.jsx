@@ -149,6 +149,46 @@ const show = () =>
 const card = (name = 'Provider One') =>
   within(screen.getByRole('article', { name: 'M3U account ' + name }));
 describe('M3U account cards', () => {
+  it.each([true, 1, '1'])(
+    'shows Trial from the default profile (%s)',
+    (is_trial) => {
+      setup({
+        playlists: [
+          account({
+            profiles: [
+              {
+                is_default: true,
+                custom_properties: { user_info: { is_trial } },
+              },
+            ],
+          }),
+        ],
+      });
+      show();
+      expect(card().getByText('Trial')).toBeInTheDocument();
+    }
+  );
+
+  it('does not mark the account as a trial because an additional connection is a trial', () => {
+    setup({
+      playlists: [
+        account({
+          profiles: [
+            {
+              is_default: true,
+              custom_properties: { user_info: { is_trial: '0' } },
+            },
+            {
+              is_default: false,
+              custom_properties: { user_info: { is_trial: '1' } },
+            },
+          ],
+        }),
+      ],
+    });
+    show();
+    expect(card().queryByText('Trial')).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();

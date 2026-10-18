@@ -124,9 +124,15 @@ const RegexFormAndView = ({
     );
     if (expDate !== undefined) submitValues.exp_date = expDate;
 
-    profile?.id
-      ? await updateM3UProfile(m3u.id, { ...submitValues, id: profile.id })
-      : await addM3UProfile(m3u.id, submitValues);
+    try {
+      const saved = profile?.id
+        ? await updateM3UProfile(m3u.id, { ...submitValues, id: profile.id })
+        : await addM3UProfile(m3u.id, submitValues);
+      if (!saved) return;
+    } catch {
+      // The API reports the error; keep the profile draft available to retry.
+      return;
+    }
 
     reset();
     setSearchPattern('');
@@ -264,7 +270,12 @@ const RegexFormAndView = ({
       title={isDefaultProfile ? 'Edit Default Profile' : 'M3U Profile'}
       size="lg"
     >
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form
+        onSubmit={(event) => {
+          event.stopPropagation();
+          return handleSubmit(onSubmit)(event);
+        }}
+      >
         <TextInput
           label="Name"
           description="A label to identify this URL rewrite profile"

@@ -2030,13 +2030,17 @@ export default class API {
     const { id, ...payload } = values;
 
     try {
-      await request(`${host}/api/m3u/accounts/${accountId}/profiles/${id}/`, {
-        method: 'PUT',
-        body: payload,
-      });
+      const response = await request(
+        `${host}/api/m3u/accounts/${accountId}/profiles/${id}/`,
+        {
+          method: 'PUT',
+          body: payload,
+        }
+      );
 
       const playlist = await API.getPlaylist(accountId);
       usePlaylistsStore.getState().updatePlaylist(playlist);
+      return response;
     } catch (e) {
       errorNotification(`Failed to update profile for account ${accountId}`, e);
     }

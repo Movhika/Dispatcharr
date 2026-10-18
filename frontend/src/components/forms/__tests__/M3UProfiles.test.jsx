@@ -20,11 +20,25 @@ vi.mock('../../../utils/forms/M3uProfileUtils.js', () => ({
   updateM3UProfile: vi.fn(),
 }));
 
-vi.mock('../../../utils/forms/M3uProfilesUtils.js', () => ({
-  getExpirationInfo: vi.fn(),
+vi.mock('../../../utils/forms/M3uProfilesUtils.js', async (original) => ({
+  ...(await original()),
+  parseExpirationDate: vi.fn(() => new Date('2027-01-01T12:00:00Z')),
   isAccountExpired: vi.fn(),
   profileSortComparator: vi.fn(),
 }));
+vi.mock('../../../utils/tables/M3UsTableUtils.js', () => ({
+  getExpirationInfo: vi.fn(),
+}));
+vi.mock('../../../utils/dateTimeUtils.js', () => ({
+  diff: () => 60,
+  getNow: () => new Date('2026-11-01T12:00:00Z'),
+  format: (value) => value.toISOString(),
+  useDateTimeFormat: () => ({
+    fullDateFormat: 'YYYY-MM-DD',
+    fullDateTimeFormat: 'YYYY-MM-DD HH:mm',
+  }),
+}));
+import * as expirationUtils from '../../../utils/tables/M3UsTableUtils.js';
 
 // ── Sub-component mocks ────────────────────────────────────────────────────────
 vi.mock('../M3UProfile', () => ({
@@ -250,7 +264,7 @@ describe('M3UProfiles', () => {
     vi.clearAllMocks();
     vi.mocked(M3uProfileUtils.deleteM3UProfile).mockResolvedValue(undefined);
     vi.mocked(M3uProfileUtils.updateM3UProfile).mockResolvedValue(undefined);
-    vi.mocked(M3uProfilesUtils.getExpirationInfo).mockReturnValue({
+    vi.mocked(expirationUtils.getExpirationInfo).mockReturnValue({
       label: null,
       color: null,
     });
@@ -263,6 +277,30 @@ describe('M3UProfiles', () => {
   // ── Guard conditions ───────────────────────────────────────────────────────
 
   describe('guard conditions', () => {
+    it.each(['1', 1, true])(
+      'shows Trial for a trial connection (%s)',
+      (is_trial) => {
+        setupStores({
+          profiles: {
+            1: [
+              makeProfile({ custom_properties: { user_info: { is_trial } } }),
+            ],
+          },
+        });
+        render(<M3UProfiles {...defaultProps()} />);
+        expect(screen.getByText('Trial')).toBeInTheDocument();
+      }
+    );
+
+    it('shows a placeholder for unavailable profile expiration', () => {
+      vi.mocked(M3uProfilesUtils.parseExpirationDate).mockReturnValueOnce(null);
+      setupStores();
+      render(<M3UProfiles {...defaultProps()} />);
+      expect(screen.getByText('—')).toBeInTheDocument();
+      expect(
+        screen.getByTitle('No expiration date available')
+      ).toBeInTheDocument();
+    });
     it('does not render modal when isOpen is false', () => {
       setupStores();
       render(<M3UProfiles {...defaultProps({ isOpen: false })} />);
@@ -348,6 +386,13 @@ describe('M3UProfiles', () => {
       });
       expect(maxStreams).toHaveStyle({ width: '104px' });
       expect(actions).not.toContainElement(maxStreams);
+      const header = screen
+        .getByTestId('profile-card')
+        .querySelector(`.${summaryClasses.profileRow}`);
+      expect(header).not.toContainElement(maxStreams);
+      expect(header).toContainElement(actions);
+      expect(header).toContainElement(enabled);
+      expect(screen.getByText('Expires')).toBeInTheDocument();
     });
 
     it('marks the default profile while preserving its protected controls', () => {
@@ -458,8 +503,8 @@ describe('M3UProfiles', () => {
     });
 
     it('renders an expiration badge when getExpirationInfo returns a label', () => {
-      vi.mocked(M3uProfilesUtils.getExpirationInfo).mockReturnValue({
-        text: 'Expires soon',
+      vi.mocked(expirationUtils.getExpirationInfo).mockReturnValue({
+        label: 'Expires soon',
         color: 'orange',
       });
       setupStores();
@@ -740,8 +785,8 @@ describe('M3UProfiles', () => {
     });
 
     it('renders expiration badge with correct color', () => {
-      vi.mocked(M3uProfilesUtils.getExpirationInfo).mockReturnValue({
-        text: '3 days left',
+      vi.mocked(expirationUtils.getExpirationInfo).mockReturnValue({
+        label: '3 days left',
         color: 'red',
       });
       setupStores();
