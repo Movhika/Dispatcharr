@@ -1,5 +1,4 @@
-.categoryGrid,
-.epgGrid {
+.categoryGrid {
   display: grid;
   gap: var(--mantine-spacing-md);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
@@ -27,11 +26,9 @@
   line-height: 1.4;
 }
 
-.editButton {
-  margin-top: auto;
-}
-
-.epgGrid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-  align-items: start;
+.selectionActions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 4.5rem;
 }

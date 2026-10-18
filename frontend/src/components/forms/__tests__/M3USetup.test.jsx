@@ -474,6 +474,15 @@ describe('persisted M3U setup', () => {
     };
     API.getPlaylist.mockResolvedValue(categories);
     renderSetup({ account: categories });
+    const actions = await screen.findByRole('region', {
+      name: 'Category selection actions',
+    });
+    expect(
+      within(actions).getByRole('button', { name: 'Select categories' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Finish & import' })
+    ).toBeDisabled();
     fireEvent.click(
       await screen.findByRole('button', { name: 'Select categories' })
     );
@@ -518,7 +527,7 @@ describe('persisted M3U setup', () => {
     await screen.findByRole('button', { name: 'Select categories' });
     expect(
       screen.queryByRole('button', { name: 'Finish & import' })
-    ).not.toBeInTheDocument();
+    ).toBeDisabled();
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -611,6 +620,6 @@ describe('persisted M3U setup', () => {
     expect(screen.getByText('0 of 0 categories selected')).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Finish & import' })
-    ).not.toBeInTheDocument();
+    ).toBeDisabled();
   });
 });

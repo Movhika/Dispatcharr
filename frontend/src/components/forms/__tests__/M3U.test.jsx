@@ -65,12 +65,11 @@ vi.mock('../M3UProfiles', () => ({
 }));
 
 vi.mock('../M3UGroupFilter', () => ({
-  default: ({ onChange, isInitialSetup, isOpen, onClose, initialTab }) => (
+  default: ({ onChange, isInitialSetup, isOpen, onClose }) => (
     <div
       data-testid="m3u-group-filter"
       data-initial-setup={String(isInitialSetup)}
       data-open={String(isOpen)}
-      data-initial-tab={initialTab}
     >
       <button onClick={() => onChange?.([])}>M3UGroupFilter</button>
       <button onClick={onClose}>Close groups</button>
@@ -121,7 +120,7 @@ vi.mock('../M3UAccountEPG.jsx', () => ({
 vi.mock('../M3UAccountCategories.jsx', () => ({
   default: ({ account, onEdit }) => (
     <div data-testid="account-categories" data-saved-name={account.name}>
-      <button type="button" onClick={() => onEdit(account, 'vod-series')}>
+      <button type="button" onClick={() => onEdit(account)}>
         Edit selection
       </button>
     </div>
@@ -1268,10 +1267,6 @@ describe('M3U', () => {
       );
       fireEvent.click(screen.getByRole('tab', { name: 'Categories' }));
       fireEvent.click(screen.getByRole('button', { name: 'Edit selection' }));
-      expect(screen.getByTestId('m3u-group-filter')).toHaveAttribute(
-        'data-initial-tab',
-        'vod-series'
-      );
       expect(screen.getByTestId('modal')).toHaveAttribute(
         'data-close-on-escape',
         'false'

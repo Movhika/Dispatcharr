@@ -8,7 +8,7 @@ import { formatApiError } from '../../utils';
 import M3UCategorySummary from './M3UCategorySummary.jsx';
 
 const M3UAccountCategories = ({ account, onEdit }) => {
-  const [opening, setOpening] = useState(null);
+  const [opening, setOpening] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -18,9 +18,9 @@ const M3UAccountCategories = ({ account, onEdit }) => {
     };
   }, []);
 
-  const edit = async (tab) => {
+  const edit = async () => {
     if (opening) return;
-    setOpening(tab);
+    setOpening(true);
     try {
       // Names are needed by the selection editor, not by this count summary.
       const missingNames = () =>
@@ -33,7 +33,7 @@ const M3UAccountCategories = ({ account, onEdit }) => {
         throw new Error('Category names could not be loaded. Please retry.');
       if (mounted.current) {
         hideNotification(`m3u-categories-${account.id}`);
-        onEdit(account, tab);
+        onEdit(account);
       }
     } catch (failure) {
       if (!mounted.current) return;
@@ -45,7 +45,7 @@ const M3UAccountCategories = ({ account, onEdit }) => {
         autoClose: false,
       });
     } finally {
-      if (mounted.current) setOpening(null);
+      if (mounted.current) setOpening(false);
     }
   };
 

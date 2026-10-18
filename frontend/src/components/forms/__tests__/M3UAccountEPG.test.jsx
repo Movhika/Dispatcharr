@@ -1,10 +1,4 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -181,14 +175,12 @@ describe('EPG in the account editor', () => {
     expect(screen.getByText('Fetching')).toBeInTheDocument();
   });
 
-  it('shows other sources inside initial setup without offering assignment or navigation', async () => {
+  it('keeps unrelated sources hidden before and after creating the matching guide', async () => {
     const alternate = {
       id: 12,
-      name: 'Existing guide',
-      source_type: 'schedules_direct',
-      is_active: false,
-      status: 'idle',
-      updated_at: null,
+      name: 'Unrelated guide',
+      source_type: 'xmltv',
+      is_active: true,
     };
     API.getM3UEPG.mockResolvedValue({
       source: null,
@@ -197,16 +189,11 @@ describe('EPG in the account editor', () => {
     });
     const onNext = vi.fn();
     show({ isInitialSetup: true, onNext });
-    const region = await screen.findByRole('region', {
-      name: 'Other configured EPG sources',
-    });
-    expect(within(region).getByText('Existing guide')).toBeInTheDocument();
-    expect(within(region).getByText('Schedules Direct')).toBeInTheDocument();
-    expect(within(region).getByText('Disabled')).toBeInTheDocument();
-    expect(within(region).getByText('Never')).toBeInTheDocument();
-    expect(within(region).queryByRole('button')).not.toBeInTheDocument();
-    expect(screen.queryByRole('link')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Skip EPG' })).toBeEnabled();
+    await screen.findByText('No matching EPG source configured.');
+    expect(screen.queryByText('Unrelated guide')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: 'Other configured EPG sources' })
+    ).not.toBeInTheDocument();
     API.createM3UEPG.mockResolvedValue({
       source: {
         id: 9,
@@ -219,7 +206,7 @@ describe('EPG in the account editor', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Create EPG' }));
     await screen.findByText('Account guide');
-    expect(screen.getAllByText('Existing guide')).toHaveLength(1);
+    expect(screen.queryByText('Unrelated guide')).not.toBeInTheDocument();
     expect(onNext).toHaveBeenCalledOnce();
   });
 
@@ -249,7 +236,7 @@ describe('EPG in the account editor', () => {
   });
 
   it.each([false, true])(
-    'places matching and alternative cards in the shared grid (setup: %s)',
+    'only shows the account matching source (setup: %s)',
     async (isInitialSetup) => {
       API.getM3UEPG.mockResolvedValue({
         source: {
@@ -263,7 +250,7 @@ describe('EPG in the account editor', () => {
         other_sources: [
           {
             id: 10,
-            name: 'Alternative guide',
+            name: 'Unrelated guide',
             source_type: 'xmltv',
             is_active: true,
             status: 'idle',
@@ -274,16 +261,12 @@ describe('EPG in the account editor', () => {
       const matching = await screen.findByRole('article', {
         name: 'EPG source Matching guide',
       });
-      const alternatives = screen.getByRole('region', {
-        name: 'Other configured EPG sources',
-      });
-      expect(matching.parentElement).toHaveClass(summaryClasses.epgGrid);
-      expect(alternatives.parentElement).toBe(matching.parentElement);
+      expect(matching).toHaveClass(summaryClasses.card);
+      expect(screen.getAllByRole('article')).toHaveLength(1);
+      expect(screen.queryByText('Unrelated guide')).not.toBeInTheDocument();
       expect(
-        within(alternatives).getByRole('article', {
-          name: 'EPG source Alternative guide',
-        })
-      ).toHaveClass(summaryClasses.card);
+        screen.queryByRole('region', { name: 'Other configured EPG sources' })
+      ).not.toBeInTheDocument();
       expect(screen.getAllByText('Matching EPG source')).toHaveLength(1);
       expect(screen.queryByRole('link')).not.toBeInTheDocument();
       expect(API.createM3UEPG).not.toHaveBeenCalled();
@@ -296,8 +279,8 @@ describe('EPG in the account editor', () => {
     expect(
       screen.queryByRole('region', { name: 'Other configured EPG sources' })
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('region', { name: 'EPG source' }).parentElement.children
-    ).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'EPG source' })).toHaveClass(
+      summaryClasses.card
+    );
   });
 });

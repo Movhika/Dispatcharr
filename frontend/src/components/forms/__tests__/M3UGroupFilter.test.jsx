@@ -263,30 +263,6 @@ describe('M3UGroupFilter', () => {
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    it.each(['live', 'vod-movie', 'vod-series'])(
-      'opens the tab selected by its overview card: %s',
-      (initialTab) => {
-        setupStores();
-        render(<M3UGroupFilter {...defaultProps({ initialTab })} />);
-        expect(screen.getByTestId('tabs')).toHaveAttribute(
-          'data-value',
-          initialTab
-        );
-      }
-    );
-
-    it('uses the newly selected card when reopening after another content type', () => {
-      setupStores();
-      const props = defaultProps({ initialTab: 'vod-series' });
-      const view = render(<M3UGroupFilter {...props} />);
-      view.rerender(<M3UGroupFilter {...props} isOpen={false} />);
-      view.rerender(<M3UGroupFilter {...props} initialTab="vod-movie" />);
-      expect(screen.getByTestId('tabs')).toHaveAttribute(
-        'data-value',
-        'vod-movie'
-      );
-    });
-
     it('renders the modal when isOpen is true with a valid playlist', () => {
       setupStores();
       render(<M3UGroupFilter {...defaultProps()} />);

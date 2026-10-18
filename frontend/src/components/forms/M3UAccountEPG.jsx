@@ -71,7 +71,6 @@ const M3UAccountEPG = ({
   onNext,
 }) => {
   const [source, setSource] = useState(null);
-  const [otherSources, setOtherSources] = useState([]);
   const [canCreate, setCanCreate] = useState(false);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -100,7 +99,6 @@ const M3UAccountEPG = ({
           sourceSnapshotRef.current =
             useEPGsStore.getState().epgs?.[result.source?.id];
           setSource(result.source);
-          setOtherSources(result.other_sources || []);
           setCanCreate(result.can_create === true);
           hideNotification(`m3u-epg-${account.id}`);
         }
@@ -134,7 +132,6 @@ const M3UAccountEPG = ({
       sourceSnapshotRef.current =
         useEPGsStore.getState().epgs?.[result.source?.id];
       setSource(result.source);
-      setOtherSources(result.other_sources || []);
       setCanCreate(result.can_create === true);
       hideNotification(`m3u-epg-${account.id}`);
       fetchEPGs().catch(() => {});
@@ -209,45 +206,10 @@ const M3UAccountEPG = ({
     </Paper>
   );
 
-  const cards = (
-    <div className={summaryClasses.epgGrid}>
-      {card}
-      {!loading && !failed && otherSources.length > 0 && (
-        <section aria-label="Other configured EPG sources">
-          <Stack gap="sm">
-            <Text fw={600} size="sm">
-              Other configured EPG sources
-            </Text>
-            <Text size="xs" c="dimmed">
-              These sources may cover the channels you need. Matching depends on
-              their channel IDs.
-            </Text>
-            {otherSources.map((other) => (
-              <Paper
-                key={other.id}
-                component="article"
-                aria-label={`EPG source ${other.name}`}
-                className={summaryClasses.card}
-                withBorder
-                radius="md"
-                p="md"
-              >
-                <EPGSourceSummary
-                  source={other}
-                  dateFormat={fullDateTimeFormat}
-                />
-              </Paper>
-            ))}
-          </Stack>
-        </section>
-      )}
-    </div>
-  );
-
-  if (!isInitialSetup) return cards;
+  if (!isInitialSetup) return card;
   return (
     <>
-      <div className={editorClasses.setupPanel}>{cards}</div>
+      <div className={editorClasses.setupPanel}>{card}</div>
       <Group
         component="footer"
         aria-label="M3U setup actions"

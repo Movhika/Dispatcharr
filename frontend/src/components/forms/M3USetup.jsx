@@ -211,6 +211,15 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
                 <M3UCategorySummary
                   account={account}
                   showCounts={ready && !loadFailed}
+                  onEdit={
+                    ready && !loadFailed
+                      ? () => setCategoryEditorOpen(true)
+                      : undefined
+                  }
+                  editLabel={
+                    categoriesSaved ? 'Edit selection' : 'Select categories'
+                  }
+                  editDisabled={busy}
                 >
                   {ready && !loadFailed ? (
                     <>
@@ -219,17 +228,6 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
                           ? 'Selection saved. Finish & import starts the initial import.'
                           : 'Select the categories you want to import before finishing setup.'}
                       </Text>
-                      {categoriesSaved && (
-                        <Group>
-                          <Button
-                            variant="default"
-                            onClick={() => setCategoryEditorOpen(true)}
-                            disabled={busy}
-                          >
-                            Edit selection
-                          </Button>
-                        </Group>
-                      )}
                     </>
                   ) : (
                     <Alert color={loadFailed ? 'red' : 'blue'}>
@@ -272,20 +270,15 @@ const M3USetup = ({ account: initialAccount, onClose }) => {
                     >
                       Retry
                     </Button>
-                  ) : categoriesSaved ? (
+                  ) : (
                     <Button
-                      disabled={busy || !ready || loadFailed}
+                      disabled={
+                        busy || !ready || loadFailed || !categoriesSaved
+                      }
                       loading={busy}
                       onClick={() => advance('complete')}
                     >
                       Finish &amp; import
-                    </Button>
-                  ) : (
-                    <Button
-                      disabled={busy}
-                      onClick={() => setCategoryEditorOpen(true)}
-                    >
-                      Select categories
                     </Button>
                   )}
                 </Group>
