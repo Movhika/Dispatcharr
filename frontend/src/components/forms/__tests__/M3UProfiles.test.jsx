@@ -112,8 +112,8 @@ vi.mock('@mantine/core', () => ({
       {children}
     </button>
   ),
-  Badge: ({ children, color }) => (
-    <span data-testid="badge" data-color={color}>
+  Badge: ({ children, color, 'aria-label': ariaLabel }) => (
+    <span data-testid="badge" data-color={color} aria-label={ariaLabel}>
       {children}
     </span>
   ),
@@ -381,15 +381,14 @@ describe('M3UProfiles', () => {
       );
       expect(within(enabled).queryByText('Active')).not.toBeInTheDocument();
       expect(actions).not.toContainElement(enabled);
-      const maxStreams = screen.getByRole('spinbutton', {
-        name: 'Max Streams for Test Profile',
-      });
-      expect(maxStreams).toHaveStyle({ width: '104px' });
+      const maxStreams = screen.getByLabelText('Max Streams for Test Profile');
+      expect(maxStreams).toHaveTextContent('2');
+      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
       expect(actions).not.toContainElement(maxStreams);
       const header = screen
         .getByTestId('profile-card')
         .querySelector(`.${summaryClasses.profileRow}`);
-      expect(header).not.toContainElement(maxStreams);
+      expect(header).toContainElement(maxStreams);
       expect(header).toContainElement(actions);
       expect(header).toContainElement(enabled);
       expect(screen.getByText('Expires')).toBeInTheDocument();
@@ -402,7 +401,7 @@ describe('M3UProfiles', () => {
         name: 'Connection profile Test Profile',
       });
       expect(within(card).getByText('Default')).toBeInTheDocument();
-      expect(within(card).getByRole('spinbutton')).toBeDisabled();
+      expect(within(card).queryByRole('spinbutton')).not.toBeInTheDocument();
       expect(within(card).getByRole('checkbox')).toBeDisabled();
       expect(
         screen.getByRole('group', { name: 'Enabled state for Test Profile' })
@@ -417,8 +416,17 @@ describe('M3UProfiles', () => {
         })
       ).toBeEnabled();
       expect(
-        within(card).queryByRole('button', { name: 'Delete Test Profile' })
-      ).not.toBeInTheDocument();
+        within(card).getByRole('button', { name: 'Delete Test Profile' })
+      ).toBeDisabled();
+      expect(
+        screen.getByTitle('The default profile cannot be deleted')
+      ).toContainElement(
+        within(card).getByRole('button', { name: 'Delete Test Profile' })
+      );
+      fireEvent.click(
+        within(card).getByRole('button', { name: 'Delete Test Profile' })
+      );
+      expect(M3uProfileUtils.deleteM3UProfile).not.toHaveBeenCalled();
     });
 
     it('keeps provider-only information hidden for standard M3U profiles', () => {
@@ -721,21 +729,15 @@ describe('M3UProfiles', () => {
   // ── Max streams / Switch ───────────────────────────────────────────────────
 
   describe('profile-level controls', () => {
-    it('still saves max streams immediately with the existing profile payload', async () => {
+    it('shows the stream limit without an inline save control', () => {
       const profile = makeProfile({ id: 42, max_streams: 2 });
       setupStores({ profiles: { 1: [profile] } });
       render(<M3UProfiles {...defaultProps()} />);
-      fireEvent.change(
-        screen.getByRole('spinbutton', {
-          name: 'Max Streams for Test Profile',
-        }),
-        { target: { value: '5' } }
-      );
-      await waitFor(() =>
-        expect(
-          M3uProfileUtils.updateM3UProfile
-        ).toHaveBeenCalledExactlyOnceWith(1, { ...profile, max_streams: 5 })
-      );
+      expect(
+        screen.getByLabelText('Max Streams for Test Profile')
+      ).toHaveTextContent('2');
+      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+      expect(M3uProfileUtils.updateM3UProfile).not.toHaveBeenCalled();
     });
 
     it('still saves activation immediately without waiting for the parent account Save', async () => {
@@ -755,22 +757,23 @@ describe('M3UProfiles', () => {
       ).not.toBeInTheDocument();
     });
 
-    it('renders NumberInput for max_streams on a profile card', () => {
+    it('renders the saved stream limit as a badge on the profile card', () => {
       const profiles = { 1: [makeProfile({ max_streams: 3 })] };
       setupStores({ profiles });
       render(<M3UProfiles {...defaultProps()} />);
-      expect(screen.getByRole('spinbutton')).toBeInTheDocument();
+      expect(
+        screen.getByLabelText('Max Streams for Test Profile')
+      ).toHaveTextContent('3');
     });
 
-    it('calls updateM3UProfile when max_streams NumberInput changes', async () => {
-      const profiles = { 1: [makeProfile({ max_streams: 2 })] };
+    it('displays zero as unlimited, matching the account overview', () => {
+      const profiles = { 1: [makeProfile({ max_streams: 0 })] };
       setupStores({ profiles });
       render(<M3UProfiles {...defaultProps()} />);
-      const input = screen.getByRole('spinbutton');
-      fireEvent.change(input, { target: { value: '5' } });
-      await waitFor(() => {
-        expect(M3uProfileUtils.updateM3UProfile).toHaveBeenCalled();
-      });
+      expect(
+        screen.getByLabelText('Max Streams for Test Profile')
+      ).toHaveTextContent('∞');
+      expect(M3uProfileUtils.updateM3UProfile).not.toHaveBeenCalled();
     });
   });
 
@@ -791,7 +794,7 @@ describe('M3UProfiles', () => {
       });
       setupStores();
       render(<M3UProfiles {...defaultProps()} />);
-      const badge = screen.getByTestId('badge');
+      const badge = screen.getByText('3 days left');
       expect(badge.textContent).toBe('3 days left');
       expect(badge.dataset.color).toBe('red');
     });

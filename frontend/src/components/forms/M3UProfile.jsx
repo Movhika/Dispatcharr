@@ -107,12 +107,11 @@ const RegexFormAndView = ({
     if (isXC && xcMode === 'advanced' && !isDefaultProfile) {
       if (!searchPattern.trim()) {
         setError('search_pattern', { message: 'Search pattern is required' });
-        return;
       }
       if (!replacePattern.trim()) {
         setError('replace_pattern', { message: 'Replace pattern is required' });
-        return;
       }
+      if (!searchPattern.trim() || !replacePattern.trim()) return;
     }
 
     const submitValues = buildSubmitValues(
@@ -198,7 +197,11 @@ const RegexFormAndView = ({
   };
 
   useEffect(() => {
+    if (!isOpen) return;
     reset(defaultValues);
+    setSimpleErrors({});
+    setNewUsername('');
+    setNewPassword('');
     setSearchPattern(profile?.search_pattern || '');
     setReplacePattern(profile?.replace_pattern || '');
     if (isXC && !isDefaultProfile) {
@@ -215,6 +218,7 @@ const RegexFormAndView = ({
   }, [
     defaultValues,
     isDefaultProfile,
+    isOpen,
     isXC,
     m3u?.password,
     m3u?.username,
@@ -228,13 +232,16 @@ const RegexFormAndView = ({
 
   const handleXcModeChange = (mode) => {
     if (mode === 'advanced' && xcMode === 'simple') {
-      // Pre-populate regex fields from current simple values
-      const sp = `${m3u?.username || ''}/${m3u?.password || ''}`;
-      const rp = `${newUsername}/${newPassword}`;
-      setSearchPattern(sp);
-      setReplacePattern(rp);
-      setValue('search_pattern', sp);
-      setValue('replace_pattern', rp);
+      // Only transfer complete credentials; an empty pair would become "/".
+      const hasCredentials = newUsername.trim() && newPassword.trim();
+      if (hasCredentials) {
+        const sp = `${m3u?.username || ''}/${m3u?.password || ''}`;
+        const rp = `${newUsername}/${newPassword}`;
+        setSearchPattern(sp);
+        setReplacePattern(rp);
+        setValue('search_pattern', sp);
+        setValue('replace_pattern', rp);
+      }
     } else if (mode === 'simple' && xcMode === 'advanced') {
       // Parse current replace pattern back into username/password
       const idx = replacePattern.indexOf('/');
@@ -269,6 +276,7 @@ const RegexFormAndView = ({
       onClose={onClose}
       title={isDefaultProfile ? 'Edit Default Profile' : 'M3U Profile'}
       size="lg"
+      closeButtonProps={{ 'aria-label': 'Close connection profile editor' }}
     >
       <form
         onSubmit={(event) => {

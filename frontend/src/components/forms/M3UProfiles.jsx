@@ -10,7 +10,6 @@ import {
   Button,
   Group,
   Modal,
-  NumberInput,
   Paper,
   Stack,
   Switch,
@@ -45,7 +44,6 @@ const M3uProfileCard = ({
   onClickInfo,
   onClickEdit,
   onClickDelete,
-  onChangeMaxStreams,
   onChangeActive,
 }) => {
   const accountStatus = item.custom_properties?.user_info?.status ?? null;
@@ -106,6 +104,46 @@ const M3uProfileCard = ({
               {item.custom_properties.notes}
             </Text>
           )}
+          <Group gap="xl" align="flex-start" mt={4}>
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>
+                Max Streams
+              </Text>
+              <Tooltip
+                label={
+                  item.is_default
+                    ? 'Change the default profile stream limit in the M3U account settings'
+                    : 'Edit this profile to change its stream limit'
+                }
+                withArrow
+              >
+                <Badge
+                  variant="light"
+                  color="gray"
+                  aria-label={`Max Streams for ${item.name}`}
+                >
+                  {item.max_streams === 0 ? '∞' : (item.max_streams ?? '—')}
+                </Badge>
+              </Tooltip>
+            </Stack>
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>
+                Expires
+              </Text>
+              <Tooltip
+                label={
+                  expiration
+                    ? format(expiration, fullDateTimeFormat)
+                    : 'No expiration date available'
+                }
+                withArrow
+              >
+                <Badge variant="light" color={expirationInfo?.color || 'gray'}>
+                  {expirationInfo?.label || '—'}
+                </Badge>
+              </Tooltip>
+            </Stack>
+          </Group>
         </Stack>
         <div className={summaryClasses.profileControls}>
           <Tooltip
@@ -179,51 +217,32 @@ const M3uProfileCard = ({
                   <SquarePen size={17} />
                 </ActionIcon>
               </Tooltip>
-              {!item.is_default && (
-                <Tooltip label="Delete profile">
+              <Tooltip
+                label={
+                  item.is_default
+                    ? 'The default profile cannot be deleted'
+                    : 'Delete profile'
+                }
+                withArrow
+                events={{ hover: true, focus: true, touch: true }}
+              >
+                <span tabIndex={item.is_default ? 0 : undefined}>
                   <ActionIcon
                     color="red"
-                    onClick={onClickDelete}
+                    onClick={item.is_default ? undefined : onClickDelete}
+                    disabled={item.is_default}
                     size="md"
                     variant="subtle"
                     aria-label={`Delete ${item.name}`}
                   >
                     <Trash2 size={17} />
                   </ActionIcon>
-                </Tooltip>
-              )}
+                </span>
+              </Tooltip>
             </Group>
           </Paper>
         </div>
       </div>
-      <Group gap="xl" align="flex-start" mt="md">
-        <NumberInput
-          label="Max Streams"
-          aria-label={`Max Streams for ${item.name}`}
-          value={item.max_streams}
-          disabled={item.is_default}
-          onChange={onChangeMaxStreams}
-          size="sm"
-          w={104}
-        />
-        <Stack gap={4}>
-          <Text size="sm" fw={500}>
-            Expires
-          </Text>
-          <Tooltip
-            label={
-              expiration
-                ? format(expiration, fullDateTimeFormat)
-                : 'No expiration date available'
-            }
-            withArrow
-          >
-            <Badge variant="light" color={expirationInfo?.color || 'gray'}>
-              {expirationInfo?.label || '—'}
-            </Badge>
-          </Tooltip>
-        </Stack>
-      </Group>
     </Paper>
   );
 };
@@ -282,9 +301,7 @@ const M3UProfiles = ({
   }, [allProfiles, playlist]);
 
   const editProfile = (profile = null) => {
-    if (profile) {
-      setProfile(profile);
-    }
+    setProfile(profile);
     setEditorPendingExpDate(pendingExpDate);
     setProfileEditorOpen(true);
   };
@@ -329,26 +346,19 @@ const M3UProfiles = ({
     }
   };
 
-  const modifyMaxStreams = async (value, item) => {
-    if (!playlist || !playlist.id) return;
-    try {
-      await updateM3UProfile(playlist.id, {
-        ...item,
-        max_streams: value,
-      });
-    } catch (error) {
-      console.error('Error updating max streams:', error);
-    }
-  };
-
   const closeEditor = () => {
     setProfileEditorOpen(false);
-    // Delay clearing the profile until after the modal animation completes
-    setTimeout(() => {
+  };
+
+  useEffect(() => {
+    if (profileEditorOpen) return;
+    // Keep the closing animation intact, but cancel cleanup if reopened.
+    const timer = setTimeout(() => {
       setProfile(null);
       setEditorPendingExpDate(undefined);
-    }, 300); // Mantine modal animation typically takes ~200-300ms
-  };
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [profileEditorOpen]);
 
   const showAccountInfo = (profile) => {
     setSelectedProfileForInfo(profile);
@@ -394,7 +404,6 @@ const M3UProfiles = ({
                 item={item}
                 accountType={playlist?.account_type}
                 onClickInfo={() => showAccountInfo(item)}
-                onChangeMaxStreams={(value) => modifyMaxStreams(value, item)}
                 onChangeActive={() => toggleActive(item)}
                 onClickEdit={() => editProfile(item)}
                 onClickDelete={() => deleteProfile(item.id)}

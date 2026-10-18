@@ -175,7 +175,7 @@ vi.mock('@mantine/core', () => ({
       <input
         data-testid={`text-input-${label?.toLowerCase?.().replace(/\s+/g, '-') ?? 'text'}`}
         value={value ?? ''}
-        onChange={(e) => onChange?.(e.target.value)}
+        onChange={onChange}
         disabled={disabled}
         placeholder={placeholder}
       />
@@ -680,13 +680,23 @@ describe('M3UProfile', () => {
       ).toBeInTheDocument();
     });
 
-    it('calls setValue when switching to advanced mode', () => {
+    it('transfers complete simple credentials when switching to advanced mode', () => {
       const formMethods = setupForm();
       render(<M3UProfile {...xcProps()} />);
+      fireEvent.change(screen.getByTestId('text-input-new-username'), {
+        target: { value: 'alternate' },
+      });
+      fireEvent.change(screen.getByTestId('text-input-new-password'), {
+        target: { value: 'synthetic-secret' },
+      });
       fireEvent.click(screen.getByTestId('segment-advanced'));
       expect(formMethods.setValue).toHaveBeenCalledWith(
         'search_pattern',
-        expect.any(String)
+        'user1/pass1'
+      );
+      expect(formMethods.setValue).toHaveBeenCalledWith(
+        'replace_pattern',
+        'alternate/synthetic-secret'
       );
     });
 

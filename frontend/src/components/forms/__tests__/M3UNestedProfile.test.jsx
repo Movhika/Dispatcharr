@@ -82,9 +82,12 @@ const openProfile = async (existing = false) => {
           id: 71,
           name: 'Existing connection',
           max_streams: 1,
-          search_pattern: 'example/synthetic',
-          replace_pattern: 'alternate/secret',
-          custom_properties: { xcMode: 'simple' },
+          search_pattern:
+            existing === 'advanced' ? '^https?://([^/]+)' : 'example/synthetic',
+          replace_pattern: existing === 'advanced' ? '$1' : 'alternate/secret',
+          custom_properties: {
+            xcMode: existing === 'advanced' ? 'advanced' : 'simple',
+          },
         },
       ],
     };
@@ -105,6 +108,147 @@ const openProfile = async (existing = false) => {
 };
 
 describe('profile submissions inside the M3U editor', () => {
+  it('preserves a saved advanced replacement that cannot be represented as simple credentials', async () => {
+    const { dialog } = await openProfile('advanced');
+    expect(within(dialog).getByLabelText('Replace Pattern')).toHaveValue('$1');
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Simple' }));
+    fireEvent.click(
+      within(dialog).getByRole('radio', { name: 'Advanced (Regex)' })
+    );
+    expect(within(dialog).getByLabelText('Search Pattern (Regex)')).toHaveValue(
+      '^https?://([^/]+)'
+    );
+    expect(within(dialog).getByLabelText('Replace Pattern')).toHaveValue('$1');
+    expect(API.updateM3UProfile).not.toHaveBeenCalled();
+  });
+  it.each(['empty', 'username only', 'password only'])(
+    'starts Advanced empty without errors for incomplete simple credentials (%s)',
+    async (credentials) => {
+      const { dialog, onClose } = await openProfile();
+      fireEvent.change(within(dialog).getByLabelText('Name'), {
+        target: { value: 'New connection' },
+      });
+      if (credentials === 'username only')
+        fireEvent.change(within(dialog).getByLabelText('New Username'), {
+          target: { value: 'alternate' },
+        });
+      if (credentials === 'password only')
+        fireEvent.change(within(dialog).getByLabelText('New Password'), {
+          target: { value: 'synthetic' },
+        });
+      fireEvent.click(
+        within(dialog).getByRole('radio', { name: 'Advanced (Regex)' })
+      );
+      expect(
+        within(dialog).getByLabelText('Search Pattern (Regex)')
+      ).toHaveValue('');
+      expect(within(dialog).getByLabelText('Replace Pattern')).toHaveValue('');
+      expect(
+        within(dialog).queryByText(/pattern is required/)
+      ).not.toBeInTheDocument();
+      expect(API.addM3UProfile).not.toHaveBeenCalled();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }));
+      expect(
+        await within(dialog).findByText('Search pattern is required')
+      ).toBeInTheDocument();
+      expect(
+        within(dialog).getByText('Replace pattern is required')
+      ).toBeInTheDocument();
+      expect(API.addM3UProfile).not.toHaveBeenCalled();
+      expect(updatePlaylist).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['simple', 'advanced', 'name'])(
+    'opens a fresh profile without errors from a previous %s validation attempt',
+    async (mode) => {
+      const { dialog } = await openProfile();
+      if (mode !== 'name')
+        fireEvent.change(within(dialog).getByLabelText('Name'), {
+          target: { value: 'Unfinished connection' },
+        });
+      if (mode === 'advanced')
+        fireEvent.click(
+          within(dialog).getByRole('radio', { name: 'Advanced (Regex)' })
+        );
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }));
+      expect(
+        await within(dialog).findByText(
+          mode === 'name'
+            ? 'Name is required'
+            : mode === 'advanced'
+              ? 'Search pattern is required'
+              : 'New username is required'
+        )
+      ).toBeInTheDocument();
+      fireEvent.click(
+        within(dialog).getByRole('button', {
+          name: 'Close connection profile editor',
+        })
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('dialog', { name: 'M3U Profile' })
+        ).not.toBeInTheDocument()
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Add connection profile' })
+      );
+      const reopened = await screen.findByRole('dialog', {
+        name: 'M3U Profile',
+      });
+      expect(within(reopened).getByLabelText('Name')).toHaveValue('');
+      expect(within(reopened).getByLabelText('New Username')).toHaveValue('');
+      expect(within(reopened).getByLabelText('New Password')).toHaveValue('');
+      expect(
+        within(reopened).queryByText(/is required/)
+      ).not.toBeInTheDocument();
+      expect(API.addM3UProfile).not.toHaveBeenCalled();
+      expect(updatePlaylist).not.toHaveBeenCalled();
+    }
+  );
+
+  it('transfers complete simple credentials and saves the stream limit only through the editor', async () => {
+    const { dialog, onClose } = await openProfile();
+    fireEvent.change(within(dialog).getByLabelText('Name'), {
+      target: { value: 'Additional connection' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('New Username'), {
+      target: { value: 'alternate' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('New Password'), {
+      target: { value: 'synthetic-secret' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Max Streams'), {
+      target: { value: '5' },
+    });
+    fireEvent.click(
+      within(dialog).getByRole('radio', { name: 'Advanced (Regex)' })
+    );
+    expect(within(dialog).getByLabelText('Search Pattern (Regex)')).toHaveValue(
+      'example/synthetic'
+    );
+    expect(within(dialog).getByLabelText('Replace Pattern')).toHaveValue(
+      'alternate/synthetic-secret'
+    );
+    expect(API.addM3UProfile).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }));
+    await waitFor(() =>
+      expect(API.addM3UProfile).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          max_streams: 5,
+          search_pattern: 'example/synthetic',
+          replace_pattern: 'alternate/synthetic-secret',
+          custom_properties: { notes: '', xcMode: 'advanced' },
+        })
+      )
+    );
+    expect(updatePlaylist).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('keeps a name-only profile open and never submits the account behind it', async () => {
     const { dialog, onClose } = await openProfile();
     fireEvent.change(within(dialog).getByLabelText('Name'), {
