@@ -25,6 +25,10 @@ _KEY = (
     r"access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|"
     r"token|authorization|auth|cookie|session[_-]?id)"
 )
+_SENSITIVE_KEY = re.compile(_KEY, re.IGNORECASE)
+_ADDRESS_KEY = re.compile(
+    r"(?:[\w-]+[_-])?(?P<kind>url|uri|host(?:name)?)", re.IGNORECASE,
+)
 _VALUE = (
     re.escape(REDACTED)
     + r'|"(?:\\.|[^"\\])*"'
@@ -290,6 +294,32 @@ def redact_log_text(text):
 def redact_log_bytes(data):
     # Latin-1 is a reversible byte mapping; leave unrelated bytes untouched.
     return redact_log_text(data.decode("latin-1")).encode("latin-1")
+
+
+def redact_log_data(value, *, key=None):
+    """Copy JSON diagnostics, preserving non-sensitive fields and value types.
+
+    Keep the original payload for application/integration use. Field names
+    supply context for bare credentials and relative URLs in event details;
+    free-form messages use the same rules as ordinary log lines.
+    """
+    if isinstance(key, str) and _SENSITIVE_KEY.fullmatch(key):
+        return REDACTED
+    if isinstance(value, dict):
+        return {
+            name: redact_log_data(item, key=name)
+            for name, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return type(value)(redact_log_data(item, key=key) for item in value)
+    if not isinstance(value, str) or value == REDACTED:
+        return value
+    address = _ADDRESS_KEY.fullmatch(key) if isinstance(key, str) else None
+    if address:
+        if address["kind"].lower().startswith("host"):
+            return _redact_host(value)
+        return _redact_url(value)
+    return redact_log_text(value)
 
 
 def redacted_log_lines(stream, max_line_bytes=MAX_LINE_BYTES):

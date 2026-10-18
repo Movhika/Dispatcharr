@@ -11,6 +11,7 @@ from unittest import TestCase, mock
 from dispatcharr.log_redaction import (
     REDACTED,
     redact_log_bytes,
+    redact_log_data,
     redact_log_text,
     redacted_log_lines,
 )
@@ -18,6 +19,85 @@ from dispatcharr.startup_log import DisplayTimezoneFormatter, startup_log
 
 
 class LogRedactionTests(TestCase):
+    def test_structured_details_mask_nested_credentials_without_mutating_input(self):
+        original = {
+            "message": (
+                "Forbidden https://example.invalid/player_api.php?password=secret"
+            ),
+            "nested": [{"username": "alice", "xc_password": "with spaces, and quotes"}],
+            "token": ["first-secret", {"value": "second-secret"}],
+            "attempts": 3,
+            "elapsed": 1.25,
+            "active": False,
+            "missing": None,
+        }
+        result = redact_log_data(original)
+        self.assertEqual(
+            result["nested"],
+            [{"username": REDACTED, "xc_password": REDACTED}],
+        )
+        self.assertEqual(result["token"], REDACTED)
+        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(result["elapsed"], 1.25)
+        self.assertIs(result["active"], False)
+        self.assertIsNone(result["missing"])
+        self.assertIn("player_api.php", result["message"])
+        self.assertNotIn("example.invalid", result["message"])
+        self.assertEqual(original["nested"][0]["username"], "alice")
+        self.assertEqual(original["token"][0], "first-secret")
+        self.assertEqual(redact_log_data(result), result)
+
+    def test_structured_addresses_use_existing_url_policy(self):
+        original = {
+            "url": "/get.php?username=alice&password=secret&type=m3u_plus",
+            "server_host": "example.invalid:8080",
+            "stream_url": ["https://example.invalid/live/alice/secret/123.ts"],
+            "poster_url": "https://image.tmdb.org/t/p/w500/example.jpg",
+            "help_url": "https://dispatcharr.github.io/Dispatcharr-Docs/",
+        }
+        result = redact_log_data(original)
+        self.assertEqual(
+            result["url"],
+            f"/get.php?username={REDACTED}&password={REDACTED}&type=m3u_plus",
+        )
+        self.assertEqual(result["server_host"], "redacted.invalid:8080")
+        self.assertEqual(
+            result["stream_url"],
+            [f"https://redacted.invalid/live/{REDACTED}/{REDACTED}/123.ts"],
+        )
+        self.assertEqual(result["poster_url"], original["poster_url"])
+        self.assertEqual(result["help_url"], original["help_url"])
+        self.assertEqual(redact_log_data(result), result)
+
+    def test_structured_secret_fields_hide_non_string_values_too(self):
+        original = {"PASSWORD": 123456, "Authorization": {"value": "secret"}}
+        self.assertEqual(
+            redact_log_data(original),
+            {"PASSWORD": REDACTED, "Authorization": REDACTED},
+        )
+
+    def test_structured_tuple_values_are_redacted_before_json_serialization(self):
+        original = ({"password": "secret"}, "https://example.invalid/live/u/p/123.ts")
+        self.assertEqual(
+            redact_log_data(original),
+            (
+                {"password": REDACTED},
+                f"https://redacted.invalid/live/{REDACTED}/{REDACTED}/123.ts",
+            ),
+        )
+        self.assertEqual(original[0]["password"], "secret")
+
+    def test_structured_diagnostic_labels_and_scalar_types_are_preserved(self):
+        original = {
+            "account_name": "Provider A",
+            "user_agent": "Example Player/1.0",
+            "status": 403,
+            "error_type": "connection_failed",
+            "values": [True, False, None, 0, 1.5],
+        }
+        self.assertEqual(redact_log_data(original), original)
+        self.assertEqual(redact_log_data("status=403"), "status=403")
+
     def test_direct_collector_script_needs_no_application_bootstrap(self):
         script = Path(__file__).resolve().parents[2] / "dispatcharr/log_collector.py"
         with tempfile.TemporaryDirectory() as log_dir:
