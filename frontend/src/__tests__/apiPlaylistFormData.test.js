@@ -89,6 +89,44 @@ describe('profile save results', () => {
   );
 });
 
+describe('read-only M3U connection checks', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('posts a draft in the body without updating the store or notifying', async () => {
+    const values = {
+      account_type: 'XC',
+      server_url: 'https://example.invalid',
+      username: 'example',
+      password: 'synthetic',
+    };
+    const result = { success: false, code: 'http_error', message: 'HTTP 403' };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify(result),
+    });
+    expect(await API.checkM3UConnection(values)).toEqual(result);
+    const [url, options] = globalThis.fetch.mock.calls[0];
+    expect(new URL(url, 'http://example.invalid').pathname).toBe(
+      '/api/m3u/accounts/check-connection/'
+    );
+    expect(url).not.toContain('synthetic');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body)).toEqual(values);
+    expect(mocks.updatePlaylist).not.toHaveBeenCalled();
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
+  it('leaves API failures to the confirmation dialog without a duplicate notification', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Unavailable',
+    });
+    await expect(API.checkM3UConnection({})).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
+});
+
 describe('account import rule requests', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -37,6 +37,8 @@ from .serializers import (
     M3UAccountProfileSerializer,
     M3USetupActionSerializer,
     M3UMatchingEPGResponseSerializer,
+    M3UConnectionCheckSerializer,
+    M3UConnectionCheckResultSerializer,
 )
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
@@ -64,6 +66,28 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         return permissions_for_action(self)
+
+    @extend_schema(
+        request=M3UConnectionCheckSerializer,
+        responses={200: M3UConnectionCheckResultSerializer},
+        description=(
+            "Check unsaved M3U/Xtream connection details from the server without "
+            "saving an account, importing content or refreshing account metadata. "
+            "An account ID allows reuse of its password only for the unchanged "
+            "Xtream server URL. Internal network targets are not probed."
+        ),
+    )
+    @action(
+        detail=False, methods=["post"], url_path="check-connection",
+        permission_classes=[IsAdmin],
+    )
+    def check_connection(self, request):
+        from .connection_check import check_account_connection
+
+        serializer = M3UConnectionCheckSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = check_account_connection(serializer.validated_data)
+        return Response(M3UConnectionCheckResultSerializer(result).data)
 
     @extend_schema(
         request=M3USetupActionSerializer,

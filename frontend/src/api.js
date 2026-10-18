@@ -1551,6 +1551,13 @@ export default class API {
     return response;
   }
 
+  static async checkM3UConnection(values) {
+    return await request(`${host}/api/m3u/accounts/check-connection/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
   static async getM3UEPG(id) {
     return await request(`${host}/api/m3u/accounts/${id}/epg/`);
   }

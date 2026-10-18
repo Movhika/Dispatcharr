@@ -10,6 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import M3U from '../M3U';
 import { useDateTimeFormat } from '../../../utils/dateTimeUtils.js';
 import editorClasses from '../AccountEditor.module.css';
+import API from '../../../api.js';
+
+vi.mock('../../../api.js', () => ({
+  default: { checkM3UConnection: vi.fn() },
+}));
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/userAgents', () => ({ default: vi.fn() }));
@@ -632,6 +637,7 @@ const setupStores = (overrides = {}) => {
 describe('M3U', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    API.checkM3UConnection.mockResolvedValue({ success: true });
     mantineForm.__resetFormState();
     vi.mocked(useDateTimeFormat).mockReturnValue({
       timeFormat: 'HH:mm',
@@ -883,7 +889,7 @@ describe('M3U', () => {
   // ── Adding a playlist ──────────────────────────────────────────────────────
 
   describe('adding a new playlist', () => {
-    const fillRequiredFields = () => {
+    const fillRequiredFields = async () => {
       const nameInput = screen.getByTestId('text-input-name');
       fireEvent.change(nameInput, { target: { value: 'New Playlist' } });
 
@@ -900,13 +906,15 @@ describe('M3U', () => {
         target: { value: 'example-password' },
       });
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+      );
     };
 
     it('calls addPlaylist on valid submit', async () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-      fillRequiredFields();
+      await fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(M3uUtils.addPlaylist).toHaveBeenCalled();
@@ -918,7 +926,7 @@ describe('M3U', () => {
       setupStores();
       vi.mocked(M3uUtils.addPlaylist).mockResolvedValueOnce(undefined);
       render(<M3U {...defaultProps()} />);
-      fillRequiredFields();
+      await fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() =>
         expect(M3uUtils.addPlaylist).toHaveBeenCalledTimes(1)
@@ -934,7 +942,7 @@ describe('M3U', () => {
       const onClose = vi.fn();
       setupStores();
       render(<M3U {...defaultProps({ onClose })} />);
-      fillRequiredFields();
+      await fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() =>
         expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
@@ -948,7 +956,7 @@ describe('M3U', () => {
     it('calls prepareSubmitValues before addPlaylist', async () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
-      fillRequiredFields();
+      await fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(M3uUtils.prepareSubmitValues).toHaveBeenCalled();
@@ -959,7 +967,7 @@ describe('M3U', () => {
       const onClose = vi.fn();
       setupStores();
       render(<M3U {...defaultProps({ onClose })} />);
-      fillRequiredFields();
+      await fillRequiredFields();
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => {
         expect(onClose).toHaveBeenCalled();
@@ -1794,20 +1802,11 @@ describe('M3U', () => {
             })}
           />
         );
-        if (setup_step === 'account')
-          expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
-        else
-          expect(
-            screen.getByRole('tab', { name: 'Live TV' })
-          ).toBeInTheDocument();
+        expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
         expect(
           screen.queryByRole('button', { name: 'Save' })
         ).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-        if (setup_step === 'content') {
-          expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
-          fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-        }
         await waitFor(() => expect(onSetupNext).toHaveBeenCalledOnce());
         expect(M3uUtils.updatePlaylist).toHaveBeenCalledWith(
           account,
@@ -1846,7 +1845,7 @@ describe('M3U', () => {
       expect(screen.getByDisplayValue('Unsubmitted draft')).toBeInTheDocument();
     });
 
-    it('moves back from VOD to Live settings without saving or leaving setup', () => {
+    it('shows Live and VOD together and goes back to Account without saving', () => {
       setupStores();
       const onSetupBack = vi.fn();
       const onSetupNext = vi.fn();
@@ -1860,19 +1859,18 @@ describe('M3U', () => {
           })}
         />
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-      expect(screen.getByRole('tab', { name: 'VOD' })).toBeInTheDocument();
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
       fireEvent.change(screen.getByLabelText('VOD Priority'), {
         target: { value: '27' },
       });
       fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-      expect(onSetupBack).not.toHaveBeenCalled();
+      expect(onSetupBack).toHaveBeenCalledOnce();
       expect(onSetupNext).not.toHaveBeenCalled();
       expect(M3uUtils.updatePlaylist).not.toHaveBeenCalled();
       expect(M3uUtils.addPlaylist).not.toHaveBeenCalled();
-      expect(screen.getByLabelText('VOD Priority')).toHaveValue(27);
-      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-      expect(onSetupBack).toHaveBeenCalledOnce();
+      expect(
+        mantineForm.useForm.mock.results.at(-1).value.getValues().priority
+      ).toBe(27);
     });
 
     it('does not allow Content before validating Account', () => {

@@ -72,13 +72,15 @@ const tabTo = async (target) => {
 };
 
 describe('M3U content switch tooltips with Mantine controls', () => {
-  it('keeps guided Live and VOD settings separate without losing drafts', () => {
+  it('shows guided Live and VOD settings together without losing drafts', () => {
+    const onSetupBack = vi.fn();
     render(
       <MantineProvider>
         <M3U
           isOpen
           setupMode
           onClose={vi.fn()}
+          onSetupBack={onSetupBack}
           m3uAccount={{
             id: 1,
             name: 'Example account',
@@ -94,16 +96,13 @@ describe('M3U content switch tooltips with Mantine controls', () => {
     expect(
       screen.getByRole('group', { name: 'Live TV settings' })
     ).toBeVisible();
-    expect(screen.queryByRole('group', { name: 'VOD settings' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'VOD settings' })).toBeVisible();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Stale Stream Retention (days)'), {
       target: { value: '14' },
     });
-    fireEvent.click(screen.getByRole('tab', { name: 'VOD' }));
-    expect(screen.getByRole('group', { name: 'VOD settings' })).toBeVisible();
-    expect(
-      screen.queryByRole('group', { name: 'Live TV settings' })
-    ).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(onSetupBack).toHaveBeenCalledOnce();
     expect(screen.getByLabelText('Stale Stream Retention (days)')).toHaveValue(
       '14'
     );

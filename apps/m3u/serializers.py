@@ -358,6 +358,73 @@ class M3USetupActionSerializer(serializers.Serializer):
     )
 
 
+class M3UConnectionCheckSerializer(serializers.Serializer):
+    account_id = serializers.PrimaryKeyRelatedField(
+        queryset=M3UAccount.objects.all(), required=False, write_only=True,
+    )
+    account_type = serializers.ChoiceField(choices=M3UAccount.Types.choices)
+    server_url = serializers.CharField(
+        max_length=1000, validators=[validate_flexible_url],
+    )
+    username = serializers.CharField(
+        max_length=255, required=False, allow_blank=True,
+    )
+    password = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, trim_whitespace=False,
+        write_only=True,
+    )
+    user_agent = serializers.PrimaryKeyRelatedField(
+        queryset=UserAgent.objects.all(), required=False, allow_null=True,
+    )
+
+    def validate_server_url(self, value):
+        from urllib.parse import urlsplit
+
+        try:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError()
+            parsed.port
+        except ValueError as exc:
+            raise serializers.ValidationError(
+                "Enter a complete HTTP or HTTPS URL."
+            ) from exc
+        return value
+
+    def validate(self, attrs):
+        from core.xtream_codes import normalize_server_url
+
+        account = attrs.pop("account_id", None)
+        if attrs["account_type"] == "XC":
+            if not attrs.get("username"):
+                raise serializers.ValidationError({
+                    "username": "Enter the provider username.",
+                })
+            # Never send a stored secret to a caller-supplied different server.
+            # A changed destination requires the password to be entered again.
+            if (
+                not attrs.get("password")
+                and account
+                and account.account_type == "XC"
+                and normalize_server_url(attrs["server_url"])
+                == normalize_server_url(account.server_url)
+            ):
+                attrs["password"] = account.password
+        agent = attrs.pop("user_agent", None)
+        attrs["user_agent_string"] = (
+            agent.user_agent if agent and agent.user_agent
+            else M3UAccount().get_user_agent_string()
+        )
+        return attrs
+
+
+class M3UConnectionCheckResultSerializer(serializers.Serializer):
+    success = serializers.BooleanField()
+    code = serializers.CharField()
+    message = serializers.CharField()
+    http_status = serializers.IntegerField(required=False)
+
+
 class M3UMatchingEPGSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()

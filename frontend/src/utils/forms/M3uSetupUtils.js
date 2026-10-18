@@ -17,6 +17,33 @@ export const prepareM3USourceValues = (values, sourceType) => {
   return prepared;
 };
 
+export const getM3UConnectionDetails = (values, sourceType, account) => ({
+  ...(account?.id ? { account_id: account.id } : {}),
+  account_type: sourceType === 'XC' ? 'XC' : 'STD',
+  server_url: values.server_url?.trim() || '',
+  user_agent: values.user_agent === '0' ? null : values.user_agent || null,
+  ...(sourceType === 'XC'
+    ? {
+        username: values.username?.trim() || '',
+        ...(values.password ? { password: values.password } : {}),
+      }
+    : {}),
+});
+
+export const needsM3UConnectionCheck = (values, sourceType, account) => {
+  if (sourceType === 'M3U_FILE') return false;
+  if (!account?.id) return true;
+  return (
+    sourceType !== getM3USourceType(account) ||
+    values.server_url?.trim() !== (account.server_url || '').trim() ||
+    (values.user_agent === '0' ? '' : String(values.user_agent || '')) !==
+      String(account.user_agent || '') ||
+    (sourceType === 'XC' &&
+      (values.username?.trim() !== (account.username || '').trim() ||
+        !!values.password))
+  );
+};
+
 export const validateNewM3UAccount = (
   values,
   file,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   getM3USourceType,
+  getM3UConnectionDetails,
+  needsM3UConnectionCheck,
   prepareM3USourceValues,
   validateNewM3UAccount,
 } from '../M3uSetupUtils.js';
@@ -120,5 +122,68 @@ describe('new M3U connection validation', () => {
       file_path: '',
     });
     expect(input).toEqual({ ...values, account_type: 'STD' });
+  });
+});
+
+describe('connection check scope', () => {
+  const account = {
+    id: 7,
+    account_type: 'XC',
+    server_url: 'https://example.invalid',
+    username: 'example',
+    user_agent: null,
+  };
+  const values = { ...account, password: '', user_agent: '0' };
+
+  it('checks new remote sources, but never file sources', () => {
+    expect(needsM3UConnectionCheck(values, 'XC')).toBe(true);
+    expect(needsM3UConnectionCheck(values, 'M3U_URL')).toBe(true);
+    expect(needsM3UConnectionCheck(values, 'M3U_FILE')).toBe(false);
+    expect(needsM3UConnectionCheck(values, 'M3U_FILE', account)).toBe(false);
+  });
+
+  it('does not check unchanged connections or unrelated edits', () => {
+    expect(needsM3UConnectionCheck(values, 'XC', account)).toBe(false);
+    expect(
+      needsM3UConnectionCheck(
+        { ...values, name: 'Renamed', max_streams: 3 },
+        'XC',
+        account
+      )
+    ).toBe(false);
+  });
+
+  it.each([
+    { server_url: 'https://changed.invalid' },
+    { username: 'changed' },
+    { password: 'changed' },
+    { user_agent: '2' },
+  ])('checks changed connection details: %j', (changes) => {
+    expect(
+      needsM3UConnectionCheck({ ...values, ...changes }, 'XC', account)
+    ).toBe(true);
+  });
+
+  it('checks a change of source type and excludes hidden credentials from M3U requests', () => {
+    expect(needsM3UConnectionCheck(values, 'M3U_URL', account)).toBe(true);
+    expect(
+      getM3UConnectionDetails(
+        { ...values, password: 'hidden' },
+        'M3U_URL',
+        account
+      )
+    ).toEqual({
+      account_id: 7,
+      account_type: 'STD',
+      server_url: account.server_url,
+      user_agent: null,
+    });
+    expect(getM3UConnectionDetails(values, 'XC', account)).toEqual({
+      account_id: 7,
+      account_type: 'XC',
+      server_url: account.server_url,
+      username: 'example',
+      user_agent: null,
+    });
   });
 });

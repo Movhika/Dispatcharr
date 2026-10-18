@@ -50,13 +50,16 @@ import editorClasses from './AccountEditor.module.css';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
 import {
+  getM3UConnectionDetails,
   getM3USourceType,
+  needsM3UConnectionCheck,
   prepareM3USourceValues,
   validateNewM3UAccount,
 } from '../../utils/forms/M3uSetupUtils.js';
 import { Upload } from 'lucide-react';
 import M3UAccountEPG from './M3UAccountEPG.jsx';
 import M3UAccountCategories from './M3UAccountCategories.jsx';
+import API from '../../api.js';
 
 const helpLabel = (label, help) => (
   <Group gap={5} wrap="nowrap">
@@ -129,6 +132,11 @@ const M3U = ({
   const [contentAvailable, setContentAvailable] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [connectionFailure, setConnectionFailure] = useState(null);
+  const checkingConnectionRef = useRef(false);
+  const submitAttemptRef = useRef(false);
+  const approvedConnection = useRef(null);
   const creatingRef = useRef(false);
   const initializedSetupAccount = useRef(null);
   const savedSourceType = useRef('XC');
@@ -193,23 +201,17 @@ const M3U = ({
       return;
     }
     if (setupMode && initializedSetupAccount.current === m3uAccount?.id) {
-      setActiveTab(
-        m3uAccount.setup_step === 'content' ? 'live' : m3uAccount.setup_step
-      );
+      setActiveTab(m3uAccount.setup_step);
       return;
     }
     initializedSetupAccount.current = setupMode ? m3uAccount?.id : null;
     setFile(null);
     setCategoryPlaylist(null);
-    setActiveTab(
-      setupMode && m3uAccount.setup_step === 'content'
-        ? 'live'
-        : setupMode
-          ? m3uAccount.setup_step
-          : 'account'
-    );
+    setActiveTab(setupMode ? m3uAccount.setup_step : 'account');
     setContentAvailable(false);
     setDiscardOpen(false);
+    setConnectionFailure(null);
+    approvedConnection.current = null;
     savedSourceType.current = m3uAccount ? getM3USourceType(m3uAccount) : 'XC';
     savedExpiration.current = expDateKey(m3uAccount?.exp_date);
     if (m3uAccount) {
@@ -291,93 +293,140 @@ const M3U = ({
     setExpDate((prev) => (expDateKey(prev) === expDateKey(next) ? prev : next));
   }, [storeExpDate]);
 
-  const next = () => {
+  const connectionKey = () =>
+    JSON.stringify(
+      getM3UConnectionDetails(form.getValues(), sourceType, playlist)
+    );
+
+  const checkConnection = async (intent) => {
+    const values = form.getValues();
+    if (!needsM3UConnectionCheck(values, sourceType, playlist)) return true;
+    const details = getM3UConnectionDetails(values, sourceType, playlist);
+    const key = JSON.stringify(details);
+    if (approvedConnection.current === key) return true;
+    checkingConnectionRef.current = true;
+    setCheckingConnection(true);
+    try {
+      const result = await API.checkM3UConnection(details);
+      // A result belongs only to the exact connection that was checked.
+      if (key !== connectionKey()) return false;
+      if (result?.success === true) {
+        approvedConnection.current = key;
+        return true;
+      }
+      setConnectionFailure({
+        intent,
+        key,
+        message: result?.message || 'The connection could not be verified.',
+      });
+      return false;
+    } catch {
+      if (key === connectionKey())
+        setConnectionFailure({
+          intent,
+          key,
+          message:
+            'The connection check could not be completed. Try again or continue without a verified connection.',
+        });
+      return false;
+    } finally {
+      checkingConnectionRef.current = false;
+      setCheckingConnection(false);
+    }
+  };
+
+  const next = async () => {
+    if (checkingConnectionRef.current || creatingRef.current) return false;
     const errors = validateNewM3UAccount(form.getValues(), file, {
       sourceType,
     });
     form.setErrors(errors);
     if (Object.keys(errors).length) return false;
+    if (!(await checkConnection('next'))) return false;
     setContentAvailable(true);
-    setActiveTab('live');
+    setActiveTab('content');
     return true;
   };
 
   const onSubmit = async () => {
-    if (creatingRef.current) return;
-    if (!playlist?.id && activeTab === 'account') {
-      next();
-      return;
-    }
     if (
-      (!playlist?.id || setupMode) &&
-      activeTab === 'live' &&
-      accountType === 'XC'
-    ) {
-      setActiveTab('vod');
+      creatingRef.current ||
+      checkingConnectionRef.current ||
+      submitAttemptRef.current
+    )
       return;
-    }
-    const errors = validateNewM3UAccount(form.getValues(), file, {
-      sourceType,
-      existingAccount: playlist,
-    });
-    form.setErrors(errors);
-    if (Object.keys(errors).length) {
-      if (setupMode && ['live', 'vod'].includes(activeTab)) await onSetupBack();
-      else setActiveTab('account');
-      return;
-    }
-    const rawValues = form.getValues();
-    const values = prepareM3USourceValues(
-      prepareSubmitValues(rawValues, expDate),
-      sourceType
-    );
-    const selectedFile = sourceType === 'M3U_FILE' ? file : null;
+    submitAttemptRef.current = true;
+    try {
+      if (!playlist?.id && activeTab === 'account') {
+        await next();
+        return;
+      }
+      const errors = validateNewM3UAccount(form.getValues(), file, {
+        sourceType,
+        existingAccount: playlist,
+      });
+      form.setErrors(errors);
+      if (Object.keys(errors).length) {
+        if (setupMode && activeTab === 'content') await onSetupBack();
+        else setActiveTab('account');
+        return;
+      }
+      if (!(await checkConnection('save'))) return;
+      const rawValues = form.getValues();
+      const values = prepareM3USourceValues(
+        prepareSubmitValues(rawValues, expDate),
+        sourceType
+      );
+      const selectedFile = sourceType === 'M3U_FILE' ? file : null;
 
-    if (playlist?.id) {
-      // Enabled is controlled in the overview, not by a stale editor snapshot.
-      delete values.is_active;
+      if (playlist?.id) {
+        // Enabled is controlled in the overview, not by a stale editor snapshot.
+        delete values.is_active;
+        creatingRef.current = true;
+        setCreating(true);
+        try {
+          const updatedPlaylist = await updatePlaylist(
+            playlist,
+            values,
+            selectedFile
+          );
+          if (!updatedPlaylist?.id) return;
+          setFile(null);
+          if (setupMode) {
+            setPlaylist(updatedPlaylist);
+            form.resetDirty();
+            savedSourceType.current = sourceType;
+            savedExpiration.current = expDateKey(expDate);
+            await onSetupNext(updatedPlaylist);
+          } else {
+            form.reset();
+            if (onSaved) onSaved(updatedPlaylist);
+            else onClose();
+          }
+        } finally {
+          creatingRef.current = false;
+          setCreating(false);
+        }
+        return;
+      }
+
       creatingRef.current = true;
       setCreating(true);
       try {
-        const updatedPlaylist = await updatePlaylist(
-          playlist,
-          values,
+        const newPlaylist = await addPlaylist(
+          { ...values, start_setup: true },
           selectedFile
         );
-        if (!updatedPlaylist?.id) return;
+        if (!newPlaylist?.id) return;
+        form.reset();
         setFile(null);
-        if (setupMode) {
-          setPlaylist(updatedPlaylist);
-          form.resetDirty();
-          savedSourceType.current = sourceType;
-          savedExpiration.current = expDateKey(expDate);
-          await onSetupNext(updatedPlaylist);
-        } else {
-          form.reset();
-          if (onSaved) onSaved(updatedPlaylist);
-          else onClose();
-        }
+        onClose(newPlaylist);
       } finally {
         creatingRef.current = false;
         setCreating(false);
       }
-      return;
-    }
-
-    creatingRef.current = true;
-    setCreating(true);
-    try {
-      const newPlaylist = await addPlaylist(
-        { ...values, start_setup: true },
-        selectedFile
-      );
-      if (!newPlaylist?.id) return;
-      form.reset();
-      setFile(null);
-      onClose(newPlaylist);
     } finally {
-      creatingRef.current = false;
-      setCreating(false);
+      submitAttemptRef.current = false;
     }
   };
 
@@ -398,7 +447,16 @@ const M3U = ({
   };
 
   const requestClose = () => {
-    if (creatingRef.current || creating || setupBusy || form.submitting) return;
+    if (
+      creatingRef.current ||
+      submitAttemptRef.current ||
+      checkingConnectionRef.current ||
+      creating ||
+      setupBusy ||
+      form.submitting ||
+      connectionFailure
+    )
+      return;
     if (setupMode || hasUnsavedChanges()) {
       setDiscardOpen(true);
       return;
@@ -423,11 +481,6 @@ const M3U = ({
   }
 
   const guidedSettings = !playlist?.id || setupMode;
-  const settingsTab = guidedSettings
-    ? activeTab === 'vod'
-      ? 'vod'
-      : 'live'
-    : 'content';
 
   const unsavedSetupChanges = setupMode && hasUnsavedChanges();
 
@@ -457,6 +510,7 @@ const M3U = ({
           !serverGroupsManagerOpen &&
           !profileOverlayOpen &&
           !epgOverlayOpen &&
+          !connectionFailure &&
           !discardOpen
         }
         closeOnEscape={
@@ -465,13 +519,18 @@ const M3U = ({
           !profileOverlayOpen &&
           !epgOverlayOpen &&
           !discardOpen &&
+          !connectionFailure &&
+          !checkingConnection &&
           !creating &&
           !setupBusy
         }
         yOffset="2vh"
         xOffset="3vw"
       >
-        <LoadingOverlay visible={form.submitting || creating} overlayBlur={2} />
+        <LoadingOverlay
+          visible={form.submitting || creating || checkingConnection}
+          overlayBlur={2}
+        />
 
         <form
           onSubmit={(event) => {
@@ -482,9 +541,7 @@ const M3U = ({
         >
           {(!playlist?.id || setupMode) && (
             <M3USetupSteps
-              stage={
-                ['live', 'vod'].includes(activeTab) ? 'content' : activeTab
-              }
+              stage={activeTab}
               accountType={accountType}
               contentAvailable={contentAvailable}
               onSelect={
@@ -493,38 +550,32 @@ const M3U = ({
                   : (stage) => {
                       if (
                         !creating &&
+                        !checkingConnection &&
                         (stage === 'account' ||
                           (stage === 'content' && contentAvailable))
                       )
-                        setActiveTab(stage === 'content' ? 'live' : stage);
+                        setActiveTab(stage);
                     }
               }
             />
           )}
           <Tabs
             value={activeTab}
-            onChange={setActiveTab}
+            inert={checkingConnection || !!connectionFailure}
+            onChange={(tab) => {
+              if (!checkingConnection && !creating) setActiveTab(tab);
+            }}
             className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
           >
-            {((playlist?.id && !setupMode) ||
-              ['live', 'vod'].includes(activeTab)) && (
+            {playlist?.id && !setupMode && (
               <TabsList className={editorClasses.tabList}>
-                {guidedSettings ? (
-                  <>
-                    <TabsTab value="live">Live TV</TabsTab>
-                    {accountType === 'XC' && <TabsTab value="vod">VOD</TabsTab>}
-                  </>
-                ) : (
-                  <>
-                    <TabsTab value="account">Account</TabsTab>
-                    <TabsTab value="content">Settings</TabsTab>
-                    {accountType === 'XC' && playlist.account_type === 'XC' && (
-                      <TabsTab value="epg">EPG</TabsTab>
-                    )}
-                    <TabsTab value="categories">Categories</TabsTab>
-                    <TabsTab value="profiles">Profiles</TabsTab>
-                  </>
+                <TabsTab value="account">Account</TabsTab>
+                <TabsTab value="content">Settings</TabsTab>
+                {accountType === 'XC' && playlist.account_type === 'XC' && (
+                  <TabsTab value="epg">EPG</TabsTab>
                 )}
+                <TabsTab value="categories">Categories</TabsTab>
+                <TabsTab value="profiles">Profiles</TabsTab>
               </TabsList>
             )}
             <TabsPanel
@@ -771,22 +822,14 @@ const M3U = ({
               </SimpleGrid>
             </TabsPanel>
             <TabsPanel
-              value={settingsTab}
+              value="content"
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
-              data-editor-active={activeTab === settingsTab}
-              aria-hidden={activeTab !== settingsTab}
-              inert={activeTab !== settingsTab}
+              data-editor-active={activeTab === 'content'}
+              aria-hidden={activeTab !== 'content'}
+              inert={activeTab !== 'content'}
             >
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                <Paper
-                  withBorder
-                  p="sm"
-                  display={
-                    guidedSettings && settingsTab !== 'live'
-                      ? 'none'
-                      : undefined
-                  }
-                >
+                <Paper withBorder p="sm">
                   <Stack
                     gap={4}
                     style={{ minWidth: 0 }}
@@ -827,7 +870,7 @@ const M3U = ({
                   withBorder
                   p="sm"
                   display={
-                    guidedSettings && settingsTab !== 'vod' ? 'none' : undefined
+                    guidedSettings && accountType !== 'XC' ? 'none' : undefined
                   }
                 >
                   <Stack
@@ -887,15 +930,7 @@ const M3U = ({
                   </Stack>
                 </Paper>
 
-                <Paper
-                  withBorder
-                  p="sm"
-                  display={
-                    guidedSettings && settingsTab !== 'live'
-                      ? 'none'
-                      : undefined
-                  }
-                >
+                <Paper withBorder p="sm">
                   <Stack
                     gap={4}
                     role="group"
@@ -935,7 +970,7 @@ const M3U = ({
                   withBorder
                   p="sm"
                   display={
-                    guidedSettings && settingsTab !== 'vod' ? 'none' : undefined
+                    guidedSettings && accountType !== 'XC' ? 'none' : undefined
                   }
                 >
                   <Stack gap={4} role="group" aria-label="VOD refresh schedule">
@@ -1095,17 +1130,13 @@ const M3U = ({
           >
             {(!playlist?.id || setupMode) && (
               <div>
-                {['live', 'vod'].includes(activeTab) && (
+                {activeTab === 'content' && (
                   <Button
                     variant="default"
                     onClick={() =>
-                      activeTab === 'vod'
-                        ? setActiveTab('live')
-                        : setupMode
-                          ? onSetupBack()
-                          : setActiveTab('account')
+                      setupMode ? onSetupBack() : setActiveTab('account')
                     }
-                    disabled={creating || setupBusy}
+                    disabled={creating || setupBusy || checkingConnection}
                   >
                     Back
                   </Button>
@@ -1117,29 +1148,61 @@ const M3U = ({
                 <Button
                   key="next"
                   type="button"
+                  disabled={checkingConnection || !!connectionFailure}
+                  loading={checkingConnection}
                   onClick={(event) => {
                     event.preventDefault();
                     next();
                   }}
                 >
-                  Next
+                  {checkingConnection ? 'Checking connection…' : 'Next'}
                 </Button>
               ) : (
                 <Button
                   key="save"
                   type="submit"
                   variant="filled"
-                  disabled={form.submitting || creating || setupBusy}
-                  loading={creating || setupBusy}
+                  disabled={
+                    form.submitting ||
+                    creating ||
+                    setupBusy ||
+                    checkingConnection ||
+                    !!connectionFailure
+                  }
+                  loading={creating || setupBusy || checkingConnection}
                   size="sm"
                 >
-                  {playlist?.id && !setupMode ? 'Save' : 'Next'}
+                  {checkingConnection
+                    ? 'Checking connection…'
+                    : playlist?.id && !setupMode
+                      ? 'Save'
+                      : 'Next'}
                 </Button>
               )}
             </Flex>
           </Flex>
         </form>
       </Modal>
+      <ConfirmationDialog
+        opened={!!connectionFailure}
+        onClose={() => setConnectionFailure(null)}
+        onConfirm={() => {
+          const failure = connectionFailure;
+          setConnectionFailure(null);
+          if (!failure) return;
+          if (failure.key === connectionKey())
+            approvedConnection.current = failure.key;
+          if (failure.intent === 'next') void next();
+          else void onSubmit();
+        }}
+        title="Connection check failed"
+        message={`${connectionFailure?.message || ''} No account changes have been saved. Continue anyway?`}
+        confirmLabel={
+          playlist?.id && !setupMode ? 'Save anyway' : 'Continue anyway'
+        }
+        confirmColor="orange"
+        cancelLabel="Back to editing"
+      />
       <ConfirmationDialog
         opened={discardOpen}
         onClose={() => setDiscardOpen(false)}
