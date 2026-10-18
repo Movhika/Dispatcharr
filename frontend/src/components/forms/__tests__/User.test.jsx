@@ -238,13 +238,7 @@ describe('User', () => {
       editorClasses.panel
     );
     expect(screen.getByTestId('panel-api')).toHaveClass(editorClasses.panel);
-    for (const tab of [
-      'account',
-      'permissions',
-      'epg',
-      'api',
-      'live-refresh',
-    ]) {
+    for (const tab of ['account', 'permissions', 'epg', 'api']) {
       expect(screen.getByTestId(`panel-${tab}`)).toHaveClass(
         editorClasses.accountPanel
       );
@@ -907,42 +901,17 @@ describe('User', () => {
     });
   });
 
-  it('shows only the refresh permission with a fixed 15-second wait', () => {
-    setupMocks({ authUser: makeAdminUser() });
-    render(
-      <User isOpen={true} onClose={vi.fn()} user={makeRegularUser({ id: 2 })} />
-    );
-    expect(
-      screen.getByText('Allow XC client to trigger Live TV refresh')
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText('Wait for a fresh XC Live catalog')
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText('Maximum wait for a fresh catalog (seconds)')
-    ).not.toBeInTheDocument();
-    expect(mockForm.getInputProps).not.toHaveBeenCalledWith(
-      'xc_live_refresh_wait_timeout_seconds'
-    );
-    expect(screen.getByText(/at most 15 seconds total/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText('User request interval (minutes)')
-    ).not.toBeInTheDocument();
-  });
-
-  it('does not expose the client refresh permission to a non-admin', () => {
-    setupMocks({ authUser: makeRegularUser() });
-    render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
-    expect(
-      screen.queryByText('Allow XC client to trigger Live TV refresh')
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText('Wait for a fresh XC Live catalog')
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText('Maximum wait for a fresh catalog (seconds)')
-    ).not.toBeInTheDocument();
-  });
+  it.each([makeAdminUser(), makeRegularUser()])(
+    'does not expose client-triggered refresh controls',
+    (authUser) => {
+      setupMocks({ authUser });
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
+      expect(screen.queryByText('Live refresh')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('Allow XC client to trigger Live TV refresh')
+      ).not.toBeInTheDocument();
+    }
+  );
 
   // ── XC password generation ───────────────────────────────────────────────────
 

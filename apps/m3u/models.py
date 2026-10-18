@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 import logging
 from django.db import models
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator
 from django.utils import timezone as django_timezone
 from core.models import CoreSettings, UserAgent
 import re
@@ -104,11 +103,6 @@ class M3UAccount(models.Model):
     password = models.CharField(max_length=255, null=True, blank=True)
     custom_properties = models.JSONField(default=dict, blank=True, null=True)
     refresh_interval = models.IntegerField(default=0)
-    xc_live_refresh_min_age_minutes = models.PositiveIntegerField(
-        default=30,
-        validators=[MaxValueValidator(10080)],
-        help_text="Minimum age of the last successful Live TV refresh before an XC client request may trigger another one.",
-    )
     refresh_task = models.ForeignKey(
         PeriodicTask, on_delete=models.SET_NULL, null=True, blank=True
     )

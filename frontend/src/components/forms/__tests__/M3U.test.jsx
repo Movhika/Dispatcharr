@@ -1452,11 +1452,6 @@ describe('M3U', () => {
         liveSchedule.getByLabelText('Live TV refresh interval (hours)')
       ).toBeInTheDocument();
       expect(
-        live.getByRole('spinbutton', {
-          name: 'Client refresh cooldown (minutes)',
-        })
-      ).toBeInTheDocument();
-      expect(
         live.queryByRole('spinbutton', { name: 'VOD Priority' })
       ).not.toBeInTheDocument();
       expect(
@@ -1580,40 +1575,13 @@ describe('M3U', () => {
       ).toBeInTheDocument();
     });
 
-    it('defaults new account client refresh cooldowns to thirty minutes', () => {
+    it('does not expose client-triggered refresh controls', () => {
       setupStores();
       render(<M3U {...defaultProps()} />);
       expect(
-        screen.getByLabelText('Client refresh cooldown (minutes)')
-      ).toHaveValue(30);
+        screen.queryByLabelText('Client refresh cooldown (minutes)')
+      ).not.toBeInTheDocument();
     });
-
-    it('uses thirty minutes when an existing account response omits the cooldown', () => {
-      setupStores();
-      render(<M3U {...defaultProps({ m3uAccount: makeM3uAccount() })} />);
-      expect(
-        screen.getByLabelText('Client refresh cooldown (minutes)')
-      ).toHaveValue(30);
-    });
-
-    it.each([0, 45, 55])(
-      'preserves an existing client refresh cooldown of %s minutes',
-      (minutes) => {
-        setupStores();
-        render(
-          <M3U
-            {...defaultProps({
-              m3uAccount: makeM3uAccount({
-                xc_live_refresh_min_age_minutes: minutes,
-              }),
-            })}
-          />
-        );
-        expect(
-          screen.getByLabelText('Client refresh cooldown (minutes)')
-        ).toHaveValue(minutes);
-      }
-    );
 
     it('preserves the independent Live TV and VOD values when saving the new layout', async () => {
       setupStores();
@@ -1622,7 +1590,6 @@ describe('M3U', () => {
         vod_refresh_after_live: false,
         refresh_interval: 6,
         vod_refresh_interval: 24,
-        xc_live_refresh_min_age_minutes: 55,
         priority: 30,
       });
       render(<M3U {...defaultProps({ m3uAccount: account })} />);
@@ -1642,7 +1609,6 @@ describe('M3U', () => {
             vod_refresh_interval: 48,
             vod_refresh_after_live: false,
             enable_vod: true,
-            xc_live_refresh_min_age_minutes: 55,
             priority: 30,
           }),
           null

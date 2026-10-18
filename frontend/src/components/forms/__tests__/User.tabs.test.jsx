@@ -39,13 +39,12 @@ describe('User stable-height tabs with Mantine controls', () => {
       editorClasses.accountTabs
     );
     const panels = screen.getAllByRole('tabpanel', { hidden: true });
-    expect(panels).toHaveLength(5);
+    expect(panels).toHaveLength(4);
     for (const name of [
       'Account',
       'Permissions',
       'EPG Defaults',
       'API & XC',
-      'Live refresh',
     ]) {
       fireEvent.click(screen.getByRole('tab', { name, exact: true }));
       const active = screen.getByRole('tabpanel', { name, exact: true });
@@ -114,6 +113,6 @@ describe('User stable-height tabs with Mantine controls', () => {
     expect(
       screen.queryByRole('tab', { name: 'Permissions' })
     ).not.toBeInTheDocument();
-    expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(4);
+    expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(3);
   });
 });

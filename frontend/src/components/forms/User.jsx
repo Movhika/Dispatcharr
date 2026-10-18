@@ -344,7 +344,6 @@ const User = ({ user = null, isOpen, onClose }) => {
             )}
             <TabsTab value="epg">EPG Defaults</TabsTab>
             <TabsTab value="api">API &amp; XC</TabsTab>
-            {isAdmin && <TabsTab value="live-refresh">Live refresh</TabsTab>}
           </TabsList>
 
           <TabsPanel
@@ -708,24 +707,6 @@ const User = ({ user = null, isOpen, onClose }) => {
               )}
             </Stack>
           </TabsPanel>
-          {isAdmin && (
-            <TabsPanel
-              value="live-refresh"
-              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
-              data-editor-active={activeTab === 'live-refresh'}
-              aria-hidden={activeTab !== 'live-refresh'}
-              inert={activeTab !== 'live-refresh'}
-            >
-              <Switch
-                label="Allow XC client to trigger Live TV refresh"
-                description="When this user's XC client requests the Live catalog, refresh eligible providers first. Return as soon as the newly queued refreshes finish, or after at most 15 seconds total. Unfinished refreshes continue in the background. Each provider's client refresh cooldown applies to all users."
-                {...form.getInputProps('xc_live_refresh_on_request', {
-                  type: 'checkbox',
-                })}
-                key={form.key('xc_live_refresh_on_request')}
-              />
-            </TabsPanel>
-          )}
         </Tabs>
 
         <Group

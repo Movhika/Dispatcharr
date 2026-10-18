@@ -175,7 +175,6 @@ const M3U = ({
       is_active: true,
       max_streams: 0,
       refresh_interval: 24,
-      xc_live_refresh_min_age_minutes: 30,
       cron_expression: '',
       vod_refresh_interval: 0,
       vod_cron_expression: '',
@@ -228,8 +227,6 @@ const M3U = ({
           : '0',
         is_active: m3uAccount.is_active,
         refresh_interval: m3uAccount.refresh_interval,
-        xc_live_refresh_min_age_minutes:
-          m3uAccount.xc_live_refresh_min_age_minutes ?? 30,
         cron_expression: m3uAccount.cron_expression || '',
         vod_refresh_interval: m3uAccount.vod_refresh_interval ?? 0,
         vod_cron_expression: m3uAccount.vod_cron_expression || '',
@@ -837,22 +834,6 @@ const M3U = ({
                     aria-label="Live TV settings"
                   >
                     <Text fw={600}>Live TV</Text>
-                    {accountType === 'XC' && (
-                      <NumberInput
-                        min={0}
-                        max={10080}
-                        allowDecimal={false}
-                        label={helpLabel(
-                          'Client refresh cooldown (minutes)',
-                          'Minimum wait after a successful Live refresh. Applies to all users; 0 disables this cooldown. Failed requests are still rate-limited per provider.'
-                        )}
-                        aria-label="Client refresh cooldown (minutes)"
-                        {...form.getInputProps(
-                          'xc_live_refresh_min_age_minutes'
-                        )}
-                        key={form.key('xc_live_refresh_min_age_minutes')}
-                      />
-                    )}
                     <NumberInput
                       min={0}
                       max={365}
