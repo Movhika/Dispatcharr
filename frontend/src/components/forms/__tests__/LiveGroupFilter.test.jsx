@@ -19,7 +19,10 @@ vi.mock('../../../hooks/useSmartLogos', () => ({
 
 // ── Child component mocks ─────────────────────────────────────────────────────
 vi.mock('../M3UGroupContentPreview.jsx', () => ({ default: () => null }));
-vi.mock('../M3UFilters.jsx', () => ({ default: () => null }));
+vi.mock('../M3UFilters.jsx', () => ({
+  default: ({ isOpen }) =>
+    isOpen ? <div data-testid="stream-filters-editor" /> : null,
+}));
 vi.mock('../../ListPagination.jsx', () => ({ default: () => null }));
 vi.mock('../GroupConfigureModal', () => ({
   default: ({ opened, onDone, onCancel, group, children }) =>
@@ -384,6 +387,44 @@ describe('LiveGroupFilter', () => {
   };
 
   // ── Rendering ──────────────────────────────────────────────────────────────
+
+  it.each(['', 'categories'])(
+    'requires an enabled Live category before opening stream filters (setup=%s)',
+    (setupStep) => {
+      const { rerender } = render(
+        <LiveGroupFilter
+          playlist={makePlaylist({
+            setup_step: setupStep,
+            enable_vod: true,
+            category_selection_counts: { movie: { selected: 1 } },
+          })}
+          groupStates={[makeGroup({ enabled: false })]}
+          setGroupStates={vi.fn()}
+        />
+      );
+      const open = screen.getByRole('button', { name: 'Stream filters' });
+      expect(open).toBeDisabled();
+      expect(open.parentElement).toHaveAttribute('tabindex', '0');
+      expect(open.parentElement).toHaveAttribute(
+        'aria-label',
+        'Select at least one Live TV category before configuring stream filters.'
+      );
+      fireEvent.click(open);
+      expect(
+        screen.queryByTestId('stream-filters-editor')
+      ).not.toBeInTheDocument();
+      rerender(
+        <LiveGroupFilter
+          playlist={makePlaylist({ setup_step: setupStep })}
+          groupStates={[makeGroup()]}
+          setGroupStates={vi.fn()}
+        />
+      );
+      expect(open).toBeEnabled();
+      fireEvent.click(open);
+      expect(screen.getByTestId('stream-filters-editor')).toBeInTheDocument();
+    }
+  );
 
   describe('rendering', () => {
     it('reserves enough status-column width for the full badge label', () => {

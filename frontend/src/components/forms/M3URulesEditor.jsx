@@ -204,6 +204,7 @@ const M3URulesEditor = ({
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [regexHelpOpen, setRegexHelpOpen] = useState(false);
   const [coverage, setCoverage] = useState({ causes: {}, coveredBy: {} });
+  const [streamInventoryCount, setStreamInventoryCount] = useState(null);
   const coverageRequest = useRef(0);
   const previewRequest = useRef(0);
   const savedRules = useRef(new Map());
@@ -246,6 +247,8 @@ const M3URulesEditor = ({
 
   const acceptCoverage = useCallback(
     (rows, response, forceNotice = false, notify = true) => {
+      if (streamFilters)
+        setStreamInventoryCount(response.inventory_count ?? null);
       const found = getRuleCoverage(rows, response, streamFilters);
       const causes = Object.values(found.causes);
       setCoverage(found);
@@ -278,6 +281,7 @@ const M3URulesEditor = ({
   const checkSavedRows = useCallback(
     async (rows, requestId, preservedErrors = {}) => {
       if (!rows.length) {
+        setStreamInventoryCount(null);
         setCoverage({ causes: {}, coveredBy: {} });
         hideNotification(coverageNotificationId);
         lastCoverageNotice.current = null;
@@ -298,6 +302,7 @@ const M3URulesEditor = ({
         }
       } catch (error) {
         if (requestId !== coverageRequest.current) return;
+        setStreamInventoryCount(null);
         setCoverage({ causes: {}, coveredBy: {} });
         hideNotification(coverageNotificationId);
         error.body?.rules?.forEach?.((fields, index) => {
@@ -338,6 +343,7 @@ const M3URulesEditor = ({
   const load = useCallback(async () => {
     const requestId = ++coverageRequest.current;
     setBusy(true);
+    setStreamInventoryCount(null);
     try {
       const loaded = await API.getM3URules(accountId, kind, scope);
       if (requestId !== coverageRequest.current) return;
@@ -553,14 +559,17 @@ const M3URulesEditor = ({
           },
           true
         );
-        if (!Object.keys(checked.causes).length)
+        if (!Object.keys(checked.causes).length) {
+          const effectUnchecked = streamFilters && !response.inventory_count;
           showNotification({
             id: coverageNotificationId,
             title: streamFilters ? 'Stream filter saved' : 'Import rule saved',
-            message:
-              'Used during future scans. Existing selections are unchanged.',
-            color: 'green',
+            message: effectUnchecked
+              ? 'Effect not yet checked. Preview is available once a Live import has loaded stream data.'
+              : 'Used during future scans. Existing selections are unchanged.',
+            color: effectUnchecked ? 'gray' : 'green',
           });
+        }
       }
     } catch (error) {
       setRowErrors((current) => ({
@@ -602,7 +611,7 @@ const M3URulesEditor = ({
   };
 
   const openPreview = (rule) => {
-    if (busy || hasUnsavedChanges) return;
+    if (busy || hasUnsavedChanges || !hasPreviewData) return;
     const draft = rules.map((item) => ({
       ...item,
       custom_properties: { ...(item.custom_properties || {}) },
@@ -744,6 +753,12 @@ const M3URulesEditor = ({
   const hasUnsavedChanges =
     dirtyIds.size > 0 || rules.some((rule) => rule.isNew);
   const hasNewRule = rules.some((rule) => rule.isNew);
+  const hasPreviewData = !streamFilters || streamInventoryCount > 0;
+  const previewHint = hasUnsavedChanges
+    ? 'Save all changes before previewing.'
+    : !hasPreviewData
+      ? 'Preview is available once a Live import has loaded stream data.'
+      : `Preview ${noun}`;
   const visibleCoverage = hasUnsavedChanges
     ? { causes: {}, coveredBy: {} }
     : coverage;
@@ -823,6 +838,17 @@ const M3URulesEditor = ({
           </span>
         </Tooltip>
       </Group>
+      {streamFilters && !busy && (
+        <Text size="xs" c="dimmed" role="status" aria-live="polite">
+          {hasUnsavedChanges
+            ? 'Effect not yet checked. Save changes to check against available stream data.'
+            : streamInventoryCount === null
+              ? 'Effect not yet checked. Save a filter to check available stream data.'
+              : streamInventoryCount === 0
+                ? 'Effect not yet checked — no stream data available.'
+                : `Checked against ${streamInventoryCount} available streams.`}
+        </Text>
+      )}
       {!rules.length && !busy && !error && (
         <Alert color="gray" variant="light">
           {streamFilters
@@ -1139,27 +1165,29 @@ const M3URulesEditor = ({
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip
-                            label={
-                              hasUnsavedChanges
-                                ? 'Save all changes before previewing.'
-                                : `Preview ${noun}`
-                            }
+                            label={previewHint}
                             events={{ hover: true, focus: true, touch: true }}
                             withArrow
                           >
                             <span
                               style={{ display: 'inline-flex' }}
-                              tabIndex={hasUnsavedChanges ? 0 : undefined}
+                              tabIndex={
+                                hasUnsavedChanges || !hasPreviewData
+                                  ? 0
+                                  : undefined
+                              }
                               aria-label={
-                                hasUnsavedChanges
-                                  ? 'Save all changes before previewing.'
+                                hasUnsavedChanges || !hasPreviewData
+                                  ? previewHint
                                   : undefined
                               }
                             >
                               <ActionIcon
                                 aria-label={`Preview ${noun}`}
                                 variant="subtle"
-                                disabled={busy || hasUnsavedChanges}
+                                disabled={
+                                  busy || hasUnsavedChanges || !hasPreviewData
+                                }
                                 onClick={() => openPreview(rule)}
                               >
                                 <Eye size={16} />

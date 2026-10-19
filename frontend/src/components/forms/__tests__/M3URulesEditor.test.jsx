@@ -103,7 +103,7 @@ describe('M3URulesEditor', () => {
     vi.clearAllMocks();
     useM3URuleChecks.setState({ checks: {} });
     API.getM3URules.mockResolvedValue([]);
-    API.analyzeM3URules.mockResolvedValue({});
+    API.analyzeM3URules.mockResolvedValue({ inventory_count: 1 });
     API.previewM3URules.mockResolvedValue({
       count: 1,
       inventory_count: 1,
@@ -629,6 +629,86 @@ describe('M3URulesEditor', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('### Event')).toBeInTheDocument();
     expect(screen.queryByText('Apply to existing')).not.toBeInTheDocument();
+  });
+  it('keeps stream filter effects unchecked and preview disabled without stream data', async () => {
+    API.getM3URules.mockResolvedValue([
+      rule({ filter_type: 'name', exclude: true }),
+    ]);
+    API.analyzeM3URules.mockResolvedValue({
+      inventory_count: 0,
+      rule_coverage: [{ rule_id: '1', count: 0 }],
+    });
+    renderEditor({ streamFilters: true });
+    expect(
+      await screen.findByText(
+        'Effect not yet checked — no stream data available.'
+      )
+    ).toHaveAttribute('role', 'status');
+    const preview = screen.getByLabelText('Preview filter');
+    expect(preview).toBeDisabled();
+    expect(preview.parentElement).toHaveAttribute('tabindex', '0');
+    expect(preview.parentElement).toHaveAttribute(
+      'aria-label',
+      'Preview is available once a Live import has loaded stream data.'
+    );
+    fireEvent.click(preview);
+    expect(API.previewM3URules).not.toHaveBeenCalled();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
+  it('allows preparing a filter before the first import without claiming its effect was checked', async () => {
+    API.analyzeM3URules.mockResolvedValue({ inventory_count: 0 });
+    API.saveM3URule.mockResolvedValue(
+      rule({ filter_type: 'name', regex_pattern: 'Sports', exclude: true })
+    );
+    renderEditor({ streamFilters: true });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Add filter' })).toBeEnabled()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
+    fireEvent.change(screen.getByLabelText('Regular expression'), {
+      target: { value: 'Sports' },
+    });
+    expect(API.analyzeM3URules).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText('Save filter'));
+    await screen.findByText(
+      'Effect not yet checked — no stream data available.'
+    );
+    expect(API.saveM3URule).toHaveBeenCalledWith(
+      7,
+      'filters',
+      null,
+      expect.objectContaining({ regex_pattern: 'Sports', exclude: true })
+    );
+    expect(screen.getByLabelText('Preview filter')).toBeDisabled();
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Stream filter saved',
+        color: 'gray',
+        message: expect.stringContaining('Effect not yet checked'),
+      })
+    );
+    expect(API.previewM3URules).not.toHaveBeenCalled();
+  });
+  it('unlocks preview after reopening with stream inventory even when every stream is excluded', async () => {
+    API.getM3URules.mockResolvedValue([
+      rule({ filter_type: 'name', regex_pattern: '^', exclude: true }),
+    ]);
+    API.analyzeM3URules.mockResolvedValue({ inventory_count: 0 });
+    const first = renderEditor({ streamFilters: true });
+    await screen.findByText(
+      'Effect not yet checked — no stream data available.'
+    );
+    first.unmount();
+    API.analyzeM3URules.mockResolvedValue({
+      inventory_count: 10,
+      rule_coverage: [{ rule_id: '1', count: 10 }],
+    });
+    renderEditor({ streamFilters: true });
+    await screen.findByText('Checked against 10 available streams.');
+    expect(screen.getByLabelText('Preview filter')).toBeEnabled();
+    expect(
+      screen.getByRole('img', { name: /Matches all 10/ })
+    ).toBeInTheDocument();
   });
   it('requires saving new stream filters and reports validation errors in a notification', async () => {
     renderEditor({ streamFilters: true });

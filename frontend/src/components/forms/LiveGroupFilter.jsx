@@ -837,6 +837,7 @@ const LiveGroupFilter = ({
   const selectedVisibleCount = visibleGroups.filter((group) =>
     selectedGroupIds.has(group.channel_group)
   ).length;
+  const hasEnabledLiveCategories = groupStates.some((group) => group.enabled);
   const toggleVisibleSelection = (checked) => {
     setSelectedGroupIds((current) => {
       const next = new Set(current);
@@ -868,13 +869,33 @@ const LiveGroupFilter = ({
         <Button size="xs" variant="default" onClick={onOpenRules}>
           Import rules
         </Button>
-        <Button
-          size="xs"
-          variant="default"
-          onClick={() => setFiltersOpen(true)}
+        <Tooltip
+          label="Select at least one Live TV category before configuring stream filters."
+          disabled={hasEnabledLiveCategories}
+          events={{ hover: true, focus: true, touch: true }}
+          withArrow
         >
-          Stream filters
-        </Button>
+          <span
+            style={{ display: 'inline-flex' }}
+            tabIndex={hasEnabledLiveCategories ? undefined : 0}
+            aria-label={
+              hasEnabledLiveCategories
+                ? undefined
+                : 'Select at least one Live TV category before configuring stream filters.'
+            }
+          >
+            <Button
+              size="xs"
+              variant="default"
+              disabled={!hasEnabledLiveCategories}
+              onClick={() => {
+                if (hasEnabledLiveCategories) setFiltersOpen(true);
+              }}
+            >
+              Stream filters
+            </Button>
+          </span>
+        </Tooltip>
         <Text size="xs" c="dimmed">
           New unmatched categories are imported disabled.
         </Text>
