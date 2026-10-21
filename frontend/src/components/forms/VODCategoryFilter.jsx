@@ -1,4 +1,10 @@
-import React, { memo, startTransition, useCallback, useEffect, useState } from 'react';
+import React, {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import {
   TextInput,
   Button,
@@ -11,43 +17,54 @@ import {
   Checkbox,
   SegmentedControl,
   Select,
+  MultiSelect,
 } from '@mantine/core';
 import { CircleCheck, CircleX } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
+import API from '../../api';
 
-export const VOD_CATEGORY_QUALITIES = ['4K', '1080p', '720p', '480p', 'SD'];
+export const VOD_CATEGORY_QUALITIES = [
+  '4320p',
+  '2160p',
+  '1440p',
+  '1080p',
+  '720p',
+  '576p',
+  '480p',
+  'SD',
+];
 
-// Common ISO 639-1 codes for IPTV VOD catalogs.
+// Initial options; the backend supplies the complete ISO 639-2/B catalogue.
 export const VOD_CATEGORY_LANGUAGES = [
-  { value: 'en', label: 'English (en)' },
-  { value: 'es', label: 'Spanish (es)' },
-  { value: 'fr', label: 'French (fr)' },
-  { value: 'de', label: 'German (de)' },
-  { value: 'it', label: 'Italian (it)' },
-  { value: 'pt', label: 'Portuguese (pt)' },
-  { value: 'nl', label: 'Dutch (nl)' },
-  { value: 'pl', label: 'Polish (pl)' },
-  { value: 'ru', label: 'Russian (ru)' },
-  { value: 'ar', label: 'Arabic (ar)' },
-  { value: 'tr', label: 'Turkish (tr)' },
-  { value: 'ja', label: 'Japanese (ja)' },
-  { value: 'ko', label: 'Korean (ko)' },
-  { value: 'zh', label: 'Chinese (zh)' },
-  { value: 'hi', label: 'Hindi (hi)' },
-  { value: 'sv', label: 'Swedish (sv)' },
-  { value: 'no', label: 'Norwegian (no)' },
-  { value: 'da', label: 'Danish (da)' },
-  { value: 'fi', label: 'Finnish (fi)' },
-  { value: 'cs', label: 'Czech (cs)' },
-  { value: 'el', label: 'Greek (el)' },
-  { value: 'he', label: 'Hebrew (he)' },
-  { value: 'hu', label: 'Hungarian (hu)' },
-  { value: 'ro', label: 'Romanian (ro)' },
-  { value: 'uk', label: 'Ukrainian (uk)' },
-  { value: 'th', label: 'Thai (th)' },
-  { value: 'vi', label: 'Vietnamese (vi)' },
-  { value: 'id', label: 'Indonesian (id)' },
-  { value: 'ms', label: 'Malay (ms)' },
+  { value: 'eng', legacyValue: 'en', label: 'English (eng)' },
+  { value: 'spa', legacyValue: 'es', label: 'Spanish (spa)' },
+  { value: 'fre', legacyValue: 'fr', label: 'French (fre)' },
+  { value: 'ger', legacyValue: 'de', label: 'German (ger)' },
+  { value: 'ita', legacyValue: 'it', label: 'Italian (ita)' },
+  { value: 'por', legacyValue: 'pt', label: 'Portuguese (por)' },
+  { value: 'dut', legacyValue: 'nl', label: 'Dutch (dut)' },
+  { value: 'pol', legacyValue: 'pl', label: 'Polish (pol)' },
+  { value: 'rus', legacyValue: 'ru', label: 'Russian (rus)' },
+  { value: 'ara', legacyValue: 'ar', label: 'Arabic (ara)' },
+  { value: 'tur', legacyValue: 'tr', label: 'Turkish (tur)' },
+  { value: 'jpn', legacyValue: 'ja', label: 'Japanese (jpn)' },
+  { value: 'kor', legacyValue: 'ko', label: 'Korean (kor)' },
+  { value: 'chi', legacyValue: 'zh', label: 'Chinese (chi)' },
+  { value: 'hin', legacyValue: 'hi', label: 'Hindi (hin)' },
+  { value: 'swe', legacyValue: 'sv', label: 'Swedish (swe)' },
+  { value: 'nor', legacyValue: 'no', label: 'Norwegian (nor)' },
+  { value: 'dan', legacyValue: 'da', label: 'Danish (dan)' },
+  { value: 'fin', legacyValue: 'fi', label: 'Finnish (fin)' },
+  { value: 'cze', legacyValue: 'cs', label: 'Czech (cze)' },
+  { value: 'gre', legacyValue: 'el', label: 'Greek (gre)' },
+  { value: 'heb', legacyValue: 'he', label: 'Hebrew (heb)' },
+  { value: 'hun', legacyValue: 'hu', label: 'Hungarian (hun)' },
+  { value: 'rum', legacyValue: 'ro', label: 'Romanian (rum)' },
+  { value: 'ukr', legacyValue: 'uk', label: 'Ukrainian (ukr)' },
+  { value: 'tha', legacyValue: 'th', label: 'Thai (tha)' },
+  { value: 'vie', legacyValue: 'vi', label: 'Vietnamese (vie)' },
+  { value: 'ind', legacyValue: 'id', label: 'Indonesian (ind)' },
+  { value: 'may', legacyValue: 'ms', label: 'Malay (may)' },
 ];
 
 const QUALITY_OPTIONS = VOD_CATEGORY_QUALITIES.map((q) => ({
@@ -68,8 +85,26 @@ const CategoryCard = memo(function CategoryCard({
   category,
   onToggle,
   onCustomPropertyChange,
+  languageOptions,
 }) {
   const props = category.custom_properties || {};
+  const audioLanguages =
+    props.audio_languages ??
+    (props.language
+      ? [
+          VOD_CATEGORY_LANGUAGES.find(
+            (option) => option.legacyValue === props.language
+          )?.value || props.language,
+        ]
+      : []);
+  const optionsFor = (values) => [
+    ...languageOptions,
+    ...values
+      .filter(
+        (value) => !languageOptions.some((option) => option.value === value)
+      )
+      .map((value) => ({ value, label: value })),
+  ];
 
   return (
     <Stack
@@ -97,30 +132,62 @@ const CategoryCard = memo(function CategoryCard({
         </Text>
       </Button>
       <Group grow gap="xs" wrap="nowrap">
-        <Select
+        <MultiSelect
           size="xs"
-          aria-label="Language"
-          placeholder="Language"
-          data={VOD_CATEGORY_LANGUAGES}
-          value={props.language || null}
+          aria-label="Audio languages"
+          placeholder="Audio languages"
+          data={optionsFor(audioLanguages)}
+          value={audioLanguages}
           onChange={(value) =>
-            onCustomPropertyChange(category.id, 'language', value)
+            onCustomPropertyChange(category.id, 'audio_languages', value)
           }
           searchable
           clearable
-          allowDeselect
         />
+        <MultiSelect
+          size="xs"
+          aria-label="Subtitle languages"
+          placeholder="Subtitle languages"
+          data={optionsFor(props.subtitle_languages || [])}
+          value={props.subtitle_languages || []}
+          onChange={(value) =>
+            onCustomPropertyChange(category.id, 'subtitle_languages', value)
+          }
+          searchable
+          clearable
+        />
+      </Group>
+      <Group grow gap="xs" wrap="nowrap">
         <Select
           size="xs"
           aria-label="Quality"
           placeholder="Quality"
           data={QUALITY_OPTIONS}
-          value={props.quality || null}
+          value={
+            props.resolution ||
+            (props.quality === '4K' ? '2160p' : props.quality) ||
+            null
+          }
           onChange={(value) =>
-            onCustomPropertyChange(category.id, 'quality', value)
+            onCustomPropertyChange(category.id, 'resolution', value)
           }
           clearable
           allowDeselect
+        />
+        <MultiSelect
+          size="xs"
+          aria-label="Video features"
+          placeholder="Video features"
+          data={[
+            { value: 'hdr', label: 'HDR' },
+            { value: 'dv', label: 'Dolby Vision' },
+            { value: '3d', label: '3D' },
+          ]}
+          value={props.video_features || []}
+          onChange={(value) =>
+            onCustomPropertyChange(category.id, 'video_features', value)
+          }
+          clearable
         />
       </Group>
     </Stack>
@@ -138,6 +205,21 @@ const VODCategoryFilter = ({
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [languageOptions, setLanguageOptions] = useState(
+    VOD_CATEGORY_LANGUAGES
+  );
+
+  useEffect(() => {
+    let active = true;
+    API.getVODMetadataOptions()
+      .then((options) => {
+        if (active) setLanguageOptions(options.languages);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (Object.keys(categories).length === 0) {
@@ -156,7 +238,9 @@ const VODCategoryFilter = ({
             (acc) => acc.m3u_account == playlist.id
           );
           if (!match) return null;
-          const custom_properties = parseCustomProperties(match.custom_properties);
+          const custom_properties = parseCustomProperties(
+            match.custom_properties
+          );
           return {
             ...cat,
             enabled: match.enabled || false,
@@ -289,6 +373,7 @@ const VODCategoryFilter = ({
               category={category}
               onToggle={toggleEnabled}
               onCustomPropertyChange={updateCustomProperty}
+              languageOptions={languageOptions}
             />
           ))}
         </SimpleGrid>

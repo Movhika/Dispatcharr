@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
+vi.mock('../../../api', () => ({
+  default: { getVODMetadataOptions: vi.fn(() => new Promise(() => {})) },
+}));
 
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
@@ -12,6 +15,29 @@ vi.mock('lucide-react', () => ({
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
+  MultiSelect: ({
+    value = [],
+    data = [],
+    onChange,
+    'aria-label': ariaLabel,
+  }) => (
+    <select
+      multiple
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) =>
+        onChange(
+          Array.from(event.target.selectedOptions, (option) => option.value)
+        )
+      }
+    >
+      {data.map((item) => (
+        <option key={item.value} value={item.value}>
+          {item.label}
+        </option>
+      ))}
+    </select>
+  ),
   Box: ({ children }) => <div>{children}</div>,
   Button: ({ children, onClick, disabled, color, variant }) => (
     <button
@@ -522,67 +548,69 @@ describe('VODCategoryFilter', () => {
   describe('language and quality selects', () => {
     it('renders language and quality selects for each visible category', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      expect(screen.getAllByLabelText('Language')).toHaveLength(3);
+      expect(screen.getAllByLabelText('Audio languages')).toHaveLength(3);
+      expect(screen.getAllByLabelText('Subtitle languages')).toHaveLength(3);
+      expect(screen.getAllByLabelText('Video features')).toHaveLength(3);
       expect(screen.getAllByLabelText('Quality')).toHaveLength(3);
     });
 
     it('loads existing language and quality from category state', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
-      const languageSelects = screen.getAllByLabelText('Language');
+      const languageSelects = screen.getAllByLabelText('Audio languages');
       const qualitySelects = screen.getAllByLabelText('Quality');
       // Categories render sorted by name: Action, Comedy, Drama
-      expect(languageSelects[0]).toHaveValue('en');
+      expect(languageSelects[0]).toHaveValue(['eng']);
       expect(qualitySelects[0]).toHaveValue('1080p');
-      expect(languageSelects[1]).toHaveValue('');
+      expect(languageSelects[1]).toHaveValue([]);
       expect(qualitySelects[1]).toHaveValue('');
     });
 
-    it('updates custom_properties.language when language changes', () => {
+    it('updates source audio languages without clearing other metadata', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      const languageSelects = screen.getAllByLabelText('Language');
-      fireEvent.change(languageSelects[0], { target: { value: 'es' } });
+      const languageSelects = screen.getAllByLabelText('Audio languages');
+      fireEvent.change(languageSelects[0], { target: { value: 'spa' } });
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
       );
-      expect(called.find((s) => s.id === 1).custom_properties.language).toBe(
-        'es'
-      );
+      expect(
+        called.find((s) => s.id === 1).custom_properties.audio_languages
+      ).toEqual(['spa']);
       expect(called.find((s) => s.id === 1).custom_properties.quality).toBe(
         '1080p'
       );
     });
 
-    it('updates custom_properties.quality when quality changes', () => {
+    it('updates the normalized source resolution', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
       const qualitySelects = screen.getAllByLabelText('Quality');
-      fireEvent.change(qualitySelects[0], { target: { value: '4K' } });
+      fireEvent.change(qualitySelects[0], { target: { value: '2160p' } });
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
       );
-      expect(called.find((s) => s.id === 1).custom_properties.quality).toBe(
-        '4K'
+      expect(called.find((s) => s.id === 1).custom_properties.resolution).toBe(
+        '2160p'
       );
     });
 
-    it('clears language to null when deselected', () => {
+    it('explicitly clears audio languages when deselected', () => {
       const setCategoryStates = vi.fn();
       const props = defaultProps({ setCategoryStates });
       render(<VODCategoryFilter {...props} />);
-      const languageSelects = screen.getAllByLabelText('Language');
+      const languageSelects = screen.getAllByLabelText('Audio languages');
       fireEvent.change(languageSelects[0], { target: { value: '' } });
       const called = latestCategoryStates(
         setCategoryStates,
         props.categoryStates
       );
-      expect(called.find((s) => s.id === 1).custom_properties.language).toBe(
-        null
-      );
+      expect(
+        called.find((s) => s.id === 1).custom_properties.audio_languages
+      ).toEqual([]);
     });
 
     it('hydrates custom_properties from the store on mount', () => {
