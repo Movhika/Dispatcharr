@@ -3,9 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Store mock ─────────────────────────────────────────────────────────────────
 vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
-vi.mock('../../../api', () => ({
-  default: { getVODMetadataOptions: vi.fn(() => new Promise(() => {})) },
-}));
 
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({

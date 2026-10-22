@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { CircleCheck, CircleX, Pencil } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
-import API from '../../api';
+import MEDIA_LANGUAGE_OPTIONS from '../../../../apps/vod/media_languages.json';
 import VODCategoryMetadataEditor from './VODCategoryMetadataEditor';
 
 const VOD_CATEGORY_QUALITIES = [
@@ -30,39 +30,6 @@ const VOD_CATEGORY_QUALITIES = [
   '360p',
 ];
 
-// Initial options; the backend supplies the complete ISO 639-2/B catalogue.
-const VOD_CATEGORY_LANGUAGES = [
-  { value: 'eng', legacyValue: 'en', label: 'English (eng)' },
-  { value: 'spa', legacyValue: 'es', label: 'Spanish (spa)' },
-  { value: 'fre', legacyValue: 'fr', label: 'French (fre)' },
-  { value: 'ger', legacyValue: 'de', label: 'German (ger)' },
-  { value: 'ita', legacyValue: 'it', label: 'Italian (ita)' },
-  { value: 'por', legacyValue: 'pt', label: 'Portuguese (por)' },
-  { value: 'dut', legacyValue: 'nl', label: 'Dutch (dut)' },
-  { value: 'pol', legacyValue: 'pl', label: 'Polish (pol)' },
-  { value: 'rus', legacyValue: 'ru', label: 'Russian (rus)' },
-  { value: 'ara', legacyValue: 'ar', label: 'Arabic (ara)' },
-  { value: 'tur', legacyValue: 'tr', label: 'Turkish (tur)' },
-  { value: 'jpn', legacyValue: 'ja', label: 'Japanese (jpn)' },
-  { value: 'kor', legacyValue: 'ko', label: 'Korean (kor)' },
-  { value: 'chi', legacyValue: 'zh', label: 'Chinese (chi)' },
-  { value: 'hin', legacyValue: 'hi', label: 'Hindi (hin)' },
-  { value: 'swe', legacyValue: 'sv', label: 'Swedish (swe)' },
-  { value: 'nor', legacyValue: 'no', label: 'Norwegian (nor)' },
-  { value: 'dan', legacyValue: 'da', label: 'Danish (dan)' },
-  { value: 'fin', legacyValue: 'fi', label: 'Finnish (fin)' },
-  { value: 'cze', legacyValue: 'cs', label: 'Czech (cze)' },
-  { value: 'gre', legacyValue: 'el', label: 'Greek (gre)' },
-  { value: 'heb', legacyValue: 'he', label: 'Hebrew (heb)' },
-  { value: 'hun', legacyValue: 'hu', label: 'Hungarian (hun)' },
-  { value: 'rum', legacyValue: 'ro', label: 'Romanian (rum)' },
-  { value: 'ukr', legacyValue: 'uk', label: 'Ukrainian (ukr)' },
-  { value: 'tha', legacyValue: 'th', label: 'Thai (tha)' },
-  { value: 'vie', legacyValue: 'vi', label: 'Vietnamese (vie)' },
-  { value: 'ind', legacyValue: 'id', label: 'Indonesian (ind)' },
-  { value: 'may', legacyValue: 'ms', label: 'Malay (may)' },
-];
-
 const categoryMetadata = (category) => {
   const props = category.custom_properties || {};
   return {
@@ -70,7 +37,7 @@ const categoryMetadata = (category) => {
       props.audio_languages ??
       (props.language
         ? [
-            VOD_CATEGORY_LANGUAGES.find(
+            MEDIA_LANGUAGE_OPTIONS.find(
               (option) => option.legacyValue === props.language
             )?.value || props.language,
           ]
@@ -175,22 +142,6 @@ const VODCategoryFilter = ({
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [editingCategory, setEditingCategory] = useState(null);
-  const [languageOptions, setLanguageOptions] = useState(
-    VOD_CATEGORY_LANGUAGES
-  );
-
-  useEffect(() => {
-    let active = true;
-    API.getVODMetadataOptions()
-      .then((options) => {
-        if (active) setLanguageOptions(options.languages);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
-
   useEffect(() => {
     if (Object.keys(categories).length === 0) {
       return;
@@ -355,21 +306,7 @@ const VODCategoryFilter = ({
           <VODCategoryMetadataEditor
             key={editingCategory.id}
             value={categoryMetadata(editingCategory)}
-            languages={[
-              ...languageOptions,
-              ...[
-                ...new Set([
-                  ...categoryMetadata(editingCategory).audio_languages,
-                  ...categoryMetadata(editingCategory).subtitle_languages,
-                ]),
-              ]
-                .filter(
-                  (value) =>
-                    !languageOptions.some((option) => option.value === value)
-                )
-                .map((value) => ({ value, label: value.toUpperCase() })),
-            ]}
-            commonLanguages={VOD_CATEGORY_LANGUAGES}
+            languages={MEDIA_LANGUAGE_OPTIONS}
             resolutions={VOD_CATEGORY_QUALITIES}
             pickerStackId={`vod-category-metadata-${type}`}
             onApply={applyMetadata}

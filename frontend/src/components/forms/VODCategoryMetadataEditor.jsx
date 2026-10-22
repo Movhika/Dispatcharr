@@ -46,7 +46,6 @@ const customFeature = (value) => {
 const VODCategoryMetadataEditor = ({
   value,
   languages,
-  commonLanguages,
   resolutions,
   pickerStackId,
   onApply,
@@ -56,7 +55,6 @@ const VODCategoryMetadataEditor = ({
   const [picker, setPicker] = useState(null);
   const [pending, setPending] = useState([]);
   const [query, setQuery] = useState('');
-  const [showAll, setShowAll] = useState(false);
   const [custom, setCustom] = useState('');
   const isLanguage = picker !== 'video_features';
 
@@ -69,7 +67,6 @@ const VODCategoryMetadataEditor = ({
   const openPicker = (field) => {
     setPending(draft[field]);
     setQuery('');
-    setShowAll(false);
     setCustom('');
     setPicker(field);
   };
@@ -81,16 +78,11 @@ const VODCategoryMetadataEditor = ({
         : [...current, code]
     );
 
-  const commonCodes = new Set(commonLanguages.map((option) => option.value));
   const choices = isLanguage
     ? languages.filter((option) =>
-        query.trim()
-          ? `${option.label} ${option.value}`
-              .toLowerCase()
-              .includes(query.trim().toLowerCase())
-          : showAll ||
-            commonCodes.has(option.value) ||
-            pending.includes(option.value)
+        `${option.label} ${option.value} ${option.legacyValue || ''}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase())
       )
     : [
         ...FEATURE_OPTIONS,
@@ -130,6 +122,7 @@ const VODCategoryMetadataEditor = ({
                 color="gray"
                 size="compact-xs"
                 aria-label={`Remove ${labelFor(field, code)} from ${FIELD_LABELS[field]}`}
+                title={labelFor(field, code)}
                 onClick={() =>
                   setDraft((current) => ({
                     ...current,
@@ -137,7 +130,7 @@ const VODCategoryMetadataEditor = ({
                   }))
                 }
               >
-                {labelFor(field, code)} ×
+                {field === 'video_features' ? labelFor(field, code) : code} ×
               </Button>
             ))
           ) : (
@@ -209,19 +202,10 @@ const VODCategoryMetadataEditor = ({
             <>
               <TextInput
                 aria-label="Search languages"
-                placeholder="Search all languages by name or code"
+                placeholder="Search languages by name or code"
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
               />
-              {!query.trim() && (
-                <Button
-                  type="button"
-                  variant="subtle"
-                  onClick={() => setShowAll((current) => !current)}
-                >
-                  {showAll ? 'Show common languages' : 'Show all languages'}
-                </Button>
-              )}
             </>
           )}
           <ScrollArea h={260} type="auto">

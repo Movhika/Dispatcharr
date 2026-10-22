@@ -10,27 +10,10 @@ import {
 import { MantineProvider, Modal } from '@mantine/core';
 import { describe, expect, it, vi } from 'vitest';
 import VODCategoryFilter from '../VODCategoryFilter';
-
-const fixtures = vi.hoisted(() => ({
-  languages: [
-    { value: 'ger', label: 'German (ger)' },
-    { value: 'eng', label: 'English (eng)' },
-    ...Array.from({ length: 484 }, (_, index) => ({
-      value: `synthetic-${index}`,
-      label: `Synthetic language ${String(index).padStart(3, '0')}`,
-    })),
-  ],
-}));
+import MEDIA_LANGUAGE_OPTIONS from '../../../../../apps/vod/media_languages.json';
 
 vi.mock('../../../store/useVODStore', () => ({
   default: (select) => select({ categories: {} }),
-}));
-vi.mock('../../../api', () => ({
-  default: {
-    getVODMetadataOptions: vi.fn(async () => ({
-      languages: fixtures.languages,
-    })),
-  },
 }));
 
 function CategoryHarness({ type, onChange, properties }) {
@@ -74,7 +57,7 @@ function CategoryHarness({ type, onChange, properties }) {
 
 async function renderCategories(
   type = 'movie',
-  properties = { audio_languages: ['synthetic-483'], provider_field: 'keep' }
+  properties = { audio_languages: ['gmh'], provider_field: 'keep' }
 ) {
   const onChange = vi.fn();
   await act(async () => {
@@ -131,7 +114,7 @@ describe('VOD category metadata with real Mantine controls', () => {
   );
 
   it.each(['DUB languages', 'SUB languages'])(
-    'shows common %s first and searches the full catalogue without applying immediately',
+    'searches the limited %s choices and retains saved unlisted values without applying immediately',
     async (field) => {
       const onChange = await renderCategories();
       await openEditor();
@@ -139,17 +122,13 @@ describe('VOD category metadata with real Mantine controls', () => {
       expect(
         within(picker).getByRole('checkbox', { name: 'German (ger)' })
       ).toBeInTheDocument();
-      expect(
-        within(picker).queryByRole('checkbox', {
-          name: 'Synthetic language 482',
-        })
-      ).not.toBeInTheDocument();
+      expect(within(picker).getAllByRole('checkbox')).toHaveLength(50);
       fireEvent.change(
         within(picker).getByRole('textbox', { name: 'Search languages' }),
-        { target: { value: 'Synthetic language 482' } }
+        { target: { value: 'Slovak' } }
       );
       fireEvent.click(
-        within(picker).getByRole('checkbox', { name: 'Synthetic language 482' })
+        within(picker).getByRole('checkbox', { name: 'Slovak (slo)' })
       );
       await applyPicker(picker);
       expect(onChange).not.toHaveBeenCalled();
@@ -165,16 +144,46 @@ describe('VOD category metadata with real Mantine controls', () => {
       const editor = await openEditor();
       expect(
         within(editor).getByRole('button', {
-          name: new RegExp(`Remove Synthetic language 482 from ${field}`),
+          name: new RegExp(`Remove Slovak \\(slo\\) from ${field}`),
         })
       ).toBeInTheDocument();
       expect(
         within(editor).getByRole('button', {
-          name: 'Remove Synthetic language 483 from DUB languages',
+          name: 'Remove GMH from DUB languages',
         })
       ).toBeInTheDocument();
     }
   );
+
+  it('uses only codes in selected language chips but full names in the selection list', async () => {
+    await renderCategories('movie', {
+      audio_languages: ['eng', 'ger'],
+      subtitle_languages: ['eng'],
+    });
+    const editor = await openEditor();
+    const audio = within(editor).getByRole('button', {
+      name: 'Remove English (eng) from DUB languages',
+    });
+    expect(audio).toHaveTextContent(/^eng ×$/);
+    expect(audio).toHaveAttribute('title', 'English (eng)');
+    expect(
+      within(editor).getByRole('button', {
+        name: 'Remove German (ger) from DUB languages',
+      })
+    ).toHaveTextContent(/^ger ×$/);
+    expect(
+      within(editor).getByRole('button', {
+        name: 'Remove English (eng) from SUB languages',
+      })
+    ).toHaveTextContent(/^eng ×$/);
+    const picker = await openPicker('DUB languages');
+    expect(
+      within(picker).getByRole('checkbox', { name: 'English (eng)' })
+    ).toBeChecked();
+    expect(
+      within(picker).getByRole('checkbox', { name: 'German (ger)' })
+    ).toBeChecked();
+  });
 
   it('closes only the top dialog on Escape and keeps the category selection open', async () => {
     const onChange = await renderCategories();
@@ -199,24 +208,42 @@ describe('VOD category metadata with real Mantine controls', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('can show every language and retain an already selected rare language', async () => {
+  it('never offers historical or collective codes, including through search', async () => {
     await renderCategories();
     await openEditor();
     const picker = await openPicker('DUB languages');
+    expect(picker.querySelectorAll('input[type="checkbox"]')).toHaveLength(
+      MEDIA_LANGUAGE_OPTIONS.length
+    );
     expect(
-      within(picker).getByRole('checkbox', { name: 'Synthetic language 483' })
-    ).toBeChecked();
+      within(picker).queryByRole('button', { name: 'Show all languages' })
+    ).not.toBeInTheDocument();
+    for (const value of ['gmh', 'goh', 'gem', 'Middle High', 'Germanic']) {
+      fireEvent.change(
+        within(picker).getByRole('textbox', { name: 'Search languages' }),
+        { target: { value } }
+      );
+      expect(within(picker).queryByRole('checkbox')).not.toBeInTheDocument();
+    }
+  });
+
+  it('does not offer an unlisted saved value again after it is explicitly removed', async () => {
+    const onChange = await renderCategories();
+    await openEditor();
     fireEvent.click(
-      within(picker).getByRole('button', { name: 'Show all languages' })
+      screen.getByRole('button', { name: 'Remove GMH from DUB languages' })
     );
-    expect(picker.querySelectorAll('input[type="checkbox"]')).toHaveLength(486);
-    fireEvent.click(
-      within(picker).getByRole('button', { name: 'Show common languages' })
+    const picker = await openPicker('DUB languages');
+    fireEvent.change(
+      within(picker).getByRole('textbox', { name: 'Search languages' }),
+      { target: { value: 'gmh' } }
     );
-    expect(picker.querySelectorAll('input[type="checkbox"]')).toHaveLength(3);
-    // Mounting the full real Mantine catalogue is expensive in jsdom when the
-    // entire suite runs concurrently; keep the assertions, allow CPU contention.
-  }, 15000);
+    expect(within(picker).queryByRole('checkbox')).not.toBeInTheDocument();
+    await applyPicker(picker);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    const next = onChange.mock.calls[0][0]([{ id: 1, custom_properties: {} }]);
+    expect(next[0].custom_properties.audio_languages).toEqual([]);
+  });
 
   it('cancels pending picker and editor changes without touching category state', async () => {
     const onChange = await renderCategories();
@@ -235,7 +262,7 @@ describe('VOD category metadata with real Mantine controls', () => {
     expect(onChange).not.toHaveBeenCalled();
     await openEditor(1);
     expect(
-      screen.queryByRole('button', { name: /Remove Synthetic language 483/ })
+      screen.queryByRole('button', { name: /Remove GMH/ })
     ).not.toBeInTheDocument();
   });
 
@@ -276,7 +303,7 @@ describe('VOD category metadata with real Mantine controls', () => {
     ]);
     expect(next[0].custom_properties).toEqual({
       provider_field: 'keep',
-      audio_languages: ['synthetic-483'],
+      audio_languages: ['gmh'],
       subtitle_languages: [],
       resolution: '360p',
       video_features: ['hdr', 'custom:imax'],
