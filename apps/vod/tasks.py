@@ -21,6 +21,49 @@ import re
 logger = logging.getLogger(__name__)
 
 
+class _VODIdentityConflict(ValueError):
+    """Contradictory provider IDs must abort the complete list batch."""
+
+
+def _enrich_list_identities(existing_relations, entries, content_field):
+    """Keep published IDs when a known provider source gains external IDs.
+
+    Run before preparing bulk updates: a compatible merge may retire another
+    canonical row, so callers must then reload their source/content cache.
+    """
+    from .identity import handle_identity_conflicts
+
+    def can_enrich(content, properties):
+        pairs = [
+            (properties.get(field), getattr(content, field))
+            for field in ("tmdb_id", "imdb_id")
+        ]
+        return any(incoming and not current for incoming, current in pairs) and all(
+            not incoming or not current or str(incoming) == str(current)
+            for incoming, current in pairs
+        )
+
+    changed = False
+    for provider_id, properties in entries:
+        relation = existing_relations.get(provider_id)
+        if relation is None or not can_enrich(
+            getattr(relation, content_field), properties
+        ):
+            continue
+        # A preceding merge may have moved this source and deleted its cached
+        # content object. Never save that stale object back into the catalogue.
+        relation = (
+            type(relation).objects.select_related(content_field).get(pk=relation.pk)
+        )
+        content = getattr(relation, content_field)
+        if can_enrich(content, properties):
+            handle_identity_conflicts(
+                content, relation, properties.get("tmdb_id"), properties.get("imdb_id")
+            )
+            changed = True
+    return changed
+
+
 def _empty_categories_should_abort(categories_data, account, category_type):
     """True when an empty provider response would wipe existing group selections."""
     if categories_data:
@@ -502,6 +545,7 @@ def batch_create_categories(categories_data, category_type, account):
 
 
 @shared_task
+@transaction.atomic
 def process_movie_batch(account, batch, categories, relations, scan_start_time=None):
     """Process a batch of movies using simple bulk operations like M3U processing"""
     logger.info(f"Processing movie batch of {len(batch)} movies for account {account.name}")
@@ -514,12 +558,10 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
 
     # Account/provider identity stays stable when category metadata changes.
     batch_stream_ids = [str(movie_data.get('stream_id')) for movie_data in batch]
-    existing_relations = {
-        rel.stream_id: rel for rel in M3UMovieRelation.objects.filter(
-            m3u_account=account,
-            stream_id__in=batch_stream_ids
-        ).select_related('movie')
-    }
+    existing_relation_qs = M3UMovieRelation.objects.filter(
+        m3u_account=account, stream_id__in=batch_stream_ids
+    ).select_related('movie')
+    existing_relations = {rel.stream_id: rel for rel in existing_relation_qs}
 
     # Process each movie in the batch
     for movie_data in batch:
@@ -619,8 +661,21 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
                 },
             }
 
+        except _VODIdentityConflict:
+            raise
         except Exception as e:
             logger.error(f"Error preparing movie {movie_data.get('name', 'Unknown')}: {str(e)}")
+
+    if _enrich_list_identities(
+        existing_relations,
+        (
+            (stream_id, data['props'])
+            for data in movie_keys.values()
+            for stream_id in data['occurrences']
+        ),
+        'movie',
+    ):
+        existing_relations = {rel.stream_id: rel for rel in existing_relation_qs.all()}
 
     # Collect all logo URLs and create logos in batch
     logo_urls = set()
@@ -849,11 +904,13 @@ def process_movie_batch(account, batch, categories, relations, scan_start_time=N
         return f"Movie batch processed: {len(movies_to_create)} created, {len(movies_to_update)} updated"
 
     except Exception as e:
+        transaction.set_rollback(True)
         logger.error(f"Movie batch processing failed: {str(e)}")
         return f"Movie batch processing failed: {str(e)}"
 
 
 @shared_task
+@transaction.atomic
 def process_series_batch(account, batch, categories, relations, scan_start_time=None):
     """Process a batch of series using simple bulk operations like M3U processing"""
     logger.info(f"Processing series batch of {len(batch)} series for account {account.name}")
@@ -866,12 +923,10 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
 
     # Account/provider identity stays stable when category metadata changes.
     batch_series_ids = [str(series_data.get('series_id')) for series_data in batch]
-    existing_relations = {
-        rel.external_series_id: rel for rel in M3USeriesRelation.objects.filter(
-            m3u_account=account,
-            external_series_id__in=batch_series_ids
-        ).select_related('series')
-    }
+    existing_relation_qs = M3USeriesRelation.objects.filter(
+        m3u_account=account, external_series_id__in=batch_series_ids
+    ).select_related('series')
+    existing_relations = {rel.external_series_id: rel for rel in existing_relation_qs}
 
     # Process each series in the batch
     for series_data in batch:
@@ -973,8 +1028,23 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
                 },
             }
 
+        except _VODIdentityConflict:
+            raise
         except Exception as e:
             logger.error(f"Error preparing series {series_data.get('name', 'Unknown')}: {str(e)}")
+
+    if _enrich_list_identities(
+        existing_relations,
+        (
+            (series_id, data['props'])
+            for data in series_keys.values()
+            for series_id in data['occurrences']
+        ),
+        'series',
+    ):
+        existing_relations = {
+            rel.external_series_id: rel for rel in existing_relation_qs.all()
+        }
 
     # Collect all logo URLs and create logos in batch
     logo_urls = set()
@@ -1200,6 +1270,7 @@ def process_series_batch(account, batch, categories, relations, scan_start_time=
         return f"Series batch processed: {len(series_to_create)} created, {len(series_to_update)} updated"
 
     except Exception as e:
+        transaction.set_rollback(True)
         logger.error(f"Series batch processing failed: {str(e)}")
         return f"Series batch processing failed: {str(e)}"
 
@@ -2119,6 +2190,12 @@ def should_apply_provider_list_field(existing_value, new_value):
 
 def merge_blank_vod_list_props(existing_props, incoming_props):
     """Fill blank keys on existing_props from incoming_props (in place)."""
+    for field in ('tmdb_id', 'imdb_id'):
+        current, incoming = existing_props.get(field), incoming_props.get(field)
+        if current and incoming and str(current) != str(incoming):
+            raise _VODIdentityConflict(
+                "Conflicting external identifiers; list batch aborted."
+            )
     for field, value in incoming_props.items():
         if field == 'custom_properties':
             existing_cp = existing_props.get('custom_properties') or {}

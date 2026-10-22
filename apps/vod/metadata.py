@@ -106,22 +106,32 @@ def legacy_category_metadata(properties):
 
 
 def provider_source_metadata(payload):
-    """Only explicitly supplied source fields are facts; titles are not probed."""
+    """Read explicit facts, including the retained XC episode_data.info shape.
+
+    Nested episode details override list-level facts field by field. Reading
+    the retained raw payload also repairs effective metadata for existing
+    sources without requiring a refresh or rewriting an applied migration.
+    """
     payload = payload if isinstance(payload, dict) else {}
     result = {}
-    for key in METADATA_FIELDS:
-        if key in payload and payload[key] is not None:
+    for layer in (payload, payload.get("info")):
+        if not isinstance(layer, dict):
+            continue
+        facts = {}
+        for key in METADATA_FIELDS:
+            if key in layer and layer[key] is not None:
+                try:
+                    facts.update(validate_source_metadata({key: layer[key]}))
+                except ValueError:
+                    # Keep invalid/partial fields in the original provider
+                    # payload; they must not erase other valid declarations.
+                    continue
+        if "resolution" not in facts and layer.get("quality"):
             try:
-                result.update(validate_source_metadata({key: payload[key]}))
+                facts["resolution"] = normalize_resolution(layer["quality"])
             except ValueError:
-                # Keep the original provider payload in custom_properties.
-                # An invalid/partial provider field must not abort the catalogue.
-                continue
-    if "resolution" not in result and payload.get("quality"):
-        try:
-            result["resolution"] = normalize_resolution(payload["quality"])
-        except ValueError:
-            pass
+                pass
+        result.update(facts)
     return result
 
 

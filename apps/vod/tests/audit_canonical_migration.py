@@ -108,7 +108,18 @@ def run():
             series_relation=show_source,
             m3u_account=account,
             stream_id="episode-id",
-            custom_properties={"marker": index},
+            custom_properties={
+                "marker": index,
+                "info": {
+                    "id": "episode-id",
+                    "info": {
+                        "audio_languages": [language],
+                        "subtitle_languages": ["fr"],
+                        "resolution": "2160p",
+                        "video_features": ["hdr"],
+                    },
+                },
+            },
         )
         series.append((show.pk, show.uuid))
         episodes.append((episode.pk, episode.uuid))
@@ -192,6 +203,19 @@ def run():
     assert set(
         M3UEpisodeRelation.objects.filter(episode=episode).values_list("pk", flat=True)
     ) == set(episode_sources)
+    for index, source_id in enumerate(episode_sources):
+        source = M3UEpisodeRelation.objects.select_related("series_relation").get(
+            pk=source_id
+        )
+        effective = source.effective_metadata()
+        assert effective["values"] == {
+            "audio_languages": ["ger" if index == 0 else "eng"],
+            "subtitle_languages": ["fre"],
+            "resolution": "2160p",
+            "video_features": ["hdr"],
+        }
+        assert all(value == "provider" for value in effective["provenance"].values())
+        assert source.custom_properties["marker"] == index
     for index, (old_id, old_uuid) in enumerate(episodes):
         obj, requirements = resolve_content("episode", old_id)
         assert obj.pk == episode.pk
@@ -204,6 +228,7 @@ def run():
     assert VODContentAlias.objects.count() >= 7
     print("CANONICAL_MOVIE_SERIES_EPISODE_MIGRATION_OK")
     print("SOURCE_IDS_PAYLOADS_AND_OLD_PUBLIC_IDS_PRESERVED_OK")
+    print("NESTED_EPISODE_METADATA_PRESERVED_AND_READ_WITHOUT_REFRESH_OK")
     print("PUBLIC_ID_COLLISION_GUARD_OK")
 
 
