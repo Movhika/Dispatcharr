@@ -72,6 +72,9 @@ const QUALITY_OPTIONS = VOD_CATEGORY_QUALITIES.map((q) => ({
   label: q,
 }));
 
+// Otherwise every category mounts hundreds of invisible language options.
+const CATEGORY_COMBOBOX_PROPS = { keepMounted: false };
+
 const parseCustomProperties = (raw) => {
   if (!raw) return {};
   try {
@@ -136,6 +139,8 @@ const CategoryCard = memo(function CategoryCard({
           size="xs"
           aria-label="Audio languages"
           placeholder="Audio languages"
+          comboboxProps={CATEGORY_COMBOBOX_PROPS}
+          limit={50}
           data={optionsFor(audioLanguages)}
           value={audioLanguages}
           onChange={(value) =>
@@ -148,6 +153,8 @@ const CategoryCard = memo(function CategoryCard({
           size="xs"
           aria-label="Subtitle languages"
           placeholder="Subtitle languages"
+          comboboxProps={CATEGORY_COMBOBOX_PROPS}
+          limit={50}
           data={optionsFor(props.subtitle_languages || [])}
           value={props.subtitle_languages || []}
           onChange={(value) =>
@@ -162,6 +169,7 @@ const CategoryCard = memo(function CategoryCard({
           size="xs"
           aria-label="Quality"
           placeholder="Quality"
+          comboboxProps={CATEGORY_COMBOBOX_PROPS}
           data={QUALITY_OPTIONS}
           value={
             props.resolution ||
@@ -178,6 +186,7 @@ const CategoryCard = memo(function CategoryCard({
           size="xs"
           aria-label="Video features"
           placeholder="Video features"
+          comboboxProps={CATEGORY_COMBOBOX_PROPS}
           data={[
             { value: 'hdr', label: 'HDR' },
             { value: 'dv', label: 'Dolby Vision' },
