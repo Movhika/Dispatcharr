@@ -9,6 +9,8 @@ FROM node:24 AS frontend-builder
 
 WORKDIR /app/frontend
 COPY ./frontend /app/frontend
+# The frontend shares the media language catalogue with the backend.
+COPY ./apps/vod/media_languages.json /app/apps/vod/media_languages.json
 # remove any node_modules that may have been copied from the host (x86)
 RUN rm -rf node_modules || true; \
     npm install --no-audit --progress=false;
