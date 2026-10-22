@@ -129,12 +129,9 @@ const M3UGroupFilter = ({
     }
   };
 
-  if (!isOpen) {
-    return <></>;
-  }
-
   return (
     <Modal
+      stackId="m3u-category-selection"
       opened={isOpen}
       onClose={onClose}
       title="M3U Group Filter & Auto Channel Sync"

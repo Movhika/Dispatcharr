@@ -72,7 +72,9 @@ class SourceMetadataOptionsView(APIView):
                 {"value": code, "label": f"{entry['name']} ({code})"}
                 for code, entry in LANGUAGES.items()
             ], key=lambda entry: entry["label"]),
-            "resolutions": list(RESOLUTIONS), "video_features": sorted(VIDEO_FEATURES),
+            # Keep legacy SD values readable, but offer exact numeric tiers for new defaults.
+            "resolutions": [value for value in RESOLUTIONS if value != "SD"],
+            "video_features": sorted(VIDEO_FEATURES),
         }).data)
 
 

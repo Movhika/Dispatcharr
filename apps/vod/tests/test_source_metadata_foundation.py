@@ -69,11 +69,44 @@ class MetadataValidationTests(SimpleTestCase):
             {"audio_languages": ["xx"]},
             {"subtitle_languages": [3]},
             {"video_features": ["anything"]},
+            {"video_features": ["custom:"]},
+            {"video_features": ["custom:bad tag"]},
+            {"video_features": [3]},
             {"resolution": "very good"},
             {"provider_url": "https://example.invalid"},
         ):
             with self.subTest(metadata=metadata), self.assertRaises(ValueError):
                 validate_source_metadata(metadata)
+
+    def test_custom_features_and_numeric_resolutions_round_trip(self):
+        self.assertEqual(
+            validate_source_metadata(
+                {
+                    "video_features": [
+                        "HDR",
+                        "custom:IMAX",
+                        "custom:imax",
+                        "custom:hdr",
+                    ],
+                    "resolution": "360p",
+                }
+            ),
+            {"video_features": ["hdr", "custom:imax"], "resolution": "360p"},
+        )
+        self.assertEqual(
+            validate_source_metadata({"resolution": "SD"}), {"resolution": "SD"}
+        )
+        self.assertTrue(
+            metadata_satisfies(
+                {"video_features": ["hdr", "custom:imax"]},
+                {"video_features": ["custom:imax"]},
+            )
+        )
+        self.assertFalse(
+            metadata_satisfies(
+                {"video_features": ["hdr"]}, {"video_features": ["custom:imax"]}
+            )
+        )
 
     def test_empty_and_reset_are_distinct(self):
         self.assertEqual(
@@ -330,6 +363,37 @@ class SourceMetadataTests(TestCase):
         )
         self.assertTrue(Movie.objects.filter(pk=self.movie.pk).exists())
 
+    def test_category_editor_custom_properties_save_typed_metadata(self):
+        response = self.client.patch(
+            f"/api/m3u/accounts/{self.account.pk}/group-settings/",
+            {
+                "category_settings": [
+                    {
+                        "id": self.category.pk,
+                        "enabled": True,
+                        "custom_properties": {
+                            "audio_languages": ["ger", "eng"],
+                            "subtitle_languages": [],
+                            "resolution": "360p",
+                            "video_features": ["hdr", "custom:imax"],
+                        },
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.category_relation.refresh_from_db()
+        self.assertEqual(
+            self.category_relation.metadata_defaults,
+            {
+                "audio_languages": ["ger", "eng"],
+                "subtitle_languages": [],
+                "resolution": "360p",
+                "video_features": ["hdr", "custom:imax"],
+            },
+        )
+
     def test_partial_provider_refresh_preserves_other_source_facts(self):
         self.source.declared_metadata["video_features"] = ["hdr"]
         update_declared_metadata(self.source, {"audio_languages": ["en"]})
@@ -426,6 +490,13 @@ class SourceMetadataTests(TestCase):
         response = self.client.get("/api/vod/source-metadata-options/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["languages"]), len(LANGUAGES))
+        self.assertIn("360p", response.data["resolutions"])
+        self.assertTrue(
+            all(
+                value.endswith("p") and value[:-1].isdigit()
+                for value in response.data["resolutions"]
+            )
+        )
         self.assertIn(
             {"value": "ger", "label": "German (ger)"}, response.data["languages"]
         )

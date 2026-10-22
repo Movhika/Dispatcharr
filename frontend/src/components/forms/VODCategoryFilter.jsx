@@ -1,10 +1,4 @@
-import React, {
-  memo,
-  startTransition,
-  useCallback,
-  useEffect,
-  useState,
-} from 'react';
+import React, { memo, useCallback, useEffect, useState } from 'react';
 import {
   TextInput,
   Button,
@@ -16,14 +10,16 @@ import {
   Box,
   Checkbox,
   SegmentedControl,
-  Select,
-  MultiSelect,
+  ActionIcon,
+  Tooltip,
+  Modal,
 } from '@mantine/core';
-import { CircleCheck, CircleX } from 'lucide-react';
+import { CircleCheck, CircleX, Pencil } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import API from '../../api';
+import VODCategoryMetadataEditor from './VODCategoryMetadataEditor';
 
-export const VOD_CATEGORY_QUALITIES = [
+const VOD_CATEGORY_QUALITIES = [
   '4320p',
   '2160p',
   '1440p',
@@ -31,11 +27,11 @@ export const VOD_CATEGORY_QUALITIES = [
   '720p',
   '576p',
   '480p',
-  'SD',
+  '360p',
 ];
 
 // Initial options; the backend supplies the complete ISO 639-2/B catalogue.
-export const VOD_CATEGORY_LANGUAGES = [
+const VOD_CATEGORY_LANGUAGES = [
   { value: 'eng', legacyValue: 'en', label: 'English (eng)' },
   { value: 'spa', legacyValue: 'es', label: 'Spanish (spa)' },
   { value: 'fre', legacyValue: 'fr', label: 'French (fre)' },
@@ -67,13 +63,27 @@ export const VOD_CATEGORY_LANGUAGES = [
   { value: 'may', legacyValue: 'ms', label: 'Malay (may)' },
 ];
 
-const QUALITY_OPTIONS = VOD_CATEGORY_QUALITIES.map((q) => ({
-  value: q,
-  label: q,
-}));
-
-// Otherwise every category mounts hundreds of invisible language options.
-const CATEGORY_COMBOBOX_PROPS = { keepMounted: false };
+const categoryMetadata = (category) => {
+  const props = category.custom_properties || {};
+  return {
+    audio_languages:
+      props.audio_languages ??
+      (props.language
+        ? [
+            VOD_CATEGORY_LANGUAGES.find(
+              (option) => option.legacyValue === props.language
+            )?.value || props.language,
+          ]
+        : []),
+    subtitle_languages: props.subtitle_languages || [],
+    resolution: Object.hasOwn(props, 'resolution')
+      ? props.resolution || ''
+      : { '4K': '2160p', FHD: '1080p', HD: '720p' }[props.quality] ||
+        props.quality ||
+        '',
+    video_features: props.video_features || [],
+  };
+};
 
 const parseCustomProperties = (raw) => {
   if (!raw) return {};
@@ -87,27 +97,21 @@ const parseCustomProperties = (raw) => {
 const CategoryCard = memo(function CategoryCard({
   category,
   onToggle,
-  onCustomPropertyChange,
-  languageOptions,
+  onEdit,
 }) {
-  const props = category.custom_properties || {};
-  const audioLanguages =
-    props.audio_languages ??
-    (props.language
-      ? [
-          VOD_CATEGORY_LANGUAGES.find(
-            (option) => option.legacyValue === props.language
-          )?.value || props.language,
-        ]
-      : []);
-  const optionsFor = (values) => [
-    ...languageOptions,
-    ...values
-      .filter(
-        (value) => !languageOptions.some((option) => option.value === value)
-      )
-      .map((value) => ({ value, label: value })),
-  ];
+  const metadata = categoryMetadata(category);
+  const summary = [
+    metadata.audio_languages.length &&
+      `DUB: ${metadata.audio_languages.join(', ').toUpperCase()}`,
+    metadata.subtitle_languages.length &&
+      `SUB: ${metadata.subtitle_languages.join(', ').toUpperCase()}`,
+    metadata.resolution,
+    metadata.video_features
+      .map((feature) => feature.replace(/^custom:/, '').toUpperCase())
+      .join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <Stack
@@ -119,86 +123,42 @@ const CategoryCard = memo(function CategoryCard({
         backgroundColor: category.enabled ? '#2A2A2E' : '#1E1E22',
       }}
     >
-      <Button
-        color={category.enabled ? 'green' : 'gray'}
-        variant="filled"
-        onClick={() => onToggle(category.id)}
-        radius="md"
-        size="xs"
-        leftSection={
-          category.enabled ? <CircleCheck size={14} /> : <CircleX size={14} />
-        }
-        fullWidth
-      >
-        <Text size="xs" truncate>
-          {category.name}
-        </Text>
-      </Button>
-      <Group grow gap="xs" wrap="nowrap">
-        <MultiSelect
+      <Group gap={4} wrap="nowrap">
+        <Button
+          type="button"
+          color={category.enabled ? 'green' : 'gray'}
+          variant="filled"
+          onClick={() => onToggle(category.id)}
+          radius="md"
           size="xs"
-          aria-label="Audio languages"
-          placeholder="Audio languages"
-          comboboxProps={CATEGORY_COMBOBOX_PROPS}
-          limit={50}
-          data={optionsFor(audioLanguages)}
-          value={audioLanguages}
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'audio_languages', value)
+          leftSection={
+            category.enabled ? <CircleCheck size={14} /> : <CircleX size={14} />
           }
-          searchable
-          clearable
-        />
-        <MultiSelect
-          size="xs"
-          aria-label="Subtitle languages"
-          placeholder="Subtitle languages"
-          comboboxProps={CATEGORY_COMBOBOX_PROPS}
-          limit={50}
-          data={optionsFor(props.subtitle_languages || [])}
-          value={props.subtitle_languages || []}
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'subtitle_languages', value)
-          }
-          searchable
-          clearable
-        />
+          style={{ flex: 1, minWidth: 0 }}
+          aria-pressed={category.enabled}
+        >
+          <Text size="xs" truncate>
+            {category.name}
+          </Text>
+        </Button>
+        <Tooltip label="Edit category defaults" withArrow>
+          <ActionIcon
+            type="button"
+            variant="subtle"
+            aria-label={`Edit defaults for ${category.name}`}
+            onClick={() => onEdit(category)}
+          >
+            <Pencil size={16} />
+          </ActionIcon>
+        </Tooltip>
       </Group>
-      <Group grow gap="xs" wrap="nowrap">
-        <Select
-          size="xs"
-          aria-label="Quality"
-          placeholder="Quality"
-          comboboxProps={CATEGORY_COMBOBOX_PROPS}
-          data={QUALITY_OPTIONS}
-          value={
-            props.resolution ||
-            (props.quality === '4K' ? '2160p' : props.quality) ||
-            null
-          }
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'resolution', value)
-          }
-          clearable
-          allowDeselect
-        />
-        <MultiSelect
-          size="xs"
-          aria-label="Video features"
-          placeholder="Video features"
-          comboboxProps={CATEGORY_COMBOBOX_PROPS}
-          data={[
-            { value: 'hdr', label: 'HDR' },
-            { value: 'dv', label: 'Dolby Vision' },
-            { value: '3d', label: '3D' },
-          ]}
-          value={props.video_features || []}
-          onChange={(value) =>
-            onCustomPropertyChange(category.id, 'video_features', value)
-          }
-          clearable
-        />
-      </Group>
+      {summary && (
+        <Tooltip label={summary} withArrow>
+          <Text size="xs" c="dimmed" truncate>
+            {summary}
+          </Text>
+        </Tooltip>
+      )}
     </Stack>
   );
 });
@@ -214,6 +174,7 @@ const VODCategoryFilter = ({
   const categories = useVODStore((s) => s.categories);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [editingCategory, setEditingCategory] = useState(null);
   const [languageOptions, setLanguageOptions] = useState(
     VOD_CATEGORY_LANGUAGES
   );
@@ -273,28 +234,24 @@ const VODCategoryFilter = ({
     [setCategoryStates]
   );
 
-  const updateCustomProperty = useCallback(
-    (id, key, value) => {
-      const nextValue = value === '' || value == null ? null : value;
-      // Keep the Select close/selection responsive; list paint can wait a frame.
-      startTransition(() => {
-        setCategoryStates((prev) =>
-          prev.map((state) => {
-            if (state.id !== id) return state;
-            return {
-              ...state,
+  const applyMetadata = (metadata) => {
+    setCategoryStates((current) =>
+      current.map((category) =>
+        category.id === editingCategory.id
+          ? {
+              ...category,
               custom_properties: {
-                ...(state.custom_properties || {}),
-                // null clears the key on the API merge path
-                [key]: nextValue,
+                ...(category.custom_properties || {}),
+                ...metadata,
+                // null resets resolution on the existing API merge path.
+                resolution: metadata.resolution || null,
               },
-            };
-          })
-        );
-      });
-    },
-    [setCategoryStates]
-  );
+            }
+          : category
+      )
+    );
+    setEditingCategory(null);
+  };
 
   const isVisible = useCallback(
     (category) => {
@@ -381,12 +338,45 @@ const VODCategoryFilter = ({
               key={category.id}
               category={category}
               onToggle={toggleEnabled}
-              onCustomPropertyChange={updateCustomProperty}
-              languageOptions={languageOptions}
+              onEdit={setEditingCategory}
             />
           ))}
         </SimpleGrid>
       </Box>
+      <Modal
+        stackId={`vod-category-defaults-${type}`}
+        opened={Boolean(editingCategory)}
+        onClose={() => setEditingCategory(null)}
+        title={`Category defaults · ${editingCategory?.name || ''}`}
+        closeButtonProps={{ 'aria-label': 'Close category defaults' }}
+        size="md"
+      >
+        {editingCategory && (
+          <VODCategoryMetadataEditor
+            key={editingCategory.id}
+            value={categoryMetadata(editingCategory)}
+            languages={[
+              ...languageOptions,
+              ...[
+                ...new Set([
+                  ...categoryMetadata(editingCategory).audio_languages,
+                  ...categoryMetadata(editingCategory).subtitle_languages,
+                ]),
+              ]
+                .filter(
+                  (value) =>
+                    !languageOptions.some((option) => option.value === value)
+                )
+                .map((value) => ({ value, label: value.toUpperCase() })),
+            ]}
+            commonLanguages={VOD_CATEGORY_LANGUAGES}
+            resolutions={VOD_CATEGORY_QUALITIES}
+            pickerStackId={`vod-category-metadata-${type}`}
+            onApply={applyMetadata}
+            onClose={() => setEditingCategory(null)}
+          />
+        )}
+      </Modal>
     </Stack>
   );
 };

@@ -1,5 +1,7 @@
 """Source-owned VOD metadata shared by import, API and playback selection."""
 
+import re
+
 from .language_codes import LANGUAGES
 
 METADATA_FIELDS = frozenset(
@@ -11,7 +13,7 @@ METADATA_FIELDS = frozenset(
     }
 )
 VIDEO_FEATURES = frozenset({"3d", "hdr", "dv"})
-RESOLUTIONS = ("4320p", "2160p", "1440p", "1080p", "720p", "576p", "480p", "SD")
+RESOLUTIONS = ("4320p", "2160p", "1440p", "1080p", "720p", "576p", "480p", "360p", "SD")
 LANGUAGE_ALIASES = {
     alias: code
     for code, entry in LANGUAGES.items()
@@ -45,6 +47,19 @@ def normalize_resolution(value):
     return resolution
 
 
+def normalize_video_feature(value):
+    if not isinstance(value, str):
+        raise ValueError("Video features must be strings.")
+    feature = value.strip().lower()
+    if feature in VIDEO_FEATURES:
+        return feature
+    if feature.startswith("custom:"):
+        slug = feature.removeprefix("custom:")
+        if re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?", slug):
+            return slug if slug in VIDEO_FEATURES else feature
+    raise ValueError("Use 3d, hdr, dv or a custom:<tag> video feature.")
+
+
 def validate_source_metadata(payload, *, allow_reset=False):
     """Missing keys inherit, [] explicitly clears a list, null resets an override."""
     if not isinstance(payload, dict):
@@ -60,14 +75,11 @@ def validate_source_metadata(payload, *, allow_reset=False):
         elif key == "resolution":
             normalized[key] = normalize_resolution(value)
         elif key == "video_features":
-            if not isinstance(value, list) or any(
-                not isinstance(item, str) or item.lower() not in VIDEO_FEATURES
-                for item in value
-            ):
-                raise ValueError(
-                    "Video features must be a list containing 3d, hdr or dv."
-                )
-            normalized[key] = list(dict.fromkeys(item.lower() for item in value))
+            if not isinstance(value, list):
+                raise ValueError("Video features must be a list.")
+            normalized[key] = list(
+                dict.fromkeys(normalize_video_feature(item) for item in value)
+            )
     return normalized
 
 
@@ -214,7 +226,10 @@ def metadata_suffix(name, metadata):
     tags = [
         "/".join(code.upper() for code in metadata.get("audio_languages", [])),
         metadata.get("resolution", ""),
-        "/".join(feature.upper() for feature in metadata.get("video_features", [])),
+        "/".join(
+            feature.removeprefix("custom:").upper()
+            for feature in metadata.get("video_features", [])
+        ),
     ]
     suffix = " · ".join(tag for tag in tags if tag)
     return f"{name} [{suffix}]" if name and suffix else name

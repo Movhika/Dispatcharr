@@ -276,8 +276,9 @@ const M3U = ({
   }
 
   return (
-    <>
+    <Modal.Stack>
       <Modal
+        stackId="m3u-account"
         size={accountType === 'XC' ? 1280 : 960}
         opened={isOpen}
         onClose={close}
@@ -691,7 +692,7 @@ const M3U = ({
           }
         }}
       />
-    </>
+    </Modal.Stack>
   );
 };
 
