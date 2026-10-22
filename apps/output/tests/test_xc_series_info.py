@@ -103,6 +103,31 @@ class XCGetSeriesInfoTests(TestCase):
         self.assertEqual(info['episodes'][0][0]['title'], 'Special')
         self.assertEqual(info['episodes'][0][0]['season'], 0)
 
+    def test_episodes_keep_their_ids_across_sources_with_other_metadata(self):
+        # B leads with more languages; A's own episode still belongs to the series.
+        M3UEpisodeRelation.objects.filter(m3u_account=self.other_account).update(
+            declared_metadata={'audio_languages': ['eng', 'ger']}
+        )
+        self.relation_b.declared_metadata = {'audio_languages': ['eng', 'ger']}
+        self.relation_b.save(update_fields=['declared_metadata'])
+        s1e2 = Episode.objects.create(
+            series=self.series, name='S1E2', season_number=1, episode_number=2
+        )
+        M3UEpisodeRelation.objects.create(
+            m3u_account=self.account,
+            episode=s1e2,
+            series_relation=self.relation_a,
+            stream_id='a-2',
+            container_extension='mkv',
+            declared_metadata={'audio_languages': ['eng']},
+        )
+        info = self._info(self.series.id)
+        self.assertEqual(
+            [episode['id'] for episode in info['episodes'][1]],
+            [self.s1e1.id, s1e2.id],
+        )
+        self.assertEqual(info['episodes'][0][0]['id'], self.special.id)
+
     def test_prefers_higher_priority_account_stream_metadata(self):
         info = self._info(self.series.id)
         self.assertEqual(info['episodes'][1][0]['container_extension'], 'mp4')
