@@ -8,14 +8,27 @@ vi.mock('../../../store/useVODStore', () => ({ default: vi.fn() }));
 vi.mock('lucide-react', () => ({
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   CircleX: () => <svg data-testid="icon-circle-x" />,
-  Pencil: () => <svg data-testid="icon-pencil" />,
+  Settings: () => <svg data-testid="icon-settings" />,
   Plus: () => <svg data-testid="icon-plus" />,
 }));
 
 // ── Mantine core ───────────────────────────────────────────────────────────────
 vi.mock('@mantine/core', () => ({
-  ActionIcon: ({ children, onClick, 'aria-label': label }) => (
-    <button aria-label={label} onClick={onClick}>
+  ActionIcon: ({
+    children,
+    onClick,
+    disabled,
+    color,
+    variant,
+    'aria-label': label,
+  }) => (
+    <button
+      aria-label={label}
+      onClick={onClick}
+      disabled={disabled}
+      data-color={color}
+      data-variant={variant}
+    >
       {children}
     </button>
   ),
@@ -554,6 +567,36 @@ describe('VODCategoryFilter', () => {
   // ── Language / quality ────────────────────────────────────────────────────
 
   describe('compact metadata summaries', () => {
+    it('uses a disabled settings action for categories that are not enabled', () => {
+      render(<VODCategoryFilter {...defaultProps()} />);
+      const disabled = screen.getByRole('button', {
+        name: 'Edit defaults for Comedy',
+      });
+      expect(disabled).toBeDisabled();
+      expect(
+        disabled.querySelector('[data-testid="icon-settings"]')
+      ).not.toBeNull();
+      fireEvent.click(disabled);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Edit defaults for Action' })
+      ).toBeEnabled();
+    });
+
+    it('highlights configured defaults and keeps an empty settings action neutral', () => {
+      render(<VODCategoryFilter {...defaultProps()} />);
+      const configured = screen.getByRole('button', {
+        name: 'Edit defaults for Action',
+      });
+      expect(configured).toHaveAttribute('data-variant', 'light');
+      expect(configured).toHaveAttribute('data-color', 'blue');
+      const empty = screen.getByRole('button', {
+        name: 'Edit defaults for Drama',
+      });
+      expect(empty).toHaveAttribute('data-variant', 'subtle');
+      expect(empty).toHaveAttribute('data-color', 'gray');
+    });
+
     it('renders an edit action instead of inline metadata controls', () => {
       render(<VODCategoryFilter {...defaultProps()} />);
       expect(

@@ -14,7 +14,7 @@ import {
   Tooltip,
   Modal,
 } from '@mantine/core';
-import { CircleCheck, CircleX, Pencil } from 'lucide-react';
+import { CircleCheck, CircleX, Settings } from 'lucide-react';
 import useVODStore from '../../store/useVODStore';
 import MEDIA_LANGUAGE_OPTIONS from '../../../../apps/vod/media_languages.json';
 import VODCategoryMetadataEditor from './VODCategoryMetadataEditor';
@@ -108,20 +108,33 @@ const CategoryCard = memo(function CategoryCard({
             {category.name}
           </Text>
         </Button>
-        <Tooltip label="Edit category defaults" withArrow>
-          <ActionIcon
-            type="button"
-            variant="subtle"
-            aria-label={`Edit defaults for ${category.name}`}
-            onClick={() => onEdit(category)}
-          >
-            <Pencil size={16} />
-          </ActionIcon>
+        <Tooltip
+          label={
+            category.enabled
+              ? summary
+                ? 'Edit category defaults (configured)'
+                : 'Edit category defaults'
+              : 'Enable category to edit defaults'
+          }
+          withArrow
+        >
+          <Box component="span" style={{ display: 'inline-flex' }}>
+            <ActionIcon
+              type="button"
+              variant={summary ? 'light' : 'subtle'}
+              color={summary ? 'blue' : 'gray'}
+              disabled={!category.enabled}
+              aria-label={`Edit defaults for ${category.name}`}
+              onClick={() => category.enabled && onEdit(category)}
+            >
+              <Settings size={16} />
+            </ActionIcon>
+          </Box>
         </Tooltip>
       </Group>
       {summary && (
         <Tooltip label={summary} withArrow>
-          <Text size="xs" c="dimmed" truncate>
+          <Text size="xs" c="blue" truncate>
             {summary}
           </Text>
         </Tooltip>

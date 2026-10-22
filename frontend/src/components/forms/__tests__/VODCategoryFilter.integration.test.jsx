@@ -97,6 +97,56 @@ async function applyPicker(dialog) {
 
 describe('VOD category metadata with real Mantine controls', () => {
   it.each(['movie', 'series'])(
+    'allows editing %s defaults only after enabling the category and retains their visual summary',
+    async (type) => {
+      await renderCategories(type, {
+        audio_languages: ['ger'],
+        video_features: ['hdr'],
+      });
+      let action = screen.getByRole('button', {
+        name: 'Edit defaults for Synthetic category 0',
+      });
+      expect(action).toBeEnabled();
+      expect(action).toHaveAttribute('data-variant', 'light');
+      expect(action.querySelector('.lucide-settings')).not.toBeNull();
+      const summary = screen.getByText('DUB: GER · HDR');
+      expect(summary.style.color).toContain('blue');
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Synthetic category 0',
+          exact: true,
+        })
+      );
+      action = screen.getByRole('button', {
+        name: 'Edit defaults for Synthetic category 0',
+      });
+      expect(action).toBeDisabled();
+      fireEvent.click(action);
+      expect(
+        screen.queryByRole('dialog', { name: /^Category defaults/ })
+      ).not.toBeInTheDocument();
+      expect(screen.getByText('DUB: GER · HDR')).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Synthetic category 0',
+          exact: true,
+        })
+      );
+      expect(
+        screen.getByRole('button', {
+          name: 'Edit defaults for Synthetic category 0',
+        })
+      ).toBeEnabled();
+      await openEditor();
+      expect(
+        screen.getByRole('button', {
+          name: 'Remove German (ger) from DUB languages',
+        })
+      ).toHaveTextContent('ger');
+    }
+  );
+
+  it.each(['movie', 'series'])(
     'does not mount any editor or hidden option lists for closed %s categories',
     async (type) => {
       await renderCategories(type);
