@@ -7,6 +7,7 @@ import useSettingsStore from '../../store/settings';
 import useAuthStore from '../../store/auth';
 import { copyToClipboard } from '../../utils';
 import { USER_LEVELS } from '../../constants';
+import useScreenshotMode from '../../store/useScreenshotMode.js';
 
 // Mock stores
 vi.mock('../../store/channels');
@@ -167,6 +168,7 @@ const renderSidebar = (props = {}) => {
 describe('Sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useScreenshotMode.setState({ enabled: false });
 
     useChannelsStore.mockReturnValue(mockChannels);
     useSettingsStore.mockImplementation((selector) => {
@@ -186,6 +188,42 @@ describe('Sidebar', () => {
       };
       return selector(state);
     });
+  });
+
+  it('centers the tools above the separate version row and toggles screenshot mode', () => {
+    const { container } = renderSidebar();
+    const tools = screen.getByRole('group', { name: 'Sidebar tools' });
+    expect(tools).toHaveAttribute('justify', 'center');
+    const version = container.querySelector('.sidebar-version');
+    expect(version).not.toBeNull();
+    expect(tools).not.toContainElement(version);
+    expect(
+      tools.compareDocumentPosition(version) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const toggle = screen.getByRole('button', {
+      name: 'Enable screenshot mode',
+    });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(toggle);
+    expect(
+      screen.getByRole('button', { name: 'Disable screenshot mode' })
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    expect(screen.getByText('••••••••')).toBeInTheDocument();
+    expect(container.textContent).toContain(mockEnvironment.public_ip);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Disable screenshot mode' })
+    );
+    expect(useScreenshotMode.getState().enabled).toBe(false);
+    expect(screen.getByText('Admin')).toBeInTheDocument();
+  });
+
+  it('keeps the screenshot toggle available in the collapsed sidebar', () => {
+    const { container } = renderSidebar({ collapsed: true });
+    expect(
+      screen.getByRole('button', { name: 'Enable screenshot mode' })
+    ).toBeInTheDocument();
+    expect(container.querySelector('.sidebar-version')).toBeNull();
   });
 
   describe('Brand Section', () => {
@@ -208,7 +246,7 @@ describe('Sidebar', () => {
       const toggleDrawer = vi.fn();
       renderSidebar({ toggleDrawer });
 
-      const brand = screen.getByText('Dispatcharr').closest('div');
+      const brand = screen.getByRole('button', { name: 'Collapse sidebar' });
       fireEvent.click(brand);
 
       expect(toggleDrawer).toHaveBeenCalledTimes(1);
@@ -220,8 +258,11 @@ describe('Sidebar', () => {
       renderSidebar();
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
-      expect(screen.getByText('M3U & EPG Manager')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
+      expect(screen.getByText('Sources')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Sources'));
+      expect(screen.getByText('M3U Accounts')).toBeInTheDocument();
+      expect(screen.getByText('EPG Sources')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
       expect(screen.getByText('DVR')).toBeInTheDocument();
       expect(screen.getByText('Stats')).toBeInTheDocument();
@@ -289,7 +330,7 @@ describe('Sidebar', () => {
       renderSidebar();
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
       expect(screen.getByText('Settings')).toBeInTheDocument();
       // DVR view and VOD default on for standard users with no custom_properties.
@@ -353,7 +394,7 @@ describe('Sidebar', () => {
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
-      expect(screen.getByText('VODs')).toBeInTheDocument();
+      expect(screen.getByText('Library')).toBeInTheDocument();
       expect(screen.queryByText('DVR')).not.toBeInTheDocument();
     });
   });
@@ -383,7 +424,7 @@ describe('Sidebar', () => {
 
       expect(screen.getByText('Channels')).toBeInTheDocument();
       expect(screen.getByText('TV Guide')).toBeInTheDocument();
-      expect(screen.queryByText('VODs')).not.toBeInTheDocument();
+      expect(screen.queryByText('Library')).not.toBeInTheDocument();
     });
   });
 

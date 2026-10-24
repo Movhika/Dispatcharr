@@ -5,7 +5,6 @@ import useSettingsStore from '../../store/settings';
 import {
   Paper,
   Title,
-  TextInput,
   Button,
   Center,
   Stack,
@@ -19,6 +18,7 @@ import {
   Checkbox,
 } from '@mantine/core';
 import logo from '../../assets/logo.png';
+import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { showNotification } from '../../utils/notificationUtils.js';
 import { defaultRoute, getSafeNextPath } from '../../utils/loginRedirect';
 

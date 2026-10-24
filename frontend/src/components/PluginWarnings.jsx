@@ -8,7 +8,7 @@ export const PluginSecurityWarning = ({ children }) => (
     style={{
       background: 'rgba(239, 68, 68, 0.1)',
       border: '1px solid rgba(239, 68, 68, 0.35)',
-      borderRadius: 'var(--mantine-radius-sm)',
+      borderRadius: 'var(--mantine-radius-default)',
       padding: '10px 14px',
       display: 'flex',
       gap: 10,
@@ -29,7 +29,7 @@ export const PluginSupportDisclaimer = () => (
     style={{
       background: 'rgba(20, 145, 126, 0.1)',
       border: '1px solid rgba(20, 145, 126, 0.35)',
-      borderRadius: 'var(--mantine-radius-sm)',
+      borderRadius: 'var(--mantine-radius-default)',
       padding: '10px 14px',
       display: 'flex',
       gap: 10,
@@ -59,7 +59,7 @@ export const PluginDowngradeWarning = ({ children }) => (
     style={{
       background: 'rgba(249, 115, 22, 0.1)',
       border: '1px solid rgba(249, 115, 22, 0.35)',
-      borderRadius: 'var(--mantine-radius-sm)',
+      borderRadius: 'var(--mantine-radius-default)',
       padding: '10px 14px',
       display: 'flex',
       gap: 10,
@@ -80,7 +80,7 @@ export const PluginInfoNote = ({ children }) => (
     style={{
       background: 'rgba(148, 163, 184, 0.08)',
       border: '1px solid rgba(148, 163, 184, 0.25)',
-      borderRadius: 'var(--mantine-radius-sm)',
+      borderRadius: 'var(--mantine-radius-default)',
       padding: '10px 14px',
       display: 'flex',
       gap: 10,
@@ -101,7 +101,7 @@ export const PluginRestartWarning = () => (
     style={{
       background: 'rgba(234, 179, 8, 0.1)',
       border: '1px solid rgba(234, 179, 8, 0.35)',
-      borderRadius: 'var(--mantine-radius-sm)',
+      borderRadius: 'var(--mantine-radius-default)',
       padding: '10px 14px',
       display: 'flex',
       gap: 10,
