@@ -12,6 +12,7 @@ vi.mock('../../../api.js', () => ({
 }));
 
 vi.mock('../../dateTimeUtils.js', () => ({
+  diff: vi.fn((a, b) => new Date(a) - new Date(b)),
   format: vi.fn((val, fmt) => `formatted:${fmt}`),
   formatDuration: vi.fn((seconds) => `duration:${seconds}`),
 }));
@@ -133,6 +134,25 @@ describe('M3UsTableUtils', () => {
 
     it('returns "gray.5" for null', () => {
       expect(M3UsTableUtils.getStatusColor(null)).toBe('gray.5');
+    });
+  });
+
+  // ── getDaysLeft ─────────────────────────────────────────────────────────────
+  describe('getDaysLeft', () => {
+    const now = '2026-11-13T10:00:00Z';
+
+    it('is negative once the expiration has passed, even within a day', () => {
+      expect(M3UsTableUtils.getDaysLeft('2026-11-12T23:00:00Z', now)).toBe(-1);
+      expect(M3UsTableUtils.getDaysLeft('2026-11-13T09:59:00Z', now)).toBe(-1);
+    });
+
+    it('is 0 for an expiration within the next day', () => {
+      expect(M3UsTableUtils.getDaysLeft('2026-11-13T10:00:00Z', now)).toBe(0);
+      expect(M3UsTableUtils.getDaysLeft('2026-11-14T09:59:00Z', now)).toBe(0);
+    });
+
+    it('counts whole days left', () => {
+      expect(M3UsTableUtils.getDaysLeft('2026-11-15T12:00:00Z', now)).toBe(2);
     });
   });
 

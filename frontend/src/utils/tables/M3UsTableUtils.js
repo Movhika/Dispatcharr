@@ -1,5 +1,5 @@
 import API from '../../api.js';
-import { format } from '../dateTimeUtils.js';
+import { diff, format } from '../dateTimeUtils.js';
 import { formatDuration } from '../dateTimeUtils.js';
 import { formatSpeed } from '../networkUtils.js';
 
@@ -41,6 +41,13 @@ export const getStatusColor = (status) => {
     default:              return 'gray.5';
   }
 };
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+// Whole days until the expiration, rounded down: a date that has already
+// passed is negative, even when it was less than a day ago.
+export const getDaysLeft = (expiration, now) =>
+  Math.floor(diff(expiration, now) / DAY_IN_MS);
 
 export const getExpirationInfo = (daysLeft, earliest, fullDateFormat) => {
   let color;
