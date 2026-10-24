@@ -187,6 +187,7 @@ import API from '../../../api';
 import { copyToClipboard } from '../../../utils';
 import { USER_LEVELS, USER_LEVEL_LABELS } from '../../../constants';
 import UsersTable from '../UsersTable';
+import useScreenshotMode from '../../../store/useScreenshotMode.js';
 
 // ── Factories ──────────────────────────────────────────────────────────────────
 const makeUser = (overrides = {}) => ({
@@ -665,6 +666,24 @@ describe('UsersTable', () => {
       fireEvent.click(toggleBtn);
       fireEvent.click(getByTestId('icon-eye-off').closest('button'));
       expect(getByText('••••••••')).toBeInTheDocument();
+    });
+
+    it('keeps the password hidden and the toggle disabled in screenshot mode', () => {
+      setupMocks();
+      render(<UsersTable />);
+      useScreenshotMode.setState({ enabled: true });
+      try {
+        const { getByText, getByTestId, queryByText } = renderXCCell({
+          xc_password: 'mypassword',
+        });
+        const toggleBtn = getByTestId('icon-eye').closest('button');
+        expect(toggleBtn).toBeDisabled();
+        fireEvent.click(toggleBtn);
+        expect(queryByText('mypassword')).not.toBeInTheDocument();
+        expect(getByText('••••••••')).toBeInTheDocument();
+      } finally {
+        useScreenshotMode.setState({ enabled: false });
+      }
     });
 
     it('shows "N/A" when no xc_password', () => {

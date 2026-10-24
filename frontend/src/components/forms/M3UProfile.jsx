@@ -14,9 +14,12 @@ import {
   SegmentedControl,
   Text,
   Textarea,
-  TextInput,
   Title,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitiveValue,
+} from '../SensitiveFields.jsx';
 import { TriangleAlert } from 'lucide-react';
 import { DateTimePicker } from '@mantine/dates';
 import { useWebSocket } from '../../WebSocketContext';
@@ -463,12 +466,12 @@ const RegexFormAndView = ({
                     highlighted
                   </Badge>
                 </Text>
-                <Text
+                <SensitiveValue
                   size="sm"
                   sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                 >
                   {getHighlightedSearchText()}
-                </Text>
+                </SensitiveValue>
               </Paper>
             </GridCol>
 
@@ -477,12 +480,12 @@ const RegexFormAndView = ({
                 <Text size="sm" weight={500} mb={3}>
                   Result After Replace
                 </Text>
-                <Text
+                <SensitiveValue
                   size="sm"
                   sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
                 >
                   {getLocalReplaceResult()}
-                </Text>
+                </SensitiveValue>
               </Paper>
             </GridCol>
           </Grid>

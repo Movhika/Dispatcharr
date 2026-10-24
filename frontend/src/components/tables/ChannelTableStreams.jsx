@@ -38,6 +38,7 @@ import usePlaylistsStore from '../../store/playlists';
 import useVideoStore from '../../store/useVideoStore';
 import useSettingsStore from '../../store/settings';
 import CatchupIndicator from '../CatchupIndicator';
+import { SensitiveValue } from '../SensitiveFields.jsx';
 import {
   closestCenter,
   DndContext,
@@ -283,7 +284,13 @@ const StreamInfoCell = React.memo(
             </Badge>
           )}
           {stream.url && (
-            <Tooltip label={stream.url}>
+            <Tooltip
+              label={
+                <SensitiveValue component="span" size="inherit">
+                  {stream.url}
+                </SensitiveValue>
+              }
+            >
               <Badge
                 size="xs"
                 variant="light"

@@ -1,7 +1,6 @@
 // Modal.js
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  TextInput,
   Button,
   Checkbox,
   Modal,
@@ -21,6 +20,7 @@ import {
   Switch,
   UnstyledButton,
 } from '@mantine/core';
+import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { TriangleAlert, Trash2, Plus, Search } from 'lucide-react';
 import { isNotEmpty, useForm } from '@mantine/form';
 import ScheduleInput from './ScheduleInput';

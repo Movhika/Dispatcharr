@@ -29,6 +29,7 @@ import {
 import { useDateTimeFormat } from '../../utils/dateTimeUtils.js';
 import useUsersStore from '../../store/users.jsx';
 import AudioStreamBadge from '../AudioStreamBadge.jsx';
+import { SensitiveValue } from '../SensitiveFields.jsx';
 
 const ClientDetails = ({ connection, connectionStartTime }) => (
   <Stack
@@ -361,9 +362,9 @@ const TimeshiftConnectionCard = ({
                     <Text size="sm" c="dimmed">
                       User:
                     </Text>
-                    <Text size="sm">
+                    <SensitiveValue size="sm">
                       {usersMap[String(connection.user_id)]}
-                    </Text>
+                    </SensitiveValue>
                   </>
                 )}
               </Group>

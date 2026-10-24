@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import EPGsTable from '../EPGsTable';
+import useScreenshotMode from '../../../store/useScreenshotMode.js';
 
 // ── Store mocks ────────────────────────────────────────────────────────────────
 vi.mock('../../../store/epgs', () => ({ default: vi.fn() }));
@@ -955,6 +956,26 @@ describe('EPGsTable', () => {
       const cell = { getValue: vi.fn(() => null) };
       const { getByText } = render(urlCol.cell({ cell, row }));
       expect(getByText('/data/epg.xml')).toBeInTheDocument();
+    });
+
+    it('hides the url in screenshot mode', () => {
+      setupMocks();
+      render(<EPGsTable />);
+      useScreenshotMode.setState({ enabled: true });
+      try {
+        const urlCol = capturedTableOptions.columns.find(
+          (c) => c.accessorKey === 'url'
+        );
+        const row = { original: makeEpg() };
+        const cell = { getValue: vi.fn(() => 'http://example.com/epg.xml') };
+        const { queryByText, getByText } = render(urlCol.cell({ cell, row }));
+        expect(
+          queryByText('http://example.com/epg.xml')
+        ).not.toBeInTheDocument();
+        expect(getByText('••••••••')).toBeInTheDocument();
+      } finally {
+        useScreenshotMode.setState({ enabled: false });
+      }
     });
   });
 
