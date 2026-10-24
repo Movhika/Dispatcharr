@@ -20,6 +20,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { ScreenshotText, SensitiveValue } from '../SensitiveFields.jsx';
 import {
   ChevronDown,
   Filter,
@@ -147,7 +148,7 @@ const EPGStatusCell = ({ epg }) => {
         )}
         {additionalInfo && (
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {additionalInfo}
+            <ScreenshotText>{additionalInfo}</ScreenshotText>
           </Text>
         )}
       </Stack>
@@ -157,14 +158,18 @@ const EPGStatusCell = ({ epg }) => {
   // Show error message
   if (epg.status === 'error' && epg.last_message) {
     return (
-      <Tooltip label={epg.last_message} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text
           c="dimmed"
           size="xs"
           lineClamp={2}
           style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
         >
-          {epg.last_message}
+          <ScreenshotText>{epg.last_message}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -175,14 +180,18 @@ const EPGStatusCell = ({ epg }) => {
     const successMessage =
       epg.last_message || 'EPG data refreshed successfully';
     return (
-      <Tooltip label={successMessage} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{successMessage}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text
           c="dimmed"
           size="xs"
           lineClamp={2}
           style={{ color: theme.colors.green[6], lineHeight: 1.3 }}
         >
-          {successMessage}
+          <ScreenshotText>{successMessage}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -191,9 +200,13 @@ const EPGStatusCell = ({ epg }) => {
   // Show idle message
   if (epg.status === 'idle' && epg.last_message) {
     return (
-      <Tooltip label={epg.last_message} multiline width={300}>
+      <Tooltip
+        label={<ScreenshotText>{epg.last_message}</ScreenshotText>}
+        multiline
+        width={300}
+      >
         <Text c="dimmed" size="xs" lineClamp={2} style={{ lineHeight: 1.3 }}>
-          {epg.last_message}
+          <ScreenshotText>{epg.last_message}</ScreenshotText>
         </Text>
       </Tooltip>
     );
@@ -279,35 +292,38 @@ const EPGsTable = () => {
         cell: ({ cell, row }) => {
           const sourceType = row.original.source_type;
           let value = '';
-          let tooltip = '';
 
           if (sourceType === 'schedules_direct') {
             // Never expose credentials — show username only
             const username = row.original.username || '';
             value = username ? `User: ${username}` : '(credentials set)';
-            tooltip = value;
           } else {
             value =
               cell.getValue() ||
               row.original.password ||
               row.original.file_path ||
               '';
-            tooltip = value;
           }
 
           return (
-            <Tooltip label={tooltip} disabled={!tooltip}>
-              <div
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: '100%',
-                }}
-              >
-                {value}
-              </div>
-            </Tooltip>
+            <SensitiveValue
+              withTooltip
+              sensitive={
+                sourceType === 'schedules_direct'
+                  ? !!row.original.username
+                  : !!(row.original.url || row.original.password)
+              }
+              component="div"
+              inherit
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+              }}
+            >
+              {value}
+            </SensitiveValue>
           );
         },
       },
@@ -737,17 +753,31 @@ const EPGsTable = () => {
 
 Name: ${epgToDelete.name}
 Source Type: ${epgToDelete.source_type}
-${
-  epgToDelete.source_type === 'schedules_direct'
-    ? epgToDelete.username
-      ? `Username: ${epgToDelete.username}`
-      : '(credentials set)'
-    : epgToDelete.url
-      ? `URL: ${epgToDelete.url}`
-      : epgToDelete.file_path
-        ? `File Path: ${epgToDelete.file_path}`
-        : ''
-}
+`}
+              {epgToDelete.source_type === 'schedules_direct' ? (
+                epgToDelete.username ? (
+                  <>
+                    Username:{' '}
+                    <SensitiveValue component="span" inherit>
+                      {epgToDelete.username}
+                    </SensitiveValue>
+                  </>
+                ) : (
+                  '(credentials set)'
+                )
+              ) : epgToDelete.url ? (
+                <>
+                  URL:{' '}
+                  <SensitiveValue component="span" inherit>
+                    {epgToDelete.url}
+                  </SensitiveValue>
+                </>
+              ) : epgToDelete.file_path ? (
+                `File Path: ${epgToDelete.file_path}`
+              ) : (
+                ''
+              )}
+              {`
 
 This will remove all related program information and channel associations.
 This action cannot be undone.`}

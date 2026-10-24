@@ -6,7 +6,6 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
-  PasswordInput,
   Select,
   Stack,
   Switch,
@@ -16,9 +15,12 @@ import {
   TabsTab,
   TagsInput,
   Text,
-  TextInput,
   useMantineTheme,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitivePasswordInput as PasswordInput,
+} from '../SensitiveFields.jsx';
 import { Copy, Key, RotateCcwKey, Trash2, X } from 'lucide-react';
 import { useForm } from '@mantine/form';
 import useChannelsStore from '../../store/channels';

@@ -219,6 +219,7 @@ import * as M3UsTableUtils from '../../../utils/tables/M3UsTableUtils.js';
 import * as DateTimeUtils from '../../../utils/dateTimeUtils.js';
 import { useTable } from '../CustomTable';
 import M3UTable from '../M3UsTable';
+import useScreenshotMode from '../../../store/useScreenshotMode.js';
 
 // ── Factories ──────────────────────────────────────────────────────────────────
 const makePlaylist = (overrides = {}) => ({
@@ -764,6 +765,40 @@ describe('M3UTable', () => {
         })
       );
       expect(getByText('/files/list.m3u')).toBeInTheDocument();
+    });
+
+    it('hides the provider URL but not a file path in screenshot mode', () => {
+      setupMocks();
+      render(<M3UTable />);
+      useScreenshotMode.setState({ enabled: true });
+      try {
+        const remote = makePlaylist({
+          server_url: 'http://example.com/list.m3u',
+        });
+        const local = makePlaylist({
+          server_url: '',
+          file_path: '/files/list.m3u',
+        });
+        const { queryByText, getByText } = render(
+          <>
+            {getCol('server_url').cell({
+              cell: { getValue: () => remote.server_url },
+              row: { original: remote },
+            })}
+            {getCol('server_url').cell({
+              cell: { getValue: () => '' },
+              row: { original: local },
+            })}
+          </>
+        );
+        expect(
+          queryByText('http://example.com/list.m3u')
+        ).not.toBeInTheDocument();
+        expect(getByText('••••••••')).toBeInTheDocument();
+        expect(getByText('/files/list.m3u')).toBeInTheDocument();
+      } finally {
+        useScreenshotMode.setState({ enabled: false });
+      }
     });
   });
 

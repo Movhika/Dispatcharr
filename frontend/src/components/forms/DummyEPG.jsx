@@ -20,8 +20,8 @@ import {
   Stack,
   Text,
   Textarea,
-  TextInput,
 } from '@mantine/core';
+import { SensitiveTextInput as TextInput } from '../SensitiveFields.jsx';
 import { Info } from 'lucide-react';
 import { useForm } from '@mantine/form';
 import useEPGsStore from '../../store/epgs';

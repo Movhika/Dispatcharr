@@ -25,6 +25,7 @@ import {
   MenuItem,
   MenuTarget,
 } from '@mantine/core';
+import { ScreenshotText, SensitiveValue } from '../SensitiveFields.jsx';
 import {
   SquareMinus,
   SquarePen,
@@ -345,18 +346,20 @@ const M3UTable = () => {
         cell: ({ cell, row }) => {
           const value = cell.getValue() || row.original.file_path || '';
           return (
-            <Tooltip label={value} disabled={!value}>
-              <div
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: '100%',
-                }}
-              >
-                {value}
-              </div>
-            </Tooltip>
+            <SensitiveValue
+              withTooltip
+              sensitive={!!row.original.server_url}
+              component="div"
+              inherit
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+              }}
+            >
+              {value}
+            </SensitiveValue>
           );
         },
       },
@@ -415,14 +418,18 @@ const M3UTable = () => {
           // Show error message with red styling for errors
           if (data.status === 'error') {
             return (
-              <Tooltip label={value} multiline width={300}>
+              <Tooltip
+                label={<ScreenshotText>{value}</ScreenshotText>}
+                multiline
+                width={300}
+              >
                 <Text
                   c="dimmed"
                   size="xs"
                   lineClamp={2}
                   style={{ color: theme.colors.red[6], lineHeight: 1.3 }}
                 >
-                  {value}
+                  <ScreenshotText>{value}</ScreenshotText>
                 </Text>
               </Tooltip>
             );
@@ -431,7 +438,11 @@ const M3UTable = () => {
           // Show success message with green styling for success
           if (data.status === 'success') {
             return (
-              <Tooltip label={value} multiline width={300}>
+              <Tooltip
+                label={<ScreenshotText>{value}</ScreenshotText>}
+                multiline
+                width={300}
+              >
                 <Text
                   c="dimmed"
                   size="xs"
@@ -443,7 +454,7 @@ const M3UTable = () => {
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  {value}
+                  <ScreenshotText>{value}</ScreenshotText>
                 </Text>
               </Tooltip>
             );
@@ -451,14 +462,18 @@ const M3UTable = () => {
 
           // For all other status values, just use dimmed text
           return (
-            <Tooltip label={value} multiline width={300}>
+            <Tooltip
+              label={<ScreenshotText>{value}</ScreenshotText>}
+              multiline
+              width={300}
+            >
               <Text
                 c="dimmed"
                 size="xs"
                 lineClamp={2}
                 style={{ lineHeight: 1.1 }}
               >
-                {value}
+                <ScreenshotText>{value}</ScreenshotText>
               </Text>
             </Tooltip>
           );

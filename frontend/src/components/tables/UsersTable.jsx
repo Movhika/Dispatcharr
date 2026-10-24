@@ -5,6 +5,8 @@ import useUsersStore from '../../store/users';
 import useChannelsStore from '../../store/channels';
 import useAuthStore from '../../store/auth';
 import useSettingsStore from '../../store/settings';
+import useScreenshotMode from '../../store/useScreenshotMode.js';
+import { SensitiveValue } from '../SensitiveFields.jsx';
 import { USER_LEVELS, USER_LEVEL_LABELS } from '../../constants';
 import useWarningsStore from '../../store/warnings';
 import {
@@ -59,6 +61,7 @@ const deleteUser = (id) => {
 };
 const XCPasswordCell = ({ getValue }) => {
   const [isVisible, setIsVisible] = useState(false);
+  const screenshotMode = useScreenshotMode((state) => state.enabled);
   const customProps = getValue() || {};
   const password = customProps.xc_password || 'N/A';
 
@@ -82,16 +85,25 @@ const XCPasswordCell = ({ getValue }) => {
           whiteSpace: 'nowrap',
         }}
       >
-        {password === 'N/A' ? 'N/A' : isVisible ? password : '••••••••'}
+        {password === 'N/A'
+          ? 'N/A'
+          : isVisible && !screenshotMode
+            ? password
+            : '••••••••'}
       </Text>
       {password !== 'N/A' && (
         <ActionIcon
           size="xs"
           variant="transparent"
           color="gray"
+          disabled={screenshotMode}
           onClick={() => setIsVisible((v) => !v)}
         >
-          {isVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+          {isVisible && !screenshotMode ? (
+            <EyeOff size={12} />
+          ) : (
+            <Eye size={12} />
+          )}
         </ActionIcon>
       )}
     </Group>
@@ -320,7 +332,9 @@ const UsersTable = () => {
               textOverflow: 'ellipsis',
             }}
           >
-            {getValue()}
+            <SensitiveValue component="span" inherit>
+              {getValue()}
+            </SensitiveValue>
           </Box>
         ),
       },
@@ -622,7 +636,11 @@ const UsersTable = () => {
             <div style={{ whiteSpace: 'pre-line' }}>
               {`Are you sure you want to delete the following user?
 
-Username: ${userToDelete.username}
+Username: `}
+              <SensitiveValue component="span" inherit>
+                {userToDelete.username}
+              </SensitiveValue>
+              {`
 Email: ${userToDelete.email}
 User Level: ${USER_LEVEL_LABELS[userToDelete.user_level]}
 

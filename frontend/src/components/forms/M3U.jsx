@@ -15,12 +15,14 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
-  PasswordInput,
   Select,
   Stack,
   Switch,
-  TextInput,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitivePasswordInput as PasswordInput,
+} from '../SensitiveFields.jsx';
 import M3UGroupFilter from './M3UGroupFilter';
 import useChannelsStore from '../../store/channels';
 import { isNotEmpty, useForm } from '@mantine/form';
