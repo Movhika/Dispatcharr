@@ -6,8 +6,8 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
-  PasswordInput,
   Select,
+  SimpleGrid,
   Stack,
   Switch,
   Tabs,
@@ -16,9 +16,13 @@ import {
   TabsTab,
   TagsInput,
   Text,
-  TextInput,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import {
+  SensitiveTextInput as TextInput,
+  SensitivePasswordInput as PasswordInput,
+} from '../SensitiveFields.jsx';
 import { Copy, Key, RotateCcwKey, Trash2, X } from 'lucide-react';
 import { useForm } from '@mantine/form';
 import useChannelsStore from '../../store/channels';
@@ -45,6 +49,33 @@ import {
 } from '../../utils/forms/UserUtils.js';
 import ApiKeyQrPopover from './ApiKeyQrPopover';
 import UserAppData from './UserAppData';
+import editorClasses from './AccountEditor.module.css';
+
+const helpLabel = (label, help) => (
+  <Group gap={5} wrap="nowrap">
+    <Text span inherit>
+      {label}
+    </Text>
+    <Tooltip
+      label={help}
+      multiline
+      maw={360}
+      withArrow
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Text
+        span
+        size="xs"
+        c="dimmed"
+        tabIndex={0}
+        aria-label={`${label} help`}
+        style={{ cursor: 'help' }}
+      >
+        ⓘ
+      </Text>
+    </Tooltip>
+  </Group>
+);
 
 const User = ({ user = null, isOpen, onClose }) => {
   const profiles = useChannelsStore((s) => s.profiles);
@@ -148,6 +179,10 @@ const User = ({ user = null, isOpen, onClose }) => {
     // form is from useForm; only re-sync when the edited user changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  useEffect(() => {
+    setActiveTab('account');
+  }, [isOpen, user?.id]);
 
   const onAllowedM3uProfilesChange = (values) => {
     // Any MultiSelect change (including clear to []) is an explicit allowlist.
@@ -303,10 +338,27 @@ const User = ({ user = null, isOpen, onClose }) => {
   };
 
   return (
-    <Modal opened={isOpen} onClose={onClose} title="User" size="xl">
-      <form onSubmit={form.onSubmit(onSubmit)}>
-        <Tabs value={activeTab} onChange={setActiveTab}>
-          <TabsList mb="md">
+    <Modal
+      opened={isOpen}
+      onClose={onClose}
+      title={user?.id ? 'Edit user' : 'Create user'}
+      closeButtonProps={{ 'aria-label': 'Close user editor' }}
+      size="min(880px, 94vw)"
+      classNames={{
+        content: `${editorClasses.content} ${editorClasses.userContent}`,
+        body: editorClasses.body,
+        header: editorClasses.header,
+      }}
+      yOffset="2vh"
+      xOffset="3vw"
+    >
+      <form onSubmit={form.onSubmit(onSubmit)} className={editorClasses.form}>
+        <Tabs
+          value={activeTab}
+          onChange={setActiveTab}
+          className={`${editorClasses.tabs} ${editorClasses.accountTabs}`}
+        >
+          <TabsList className={editorClasses.tabList}>
             <TabsTab value="account">Account</TabsTab>
             {showPermissions && (
               <TabsTab value="permissions">Permissions</TabsTab>
@@ -316,7 +368,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             {user?.id && <TabsTab value="app-data">App Data</TabsTab>}
           </TabsList>
 
-          <TabsPanel value="account">
+          <TabsPanel
+            value="account"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'account'}
+            aria-hidden={activeTab !== 'account'}
+            inert={activeTab !== 'account'}
+          >
             <Stack gap="sm">
               <Group grow align="flex-start">
                 <TextInput
@@ -344,8 +402,11 @@ const User = ({ user = null, isOpen, onClose }) => {
                 />
               </Group>
               <PasswordInput
-                label="Password"
-                description="Used for UI authentication"
+                label={helpLabel(
+                  'Password',
+                  'Used for UI authentication. Leave empty to keep the existing password when editing a user.'
+                )}
+                aria-label="Password"
                 {...form.getInputProps('password')}
                 key={form.key('password')}
                 disabled={form.getValues().user_level == USER_LEVELS.STREAMER}
@@ -354,7 +415,13 @@ const User = ({ user = null, isOpen, onClose }) => {
           </TabsPanel>
 
           {showPermissions && (
-            <TabsPanel value="permissions">
+            <TabsPanel
+              value="permissions"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'permissions'}
+              aria-hidden={activeTab !== 'permissions'}
+              inert={activeTab !== 'permissions'}
+            >
               <Stack gap="sm">
                 <Group grow align="flex-start">
                   <Select
@@ -384,8 +451,11 @@ const User = ({ user = null, isOpen, onClose }) => {
                 />
                 <Stack gap="xs">
                   <MultiSelect
-                    label="Allowed Provider Profiles"
-                    description="Limit which M3U account profiles this user may use when Dispatcharr hands them a provider URL (Redirect live/catchup via the channel's effective profile, and VOD when the system default is Redirect). Unrestricted allows all profiles. Clearing the list denies all provider profiles."
+                    label={helpLabel(
+                      'Allowed Provider Profiles',
+                      'Limit which M3U account profiles this user may use when Dispatcharr hands them a provider URL (Redirect live/catchup via the channel’s effective profile, and VOD when the system default is Redirect). Unrestricted allows all profiles. Clearing the list denies all provider profiles.'
+                    )}
+                    aria-label="Allowed Provider Profiles"
                     searchable
                     clearable
                     placeholder={
@@ -413,42 +483,59 @@ const User = ({ user = null, isOpen, onClose }) => {
                     </Button>
                   )}
                 </Stack>
-                <Switch
-                  label="Hide Mature Content"
-                  description="Hide channels marked as mature content (admin users not affected)"
-                  {...form.getInputProps('hide_adult_content', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('hide_adult_content')}
-                />
-                <Switch
-                  label="Enable Catchup"
-                  description="When disabled, this user cannot access timeshift or catchup endpoints, and their channels are not advertised as supporting catchup"
-                  {...form.getInputProps('catchup_enabled', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('catchup_enabled')}
-                />
-                <Switch
-                  label="Enable Movies"
-                  description="When disabled, this user cannot list or play movies via the API or Xtream Codes"
-                  {...form.getInputProps('vod_movies_enabled', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('vod_movies_enabled')}
-                />
-                <Switch
-                  label="Enable Series"
-                  description="When disabled, this user cannot list or play series/episodes via the API or Xtream Codes"
-                  {...form.getInputProps('vod_series_enabled', {
-                    type: 'checkbox',
-                  })}
-                  key={form.key('vod_series_enabled')}
-                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                  <Switch
+                    label={helpLabel(
+                      'Hide Mature Content',
+                      'Hide channels marked as mature content. Admin users are not affected.'
+                    )}
+                    aria-label="Hide Mature Content"
+                    {...form.getInputProps('hide_adult_content', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('hide_adult_content')}
+                  />
+                  <Switch
+                    label={helpLabel(
+                      'Enable Catchup',
+                      'When disabled, this user cannot access timeshift or catchup endpoints, and their channels are not advertised as supporting catchup.'
+                    )}
+                    aria-label="Enable Catchup"
+                    {...form.getInputProps('catchup_enabled', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('catchup_enabled')}
+                  />
+                  <Switch
+                    label={helpLabel(
+                      'Enable Movies',
+                      'When disabled, this user cannot list or play movies via the API or Xtream Codes.'
+                    )}
+                    aria-label="Enable Movies"
+                    {...form.getInputProps('vod_movies_enabled', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('vod_movies_enabled')}
+                  />
+                  <Switch
+                    label={helpLabel(
+                      'Enable Series',
+                      'When disabled, this user cannot list or play series/episodes via the API or Xtream Codes.'
+                    )}
+                    aria-label="Enable Series"
+                    {...form.getInputProps('vod_series_enabled', {
+                      type: 'checkbox',
+                    })}
+                    key={form.key('vod_series_enabled')}
+                  />
+                </SimpleGrid>
                 {form.getValues().user_level != USER_LEVELS.STREAMER && (
                   <Select
-                    label="DVR Access"
-                    description="None: no DVR page or playback. View: watch recordings for channels they can access (default). Manage: create, delete, and manage recordings and rules like an admin for DVR endpoints."
+                    label={helpLabel(
+                      'DVR Access',
+                      'None: no DVR page or playback. View: watch recordings for channels they can access (default). Manage: create, delete, and manage recordings and rules like an admin for DVR endpoints.'
+                    )}
+                    aria-label="DVR Access"
                     data={[
                       { value: DVR_ACCESS.NONE, label: 'None' },
                       { value: DVR_ACCESS.VIEW, label: 'View' },
@@ -462,7 +549,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             </TabsPanel>
           )}
 
-          <TabsPanel value="epg">
+          <TabsPanel
+            value="epg"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'epg'}
+            aria-hidden={activeTab !== 'epg'}
+            inert={activeTab !== 'epg'}
+          >
             <Stack gap="sm">
               <Text size="sm" c="dimmed">
                 These defaults apply when no URL parameters are specified and
@@ -471,8 +564,11 @@ const User = ({ user = null, isOpen, onClose }) => {
               </Text>
               <Group grow align="flex-start">
                 <NumberInput
-                  label="Days forward"
-                  description="Future days of EPG to include. Empty uses the system default. 0 means all stored future programmes."
+                  label={helpLabel(
+                    'Days forward',
+                    'Future days of EPG to include. Empty uses the system default. 0 means all stored future programmes.'
+                  )}
+                  aria-label="Days forward"
                   placeholder="System default"
                   min={0}
                   max={365}
@@ -481,8 +577,11 @@ const User = ({ user = null, isOpen, onClose }) => {
                   key={form.key('epg_days')}
                 />
                 <NumberInput
-                  label="Days back"
-                  description="Past days of EPG to include. Empty uses the system default. 0 means none."
+                  label={helpLabel(
+                    'Days back',
+                    'Past days of EPG to include. Empty uses the system default. 0 means none.'
+                  )}
+                  aria-label="Days back"
                   placeholder="System default"
                   min={0}
                   max={epgHistoryMaxDays}
@@ -494,7 +593,13 @@ const User = ({ user = null, isOpen, onClose }) => {
             </Stack>
           </TabsPanel>
 
-          <TabsPanel value="api">
+          <TabsPanel
+            value="api"
+            className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+            data-editor-active={activeTab === 'api'}
+            aria-hidden={activeTab !== 'api'}
+            inert={activeTab !== 'api'}
+          >
             <Stack gap="sm">
               <TextInput
                 label="XC Password"
@@ -509,6 +614,7 @@ const User = ({ user = null, isOpen, onClose }) => {
                 rightSectionWidth={30}
                 rightSection={
                   <ActionIcon
+                    aria-label="Generate XC password"
                     variant="transparent"
                     size="sm"
                     color="white"
@@ -520,36 +626,45 @@ const User = ({ user = null, isOpen, onClose }) => {
                 }
               />
               {isAdmin && (
-                <Select
-                  label="Output Format Override"
-                  description="Override the system default output format for this user. Clear to use system default."
-                  clearable
-                  placeholder="System default"
-                  disabled={!isAdmin}
-                  data={OUTPUT_FORMAT_OPTIONS}
-                  {...form.getInputProps('output_format')}
-                  key={form.key('output_format')}
-                />
-              )}
-              {isAdmin && (
-                <Select
-                  label="Output Profile Override"
-                  description="Pre-delivery transcode profile applied to streams for this user. Clear to use no transcoding."
-                  clearable
-                  searchable
-                  placeholder="No transcoding"
-                  disabled={!isAdmin}
-                  data={outputProfiles
-                    .filter((p) => p.is_active)
-                    .map((p) => ({ value: `${p.id}`, label: p.name }))}
-                  {...form.getInputProps('output_profile')}
-                  key={form.key('output_profile')}
-                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                  <Select
+                    label={helpLabel(
+                      'Output Format Override',
+                      'Override the system default output format for this user. Clear to use system default.'
+                    )}
+                    aria-label="Output Format Override"
+                    clearable
+                    placeholder="System default"
+                    disabled={!isAdmin}
+                    data={OUTPUT_FORMAT_OPTIONS}
+                    {...form.getInputProps('output_format')}
+                    key={form.key('output_format')}
+                  />
+                  <Select
+                    label={helpLabel(
+                      'Output Profile Override',
+                      'Pre-delivery transcode profile applied to streams for this user. Clear to use no transcoding.'
+                    )}
+                    aria-label="Output Profile Override"
+                    clearable
+                    searchable
+                    placeholder="No transcoding"
+                    disabled={!isAdmin}
+                    data={outputProfiles
+                      .filter((p) => p.is_active)
+                      .map((p) => ({ value: `${p.id}`, label: p.name }))}
+                    {...form.getInputProps('output_profile')}
+                    key={form.key('output_profile')}
+                  />
+                </SimpleGrid>
               )}
               {isAdmin && (
                 <TagsInput
-                  label="Allowed IPs"
-                  description="Further restrict this user by IP/CIDR within global Network Access. Leave empty to inherit global settings only."
+                  label={helpLabel(
+                    'Allowed IPs',
+                    'Further restrict this user by IP/CIDR within global Network Access. Leave empty to inherit global settings only.'
+                  )}
+                  aria-label="Allowed IPs"
                   placeholder="e.g. 192.168.1.1 or 192.168.1.0/24"
                   splitChars={[',', ' ']}
                   {...form.getInputProps('allowed_ips')}
@@ -623,7 +738,13 @@ const User = ({ user = null, isOpen, onClose }) => {
           </TabsPanel>
 
           {user?.id && (
-            <TabsPanel value="app-data">
+            <TabsPanel
+              value="app-data"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'app-data'}
+              aria-hidden={activeTab !== 'app-data'}
+              inert={activeTab !== 'app-data'}
+            >
               {activeTab === 'app-data' && (
                 <UserAppData
                   // Non-admins may only call /me/app-data/; numeric ids are
@@ -637,7 +758,10 @@ const User = ({ user = null, isOpen, onClose }) => {
           )}
         </Tabs>
 
-        <Group justify="flex-end" mt="md">
+        <Group
+          justify="flex-end"
+          className={`${editorClasses.footer} ${editorClasses.plainFooter}`}
+        >
           {activeTab === 'app-data' && clearAllAppData && (
             <Button
               type="button"
@@ -652,11 +776,11 @@ const User = ({ user = null, isOpen, onClose }) => {
           )}
           <Button
             type="submit"
-            variant="contained"
+            variant="filled"
             disabled={form.submitting}
-            size="small"
+            size="sm"
           >
-            Save
+            {user?.id ? 'Save' : 'Create'}
           </Button>
         </Group>
       </form>

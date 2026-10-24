@@ -1,6 +1,7 @@
 import { Children, cloneElement, isValidElement } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import editorClasses from '../AccountEditor.module.css';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 vi.mock('../../../constants', () => ({
@@ -101,9 +102,15 @@ vi.mock('@mantine/core', () => ({
     </button>
   ),
   Group: ({ children }) => <div>{children}</div>,
-  Modal: ({ children, opened, onClose, title }) =>
+  SimpleGrid: ({ children }) => <div data-testid="simple-grid">{children}</div>,
+  Tooltip: ({ children, label }) => <span data-help={label}>{children}</span>,
+  Modal: ({ children, opened, onClose, title, size, classNames }) =>
     opened ? (
-      <div data-testid="modal">
+      <div
+        data-testid="modal"
+        data-size={size}
+        data-content-class={classNames?.content}
+      >
         <div data-testid="modal-title">{title}</div>
         <button data-testid="modal-close" onClick={onClose}>
           ×
@@ -111,14 +118,16 @@ vi.mock('@mantine/core', () => ({
         {children}
       </div>
     ) : null,
-  MultiSelect: ({ label, onChange, data = [] }) => (
+  MultiSelect: ({ label, onChange, data = [], 'aria-label': ariaLabel }) => (
     <div>
       <label>{label}</label>
       {data.map((option) => (
-        <span key={option.value}>{option.label}</span>
+        <span key={option.value} data-testid="provider-profile-option">
+          {option.label}
+        </span>
       ))}
       <input
-        data-testid={`multiselect-${label}`}
+        data-testid={`multiselect-${ariaLabel || label}`}
         onChange={(e) =>
           onChange?.(e.target.value ? e.target.value.split(',') : [])
         }
@@ -148,16 +157,17 @@ vi.mock('@mantine/core', () => ({
   PopoverTarget: ({ children }) => (
     <div data-testid="popover-target">{children}</div>
   ),
-  Select: ({ label, disabled }) => (
+  Select: ({ label, disabled, 'aria-label': ariaLabel }) => (
     <div>
       <label>{label}</label>
-      <select disabled={disabled} />
+      <select disabled={disabled} aria-label={ariaLabel || label} />
     </div>
   ),
   Stack: ({ children }) => <div>{children}</div>,
-  Switch: ({ label }) => (
+  Switch: ({ label, description }) => (
     <div>
       <label>{label}</label>
+      {description && <span>{description}</span>}
       <input type="checkbox" />
     </div>
   ),
@@ -175,14 +185,14 @@ vi.mock('@mantine/core', () => ({
   TabsList: ({ children, __tabsOnChange }) => (
     <div>
       {Children.map(children, (child) =>
-        isValidElement(child)
-          ? cloneElement(child, { __tabsOnChange })
-          : child
+        isValidElement(child) ? cloneElement(child, { __tabsOnChange }) : child
       )}
     </div>
   ),
-  TabsPanel: ({ children, value }) => (
-    <div data-testid={`panel-${value}`}>{children}</div>
+  TabsPanel: ({ children, value, className }) => (
+    <div data-testid={`panel-${value}`} className={className}>
+      {children}
+    </div>
   ),
   TabsTab: ({ children, value, __tabsOnChange }) => (
     <button
@@ -282,6 +292,27 @@ const setupMocks = ({
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('User', () => {
+  it('uses a compact editor with the shared stable-height tab panels', () => {
+    setupMocks();
+    render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
+    expect(screen.getByTestId('modal')).toHaveAttribute(
+      'data-size',
+      'min(880px, 94vw)'
+    );
+    expect(screen.getByTestId('modal')).toHaveAttribute(
+      'data-content-class',
+      `${editorClasses.content} ${editorClasses.userContent}`
+    );
+    expect(screen.getByTestId('panel-account')).toHaveClass(
+      editorClasses.panel
+    );
+    expect(screen.getByTestId('panel-api')).toHaveClass(editorClasses.panel);
+    for (const tab of ['account', 'permissions', 'epg', 'api']) {
+      expect(screen.getByTestId(`panel-${tab}`)).toHaveClass(
+        editorClasses.accountPanel
+      );
+    }
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(UserUtils.createUser).mockResolvedValue({});
@@ -313,9 +344,7 @@ describe('User', () => {
 
     it('shows the App Data tab when editing an existing user', () => {
       setupMocks();
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       expect(screen.getByTestId('tab-app-data')).toBeInTheDocument();
       // Lazily mounted: not fetched until the tab is selected.
       expect(screen.queryByTestId('user-app-data')).not.toBeInTheDocument();
@@ -385,7 +414,11 @@ describe('User', () => {
     it('passes numeric userId for App Data when an admin edits another user', () => {
       setupMocks({ authUser: makeAdminUser() });
       render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser({ id: 2 })} />
+        <User
+          isOpen={true}
+          onClose={vi.fn()}
+          user={makeRegularUser({ id: 2 })}
+        />
       );
       fireEvent.click(screen.getByTestId('tab-app-data'));
       expect(screen.getByTestId('user-app-data')).toHaveAttribute(
@@ -427,9 +460,7 @@ describe('User', () => {
           ],
         },
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       expect(screen.getByText('Allowed Provider Profiles')).toBeInTheDocument();
       expect(screen.getByText('Provider 1: Profile B')).toBeInTheDocument();
     });
@@ -461,14 +492,14 @@ describe('User', () => {
           ],
         },
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       const multiSelect = screen.getByTestId(
         'multiselect-Allowed Provider Profiles'
       );
       const labels = Array.from(
-        multiSelect.parentElement.querySelectorAll('span')
+        multiSelect.parentElement.querySelectorAll(
+          '[data-testid="provider-profile-option"]'
+        )
       ).map((el) => el.textContent);
       expect(labels).toEqual([
         'Alpha IPTV: Alpha Backup',
@@ -482,9 +513,7 @@ describe('User', () => {
       vi.mocked(UserUtils.userToFormValues).mockReturnValue({
         allowed_m3u_profile_ids: [],
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       expect(
         screen.getByRole('button', { name: 'Allow all profiles' })
       ).toBeInTheDocument();
@@ -495,9 +524,7 @@ describe('User', () => {
       vi.mocked(UserUtils.userToFormValues).mockReturnValue({
         allowed_m3u_profile_ids: null,
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       expect(
         screen.queryByRole('button', { name: 'Allow all profiles' })
       ).not.toBeInTheDocument();
@@ -508,9 +535,7 @@ describe('User', () => {
       vi.mocked(UserUtils.userToFormValues).mockReturnValue({
         allowed_m3u_profile_ids: ['5'],
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
       fireEvent.click(
         screen.getByRole('button', { name: 'Allow all profiles' })
       );
@@ -528,12 +553,8 @@ describe('User', () => {
       vi.mocked(UserUtils.userToFormValues).mockReturnValue({
         allowed_m3u_profile_ids: ['5'],
       });
-      render(
-        <User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />
-      );
-      const input = screen.getByTestId(
-        'multiselect-Allowed Provider Profiles'
-      );
+      render(<User isOpen={true} onClose={vi.fn()} user={makeRegularUser()} />);
+      const input = screen.getByTestId('multiselect-Allowed Provider Profiles');
       fireEvent.change(input, { target: { value: '9' } });
       fireEvent.change(input, { target: { value: '' } });
       expect(mockForm.setFieldValue).toHaveBeenLastCalledWith(
@@ -1003,7 +1024,7 @@ describe('User', () => {
       setupMocks({ authUser: makeAdminUser() });
 
       render(<User isOpen={true} onClose={vi.fn()} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(UserUtils.createUser).toHaveBeenCalled();
@@ -1022,7 +1043,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 2 })}
         />
       );
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(UserUtils.updateUser).toHaveBeenCalledWith(
@@ -1041,7 +1062,7 @@ describe('User', () => {
       vi.mocked(UserUtils.updateUser).mockResolvedValue(updatedAdmin);
 
       render(<User isOpen={true} onClose={vi.fn()} user={admin} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(mockSetUser).toHaveBeenCalledWith(updatedAdmin);
@@ -1053,7 +1074,7 @@ describe('User', () => {
       const onClose = vi.fn();
 
       render(<User isOpen={true} onClose={onClose} />);
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         expect(mockForm.reset).toHaveBeenCalled();
@@ -1077,7 +1098,7 @@ describe('User', () => {
           user={makeRegularUser({ id: 2 })}
         />
       );
-      fireEvent.click(screen.getByText('Save'));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Create)$/ }));
 
       await waitFor(() => {
         const payload = vi.mocked(UserUtils.updateUser).mock.calls[0][1];
