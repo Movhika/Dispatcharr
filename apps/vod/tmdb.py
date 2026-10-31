@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -385,7 +386,17 @@ class Client:
         self.session = session or requests.Session()
         self.min_interval = max(float(min_interval), 0)
         self.timeout = timeout
-        self._last_request_at = 0.0
+        # One client may serve several worker threads; they share its rate limit.
+        self._next_request_at = 0.0
+        self._slot_lock = threading.Lock()
+
+    def _wait_for_slot(self):
+        with self._slot_lock:
+            now = time.monotonic()
+            start = max(now, self._next_request_at)
+            self._next_request_at = start + self.min_interval
+        if start > now:
+            time.sleep(start - now)
 
     def _auth(self):
         # TMDB v4 read tokens are long/JWT-like; v3 keys remain supported for
@@ -398,9 +409,7 @@ class Client:
         headers, auth_params = self._auth()
         params = {**auth_params, **params}
         for attempt in range(4):
-            delay = self.min_interval - (time.monotonic() - self._last_request_at)
-            if delay > 0:
-                time.sleep(delay)
+            self._wait_for_slot()
             try:
                 response = self.session.get(
                     f"{TMDB_API_ROOT}/{path.lstrip('/')}",
@@ -410,7 +419,6 @@ class Client:
                 )
             except requests.RequestException:
                 raise TMDBError("TMDB request failed") from None
-            self._last_request_at = time.monotonic()
             if response.status_code == 404:
                 raise TMDBNotFound(path)
             if response.status_code in {401, 403}:
@@ -445,6 +453,10 @@ class Client:
         key = "movie_results" if media_type == "movie" else "tv_results"
         rows = payload.get(key) or []
         return str(rows[0].get("id")) if len(rows) == 1 and rows[0].get("id") else ""
+
+    def validate(self):
+        if self.get("authentication").get("success") is not True:
+            raise TMDBAuthenticationError("TMDB rejected the configured API token")
 
     def search(self, query, year, media_type, languages):
         match_id, _status, _count = self.search_outcome(
