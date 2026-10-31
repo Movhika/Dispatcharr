@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
 
 import requests
@@ -102,6 +103,16 @@ class TitleCleanupTests(SimpleTestCase):
 
 class LibraryTMDBTests(SimpleTestCase):
 
+    def test_credential_validation_uses_authentication_endpoint_for_both_formats(self):
+        for token in ("a" * 32, "a" * 100):
+            client = Client(token)
+            with patch.object(client, "get", return_value={"success": True}) as get:
+                client.validate()
+                get.assert_called_once_with("authentication")
+            with patch.object(client, "get", return_value={"success": False}):
+                with self.assertRaises(TMDBAuthenticationError):
+                    client.validate()
+
     def test_details_keep_more_than_two_languages_with_one_request(self):
         client = Client("synthetic-token")
         payload = {
@@ -167,6 +178,17 @@ class LibraryTMDBTests(SimpleTestCase):
             Client("test", session=session, min_interval=0).get("movie/1")
         self.assertEqual(session.get.call_count, 4)
         self.assertTrue(all(call.args[0] <= 10 for call in sleep.call_args_list))
+
+    @patch("apps.vod.tmdb.time.sleep")
+    @patch("apps.vod.tmdb.time.monotonic", return_value=100.0)
+    def test_parallel_requests_share_one_rate_limit(self, _clock, sleep):
+        session = Mock()
+        session.get.return_value = self.response(payload={"id": 1})
+        client = Client("test", session=session, min_interval=0.04)
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            list(pool.map(lambda _: client.get("movie/1"), range(3)))
+        waits = sorted(round(call.args[0], 2) for call in sleep.call_args_list)
+        self.assertEqual(waits, [0.04, 0.08])
 
     def test_authentication_errors_are_not_retried(self):
         session = Mock()

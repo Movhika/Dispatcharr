@@ -130,6 +130,11 @@ class CoreSettingsSerializer(serializers.ModelSerializer):
         model = CoreSettings
         fields = "__all__"
 
+    def validate_key(self, value):
+        if value == "vod_library":
+            raise serializers.ValidationError("Use the VOD Library settings endpoint.")
+        return value
+
     def validate(self, attrs):
         key = attrs.get("key")
         if key is None and self.instance is not None:

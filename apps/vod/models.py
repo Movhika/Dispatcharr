@@ -151,6 +151,10 @@ class VODSourceMetadataMixin(models.Model):
 class VODLibraryMetadataMixin(models.Model):
     """Canonical library annotations, independent of exact provider sources."""
 
+    library_blocked = models.BooleanField(
+        default=False, db_default=False, db_index=True
+    )
+
     display_name = models.CharField(
         max_length=255, blank=True, default="", db_default=""
     )
@@ -180,9 +184,33 @@ class VODLibraryMetadataMixin(models.Model):
     library_added_at = models.DateTimeField(
         default=timezone.now, db_default=Now(), db_index=True
     )
+    # The canonical title in the Library languages, lowercased, so the Library
+    # can sort by an index instead of reading every title's metadata.
+    sort_title = models.CharField(
+        max_length=255, blank=True, default="", db_default="", db_index=True
+    )
+    # Every title the Library search matches, for the same reason.
+    search_title = models.TextField(blank=True, default="", db_default="")
+    # Streaming services from the TMDB data ({region, id, name}), so the Library
+    # can filter by service without reading every title's metadata.
+    streaming_services = models.JSONField(
+        default=list, db_default=[], blank=True
+    )
 
     class Meta:
         abstract = True
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        fields = kwargs.get("update_fields")
+        if fields is None or set(fields) & TITLE_FIELDS:
+            from .presentation import refresh_library_titles
+
+            refresh_library_titles(type(self), [self.pk])
+
+
+# Fields the canonical title is resolved from.
+TITLE_FIELDS = {"display_name", "tmdb_metadata", "clean_title", "name"}
 
 
 class Series(VODLibraryMetadataMixin):
@@ -566,6 +594,9 @@ class VODMetadataState(models.Model):
     task_id = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=12, default="idle")
     selection = models.JSONField(default=list, blank=True)
+    pending_enrichment = models.JSONField(default=list, db_default=[], blank=True)
+    refreshing_accounts = models.JSONField(default=list, db_default=[], blank=True)
+    job_heartbeat = models.DateTimeField(default=timezone.now, db_default=Now())
     progress = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

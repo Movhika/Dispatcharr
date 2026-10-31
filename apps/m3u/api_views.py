@@ -866,6 +866,10 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                         unique_fields=["m3u_account", "category"],
                         update_fields=["enabled", "ignored", "custom_properties", "metadata_defaults"],
                     )
+                    from apps.vod.library_filters import changed_options
+
+                    # Category metadata decides the values of its sources.
+                    changed_options()
 
             return Response({"message": "Group settings updated successfully"})
 
