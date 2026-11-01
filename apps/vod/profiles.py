@@ -1,5 +1,6 @@
 """VOD profile rules: validation and the profile that applies to a user."""
 
+import re
 import string
 
 from django.db import transaction
@@ -529,3 +530,196 @@ def normalize_name_labels(value):
             {"field": field, "values": sorted(items), "label": _text(row.get("label"), "label")}
         )
     return labels
+
+
+def _labelled(field, values, labels, default):
+    """Placeholder text for a source's values, following the profile's labels.
+
+    An exact combination wins, then several languages, then each value's own
+    label, any other value, or the plain value.
+    """
+    if not values:
+        return ""
+    rules = {frozenset(rule["values"]): rule["label"] for rule in labels if rule["field"] == field}
+    if len(values) > 1:
+        for key in (frozenset(values), frozenset([SEVERAL])):
+            if key in rules:
+                return rules[key]
+    single = {next(iter(key)): text for key, text in rules.items() if len(key) == 1}
+    return "/".join(
+        text
+        for text in (
+            single[value] if value in single else single.get(OTHER, default(value))
+            for value in values
+        )
+        if text
+    )
+
+
+def _tidy_group(match):
+    """Drop empty parts inside brackets, e.g. "[ · 1080p · ]" becomes "[1080p]"."""
+    inner = match.group(2)
+    for separator in ("·", "|"):
+        parts = [part.strip() for part in inner.split(separator)]
+        inner = f" {separator} ".join(part for part in parts if part)
+    return f"{match.group(1)}{inner}{match.group(3)}" if inner else ""
+
+
+def output_name(
+    template,
+    title,
+    metadata,
+    *,
+    year="",
+    edition="",
+    provider="",
+    extension="",
+    labels=(),
+):
+    """Format a client-facing name; empty placeholders leave no brackets behind.
+
+    ``labels`` (a profile's name labels) replace placeholder values, e.g.
+    1080p with FHD, or several subtitle languages with MULTI-SUB.
+    """
+    mapping = list(labels or ())
+    resolution = metadata.get("resolution")
+    if edition and "{edition}" not in template:
+        template = template.replace("{title}", "{title} {edition}", 1)
+    # Clean up around a marker so the title itself is never altered.
+    marker = "\x00"
+    name = template.format_map(
+        {
+            "title": marker,
+            "year": year or "",
+            "edition": edition,
+            "provider": provider,
+            "dub": _labelled(
+                "dub", metadata.get("audio_languages", []), mapping, str.upper
+            ),
+            "sub": _labelled(
+                "sub", metadata.get("subtitle_languages", []), mapping, str.upper
+            ),
+            "resolution": _labelled(
+                "resolution", [resolution] if resolution else [], mapping, str
+            ),
+            "format": (extension or "").upper(),
+            "features": _labelled(
+                "features",
+                metadata.get("video_features", []),
+                mapping,
+                lambda feature: feature.removeprefix("custom:").upper(),
+            ),
+        }
+    )
+    name = re.sub(r"([\[(])([^\[\]()]*)([\])])", _tidy_group, name)
+    name = re.sub(r"^[\s·|-]+|[\s·|-]+$", "", re.sub(r"\s{2,}", " ", name))
+    return name.replace(marker, title) or title
+
+
+def shows_source_titles(profile):
+    """Sources entries with provider titles keep each source's own title."""
+    return (
+        profile.output_mode == VODProfile.OutputMode.VARIANTS
+        and profile.title_source == PROVIDER_TITLES
+    )
+
+
+def source_title_expression():
+    """The title a source's provider lists it under, in SQL."""
+    from django.db.models.fields.json import KeyTextTransform, KeyTransform
+
+    return KeyTextTransform("name", KeyTransform("basic_data", "custom_properties"))
+
+
+def provider_source_title(custom_properties):
+    """The title a source's provider lists it under, or ""."""
+    basic = (custom_properties or {}).get("basic_data")
+    name = basic.get("name") if isinstance(basic, dict) else None
+    return name.strip() if isinstance(name, str) else ""
+
+
+def profile_output_name(
+    profile,
+    title,
+    metadata,
+    *,
+    year="",
+    edition="",
+    provider="",
+    extension="",
+    source_title="",
+):
+    """A client name in the profile's format.
+
+    Compact entries fall back to other sources, so their names only show the
+    title, its year and the edition. Source details and labels name Sources
+    entries; with provider titles each one keeps its source's own title.
+    """
+    if profile.output_mode != VODProfile.OutputMode.VARIANTS:
+        return output_name(
+            profile.name_template, title, {}, year=year, edition=edition
+        )
+    if profile.title_source == PROVIDER_TITLES:
+        title = (source_title or "").strip() or title
+    return output_name(
+        profile.name_template,
+        title,
+        metadata,
+        year=year,
+        provider=provider,
+        extension=extension,
+        labels=profile.name_labels,
+    )
+
+
+def option_values():
+    """Languages, resolutions and video features a profile can choose.
+
+    Offers what the sources actually have, read like the Library filters and
+    shared with their cache, plus whatever saved profiles already use, so a
+    saved choice never disappears from its field.
+    """
+    from .library_filters import option_values as source_values
+    from .media_languages import MEDIA_LANGUAGE_OPTIONS
+    from .metadata import RESOLUTIONS
+    from .profile_catalog import resolution_height
+
+    # The Library's unfiltered values, which a change collects in advance.
+    present = source_values({"type": "all"}, ["movie", "series"])
+    languages = set(present["audio_languages"]) | set(present["subtitle_languages"])
+    features = set(present["video_features"])
+    heights = {resolution_height(value) for value in present["resolution"]}
+    for profile in VODProfile.objects.only(
+        "edition_rules",
+        "name_labels",
+        "audio_language_order",
+        "subtitle_language_order",
+    ):
+        languages |= set(profile.audio_language_order or [])
+        languages |= set(profile.subtitle_language_order or [])
+        for rule in profile.edition_rules or []:
+            for kind in ("required", "excluded"):
+                languages |= set(rule.get(f"{kind}_audio_languages", []))
+                languages |= set(rule.get(f"{kind}_subtitle_languages", []))
+                features |= set(rule.get(f"{kind}_video_features", []))
+            heights |= {rule.get("min_resolution") or 0, rule.get("max_resolution") or 0}
+        for label in profile.name_labels or []:
+            values = set(label.get("values", [])) - {SEVERAL, OTHER}
+            if label.get("field") in ("dub", "sub"):
+                languages |= values
+            elif label.get("field") == "features":
+                features |= values
+            elif label.get("field") == "resolution":
+                heights |= {resolution_height(value) for value in values}
+    known = {item["value"] for item in MEDIA_LANGUAGE_OPTIONS}
+    return {
+        "languages": [item for item in MEDIA_LANGUAGE_OPTIONS if item["value"] in languages]
+        + [
+            {"value": code, "label": code.upper()}
+            for code in sorted(languages - known)
+        ],
+        "resolutions": [
+            value for value in RESOLUTIONS if resolution_height(value) in heights
+        ],
+        "video_features": sorted(features),
+    }

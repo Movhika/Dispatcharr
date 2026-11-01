@@ -1,6 +1,7 @@
 """The first matching rule decides the import result and all its metadata."""
 
 import tempfile
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
@@ -239,6 +240,16 @@ class MetadataRuleApiTests(TestCase):
             (french.enabled, french.metadata_defaults),
             (True, {"video_features": ["hdr"]}),
         )
+
+    def test_applying_vod_rules_rebuilds_profile_catalogues(self):
+        self.category(enabled=False)
+        rule = M3UGroupRule.objects.create(m3u_account=self.account, **rule_values())
+        with patch("apps.vod.profile_catalog.request_catalog_build") as build:
+            response = self.client.post(
+                self.url + f"{rule.pk}/apply/", {}, format="json"
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        build.assert_called_once_with()
 
     def test_apply_sets_import_result_and_replaces_defaults_of_this_account(self):
         category = self.category(enabled=False)

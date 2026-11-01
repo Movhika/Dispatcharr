@@ -174,6 +174,11 @@ def _apply_group_matches(account, scope, matches):
         model.objects.bulk_update(
             rows, ["enabled", "ignored"] if scope == "live" else ["enabled", "ignored", "metadata_defaults"]
         )
+        if scope != M3UGroupRule.Scope.LIVE:
+            # Category states and metadata decide which sources profiles offer.
+            from apps.vod.profile_catalog import request_catalog_build
+
+            request_catalog_build()
     states = {match["would_enable"] for match in matches}
     ignored_states = {match["would_ignore"] for match in matches}
     return {

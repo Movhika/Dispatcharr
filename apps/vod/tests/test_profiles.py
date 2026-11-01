@@ -34,6 +34,11 @@ class ProfileSchemaTests(SimpleTestCase):
         validate_schema(schema)
         self.assertIn("/api/vod/profiles/", schema["paths"])
         self.assertIn("/api/vod/profiles/{id}/", schema["paths"])
+        self.assertIn("/api/vod/profiles/options/", schema["paths"])
+        self.assertIn("/api/vod/profiles/values/", schema["paths"])
+        self.assertIn("/api/vod/profiles/{id}/preview/", schema["paths"])
+        self.assertIn("/api/vod/profiles/edition-counts/", schema["paths"])
+        self.assertIn("/api/vod/profiles/{id}/rebuild/", schema["paths"])
 
 
 class ProfileRuleTests(SimpleTestCase):
