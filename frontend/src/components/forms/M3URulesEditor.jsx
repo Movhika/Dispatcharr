@@ -213,6 +213,10 @@ const M3URulesEditor = ({
   onStateChange,
   onRulesChanged,
   previewGroupIds,
+  // VOD profiles reuse the editor with their own rule endpoints.
+  rulesApi = API,
+  metadataDefaults = true,
+  ignoreResult = true,
 }) => {
   const streamLabel = getM3UStreamLabel(accountType);
   const kind = streamFilters ? 'filters' : 'group-rules';
@@ -242,7 +246,8 @@ const M3URulesEditor = ({
   const [applyAllBusy, setApplyAllBusy] = useState(false);
   const [regexHelpOpen, setRegexHelpOpen] = useState(false);
   const [metadataTarget, setMetadataTarget] = useState(null);
-  const vodRules = !streamFilters && ['movie', 'series'].includes(scope);
+  const vodRules =
+    metadataDefaults && !streamFilters && ['movie', 'series'].includes(scope);
   const [coverage, setCoverage] = useState({ causes: {}, coveredBy: {} });
   const [matchCheck, setMatchCheck] = useState(null);
   const [inventoryCount, setInventoryCount] = useState(null);
@@ -367,7 +372,7 @@ const M3URulesEditor = ({
       const errors = savedRuleErrors(rows, streamFilters);
       try {
         if (rows.length) {
-          const response = await API.analyzeM3URules(
+          const response = await rulesApi.analyzeM3URules(
             accountId,
             kind,
             rows.map((row) => ({
@@ -412,6 +417,7 @@ const M3URulesEditor = ({
     [
       accountId,
       kind,
+      rulesApi,
       payload,
       streamFilters,
       acceptCoverage,
@@ -427,7 +433,7 @@ const M3URulesEditor = ({
     setMatchCheck(null);
     setInventoryCount(null);
     try {
-      const loaded = await API.getM3URules(accountId, kind, scope);
+      const loaded = await rulesApi.getM3URules(accountId, kind, scope);
       if (requestId !== coverageRequest.current) return;
       savedRules.current = new Map(loaded.map((rule) => [rule.id, rule]));
       rulesLoaded.current = true;
@@ -449,7 +455,15 @@ const M3URulesEditor = ({
     } finally {
       if (requestId === coverageRequest.current) setBusy(false);
     }
-  }, [accountId, kind, scope, checkKey, streamFilters, checkSavedRows]);
+  }, [
+    accountId,
+    kind,
+    rulesApi,
+    scope,
+    checkKey,
+    streamFilters,
+    checkSavedRows,
+  ]);
 
   useEffect(() => {
     load();
@@ -572,7 +586,7 @@ const M3URulesEditor = ({
   };
 
   const save = async (rule) => {
-    const saved = await API.saveM3URule(
+    const saved = await rulesApi.saveM3URule(
       accountId,
       kind,
       rule.isNew ? null : rule.id,
@@ -632,7 +646,7 @@ const M3URulesEditor = ({
       const checkedRows = persistedRows(rules, rule);
       let response;
       try {
-        response = await API.analyzeM3URules(
+        response = await rulesApi.analyzeM3URules(
           accountId,
           kind,
           checkedRows.map((item) => ({
@@ -711,7 +725,7 @@ const M3URulesEditor = ({
     setPreview(null);
     setTestedPreviewSignature(null);
     try {
-      const response = await API.previewM3URules(
+      const response = await rulesApi.previewM3URules(
         accountId,
         kind,
         draft.map((rule) => ({
@@ -834,7 +848,7 @@ const M3URulesEditor = ({
       return;
     setPreviewBusy(true);
     try {
-      const result = await API.saveApplyM3UGroupRules(
+      const result = await rulesApi.saveApplyM3UGroupRules(
         accountId,
         previewDraft.map((rule) => ({
           ...payload(rule),
@@ -876,7 +890,11 @@ const M3URulesEditor = ({
     }
     setApplyAllBusy(true);
     try {
-      const summary = await API.applyAllM3UGroupRules(accountId, scope, true);
+      const summary = await rulesApi.applyAllM3UGroupRules(
+        accountId,
+        scope,
+        true
+      );
       if (!summary.changed) {
         showNotification({
           title: 'Nothing to apply',
@@ -913,7 +931,7 @@ const M3URulesEditor = ({
           color: 'green',
         });
       } else {
-        const result = await API.applyAllM3UGroupRules(accountId, scope);
+        const result = await rulesApi.applyAllM3UGroupRules(accountId, scope);
         showNotification({
           title: 'Import rules applied',
           message: `${result.updated} existing ${unitLabel} updated.`,
@@ -953,7 +971,7 @@ const M3URulesEditor = ({
     try {
       setRules(reordered);
       const saved = reordered.filter((rule) => !rule.isNew);
-      await API.reorderM3URules(
+      await rulesApi.reorderM3URules(
         accountId,
         kind,
         saved.map((rule) => rule.id),
@@ -983,7 +1001,7 @@ const M3URulesEditor = ({
     setBusy(true);
     const requestId = ++coverageRequest.current;
     try {
-      await API.deleteM3URule(accountId, kind, deleteTarget.id);
+      await rulesApi.deleteM3URule(accountId, kind, deleteTarget.id);
       savedRules.current.delete(deleteTarget.id);
       hideNotification(errorNotificationId);
       const remaining = rules.filter((rule) => rule.id !== deleteTarget.id);
@@ -1139,34 +1157,36 @@ const M3URulesEditor = ({
               : 'The first matching rule wins.'}
           </Text>
         </Alert>
-        {rules.some(
-          (rule) => !rule.isNew && isRuleEnabled(rule, streamFilters)
-        ) && (
-          <Tooltip
-            label={
-              hasActiveEdit || hasUnsavedChanges
-                ? `Save or discard the current ${noun} first.`
-                : streamFilters
-                  ? 'Apply the filters now with a Live TV refresh'
-                  : `Apply all rules in order to the existing ${unitLabel}`
-            }
-            withArrow
-          >
-            <ActionIcon
-              size="input-xs"
-              variant="light"
-              color="green"
-              aria-label={
-                streamFilters ? 'Apply filters now' : 'Apply all rules'
+        {/* VOD profile rules apply continuously, so they have no button. */}
+        {(streamFilters || rulesApi.applyAllM3UGroupRules) &&
+          rules.some(
+            (rule) => !rule.isNew && isRuleEnabled(rule, streamFilters)
+          ) && (
+            <Tooltip
+              label={
+                hasActiveEdit || hasUnsavedChanges
+                  ? `Save or discard the current ${noun} first.`
+                  : streamFilters
+                    ? 'Apply the filters now with a Live TV refresh'
+                    : `Apply all rules in order to the existing ${unitLabel}`
               }
-              loading={applyAllBusy}
-              disabled={busy || hasActiveEdit || hasUnsavedChanges}
-              onClick={openApplyAll}
+              withArrow
             >
-              <Play size={14} />
-            </ActionIcon>
-          </Tooltip>
-        )}
+              <ActionIcon
+                size="input-xs"
+                variant="light"
+                color="green"
+                aria-label={
+                  streamFilters ? 'Apply filters now' : 'Apply all rules'
+                }
+                loading={applyAllBusy}
+                disabled={busy || hasActiveEdit || hasUnsavedChanges}
+                onClick={openApplyAll}
+              >
+                <Play size={14} />
+              </ActionIcon>
+            </Tooltip>
+          )}
         <Tooltip
           label={`Save or discard the current ${noun} before adding another.`}
           disabled={!hasActiveEdit}
@@ -1505,7 +1525,9 @@ const M3URulesEditor = ({
                                     value: 'disable',
                                     label: 'Disabled',
                                   },
-                                  { value: 'ignore', label: 'Ignore' },
+                                  ...(ignoreResult
+                                    ? [{ value: 'ignore', label: 'Ignore' }]
+                                    : []),
                                 ]
                           }
                           onChange={(value) =>
