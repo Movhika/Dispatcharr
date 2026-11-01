@@ -184,10 +184,14 @@ def relation_queryset(kind, filters=None):
     qs = model_for(kind, source=True).objects.filter(m3u_account__is_active=True)
     if kind == "movie" and filters.get("_hide_adult"):
         qs = qs.filter(movie__is_adult=False)
-    if filters.get("account"):
-        qs = qs.filter(m3u_account_id=filters["account"])
-    if filters.get("category"):
-        qs = qs.filter(category_id=filters["category"])
+    # One ID or several, as the filter serializer returns them.
+    for field, column in (("account", "m3u_account_id"), ("category", "category_id")):
+        value = filters.get(field)
+        if value:
+            ids = value if isinstance(value, (list, tuple)) else [value]
+            qs = qs.filter(**{f"{column}__in": ids})
+    if filters.get("category_match"):
+        qs = qs.filter(category__name__iregex=filters["category_match"])
     if filters.get("content_id"):
         qs = qs.filter(**{f"{kind}_id": filters["content_id"]})
     if filters.get("search"):

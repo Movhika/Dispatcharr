@@ -1,6 +1,11 @@
+import re
+
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .metadata import (
+    RESOLUTIONS,
     normalize_language_code,
     normalize_resolution,
     normalize_video_feature,
@@ -17,14 +22,43 @@ class StrictSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
+@extend_schema_field(OpenApiTypes.STR)
+class IdListField(serializers.Field):
+    """One or more positive IDs, sent as "3", "3,5" or a list."""
+
+    default_error_messages = {"invalid": "Select valid IDs."}
+
+    def to_internal_value(self, data):
+        values = data if isinstance(data, (list, tuple)) else str(data).split(",")
+        try:
+            ids = [int(str(value).strip()) for value in values if str(value).strip()]
+        except ValueError:
+            self.fail("invalid")
+        if not ids or any(pk < 1 for pk in ids):
+            self.fail("invalid")
+        return list(dict.fromkeys(ids))
+
+    def to_representation(self, value):
+        return ",".join(map(str, value)) if isinstance(value, list) else str(value)
+
+
 class LibraryFilterSerializer(StrictSerializer):
     type = serializers.ChoiceField(choices=["all", "movie", "series"], default="all")
     view = serializers.ChoiceField(
         choices=["posters", "titles", "sources"], default="titles"
     )
     search = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    account = serializers.IntegerField(required=False, min_value=1)
-    category = serializers.IntegerField(required=False, min_value=1)
+    account = IdListField(
+        required=False, help_text="One or more provider account IDs, comma-separated."
+    )
+    category = IdListField(
+        required=False, help_text="One or more provider category IDs, comma-separated."
+    )
+    category_match = serializers.CharField(
+        required=False,
+        max_length=500,
+        help_text="Regular expression a provider category name must match, ignoring case.",
+    )
     content_id = serializers.IntegerField(required=False, min_value=1)
     locked = serializers.ChoiceField(choices=["true", "false"], required=False)
     blocked = serializers.ChoiceField(choices=["true", "false"], required=False)
@@ -44,6 +78,12 @@ class LibraryFilterSerializer(StrictSerializer):
     audio_language = serializers.CharField(required=False, max_length=20)
     subtitle_language = serializers.CharField(required=False, max_length=20)
     resolution = serializers.CharField(required=False, max_length=20)
+    resolution_min = serializers.CharField(
+        required=False, max_length=20, help_text="Lowest resolution, e.g. 720p."
+    )
+    resolution_max = serializers.CharField(
+        required=False, max_length=20, help_text="Highest resolution, e.g. 2160p."
+    )
     video_feature = serializers.CharField(required=False, max_length=100)
     container_extension = serializers.RegexField(r"^[a-zA-Z0-9]{1,10}$", required=False)
     genre = serializers.CharField(
@@ -75,10 +115,19 @@ class LibraryFilterSerializer(StrictSerializer):
                 raise serializers.ValidationError(
                     {end: "The end date must not precede the start date."}
                 )
+        if data.get("category_match"):
+            try:
+                re.compile(data["category_match"])
+            except re.error as exc:
+                raise serializers.ValidationError(
+                    {"category_match": f"Invalid regular expression: {exc}"}
+                ) from exc
         for field, normalize in (
             ("audio_language", normalize_language_code),
             ("subtitle_language", normalize_language_code),
             ("resolution", normalize_resolution),
+            ("resolution_min", normalize_resolution),
+            ("resolution_max", normalize_resolution),
             ("video_feature", normalize_video_feature),
         ):
             if field in data:
@@ -86,6 +135,12 @@ class LibraryFilterSerializer(StrictSerializer):
                     data[field] = normalize(data[field])
                 except ValueError as exc:
                     raise serializers.ValidationError({field: str(exc)}) from exc
+        # RESOLUTIONS runs from the highest tier down.
+        low, high = data.get("resolution_min"), data.get("resolution_max")
+        if low and high and RESOLUTIONS.index(low) < RESOLUTIONS.index(high):
+            raise serializers.ValidationError(
+                {"resolution_max": "Choose a maximum at or above the minimum."}
+            )
         return data
 
 
