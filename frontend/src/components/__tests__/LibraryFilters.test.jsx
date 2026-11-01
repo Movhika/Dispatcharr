@@ -12,11 +12,14 @@ import { MantineProvider } from '@mantine/core';
 import LibraryFilters from '../LibraryFilters.jsx';
 
 const options = {
-  accounts: [{ id: 3, name: 'Provider' }],
+  accounts: [
+    { id: 3, name: 'Provider' },
+    { id: 5, name: 'Backup' },
+  ],
   categories: [{ id: 4, name: 'English category', category_type: 'movie' }],
   audio_languages: ['eng'],
   subtitle_languages: ['ger'],
-  resolution: ['1080p'],
+  resolution: ['2160p', '1080p', '720p'],
   video_features: ['hdr'],
   container_extensions: ['mkv'],
   streaming_services: [
@@ -47,7 +50,6 @@ describe('Library filter popover', () => {
   it.each([
     ['DUB', 'audio_language', 'English (eng)', 'eng'],
     ['SUB', 'subtitle_language', 'German (ger)', 'ger'],
-    ['Resolution', 'resolution', '1080p', '1080p'],
     ['Feature', 'video_feature', 'HDR', 'hdr'],
     ['Format', 'container_extension', 'mkv', 'mkv'],
     ['Streaming service', 'streaming_service', 'Netflix', 'DE:8'],
@@ -177,6 +179,49 @@ describe('Library filter popover', () => {
       screen.getByRole('button', { name: 'Filter library' })
     ).toHaveAccessibleDescription('1 filter active');
   });
+  it('checks category name patterns', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Category name (regex)' }),
+      { target: { value: 'amazon|(' } }
+    );
+    expect(screen.getByText('Invalid regular expression.')).toBeTruthy();
+  });
+  it('combines several provider accounts', async () => {
+    render(<Harness initial={{ account: '3' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
+    fireEvent.click(screen.getByRole('textbox', { name: 'Provider account' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Backup' }));
+    expect(changed).toHaveBeenLastCalledWith({ account: '3,5' });
+  });
+  it('filters a resolution range and shows an exact one as a range', async () => {
+    render(<Harness initial={{ resolution: '1080p' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
+    expect(
+      screen.getByRole('textbox', { name: 'Resolution from', exact: true })
+    ).toHaveValue('1080p');
+    fireEvent.click(
+      screen.getByRole('textbox', { name: 'Resolution to', exact: true })
+    );
+    fireEvent.click(await screen.findByRole('option', { name: '2160p' }));
+    expect(changed).toHaveBeenLastCalledWith({
+      resolution: '',
+      resolution_min: '1080p',
+      resolution_max: '2160p',
+    });
+    fireEvent.click(
+      screen.getByRole('textbox', { name: 'Resolution from', exact: true })
+    );
+    fireEvent.click(await screen.findByRole('option', { name: '2160p' }));
+    fireEvent.click(
+      screen.getByRole('textbox', { name: 'Resolution to', exact: true })
+    );
+    fireEvent.click(await screen.findByRole('option', { name: '720p' }));
+    expect(
+      screen.getByText('Choose a maximum at or above the minimum.')
+    ).toBeTruthy();
+  });
   it('preserves a selected value absent from new scoped options', () => {
     render(<Harness initial={{ audio_language: 'ger' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
@@ -238,7 +283,7 @@ describe('Library filter popover', () => {
     expect(
       within(
         screen.getByRole('region', { name: 'File data filters' })
-      ).getByRole('textbox', { name: 'Resolution', exact: true })
+      ).getByRole('textbox', { name: 'Resolution from', exact: true })
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Filter library' })

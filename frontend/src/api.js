@@ -4265,6 +4265,53 @@ export default class API {
     });
   }
 
+  static async getVODProfiles() {
+    return request(`${host}/api/vod/profiles/`);
+  }
+
+  static async getVODProfileOptions() {
+    return request(`${host}/api/vod/profiles/options/`);
+  }
+
+  static async getVODProfileValues() {
+    return request(`${host}/api/vod/profiles/values/`);
+  }
+
+  static async saveVODProfile(profile, id = null) {
+    return request(
+      id ? `${host}/api/vod/profiles/${id}/` : `${host}/api/vod/profiles/`,
+      { method: id ? 'PATCH' : 'POST', body: profile }
+    );
+  }
+
+  static async deleteVODProfile(id) {
+    return request(`${host}/api/vod/profiles/${id}/`, { method: 'DELETE' });
+  }
+
+  static async rebuildVODProfile(id) {
+    return request(`${host}/api/vod/profiles/${id}/rebuild/`, {
+      method: 'POST',
+    });
+  }
+
+  // The built catalogue; null filters are left out, "" asks for entries
+  // without edition.
+  static async previewVODProfileCatalog(id, query) {
+    const params = new URLSearchParams(
+      Object.entries(query)
+        .filter(([, value]) => value !== null && value !== undefined)
+        .map(([key, value]) => [key, String(value)])
+    );
+    return request(`${host}/api/vod/profiles/${id}/preview/?${params}`);
+  }
+
+  static async countVODProfileEditions(body) {
+    return request(`${host}/api/vod/profiles/edition-counts/`, {
+      method: 'POST',
+      body,
+    });
+  }
+
   static async vodLibraryAction(action, body = {}, method = 'POST') {
     const actions = new Set([
       'cleanup-preview',
