@@ -272,7 +272,7 @@ class SourceMetadataTests(TestCase):
         rows = xc_get_vod_streams(request, self.user)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["stream_id"], self.movie.pk)
-        self.assertIn("GER", rows[0]["name"])
+        self.assertEqual(rows[0]["name"], self.movie.name)
         self.account.priority = 0
         self.account.save(update_fields=["priority"])
         self.other.declared_metadata = {
@@ -283,7 +283,7 @@ class SourceMetadataTests(TestCase):
         rows = xc_get_vod_streams(request, self.user)
         self.assertEqual(rows[0]["stream_id"], self.movie.pk)
         info = xc_get_vod_info(request, self.user, self.movie.pk)
-        self.assertIn("ENG", info["info"]["name"])
+        self.assertEqual(info["info"]["name"], self.movie.name)
         self.assertEqual(info["movie_data"]["stream_id"], self.movie.pk)
 
     def test_category_of_another_version_lists_a_stable_version_id(self):

@@ -7,10 +7,31 @@ from apps.channels.utils import format_channel_number, is_catchup_enabled, resol
 from apps.vod.utils import is_vod_movies_enabled, is_vod_series_enabled
 from apps.vod.metadata import (
     category_key, category_metadata_map, effective_source_metadata,
-    metadata_suffix, metadata_satisfies, requirements_from_metadata,
+    metadata_satisfies, requirements_from_metadata,
 )
 from apps.vod.references import output_references, selection_key
-from apps.vod.presentation import canonical_title, canonical_title_expression
+from apps.vod.presentation import (
+    canonical_title_expression,
+    library_list_annotations,
+    library_list_values,
+)
+from apps.vod.profile_catalog import (
+    catalog_entries,
+    order_sources,
+    output_generation,
+    profile_edition,
+    profile_source_order,
+)
+from apps.vod.profiles import (
+    GROUP_CATEGORY_NAMES,
+    group_category,
+    library_metadata_language,
+    profile_for_user,
+    profile_output_name,
+    profile_title,
+    profile_title_expression,
+    uses_enriched_metadata,
+)
 from apps.vod.selection import (
     content_is_blocked,
     resolve_content,
@@ -1200,9 +1221,14 @@ def _xc_fetch_priority_distinct_relations(
     distinct_field,
     value_fields,
     order_by_name_field,
+    catalog=None,
+    profile=None,
 ):
     """
     Return one row dict per distinct content ID (highest account priority wins).
+
+    With a prepared profile catalogue, its entries already chose the sources.
+    The profile decides between provider and Library titles and metadata.
 
     On PostgreSQL, dedupe on narrow relation rows first, then fetch display
     columns via values() (no ORM model instantiation). That avoids sorting
@@ -1213,18 +1239,33 @@ def _xc_fetch_priority_distinct_relations(
     from apps.vod.library import library_settings
 
     narrow_qs = manager.filter(**rel_filters)
-    title = canonical_title_expression(
-        order_by_name_field.removesuffix('name'), library_settings()['languages']
+    prefix = order_by_name_field.removesuffix('name')
+    title = (
+        profile_title_expression(prefix, profile)
+        if profile
+        else canonical_title_expression(prefix, library_settings()['languages'])
     )
-    available = {f"{order_by_name_field.removesuffix('name')}library_blocked": False}
+    annotations = {'_library_title': title}
+    if profile and uses_enriched_metadata(profile):
+        annotations.update(
+            library_list_annotations(prefix, library_metadata_language(profile))
+        )
+    available = {f"{prefix}library_blocked": False}
 
-    def _fetch_by_ids(ids):
+    def _fetch_by_ids(ids, **filters):
         return list(
-            _xc_annotate_relation_artwork(manager.filter(pk__in=ids, **available))
-            .annotate(_library_title=title)
-            .values(*value_fields, '_library_title')
+            _xc_annotate_relation_artwork(
+                manager.filter(pk__in=ids, **available, **filters)
+            )
+            .annotate(**annotations)
+            .values(*value_fields, *annotations)
             .order_by(Lower('_library_title'), 'id')
         )
+
+    if catalog is not None:
+        if 'category_id' not in rel_filters:
+            catalog = catalog.filter(primary=True)
+        return _fetch_by_ids(catalog.values('relation_id'), **rel_filters)
 
     if connection.vendor == 'postgresql':
         winning_ids_qs = (
@@ -1245,8 +1286,8 @@ def _xc_fetch_priority_distinct_relations(
 
     seen = {}
     for row in _xc_annotate_relation_artwork(narrow_qs.filter(**available)).annotate(
-        _library_title=title
-    ).values(*value_fields, '_library_title').order_by(
+        **annotations
+    ).values(*value_fields, *annotations).order_by(
         '-m3u_account__priority', 'id'
     ):
         key = row[distinct_field]
@@ -1257,6 +1298,51 @@ def _xc_fetch_priority_distinct_relations(
     return rows
 
 
+def _xc_profile_catalog(user, content_type):
+    """The user's prepared profile entries, or None for live default output."""
+    profile = profile_for_user(user)
+    generation = output_generation(profile)
+    if generation is None:
+        return profile, None
+    return profile, catalog_entries(profile, generation, content_type)
+
+
+def _xc_profile_names(profile, entries, rows, source_metadata, content_type):
+    """Output names and public IDs of listed rows in the profile's format.
+
+    ``entries`` maps relation IDs to their public ID and edition.
+    """
+    from apps.m3u.models import M3UAccount
+
+    providers = dict(M3UAccount.objects.values_list('id', 'name'))
+    result = {}
+    for row in rows:
+        public_id, edition = entries[row['id']]
+        result[row['id']] = (
+            profile_output_name(
+                profile,
+                row['_library_title'],
+                source_metadata[row['id']],
+                year=row.get(f'{content_type}__year'),
+                edition=edition,
+                provider=providers.get(row['m3u_account_id'], ''),
+                extension=row.get('container_extension'),
+            ),
+            public_id,
+        )
+    return result
+
+
+def _xc_catalog_ids(catalog):
+    """Public IDs and editions of a profile catalogue, keyed by relation ID."""
+    return {
+        relation_id: (public_id, edition)
+        for relation_id, public_id, edition in catalog.values_list(
+            'relation_id', 'public_id', 'edition'
+        )
+    }
+
+
 def xc_get_vod_categories(user):
     """Get VOD categories for XtreamCodes API"""
     if not is_vod_movies_enabled(user=user):
@@ -1265,13 +1351,26 @@ def xc_get_vod_categories(user):
     from apps.vod.models import VODCategory, M3UMovieRelation
 
     response = []
+    profile, catalog = _xc_profile_catalog(user, 'movie')
+    offered = {} if catalog is None else {
+        'm3umovierelation__pk__in': catalog.values('relation_id')
+    }
 
     # Users with VOD access get it from all active M3U accounts
     categories = VODCategory.objects.filter(
         category_type='movie',
         m3umovierelation__movie__library_blocked=False,
-        m3umovierelation__m3u_account__is_active=True
+        m3umovierelation__m3u_account__is_active=True,
+        **offered,
     ).distinct().order_by(Lower("name"))
+    group = group_category(profile, 'movie')
+    if group:
+        # Grouped output offers every title in one category.
+        return [{
+            "category_id": str(group),
+            "category_name": GROUP_CATEGORY_NAMES['movie'],
+            "parent_id": 0,
+        }] if categories.exists() else []
 
     for category in categories:
         response.append({
@@ -1290,6 +1389,12 @@ def xc_get_vod_streams(request, user, category_id=None):
 
     from apps.vod.models import M3UMovieRelation
 
+    profile, catalog = _xc_profile_catalog(user, 'movie')
+    group = group_category(profile, 'movie')
+    if group and category_id:
+        if str(category_id) != str(group):
+            return []
+        category_id = None
     rel_filters = {"m3u_account__is_active": True}
     if category_id:
         rel_filters["category_id"] = category_id
@@ -1303,11 +1408,18 @@ def xc_get_vod_streams(request, user, category_id=None):
         distinct_field='movie_id',
         value_fields=XC_MOVIE_VALUE_FIELDS,
         order_by_name_field='movie__name',
+        catalog=catalog,
+        profile=profile,
     )
     source_metadata = _xc_source_metadata(relations)
-    public_ids = _xc_public_ids(
-        'movie', M3UMovieRelation.objects, 'movie_id', relations, source_metadata, category_id
-    )
+    if catalog is None:
+        public_ids = _xc_public_ids(
+            'movie', M3UMovieRelation.objects, 'movie_id', relations, source_metadata, category_id
+        )
+        entries = {pk: (public_id, '') for pk, public_id in public_ids.items()}
+    else:
+        entries = _xc_catalog_ids(catalog)
+    names = _xc_profile_names(profile, entries, relations, source_metadata, 'movie')
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for the fallback-icon proxy rewrites below.
@@ -1317,17 +1429,21 @@ def xc_get_vod_streams(request, user, category_id=None):
     append = streams.append
     for num, row in enumerate(relations, 1):
         custom_props = row['movie__custom_properties'] or {}
-        category_id = row['category_id']
+        category_id = group or row['category_id']
         category_id_str = str(category_id) if category_id else "0"
         category_id_list = [category_id] if category_id else []
-        rating = row['movie__rating']
+        plot = row['movie__description']
+        genre, rating, year = row['movie__genre'], row['movie__rating'], row['movie__year']
+        if '_library_plot' in row:
+            plot = row['_library_plot']
+            genre, rating, year = library_list_values(row, genre, rating, year)
         artwork = _xc_relation_artwork_from_row(row, custom_props)
 
         append({
             "num": num,
-            "name": metadata_suffix(row['_library_title'], source_metadata[row['id']]),
+            "name": names[row['id']][0],
             "stream_type": "movie",
-            "stream_id": public_ids[row['id']],
+            "stream_id": names[row['id']][1],
             "stream_icon": _xc_cover_or_logo(
                 request,
                 'movie',
@@ -1341,12 +1457,12 @@ def xc_get_vod_streams(request, user, category_id=None):
             "rating_5based": round(float(rating or 0) / 2, 2) if rating else 0,
             "added": str(int(row['movie__created_at'].timestamp())),
             "is_adult": int(bool(row['movie__is_adult'])),
-            "tmdb_id": row['movie__tmdb_id'] or "",
-            "imdb_id": row['movie__imdb_id'] or "",
+            "tmdb_id": row.get('_library_tmdb_id', row['movie__tmdb_id']) or "",
+            "imdb_id": row.get('_library_imdb_id', row['movie__imdb_id']) or "",
             "trailer": custom_props.get('youtube_trailer') or "",
-            "plot": row['movie__description'] or "",
-            "genre": row['movie__genre'] or "",
-            "year": row['movie__year'] or "",
+            "plot": plot or "",
+            "genre": genre or "",
+            "year": year or "",
             "director": custom_props.get('director', ''),
             "cast": custom_props.get('actors', ''),
             "release_date": custom_props.get('release_date', ''),
@@ -1368,13 +1484,26 @@ def xc_get_series_categories(user):
     from apps.vod.models import VODCategory, M3USeriesRelation
 
     response = []
+    profile, catalog = _xc_profile_catalog(user, 'series')
+    offered = {} if catalog is None else {
+        'm3useriesrelation__pk__in': catalog.values('relation_id')
+    }
 
     # Users with VOD access get series from all active M3U accounts
     categories = VODCategory.objects.filter(
         category_type='series',
         m3useriesrelation__series__library_blocked=False,
-        m3useriesrelation__m3u_account__is_active=True
+        m3useriesrelation__m3u_account__is_active=True,
+        **offered,
     ).distinct().order_by(Lower("name"))
+    group = group_category(profile, 'series')
+    if group:
+        # Grouped output offers every title in one category.
+        return [{
+            "category_id": str(group),
+            "category_name": GROUP_CATEGORY_NAMES['series'],
+            "parent_id": 0,
+        }] if categories.exists() else []
 
     for category in categories:
         response.append({
@@ -1393,6 +1522,12 @@ def xc_get_series(request, user, category_id=None):
 
     from apps.vod.models import M3USeriesRelation
 
+    profile, catalog = _xc_profile_catalog(user, 'series')
+    group = group_category(profile, 'series')
+    if group and category_id:
+        if str(category_id) != str(group):
+            return []
+        category_id = None
     rel_filters = {"m3u_account__is_active": True}
     if category_id:
         rel_filters["category_id"] = category_id
@@ -1403,11 +1538,18 @@ def xc_get_series(request, user, category_id=None):
         distinct_field='series_id',
         value_fields=XC_SERIES_VALUE_FIELDS,
         order_by_name_field='series__name',
+        catalog=catalog,
+        profile=profile,
     )
     source_metadata = _xc_source_metadata(relations)
-    public_ids = _xc_public_ids(
-        'series', M3USeriesRelation.objects, 'series_id', relations, source_metadata, category_id
-    )
+    if catalog is None:
+        public_ids = _xc_public_ids(
+            'series', M3USeriesRelation.objects, 'series_id', relations, source_metadata, category_id
+        )
+        entries = {pk: (public_id, '') for pk, public_id in public_ids.items()}
+    else:
+        entries = _xc_catalog_ids(catalog)
+    names = _xc_profile_names(profile, entries, relations, source_metadata, 'series')
 
     _logo_url_parts = _xc_vodlogo_url_parts(request)
     # One reverse for all series backdrop rewrites.
@@ -1417,16 +1559,20 @@ def xc_get_series(request, user, category_id=None):
     append = series_list.append
     for num, row in enumerate(relations, 1):
         custom_props = row['series__custom_properties'] or {}
-        category_id = row['category_id']
-        rating = row['series__rating']
-        year_str = str(row['series__year']) if row['series__year'] else ""
+        category_id = group or row['category_id']
+        plot = row['series__description']
+        genre, rating, year = row['series__genre'], row['series__rating'], row['series__year']
+        if '_library_plot' in row:
+            plot = row['_library_plot']
+            genre, rating, year = library_list_values(row, genre, rating, year)
+        year_str = str(year) if year else ""
         release_date = custom_props.get('release_date', year_str)
         artwork = _xc_relation_artwork_from_row(row, custom_props)
 
         append({
             "num": num,
-            "name": metadata_suffix(row['_library_title'], source_metadata[row['id']]),
-            "series_id": public_ids[row['id']],
+            "name": names[row['id']][0],
+            "series_id": names[row['id']][1],
             "cover": _xc_cover_or_logo(
                 request,
                 'series',
@@ -1436,10 +1582,10 @@ def xc_get_series(request, user, category_id=None):
                 logo_url_parts=_logo_url_parts,
                 url_parts=_series_image_parts,
             ),
-            "plot": row['series__description'] or "",
+            "plot": plot or "",
             "cast": custom_props.get('cast', ''),
             "director": custom_props.get('director', ''),
-            "genre": row['series__genre'] or "",
+            "genre": genre or "",
             "release_date": release_date,
             "releaseDate": release_date,
             "last_modified": str(int(row['updated_at'].timestamp())),
@@ -1456,11 +1602,42 @@ def xc_get_series(request, user, category_id=None):
             "episode_run_time": custom_props.get('episode_run_time', ''),
             "category_id": str(category_id) if category_id else "0",
             "category_ids": [category_id] if category_id else [],
-            "tmdb_id": row['series__tmdb_id'] or "",
-            "imdb_id": row['series__imdb_id'] or "",
+            "tmdb_id": row.get('_library_tmdb_id', row['series__tmdb_id']) or "",
+            "imdb_id": row.get('_library_imdb_id', row['series__imdb_id']) or "",
         })
 
     return series_list
+
+
+def _xc_episode_public_ids(series, series_id, requirements, sources):
+    """Client IDs of a series' episodes, by episode ID.
+
+    Episodes share the series' identity: their own IDs under the series' own
+    ID, an edition's IDs under an edition, their source's IDs under a Sources
+    entry, else the IDs of the series' version. None follows a source change.
+    """
+    from apps.vod.models import VODContentAlias
+    from apps.vod.references import edition_references, reference_kind, source_references
+
+    alias = None
+    if str(series_id) != str(series.pk):
+        alias = VODContentAlias.objects.filter(
+            content_type='series', legacy_id=int(series_id)
+        ).first()
+    kind, value = reference_kind(alias.selection_key) if alias else ('title', None)
+    if kind == 'edition':
+        found = edition_references('episode', [(pk, value) for pk in sources])
+        return {pk: found[(pk, value)] for pk in sources}
+    if kind == 'source':
+        found = source_references(
+            'episode', [(pk, source.id) for pk, source in sources.items()]
+        )
+        return {pk: found[source.id].legacy_id for pk, source in sources.items()}
+    found = output_references('episode', [(pk, requirements) for pk in sources])
+    return {
+        pk: found[selection_key('episode', pk, requirements)].legacy_id
+        for pk in sources
+    }
 
 
 def xc_get_series_info(request, user, series_id):
@@ -1476,13 +1653,19 @@ def xc_get_series_info(request, user, series_id):
     series, requirements = resolve_content('series', series_id)
     if series is None or content_is_blocked(series):
         raise Http404()
+    source_order = profile_source_order(user, 'series', series, series_id)
+    if source_order == []:
+        raise Http404()
     filters = {"series_id": series.pk, "m3u_account__is_active": True}
 
     try:
         series_relation = select_source(
-            M3USeriesRelation.objects.select_related('series', 'series__logo')
-            .filter(**filters)
-            .order_by('-m3u_account__priority', 'id'),
+            order_sources(
+                M3USeriesRelation.objects.select_related('series', 'series__logo')
+                .filter(**filters)
+                .order_by('-m3u_account__priority', 'id'),
+                source_order,
+            ),
             requirements=requirements,
         )
     except (ValueError, TypeError):
@@ -1536,15 +1719,16 @@ def xc_get_series_info(request, user, series_id):
         episode_id__in=[ep.id for ep in episodes],
         m3u_account__is_active=True,
     ).select_related('m3u_account', 'series_relation').order_by('episode_id', '-m3u_account__priority', 'id')
+    episode_sources = order_sources(
+        episode_sources, source_order, key=lambda rel: rel.series_relation_id
+    )
     for rel in source_candidates(episode_sources, requirements=requirements, preserve_selection=False):
         # First row per episode wins due to priority/id ordering.
         if rel.episode_id not in relations_by_episode_id:
             relations_by_episode_id[rel.episode_id] = rel
 
-    # Episodes share the series' identity: their own IDs for the series' own
-    # ID, else the IDs of the series' version. Neither follows the source.
-    episode_references = output_references(
-        'episode', [(episode_id, requirements) for episode_id in relations_by_episode_id]
+    episode_ids = _xc_episode_public_ids(
+        series, series_id, requirements, relations_by_episode_id
     )
 
     # Group episodes by season
@@ -1561,9 +1745,7 @@ def xc_get_series_info(request, user, series_id):
             seasons[season_num] = []
 
         best_relation = relations_by_episode_id.get(episode.id)
-        public_episode_id = episode_references[
-            selection_key('episode', episode.id, requirements)
-        ].legacy_id
+        public_episode_id = episode_ids[episode.id]
 
         video = audio = bitrate = None
         container_extension = "mp4"
@@ -1713,35 +1895,72 @@ def xc_get_series_info(request, user, series_id):
     else:
         series_cover = None
 
-    from apps.vod.library import library_settings
-    title = canonical_title(series, library_settings()['languages'])
+    profile = profile_for_user(user)
+    info_category = group_category(profile, 'series') or series_relation.category_id
+    title = profile_output_name(
+        profile,
+        profile_title(profile, series, series_data['name']),
+        selected_metadata,
+        year=series.year,
+        edition=profile_edition(profile, 'series', series, series_id),
+        provider=series_relation.m3u_account.name,
+    )
+    release_date = (series.custom_properties or {}).get(
+        'release_date', str(series.year) if series.year else ""
+    )
+    backdrops = rewrite_backdrop_paths(
+        request,
+        'series',
+        series.id,
+        series_artwork['backdrop_path'],
+    )
+    series_ids = {'tmdb_id': series.tmdb_id, 'imdb_id': series.imdb_id}
+    if uses_enriched_metadata(profile):
+        from apps.vod.library import client_document
+
+        library = client_document(series, library_metadata_language(profile))
+        for key in ('tmdb_id', 'imdb_id'):
+            series_ids[key] = library[key] or series_ids[key]
+        for field, key in (
+            ('description', 'description'),
+            ('genre', 'genre'),
+            ('rating', 'rating'),
+            ('cast', 'actors'),
+            ('director', 'director'),
+            ('youtube_trailer', 'youtube_trailer'),
+        ):
+            series_data[field] = library[key] or series_data[field]
+        release_date = library['release_date'] or release_date
+        if library['poster_url']:
+            series_cover = rewrite_single_image_url(
+                request, 'series', series.id, 'tmdb_poster', library['poster_url']
+            )
+        if library['backdrop_url']:
+            backdrops = [rewrite_single_image_url(
+                request, 'series', series.id, 'tmdb_backdrop', library['backdrop_url']
+            )]
     info = {
         'seasons': seasons_list,
         "info": {
-            "name": metadata_suffix(title, selected_metadata),
+            "name": title,
             "cover": series_cover,
             "plot": series_data['description'],
             "cast": series_data['cast'],
             "director": series_data['director'],
             "genre": series_data['genre'],
-            "release_date": series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else ""),
-            "releaseDate": series.custom_properties.get('release_date', str(series.year) if series.year else "") if series.custom_properties else (str(series.year) if series.year else ""),
+            "release_date": release_date,
+            "releaseDate": release_date,
             "added": str(int(series_relation.created_at.timestamp())),
             "last_modified": str(int(series_relation.updated_at.timestamp())),
             "rating": str(series_data['rating']),
             "rating_5based": str(round(float(series_data['rating'] or 0) / 2, 2)) if series_data['rating'] else "0",
-            "backdrop_path": rewrite_backdrop_paths(
-                request,
-                'series',
-                series.id,
-                series_artwork['backdrop_path'],
-            ),
+            "backdrop_path": backdrops,
             "youtube_trailer": series_data['youtube_trailer'],
-            "imdb": str(series.imdb_id) if series.imdb_id else "",
-            "tmdb": str(series.tmdb_id) if series.tmdb_id else "",
+            "imdb": str(series_ids['imdb_id'] or ""),
+            "tmdb": str(series_ids['tmdb_id'] or ""),
             "episode_run_time": str(series_data['episode_run_time']),
-            "category_id": str(series_relation.category.id) if series_relation.category else "0",
-            "category_ids": [int(series_relation.category.id)] if series_relation.category else [],
+            "category_id": str(info_category) if info_category else "0",
+            "category_ids": [int(info_category)] if info_category else [],
         },
         "episodes": dict(seasons)
     }
@@ -1763,6 +1982,9 @@ def xc_get_vod_info(request, user, vod_id):
     movie, requirements = resolve_content('movie', vod_id)
     if movie is None or content_is_blocked(movie):
         raise Http404()
+    source_order = profile_source_order(user, 'movie', movie, vod_id)
+    if source_order == []:
+        raise Http404()
     filters = {"movie_id": movie.pk, "m3u_account__is_active": True}
     if user.user_level < 10 and (user.custom_properties or {}).get('hide_adult_content', False):
         filters["movie__is_adult"] = False
@@ -1770,7 +1992,10 @@ def xc_get_vod_info(request, user, vod_id):
     try:
         # Order by account priority to get the best relation when multiple exist
         movie_relation = select_source(
-            M3UMovieRelation.objects.select_related('movie', 'movie__logo').filter(**filters).order_by('-m3u_account__priority', 'id'),
+            order_sources(
+                M3UMovieRelation.objects.select_related('movie', 'movie__logo').filter(**filters).order_by('-m3u_account__priority', 'id'),
+                source_order,
+            ),
             requirements=requirements,
         )
         if not movie_relation:
@@ -1882,10 +2107,49 @@ def xc_get_vod_info(request, user, vod_id):
         movie_cover = None
 
     # Provider detail responses must not replace the canonical presentation title.
-    from apps.vod.library import library_settings
-    title = metadata_suffix(
-        canonical_title(movie, library_settings()['languages']), selected_metadata
+    profile = profile_for_user(user)
+    info_category = group_category(profile, 'movie') or movie_relation.category_id
+    title = profile_output_name(
+        profile,
+        profile_title(profile, movie, movie_data.get('name', movie.name)),
+        selected_metadata,
+        year=movie.year,
+        edition=profile_edition(profile, 'movie', movie, vod_id),
+        provider=movie_relation.m3u_account.name,
+        extension=movie_relation.container_extension,
     )
+    backdrops = rewrite_backdrop_paths(
+        request,
+        'movie',
+        movie.id,
+        movie_artwork['backdrop_path'],
+    )
+    if uses_enriched_metadata(profile):
+        from apps.vod.library import client_document
+
+        library = client_document(movie, library_metadata_language(profile))
+        for field in (
+            'description',
+            'tmdb_id',
+            'imdb_id',
+            'year',
+            'genre',
+            'rating',
+            'director',
+            'actors',
+            'country',
+            'release_date',
+            'youtube_trailer',
+        ):
+            movie_data[field] = library[field] or movie_data.get(field, '')
+        if library['poster_url']:
+            movie_cover = rewrite_single_image_url(
+                request, 'movie', movie.id, 'tmdb_poster', library['poster_url']
+            )
+        if library['backdrop_url']:
+            backdrops = [rewrite_single_image_url(
+                request, 'movie', movie.id, 'tmdb_backdrop', library['backdrop_url']
+            )]
     # Transform API response to XtreamCodes format
     info = {
         "info": {
@@ -1906,12 +2170,7 @@ def xc_get_vod_info(request, user, vod_id):
             'imdb_id': movie_data.get('imdb_id', ''),
             "tmdb_id": movie_data.get('tmdb_id', ''),
             'youtube_trailer': movie_data.get('youtube_trailer', ''),
-            'backdrop_path': rewrite_backdrop_paths(
-                request,
-                'movie',
-                movie.id,
-                movie_artwork['backdrop_path'],
-            ),
+            'backdrop_path': backdrops,
             'cover': movie_cover,
             'bitrate': movie_data.get('bitrate', 0),
             'video': movie_data.get('video', {}),
@@ -1921,8 +2180,8 @@ def xc_get_vod_info(request, user, vod_id):
             "stream_id": int(vod_id),
             "name": title,
             "added": str(int(movie_relation.created_at.timestamp())),
-            "category_id": str(movie_relation.category.id) if movie_relation.category else "0",
-            "category_ids": [int(movie_relation.category.id)] if movie_relation.category else [],
+            "category_id": str(info_category) if info_category else "0",
+            "category_ids": [int(info_category)] if info_category else [],
             "container_extension": movie_relation.container_extension or "mp4",
             "custom_sid": None,
             "direct_source": "",

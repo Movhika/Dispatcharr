@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from apps.m3u.serializers import M3UFilterSerializer
 
-from . import profiles
+from . import profile_catalog, profiles
 from .models import M3UVODCategoryRelation, VODProfile, VODProfileCategoryRule
 
 
@@ -221,6 +221,7 @@ class VODProfileSerializer(serializers.ModelSerializer):
         return self._save(instance, validated_data)
 
     def _save(self, profile, data):
+        reactivated = profile.pk is None or not profile.is_active
         if data.get("is_default"):
             VODProfile.objects.select_for_update().filter(is_default=True).exclude(
                 pk=profile.pk
@@ -228,7 +229,122 @@ class VODProfileSerializer(serializers.ModelSerializer):
         for field, item in data.items():
             setattr(profile, field, item)
         profile.save()
+        profile_catalog.refresh_catalog(profile, force=reactivated)
         return profile
+
+
+class VODProfileDraftSerializer(serializers.Serializer):
+    profile = serializers.JSONField(
+        help_text="Unsaved profile settings in the same shape as a profile."
+    )
+    profile_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Saved profile whose import rules decide the categories.",
+    )
+
+    def validate_profile(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Send the profile settings as an object.")
+        settings = {
+            key: item
+            for key, item in value.items()
+            if key not in {"id", "name", "users", "is_default", "is_active"}
+        }
+        serializer = VODProfileSerializer(data=settings, partial=True)
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data
+
+
+class VODProfileEditionCountsSerializer(serializers.Serializer):
+    movie = serializers.DictField(child=serializers.IntegerField())
+    series = serializers.DictField(child=serializers.IntegerField())
+
+
+class VODProfilePreviewRequestSerializer(serializers.Serializer):
+    content_type = serializers.ChoiceField(choices=["movie", "series"])
+    search = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    excluded = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="List the titles the profile excludes instead of offered ones.",
+    )
+    account = serializers.IntegerField(
+        required=False, allow_null=True, help_text="Titles with a source here."
+    )
+    category = serializers.IntegerField(
+        required=False, allow_null=True, help_text="Titles with a source here."
+    )
+    edition = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=120,
+        help_text='Titles with an entry of this edition; "" for entries without one.',
+    )
+    page = serializers.IntegerField(required=False, min_value=1, default=1)
+    page_size = serializers.IntegerField(
+        required=False, min_value=1, max_value=100, default=50
+    )
+
+
+class VODProfilePreviewEntrySerializer(serializers.Serializer):
+    name = serializers.CharField()
+    source_id = serializers.IntegerField(help_text="Source the entry plays.")
+    edition = serializers.CharField()
+    provider = serializers.CharField()
+    category = serializers.CharField()
+    fallbacks = serializers.ListField(
+        child=serializers.IntegerField(), help_text="Source IDs in failover order."
+    )
+    metadata = serializers.JSONField()
+    sources = serializers.IntegerField()
+
+
+class VODProfilePreviewSourceSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    provider = serializers.CharField()
+    category = serializers.CharField()
+    metadata = serializers.JSONField()
+    entry = serializers.CharField(help_text="Client entry this source serves.")
+    state = serializers.ChoiceField(
+        choices=("selected", "fallback", "skipped", "unused"),
+        help_text="Selected or fallback for an entry, skipped by the profile, "
+        "or allowed but not needed.",
+    )
+    reason = serializers.CharField()
+
+
+class VODProfilePreviewTitleSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    year = serializers.IntegerField(allow_null=True)
+    reason = serializers.CharField()
+    excluded = serializers.BooleanField(
+        help_text="Whether the profile excludes this title itself."
+    )
+    entries = VODProfilePreviewEntrySerializer(many=True)
+    sources = VODProfilePreviewSourceSerializer(many=True)
+
+
+class VODProfilePreviewCategorySerializer(serializers.Serializer):
+    value = serializers.IntegerField(help_text="Category ID for the filter.")
+    label = serializers.CharField()
+
+
+class VODProfilePreviewSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    results = VODProfilePreviewTitleSerializer(many=True)
+    categories = VODProfilePreviewCategorySerializer(
+        many=True, help_text="Client categories the profile offers."
+    )
+    accounts = VODProfilePreviewCategorySerializer(
+        many=True, help_text="Accounts with a category the profile offers."
+    )
+    editions = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text='Offered titles per edition, "" for entries without one.',
+    )
 
 
 class VODProfileCategoryRuleSerializer(serializers.ModelSerializer):
@@ -257,3 +373,41 @@ class VODProfileCategoryRulePreviewRowSerializer(VODProfileCategoryRuleSerialize
 class VODProfileCategoryRulePreviewRequestSerializer(serializers.Serializer):
     target_id = serializers.CharField(max_length=128)
     rules = VODProfileCategoryRulePreviewRowSerializer(many=True, allow_empty=False)
+
+
+class VODProfileOptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
+class VODProfileUserOptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField(source="username")
+
+
+class VODProfileCategoryOptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField(source="category__name")
+    category = serializers.IntegerField(source="category_id")
+    category_type = serializers.CharField(source="category__category_type")
+    account = serializers.IntegerField(source="m3u_account_id")
+    enabled = serializers.BooleanField()
+    custom_properties = serializers.JSONField(
+        help_text="Category defaults such as languages and resolution."
+    )
+
+
+class VODProfileOptionsSerializer(serializers.Serializer):
+    users = VODProfileUserOptionSerializer(many=True)
+    accounts = VODProfileOptionSerializer(many=True)
+    categories = VODProfileCategoryOptionSerializer(many=True)
+    metadata_languages = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Library metadata languages a profile can prefer.",
+    )
+
+
+class VODProfileValuesSerializer(serializers.Serializer):
+    languages = serializers.ListField(child=serializers.JSONField())
+    resolutions = serializers.ListField(child=serializers.CharField())
+    video_features = serializers.ListField(child=serializers.CharField())
