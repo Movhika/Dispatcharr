@@ -870,6 +870,9 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
 
                     # Category metadata decides the values of its sources.
                     changed_options()
+                    from apps.vod.profile_catalog import request_catalog_build
+
+                    request_catalog_build()
 
             return Response({"message": "Group settings updated successfully"})
 

@@ -83,6 +83,13 @@ class VODLibraryViewSet(viewsets.GenericViewSet):
             from .library_filters import changed_options
 
             changed_options()
+        # Prepared profile catalogues depend on source metadata and title flags.
+        if self.action in {"content", "source_metadata", "tmdb_match"} and (
+            response.status_code < 400
+        ):
+            from .profile_catalog import request_catalog_build
+
+            request_catalog_build()
         return super().finalize_response(request, response, *args, **kwargs)
 
     @extend_schema(

@@ -260,3 +260,38 @@ def update_status_on_active_change(sender, instance, **kwargs):
         except M3UAccount.DoesNotExist:
             # New record, will use default status
             pass
+
+
+# Which accounts serve VOD, and in which order, shapes prepared profile catalogues.
+VOD_OUTPUT_FIELDS = ("is_active", "priority")
+
+
+@receiver(pre_save, sender=M3UAccount)
+def remember_vod_output_fields(sender, instance, update_fields=None, **kwargs):
+    instance._vod_output_before = None
+    if instance.pk and (
+        update_fields is None or set(update_fields) & set(VOD_OUTPUT_FIELDS)
+    ):
+        instance._vod_output_before = (
+            M3UAccount.objects.filter(pk=instance.pk)
+            .values_list(*VOD_OUTPUT_FIELDS)
+            .first()
+        )
+
+
+@receiver(post_save, sender=M3UAccount)
+def rebuild_vod_catalogs_on_account_change(sender, instance, created, **kwargs):
+    before = getattr(instance, "_vod_output_before", None)
+    if before is not None and before != tuple(
+        getattr(instance, field) for field in VOD_OUTPUT_FIELDS
+    ):
+        from apps.vod.profile_catalog import request_catalog_build
+
+        request_catalog_build()
+
+
+@receiver(post_delete, sender=M3UAccount)
+def rebuild_vod_catalogs_on_account_delete(sender, instance, **kwargs):
+    from apps.vod.profile_catalog import request_catalog_build
+
+    request_catalog_build()

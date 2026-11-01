@@ -128,7 +128,8 @@ def _find_resumable_vod_session(
     when the new session starts.
     """
     content_obj, _relation, _candidates = _get_content_and_relation(
-        content_type, content_id, preferred_m3u_account_id, preferred_stream_id
+        content_type, content_id, preferred_m3u_account_id, preferred_stream_id,
+        user=user,
     )
     if not content_obj:
         return None
@@ -265,6 +266,7 @@ def _select_vod_stream(
     profile_id=None,
     session_id=None,
     allowed_m3u_profiles=None,
+    user=None,
 ):
     """
     Resolve content to a provider URL and M3U profile.
@@ -277,7 +279,8 @@ def _select_vod_stream(
     and final_stream_url; or None when nothing usable is found.
     """
     content_obj, relation, candidates = _get_content_and_relation(
-        content_type, content_id, preferred_m3u_account_id, preferred_stream_id
+        content_type, content_id, preferred_m3u_account_id, preferred_stream_id,
+        user=user,
     )
     if not content_obj or not relation:
         return None
@@ -343,9 +346,13 @@ def _select_vod_stream(
     return None
 
 
-def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id=None, preferred_stream_id=None):
-    """Resolve a canonical title and keep its requested source context intact."""
+def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id=None, preferred_stream_id=None, user=None):
+    """Resolve a canonical title and keep its requested source context intact.
+
+    With a user, only the sources of their VOD profile are used, in its order.
+    """
     from apps.vod.metadata import effective_source_metadata, requirements_from_metadata
+    from apps.vod.profile_catalog import order_sources, profile_source_order
     from apps.vod.references import selection_key
     from apps.vod.selection import resolve_content, source_candidates
 
@@ -371,6 +378,12 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
 
     if content_obj is None or content_is_blocked(content_obj):
         return None, None, []
+    source_order = (
+        profile_source_order(user, content_type, content_obj, content_id, by_uuid=True)
+        if user is not None else None
+    )
+    if source_order == []:
+        return None, None, []
     if content_type == 'series':
         content_obj = content_obj.episodes.order_by('season_number', 'episode_number', 'pk').first()
         if content_obj is None:
@@ -386,6 +399,10 @@ def _get_content_and_relation(content_type, content_id, preferred_m3u_account_id
         ))
         .order_by('-m3u_account__priority', 'pk')
     )
+    candidates = order_sources(candidates, source_order, key=(
+        (lambda source: source.series_relation_id)
+        if relation_model is M3UEpisodeRelation else (lambda source: source.id)
+    ))
     if preferred_stream_id:
         preferred = [
             source for source in candidates
@@ -758,6 +775,7 @@ def stream_vod(
                     preferred_stream_id,
                     profile_id,
                     allowed_m3u_profiles=get_allowed_m3u_profiles(user),
+                    user=user,
                 )
                 if not selected:
                     logger.error(
@@ -806,6 +824,7 @@ def stream_vod(
             preferred_stream_id,
             profile_id,
             session_id,
+            user=user,
         )
         if not selected:
             logger.error(
@@ -922,6 +941,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
                     preferred_stream_id,
                     profile_id,
                     allowed_m3u_profiles=get_allowed_m3u_profiles(user),
+                    user=user,
                 )
                 if not selected:
                     logger.error(
@@ -963,6 +983,7 @@ def head_vod(request, content_type, content_id, session_id=None, profile_id=None
             preferred_stream_id,
             profile_id,
             session_id,
+            user=user,
         )
         if not selected:
             logger.error(
@@ -1404,12 +1425,14 @@ def stream_xc_movie(request, username, password, stream_id, extension):
         return JsonResponse({"error": "Forbidden"}, status=403)
 
     from apps.vod.models import VODContentAlias
+    from apps.vod.profile_catalog import profile_source_order
     from apps.vod.selection import resolve_content
     movie, requirements = resolve_content('movie', stream_id)
     if (
         movie is None
         or content_is_blocked(movie)
         or not movie.m3u_relations.filter(m3u_account__is_active=True).exists()
+        or profile_source_order(user, 'movie', movie, stream_id) == []
         or (
             user.user_level < 10
             and (user.custom_properties or {}).get('hide_adult_content', False)
@@ -1445,12 +1468,14 @@ def stream_xc_episode(request, username, password, stream_id, extension):
         return JsonResponse({"error": "Forbidden"}, status=403)
 
     from apps.vod.models import VODContentAlias
+    from apps.vod.profile_catalog import profile_source_order
     from apps.vod.selection import resolve_content
     episode, requirements = resolve_content('episode', stream_id)
     if (
         episode is None
         or content_is_blocked(episode)
         or not episode.m3u_relations.filter(m3u_account__is_active=True).exists()
+        or profile_source_order(user, 'episode', episode, stream_id) == []
     ):
         return JsonResponse({"error": "Episode not found"}, status=404)
     alias = VODContentAlias.objects.filter(content_type='episode', legacy_id=stream_id).first()

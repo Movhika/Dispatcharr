@@ -21,6 +21,13 @@ USER_AGENT_PATCH = patch(
 
 
 class EmptyVODCategoriesGuardTests(TransactionTestCase):
+    def setUp(self):
+        # A finished refresh requests a profile catalogue build; keep it out of
+        # these tests so they do not depend on the Celery broker.
+        catalog_build = patch("apps.vod.profile_catalog.request_catalog_build")
+        catalog_build.start()
+        self.addCleanup(catalog_build.stop)
+
     def _setup_xc_account_with_movie_category(self):
         account = M3UAccount.objects.create(
             name="Test XC Provider",

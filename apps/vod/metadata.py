@@ -229,17 +229,3 @@ def metadata_satisfies(metadata, requirements):
     ):
         return False
     return not requirements.get("unresolved_language")
-
-
-def metadata_suffix(name, metadata):
-    """Describe the selected source without asserting facts about every source."""
-    tags = [
-        "/".join(code.upper() for code in metadata.get("audio_languages", [])),
-        metadata.get("resolution", ""),
-        "/".join(
-            feature.removeprefix("custom:").upper()
-            for feature in metadata.get("video_features", [])
-        ),
-    ]
-    suffix = " · ".join(tag for tag in tags if tag)
-    return f"{name} [{suffix}]" if name and suffix else name
