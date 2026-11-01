@@ -31,6 +31,26 @@ TECHNICAL_FILTERS = {
 }
 
 
+def resolution_values(filters):
+    """The resolution tiers a filter allows, or None without a condition.
+
+    An exact resolution, a range, or both narrow the tiers.
+    """
+    from .metadata import RESOLUTIONS
+
+    exact, low, high = (
+        filters.get(key) for key in ("resolution", "resolution_min", "resolution_max")
+    )
+    if not (exact or low or high):
+        return None
+    # RESOLUTIONS runs from the highest tier down.
+    tiers = list(RESOLUTIONS)
+    start = tiers.index(high) if high in tiers else 0
+    end = tiers.index(low) if low in tiers else len(tiers) - 1
+    allowed = tiers[start : end + 1]
+    return [exact] if exact in allowed else [] if exact else allowed
+
+
 SOURCE_METADATA_PATHS = (
     "manual_metadata",
     "observed_metadata",
@@ -135,7 +155,7 @@ def video_streams(videos, accept):
     return match
 
 
-def series_resolution_match(queryset, value):
+def series_resolution_match(queryset, values):
     """Match the provider episode resolution unless the source sets its own."""
     own, effective = "_library_own_resolution", "_library_resolution"
     queryset = queryset.annotate(
@@ -145,19 +165,19 @@ def series_resolution_match(queryset, value):
     videos = episode_videos()
     inherited = Q(**{f"{own}__isnull": True})
     match = (
-        Q(**{own: value})
+        Q(**{f"{own}__in": values})
         | (
             inherited
             & ~Exists(
                 episodes.filter(video_streams(videos, lambda facts: facts["resolution"]))
             )
-            & Q(**{effective: value})
+            & Q(**{f"{effective}__in": values})
         )
         | (
             inherited
             & Exists(
                 episodes.filter(
-                    video_streams(videos, lambda facts: facts["resolution"] == value)
+                    video_streams(videos, lambda facts: facts["resolution"] in values)
                 )
             )
         )
@@ -177,20 +197,20 @@ def technical_values(queryset):
 def filter_relations(queryset, kind, filters):
     for parameter, field in TECHNICAL_FILTERS.items():
         value = filters.get(parameter)
-        if not value:
-            continue
-        if field == "resolution" and kind == "series":
-            queryset = series_resolution_match(queryset, value)
+        # Resolutions also match a range; see below.
+        if not value or field == "resolution":
             continue
         name = f"_library_{field}"
         queryset = queryset.annotate(**{name: metadata_value(field)})
-        queryset = queryset.filter(
-            **{
-                name if field == "resolution" else f"{name}__contains": (
-                    value if field == "resolution" else [value]
-                )
-            }
-        )
+        queryset = queryset.filter(**{f"{name}__contains": [value]})
+    resolutions = resolution_values(filters)
+    if resolutions is not None:
+        if kind == "series":
+            queryset = series_resolution_match(queryset, resolutions)
+        else:
+            queryset = queryset.annotate(
+                _library_resolution=metadata_value("resolution")
+            ).filter(_library_resolution__in=resolutions)
     if filters.get("container_extension"):
         queryset = (
             queryset.filter(container_extension__iexact=filters["container_extension"])

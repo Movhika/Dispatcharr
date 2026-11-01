@@ -1,0 +1,196 @@
+from django.db import transaction
+from rest_framework import serializers
+
+from . import profiles
+from .models import VODProfile
+
+
+class ProfileUsersField(serializers.ListField):
+    child = serializers.IntegerField()
+
+    def get_attribute(self, instance):
+        return sorted(assignment.user_id for assignment in instance.assignments.all())
+
+
+def _normalized(normalize, value, *args):
+    try:
+        return normalize(value, *args)
+    except profiles.FieldError as error:
+        detail = {error.field: [str(error)]}
+        if error.index is not None:
+            detail = {str(error.index): detail}
+        raise serializers.ValidationError(detail)
+    except ValueError as error:
+        raise serializers.ValidationError(str(error))
+
+
+class VODProfileSerializer(serializers.ModelSerializer):
+    users = ProfileUsersField(
+        read_only=True,
+        help_text="Users assigned to this profile in their user settings.",
+    )
+    excluded_titles = serializers.JSONField(
+        required=False,
+        help_text="Movies and series this profile never offers, by type and ID.",
+    )
+    content_rules = serializers.JSONField(
+        required=False,
+        help_text="Ordered rules; the first match includes or excludes a source.",
+    )
+
+    class Meta:
+        model = VODProfile
+        fields = (
+            "id",
+            "name",
+            "is_default",
+            "is_active",
+            "output_mode",
+            "output_groups",
+            "name_template",
+            "name_labels",
+            "title_source",
+            "metadata_source",
+            "content_rules",
+            "excluded_titles",
+            "edition_rules",
+            "ranking",
+            "audio_language_order",
+            "subtitle_language_order",
+            "provider_order",
+            "users",
+            "catalog_status",
+            "catalog_counts",
+            "catalog_progress",
+            "catalog_started_at",
+            "catalog_completed_at",
+            "catalog_error",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "catalog_status",
+            "catalog_counts",
+            "catalog_progress",
+            "catalog_started_at",
+            "catalog_completed_at",
+            "catalog_error",
+            "created_at",
+            "updated_at",
+        )
+        # The single-default constraint is enforced in _save by moving it.
+        extra_kwargs = {"is_default": {"validators": []}}
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a profile name.")
+        duplicate = VODProfile.objects.filter(name__iexact=value)
+        if self.instance is not None:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise serializers.ValidationError("A profile with this name exists.")
+        return value
+
+    def validate_excluded_titles(self, value):
+        from .selection import resolve_content
+
+        titles = _normalized(profiles.normalize_excluded_titles, value)
+        # Merged titles keep their exclusion; titles that are gone drop out.
+        current = set()
+        for title in titles:
+            content, _ = resolve_content(title["content_type"], title["id"])
+            if content is not None:
+                current.add((title["content_type"], content.pk))
+        return [
+            {"content_type": content_type, "id": content_id}
+            for content_type, content_id in sorted(current)
+        ]
+
+    def validate_name_template(self, value):
+        return _normalized(profiles.normalize_name_template, value)
+
+    def validate_name_labels(self, value):
+        return _normalized(profiles.normalize_name_labels, value)
+
+    def validate_title_source(self, value):
+        from .library import library_settings
+
+        allowed = (
+            profiles.PROVIDER_TITLES,
+            profiles.CLEAN_TITLES,
+            *library_settings()["languages"],
+        )
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "Choose provider, clean or a Library metadata language."
+            )
+        return value
+
+    def validate_content_rules(self, value):
+        return _normalized(profiles.normalize_content_rules, value)
+
+    def validate_edition_rules(self, value):
+        return _normalized(profiles.normalize_edition_rules, value)
+
+    def validate_ranking(self, value):
+        return _normalized(profiles.normalize_ranking, value)
+
+    def validate_audio_language_order(self, value):
+        return _normalized(
+            profiles.normalize_language_order, value, "DUB language order"
+        )
+
+    def validate_subtitle_language_order(self, value):
+        return _normalized(
+            profiles.normalize_language_order, value, "SUB language order"
+        )
+
+    def validate_provider_order(self, value):
+        return _normalized(profiles.normalize_provider_order, value)
+
+    def validate(self, attrs):
+        current = self.instance
+
+        def value(field):
+            return attrs.get(field, getattr(current, field, None))
+
+        if (
+            current is not None
+            and current.is_default
+            and attrs.get("is_default", True) is False
+        ):
+            raise serializers.ValidationError(
+                {"is_default": "Make another profile the default instead."}
+            )
+        if value("is_default") and value("is_active") is False:
+            raise serializers.ValidationError(
+                {"is_active": "The default profile is always active."}
+            )
+        if {"output_mode", "name_template"} & set(attrs):
+            try:
+                profiles.check_compact_name(
+                    value("output_mode") or VODProfile.OutputMode.COMPACT,
+                    value("name_template") or "",
+                )
+            except ValueError as error:
+                raise serializers.ValidationError({"name_template": str(error)})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        return self._save(VODProfile(), validated_data)
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        return self._save(instance, validated_data)
+
+    def _save(self, profile, data):
+        if data.get("is_default"):
+            VODProfile.objects.select_for_update().filter(is_default=True).exclude(
+                pk=profile.pk
+            ).update(is_default=False)
+        for field, item in data.items():
+            setattr(profile, field, item)
+        profile.save()
+        return profile

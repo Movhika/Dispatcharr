@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .library_api import VODLibraryViewSet
+from .profile_api import VODProfileViewSet
 from .api_views import (
     MovieViewSet,
     EpisodeViewSet,
@@ -18,6 +19,7 @@ app_name = 'vod'
 
 router = DefaultRouter()
 router.register(r'library', VODLibraryViewSet, basename='library')
+router.register(r'profiles', VODProfileViewSet, basename='profile')
 router.register(r'movies', MovieViewSet, basename='movie')
 router.register(r'episodes', EpisodeViewSet, basename='episode')
 router.register(r'series', SeriesViewSet, basename='series')
