@@ -523,6 +523,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.m3u.tasks.check_account_expirations",
         "schedule": 86400.0,  # Once every 24 hours
     },
+    # VOD lists follow the date: relative periods and visible periods
+    "refresh-dated-vod-lists": {
+        "task": "apps.vod.tasks.refresh_dated_vod_lists",
+        "schedule": 3600.0,  # Hourly; profiles only rebuild when a list changes
+    },
 }
 
 MEDIA_ROOT = BASE_DIR / "media"
