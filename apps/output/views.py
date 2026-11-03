@@ -1224,6 +1224,7 @@ def _xc_fetch_priority_distinct_relations(
     order_by_name_field,
     catalog=None,
     profile=None,
+    primary_only=True,
 ):
     """
     Return one row dict per distinct content ID (highest account priority wins).
@@ -1264,7 +1265,7 @@ def _xc_fetch_priority_distinct_relations(
         )
 
     if catalog is not None:
-        if 'category_id' not in rel_filters:
+        if 'category_id' not in rel_filters and primary_only:
             catalog = catalog.filter(primary=True)
         return _fetch_by_ids(catalog.values('relation_id'), **rel_filters)
 
@@ -1306,6 +1307,90 @@ def _xc_profile_catalog(user, content_type):
     if generation is None:
         return profile, None
     return profile, catalog_entries(profile, generation, content_type)
+
+
+def _xc_list_categories(profile, catalog, content_type):
+    """Client categories of list output: the profile's lists shown today."""
+    from apps.vod.lists import (
+        UNSORTED_CATEGORY_ID,
+        UNSORTED_NAME,
+        display_name,
+        list_category_id,
+        profile_lists,
+    )
+
+    response = [
+        {
+            "category_id": str(list_category_id(vod_list.pk)),
+            "category_name": display_name(vod_list),
+            "parent_id": 0,
+        }
+        for vod_list in profile_lists(profile, content_type)
+        if catalog.filter(list_ids__contains=[vod_list.pk]).exists()
+    ]
+    if profile.include_unsorted and catalog.filter(list_ids=[]).exists():
+        response.append({
+            "category_id": str(UNSORTED_CATEGORY_ID),
+            "category_name": UNSORTED_NAME,
+            "parent_id": 0,
+        })
+    return response
+
+
+def _xc_list_selection(profile, catalog, content_type, category_id):
+    """Entries of one list category or of the full list output.
+
+    Returns the entries, each relation's client categories and, for a list
+    category, the title order of that list.
+    """
+    from apps.vod.lists import (
+        UNSORTED_CATEGORY_ID,
+        category_list_id,
+        list_category_id,
+        list_positions,
+    )
+    from apps.vod.models import VODList
+
+    list_id = category_list_id(category_id) if category_id else None
+    positions = None
+    if not category_id:
+        entries = catalog.filter(primary=True)
+    elif list_id is None:
+        entries = catalog.none()
+    elif list_id == 0:
+        entries = catalog.filter(list_ids=[])
+    else:
+        entries = catalog.filter(list_ids__contains=[list_id])
+        vod_list = VODList.objects.filter(pk=list_id).first()
+        positions = list_positions(vod_list, content_type) if vod_list else {}
+    categories = {}
+    for relation_id, list_ids in entries.values_list('relation_id', 'list_ids'):
+        ids = [list_category_id(pk) for pk in list_ids] or [UNSORTED_CATEGORY_ID]
+        if category_id:
+            # The requested category leads, as the client asked for it.
+            ids = [int(category_id), *(pk for pk in ids if pk != int(category_id))]
+        categories[relation_id] = ids
+    return entries, categories, positions
+
+
+def _xc_output_category(user, profile, content_type, relation):
+    """Client category of one title in details responses."""
+    group = group_category(profile, content_type)
+    if group:
+        return group
+    if profile.output_groups == 'lists':
+        from apps.vod.lists import UNSORTED_CATEGORY_ID, list_category_id
+
+        _profile, catalog = _xc_profile_catalog(user, content_type)
+        if catalog is not None:
+            list_ids = (
+                catalog.filter(relation_id=relation.id)
+                .order_by('-primary')
+                .values_list('list_ids', flat=True)
+                .first()
+            )
+            return list_category_id(list_ids[0]) if list_ids else UNSORTED_CATEGORY_ID
+    return relation.category_id
 
 
 def _xc_profile_names(profile, entries, rows, source_metadata, content_type):
@@ -1364,6 +1449,8 @@ def xc_get_vod_categories(user):
         m3umovierelation__m3u_account__is_active=True,
         **offered,
     ).distinct().order_by(Lower("name"))
+    if catalog is not None and profile.output_groups == 'lists':
+        return _xc_list_categories(profile, catalog, 'movie')
     group = group_category(profile, 'movie')
     if group:
         # Grouped output offers every title in one category.
@@ -1396,6 +1483,12 @@ def xc_get_vod_streams(request, user, category_id=None):
         if str(category_id) != str(group):
             return []
         category_id = None
+    list_categories = positions = None
+    if catalog is not None and profile.output_groups == 'lists':
+        catalog, list_categories, positions = _xc_list_selection(
+            profile, catalog, 'movie', category_id
+        )
+        category_id = None
     rel_filters = {"m3u_account__is_active": True}
     if category_id:
         rel_filters["category_id"] = category_id
@@ -1411,7 +1504,11 @@ def xc_get_vod_streams(request, user, category_id=None):
         order_by_name_field='movie__name',
         catalog=catalog,
         profile=profile,
+        primary_only=list_categories is None,
     )
+    if positions is not None:
+        # A list category follows the list's own order.
+        relations.sort(key=lambda row: positions.get(row['movie_id'], len(positions)))
     source_metadata = _xc_source_metadata(relations)
     if catalog is None:
         public_ids = _xc_public_ids(
@@ -1431,8 +1528,11 @@ def xc_get_vod_streams(request, user, category_id=None):
     for num, row in enumerate(relations, 1):
         custom_props = row['movie__custom_properties'] or {}
         category_id = group or row['category_id']
-        category_id_str = str(category_id) if category_id else "0"
         category_id_list = [category_id] if category_id else []
+        if list_categories is not None:
+            category_id_list = list_categories[row['id']]
+            category_id = category_id_list[0]
+        category_id_str = str(category_id) if category_id else "0"
         plot = row['movie__description']
         genre, rating, year = row['movie__genre'], row['movie__rating'], row['movie__year']
         if '_library_plot' in row:
@@ -1497,6 +1597,8 @@ def xc_get_series_categories(user):
         m3useriesrelation__m3u_account__is_active=True,
         **offered,
     ).distinct().order_by(Lower("name"))
+    if catalog is not None and profile.output_groups == 'lists':
+        return _xc_list_categories(profile, catalog, 'series')
     group = group_category(profile, 'series')
     if group:
         # Grouped output offers every title in one category.
@@ -1529,6 +1631,12 @@ def xc_get_series(request, user, category_id=None):
         if str(category_id) != str(group):
             return []
         category_id = None
+    list_categories = positions = None
+    if catalog is not None and profile.output_groups == 'lists':
+        catalog, list_categories, positions = _xc_list_selection(
+            profile, catalog, 'series', category_id
+        )
+        category_id = None
     rel_filters = {"m3u_account__is_active": True}
     if category_id:
         rel_filters["category_id"] = category_id
@@ -1541,7 +1649,11 @@ def xc_get_series(request, user, category_id=None):
         order_by_name_field='series__name',
         catalog=catalog,
         profile=profile,
+        primary_only=list_categories is None,
     )
+    if positions is not None:
+        # A list category follows the list's own order.
+        relations.sort(key=lambda row: positions.get(row['series_id'], len(positions)))
     source_metadata = _xc_source_metadata(relations)
     if catalog is None:
         public_ids = _xc_public_ids(
@@ -1561,6 +1673,10 @@ def xc_get_series(request, user, category_id=None):
     for num, row in enumerate(relations, 1):
         custom_props = row['series__custom_properties'] or {}
         category_id = group or row['category_id']
+        category_ids = [category_id] if category_id else []
+        if list_categories is not None:
+            category_ids = list_categories[row['id']]
+            category_id = category_ids[0]
         plot = row['series__description']
         genre, rating, year = row['series__genre'], row['series__rating'], row['series__year']
         if '_library_plot' in row:
@@ -1602,7 +1718,7 @@ def xc_get_series(request, user, category_id=None):
             "youtube_trailer": custom_props.get('youtube_trailer', ''),
             "episode_run_time": custom_props.get('episode_run_time', ''),
             "category_id": str(category_id) if category_id else "0",
-            "category_ids": [category_id] if category_id else [],
+            "category_ids": category_ids,
             "tmdb_id": row.get('_library_tmdb_id', row['series__tmdb_id']) or "",
             "imdb_id": row.get('_library_imdb_id', row['series__imdb_id']) or "",
         })
@@ -1901,7 +2017,7 @@ def xc_get_series_info(request, user, series_id):
         series_cover = None
 
     profile = profile_for_user(user)
-    info_category = group_category(profile, 'series') or series_relation.category_id
+    info_category = _xc_output_category(user, profile, 'series', series_relation)
     title = profile_output_name(
         profile,
         profile_title(profile, series, series_data['name']),
@@ -2106,7 +2222,7 @@ def xc_get_vod_info(request, user, vod_id):
 
     # Provider detail responses must not replace the canonical presentation title.
     profile = profile_for_user(user)
-    info_category = group_category(profile, 'movie') or movie_relation.category_id
+    info_category = _xc_output_category(user, profile, 'movie', movie_relation)
     title = profile_output_name(
         profile,
         profile_title(profile, movie, movie_data.get('name', movie.name)),

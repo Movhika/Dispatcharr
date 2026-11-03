@@ -32,6 +32,8 @@ from .models import (
     Movie,
     Series,
     VODContentAlias,
+    VODList,
+    VODListItem,
     VODProfile,
     VODProfileEntry,
 )
@@ -72,6 +74,24 @@ def catalog_signature(profile):
         if profile.pk
         else []
     )
+    if profile.output_groups == VODProfile.OutputGroups.LISTS:
+        from .lists import is_visible, profile_list_ids
+
+        ids = profile_list_ids(profile)
+        found = VODList.objects.in_bulk(ids)
+        config["lists"] = {
+            "unsorted": profile.include_unsorted,
+            "lists": [
+                (
+                    pk,
+                    found[pk].content_type,
+                    is_visible(found[pk]),
+                    (found[pk].build_counts or {}).get("signature", ""),
+                )
+                for pk in ids
+                if pk in found
+            ],
+        }
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
 
 
@@ -312,7 +332,7 @@ def _build_content(profile, generation, content_type):
         titles += 1
         editions.update({entry[2] for entry in selected})
         # Entries a client gets in full lists, without per-category extras.
-        entries += sum(1 for *_entry, primary in selected if primary)
+        entries += sum(1 for entry in selected if entry[5])
         pending.extend(selected)
         if len(pending) >= BATCH_SIZE:
             _write(profile, generation, content_type, pending)
@@ -366,6 +386,11 @@ def _title_selector(profile, content_type, *, explain=False):
     variants = profile.output_mode == VODProfile.OutputMode.VARIANTS
     # Sources entries list every source; editions only shape Compact entries.
     edition_of = _edition_matcher([] if variants else profile.edition_rules)
+    lists = None
+    if profile.output_groups == VODProfile.OutputGroups.LISTS:
+        from .lists import profile_memberships
+
+        lists = profile_memberships(profile, content_type)
 
     def assess(content_id, sources):
         if content_id in left_out:
@@ -389,6 +414,16 @@ def _title_selector(profile, content_type, *, explain=False):
             )
             return [], reason, skipped
         eligible.sort(key=rank)
+        if lists is not None:
+            entries = _list_entries(
+                content_id,
+                eligible,
+                variants,
+                edition_of,
+                lists,
+                profile.include_unsorted,
+            )
+            return entries, "" if entries else "list", skipped
         return (
             _content_entries(content_id, eligible, variants, edition_of),
             "",
@@ -405,6 +440,7 @@ PREVIEW_REASONS = {
     "title": "Excluded by the title filters.",
     "category": "None of its categories is enabled in this profile.",
     "source": "No source matches the content filters.",
+    "list": "Not in any of the profile's lists.",
 }
 SOURCE_REASONS = {
     "category": "Category disabled in this profile.",
@@ -450,12 +486,15 @@ def preview(
     relations = relation_model.objects.filter(m3u_account__is_active=True)
     if account:
         relations = relations.filter(m3u_account_id=account)
+    lists = profile.output_groups == VODProfile.OutputGroups.LISTS
     # Grouped output has one client category, which holds every title.
-    if category and not group:
+    if category and not group and not lists:
         relations = relations.filter(category_id=category)
     titles = model.objects.filter(
         library_blocked=False, pk__in=relations.values(f"{content_type}_id")
     )
+    if category and lists:
+        titles = _list_category_titles(profile, content_type, titles, category)
     if search:
         titles = titles.filter(canonical_title_search("", languages, search))
     left_out = [
@@ -495,6 +534,7 @@ def preview(
 
     groups = dict(_source_groups(content_type, [row[0] for row in rows]))
     providers = dict(M3UAccount.objects.values_list("id", "name"))
+    list_names = _list_namer(profile)
     categories = dict(
         VODCategory.objects.filter(
             pk__in={
@@ -521,9 +561,9 @@ def preview(
                 extension=source.extension,
             )
 
-        offered = [entry for entry in entries if entry[-1]]
+        offered = [entry for entry in entries if entry[5]]
         roles = {}
-        for _id, relation_id, edition, _req, fallbacks, _primary in offered:
+        for _id, relation_id, edition, _req, fallbacks, *_flags in offered:
             entry_name = name(by_id[relation_id], edition)
             for position, source_id in enumerate(fallbacks):
                 roles.setdefault(source_id, (entry_name, position))
@@ -543,12 +583,15 @@ def preview(
                             by_id[relation_id].m3u_account_id, ""
                         ),
                         "category": group
+                        or list_names(list_ids)
                         or categories.get(by_id[relation_id].category_id, ""),
                         "fallbacks": fallbacks,
                         "metadata": by_id[relation_id].metadata,
                         "sources": len(fallbacks),
                     }
-                    for _id, relation_id, edition, _req, fallbacks, _primary in offered
+                    for _id, relation_id, edition, _req, fallbacks, _primary, list_ids in (
+                        offered
+                    )
                 ],
                 "sources": [
                     {
@@ -663,6 +706,25 @@ def _category_gate(profile, content_type):
     return lambda account, category: states.get((account, category), False)
 
 
+def _list_category_titles(profile, content_type, titles, category):
+    """Titles of one list category of the preview, or of Unsorted."""
+    from .lists import category_list_id, profile_lists
+
+    list_id = category_list_id(category)
+    if list_id is None:
+        return titles.none()
+    if list_id:
+        items = VODListItem.objects.filter(vod_list_id=list_id)
+    else:
+        items = VODListItem.objects.filter(
+            vod_list__in=profile_lists(profile, content_type)
+        )
+    members = items.filter(content_type=content_type).values(f"{content_type}_id")
+    return (
+        titles.filter(pk__in=members) if list_id else titles.exclude(pk__in=members)
+    )
+
+
 def preview_categories(profile, content_type, account=None):
     """The client categories the profile offers, for the preview filter."""
     from .profiles import GROUP_CATEGORY_NAMES, group_category
@@ -670,6 +732,23 @@ def preview_categories(profile, content_type, account=None):
     group = group_category(profile, content_type)
     if group:
         return [{"value": group, "label": GROUP_CATEGORY_NAMES[content_type]}]
+    if profile.output_groups == VODProfile.OutputGroups.LISTS:
+        from .lists import (
+            UNSORTED_CATEGORY_ID,
+            UNSORTED_NAME,
+            display_name,
+            list_category_id,
+            profile_lists,
+        )
+
+        return [
+            {"value": list_category_id(vod_list.pk), "label": display_name(vod_list)}
+            for vod_list in profile_lists(profile, content_type)
+        ] + (
+            [{"value": UNSORTED_CATEGORY_ID, "label": UNSORTED_NAME}]
+            if profile.include_unsorted
+            else []
+        )
     names = {
         category: name
         for category_account, category, name, enabled in _category_states(
@@ -849,6 +928,7 @@ def _content_entries(content_id, sources, variants, edition_of):
                 requirements_from_metadata(source.metadata),
                 [source.id],
                 True,
+                [],
             )
             for source in sources
         ]
@@ -856,7 +936,7 @@ def _content_entries(content_id, sources, variants, edition_of):
     for source in sources:
         editions.setdefault(edition_of(source.metadata), []).append(source)
     entries = [
-        (content_id, members[0].id, edition, None, _fallbacks(members), True)
+        (content_id, members[0].id, edition, None, _fallbacks(members), True, [])
         for edition, members in editions.items()
     ]
     primary = {entry[1]: entry for entry in entries}
@@ -877,7 +957,7 @@ def _content_entries(content_id, sources, variants, edition_of):
                 if metadata_satisfies(best.metadata, requirements):
                     # The same version as the edition: same ID, same playback.
                     entries.append(
-                        (content_id, lead.id, edition, None, by_edition[edition][4], False)
+                        (content_id, lead.id, edition, None, by_edition[edition][4], False, [])
                     )
                     continue
                 fallbacks = [lead.id] + [
@@ -887,7 +967,7 @@ def _content_entries(content_id, sources, variants, edition_of):
                     and metadata_satisfies(source.metadata, requirements)
                 ]
                 entries.append(
-                    (content_id, lead.id, edition, requirements, fallbacks, False)
+                    (content_id, lead.id, edition, requirements, fallbacks, False, [])
                 )
     return entries
 
@@ -902,6 +982,35 @@ def _fallbacks(members):
             key=lambda source: not metadata_satisfies(source.metadata, requirements),
         )
     ]
+
+
+def _list_entries(content_id, sources, variants, edition_of, lists, unsorted):
+    """Entries of a title with list output, carrying the lists it is in.
+
+    The profile chooses the sources as for any output; titles in none of its
+    lists go to Unsorted, if wanted.
+    """
+    list_ids = lists.get(content_id, [])
+    if not list_ids and not unsorted:
+        return []
+    return [
+        (*entry[:6], list_ids)
+        for entry in _content_entries(content_id, sources, variants, edition_of)
+        if entry[5]
+    ]
+
+
+def _list_namer(profile):
+    """Client category names of an entry's lists, for previews."""
+    if profile.output_groups != VODProfile.OutputGroups.LISTS:
+        return lambda list_ids: ""
+    from .lists import UNSORTED_NAME, display_name, profile_list_ids
+
+    names = {
+        vod_list.pk: display_name(vod_list)
+        for vod_list in VODList.objects.filter(pk__in=profile_list_ids(profile))
+    }
+    return lambda list_ids: ", ".join(names.get(pk, "") for pk in list_ids) or UNSORTED_NAME
 
 
 def _write(profile, generation, content_type, pending):
@@ -952,8 +1061,9 @@ def _write(profile, generation, content_type, pending):
                 edition=edition,
                 source_ids=fallbacks,
                 primary=primary,
+                list_ids=list_ids,
             )
-            for content_id, relation_id, edition, requirements, fallbacks, primary in (
+            for content_id, relation_id, edition, requirements, fallbacks, primary, list_ids in (
                 pending
             )
         ],

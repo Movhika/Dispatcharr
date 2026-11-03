@@ -5,7 +5,13 @@ from rest_framework import serializers
 from apps.m3u.serializers import M3UFilterSerializer
 
 from . import profile_catalog, profiles
-from .models import M3UVODCategoryRelation, VODProfile, VODProfileCategoryRule
+from .models import (
+    M3UVODCategoryRelation,
+    VODList,
+    VODProfile,
+    VODProfileCategoryRule,
+    VODProfileList,
+)
 
 
 class ProfileUsersField(serializers.ListField):
@@ -13,6 +19,13 @@ class ProfileUsersField(serializers.ListField):
 
     def get_attribute(self, instance):
         return sorted(assignment.user_id for assignment in instance.assignments.all())
+
+
+class ProfileListsField(serializers.ListField):
+    child = serializers.IntegerField(min_value=1)
+
+    def get_attribute(self, instance):
+        return [link.vod_list_id for link in instance.list_links.all()]
 
 
 def _normalized(normalize, value, *args):
@@ -42,6 +55,11 @@ class VODProfileSerializer(serializers.ModelSerializer):
     category_rule_counts = serializers.SerializerMethodField(
         help_text="Enabled import rules per scope."
     )
+    lists = ProfileListsField(
+        required=False,
+        max_length=100,
+        help_text="Lists offered as client categories with list output, in order.",
+    )
 
     class Meta:
         model = VODProfile
@@ -52,6 +70,8 @@ class VODProfileSerializer(serializers.ModelSerializer):
             "is_active",
             "output_mode",
             "output_groups",
+            "lists",
+            "include_unsorted",
             "name_template",
             "name_labels",
             "title_source",
@@ -184,6 +204,12 @@ class VODProfileSerializer(serializers.ModelSerializer):
     def validate_provider_order(self, value):
         return _normalized(profiles.normalize_provider_order, value)
 
+    def validate_lists(self, value):
+        ids = list(dict.fromkeys(value))
+        if len(ids) != VODList.objects.filter(pk__in=ids).count():
+            raise serializers.ValidationError("Select existing lists.")
+        return ids
+
     def validate(self, attrs):
         current = self.instance
 
@@ -222,6 +248,7 @@ class VODProfileSerializer(serializers.ModelSerializer):
 
     def _save(self, profile, data):
         reactivated = profile.pk is None or not profile.is_active
+        lists = data.pop("lists", None)
         if data.get("is_default"):
             VODProfile.objects.select_for_update().filter(is_default=True).exclude(
                 pk=profile.pk
@@ -229,6 +256,12 @@ class VODProfileSerializer(serializers.ModelSerializer):
         for field, item in data.items():
             setattr(profile, field, item)
         profile.save()
+        if lists is not None:
+            profile.list_links.all().delete()
+            VODProfileList.objects.bulk_create(
+                VODProfileList(profile=profile, vod_list_id=pk, order=index)
+                for index, pk in enumerate(lists)
+            )
         profile_catalog.refresh_catalog(profile, force=reactivated)
         return profile
 
@@ -397,6 +430,14 @@ class VODProfileCategoryOptionSerializer(serializers.Serializer):
     )
 
 
+class VODProfileListOptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    list_type = serializers.CharField()
+    content_type = serializers.CharField()
+    is_enabled = serializers.BooleanField()
+
+
 class VODProfileOptionsSerializer(serializers.Serializer):
     users = VODProfileUserOptionSerializer(many=True)
     accounts = VODProfileOptionSerializer(many=True)
@@ -404,6 +445,9 @@ class VODProfileOptionsSerializer(serializers.Serializer):
     metadata_languages = serializers.ListField(
         child=serializers.CharField(),
         help_text="Library metadata languages a profile can prefer.",
+    )
+    lists = VODProfileListOptionSerializer(
+        many=True, help_text="Lists a profile can offer with list output."
     )
 
 

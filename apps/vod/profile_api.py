@@ -30,6 +30,7 @@ from .models import (
     M3UMovieRelation,
     M3USeriesRelation,
     M3UVODCategoryRelation,
+    VODList,
     VODProfile,
     VODProfileAssignment,
     VODProfileCategoryRule,
@@ -59,6 +60,7 @@ class VODProfileViewSet(viewsets.ModelViewSet):
                 "assignments", queryset=VODProfileAssignment.objects.only("user_id")
             ),
             "category_rules",
+            "list_links",
         )
 
     def perform_destroy(self, instance):
@@ -109,6 +111,9 @@ class VODProfileViewSet(viewsets.ModelViewSet):
                         "category__category_type",
                     ),
                     "metadata_languages": library_settings()["languages"],
+                    "lists": VODList.objects.values(
+                        "id", "name", "list_type", "content_type", "is_enabled"
+                    ),
                 }
             ).data
         )
@@ -160,8 +165,12 @@ class VODProfileViewSet(viewsets.ModelViewSet):
         serializer = VODProfileDraftSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        settings = dict(data["profile"])
+        lists = settings.pop("lists", None)
         # The saved profile's import rules apply to its unsaved settings.
-        profile = VODProfile(pk=data.get("profile_id"), **data["profile"])
+        profile = VODProfile(pk=data.get("profile_id"), **settings)
+        if lists is not None:
+            profile.draft_list_ids = lists
         return Response(
             VODProfileEditionCountsSerializer(
                 profile_catalog.edition_counts(profile)
