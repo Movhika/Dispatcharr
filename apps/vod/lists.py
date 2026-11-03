@@ -203,10 +203,22 @@ def build_list(vod_list, *, fetch=True):
     return vod_list.build_counts
 
 
+# List categories are ordered at output time; cached client lists follow this.
+OUTPUT_VERSION_KEY = "vod_lists_output_version"
+
+
+def changed_lists():
+    """Start new cached client lists after a list or its order changed."""
+    from django.core.cache import cache
+
+    cache.set(OUTPUT_VERSION_KEY, time.time_ns(), timeout=None)
+
+
 def refresh_profiles(vod_list):
     """Queue rebuilds of the active profiles whose output this list changes."""
     from .profile_catalog import refresh_catalog
 
+    changed_lists()
     for profile in vod_list.profiles.filter(is_active=True, output_groups="lists"):
         refresh_catalog(profile)
 
@@ -515,6 +527,7 @@ def reorder_items(vod_list, item_ids):
     for position, item in enumerate(ordered):
         item.position = position
     VODListItem.objects.bulk_update(ordered, ["position"], batch_size=1000)
+    changed_lists()
 
 
 def ordered_items(vod_list, queryset=None):
