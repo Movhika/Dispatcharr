@@ -13,7 +13,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { Ban, Eye, LockKeyhole, Search, Wrench } from 'lucide-react';
+import { Ban, Eye, ListPlus, LockKeyhole, Search, Wrench } from 'lucide-react';
 import useAuthStore from '../store/auth';
 import useLibraryStore from '../store/useLibraryStore';
 import { notifyLibraryError } from '../utils/libraryFeedback.js';
@@ -28,6 +28,7 @@ import {
   libraryRowTitle,
 } from '../utils/libraryMetadataStatus.js';
 import LibraryFilters from './LibraryFilters.jsx';
+import { AddToListDialog, SaveAsListDialog } from './LibraryListActions.jsx';
 import LibraryMetadataDialog from './LibraryMetadataDialog.jsx';
 import VODCard from './cards/VODCard.jsx';
 import SeriesCard from './cards/SeriesCard.jsx';
@@ -166,6 +167,15 @@ export default function LibraryWorkspace({
           id: row.content_id,
         })),
       };
+  // Lists take exact sources from the Sources view, else whole titles.
+  const listSelection = allMatching
+    ? selection
+    : {
+        items: chosen.map((row) => ({
+          content_type: row.content_type,
+          id: sources ? row.source_id : row.content_id,
+        })),
+      };
   const refresh = () => {
     fetchContent();
     onChanged();
@@ -210,6 +220,9 @@ export default function LibraryWorkspace({
               moviesEnabled={moviesEnabled}
               seriesEnabled={seriesEnabled}
               admin={admin}
+              onSaveAsList={
+                admin ? () => setDialog({ type: 'save-list' }) : undefined
+              }
             />
             {error && (
               <Button size="compact-sm" variant="subtle" onClick={fetchContent}>
@@ -231,6 +244,20 @@ export default function LibraryWorkspace({
                   Clear
                 </Button>
               )}
+              <Button
+                variant="default"
+                leftSection={<ListPlus size={16} />}
+                disabled={!selectedCount}
+                onClick={() =>
+                  setDialog({
+                    type: 'add-list',
+                    selection: listSelection,
+                    count: selectedCount,
+                  })
+                }
+              >
+                Add to list
+              </Button>
               <Button
                 leftSection={<Wrench size={16} />}
                 disabled={!selectedCount}
@@ -556,6 +583,17 @@ export default function LibraryWorkspace({
             onClose={() => setDialog(null)}
             onSaved={refresh}
           />
+        )}
+        {dialog?.type === 'add-list' && (
+          <AddToListDialog
+            selection={dialog.selection}
+            sources={sources}
+            count={dialog.count}
+            onClose={() => setDialog(null)}
+          />
+        )}
+        {dialog?.type === 'save-list' && (
+          <SaveAsListDialog filters={filters} onClose={() => setDialog(null)} />
         )}
         {dialog?.type === 'metadata' && (
           <LibraryMetadataDialog

@@ -13,6 +13,7 @@ import {
   MonitorCog,
   ScrollText,
   SlidersHorizontal,
+  ListVideo,
 } from 'lucide-react';
 
 // Shared by the top-level `settings` entry and the nested entry under
@@ -45,6 +46,14 @@ export const NAV_ITEMS = {
     label: 'Profiles',
     icon: SlidersHorizontal,
     path: '/vods/profiles',
+    adminOnly: true,
+    section: 'Video on Demand',
+  },
+  vodLists: {
+    id: 'vodLists',
+    label: 'Lists',
+    icon: ListVideo,
+    path: '/vods/lists',
     adminOnly: true,
     section: 'Video on Demand',
   },
@@ -121,6 +130,7 @@ export const DEFAULT_ADMIN_ORDER = [
   'dvr',
   'vods',
   'vodProfiles',
+  'vodLists',
   'sources',
   'stats',
   'plugins',

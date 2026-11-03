@@ -97,6 +97,20 @@ export function HelpLabel({ label, help }) {
   );
 }
 
+export function Section({ title, action, children }) {
+  return (
+    <Paper withBorder p="sm">
+      <Stack gap={4} style={{ minWidth: 0 }} role="group" aria-label={title}>
+        <Group justify="space-between" wrap="nowrap">
+          <Text fw={600}>{title}</Text>
+          {action}
+        </Group>
+        {children}
+      </Stack>
+    </Paper>
+  );
+}
+
 // Items have no IDs of their own; their position identifies them.
 export function SortableList({ items, onChange, children }) {
   const sensors = useSensors(

@@ -121,6 +121,7 @@ describe('navigation config', () => {
         'channels',
         'vods',
         'vodProfiles',
+        'vodLists',
         'sources',
         'guide',
         'dvr',

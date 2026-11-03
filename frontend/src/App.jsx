@@ -24,6 +24,7 @@ import Users from './pages/Users';
 import LogosPage from './pages/Logos';
 import VODsPage from './pages/VODs';
 import VODProfilesPage from './pages/VODProfiles';
+import VODListsPage from './pages/VODLists';
 import useAuthStore from './store/auth';
 import useBrowserStorage from './hooks/useBrowserStorage';
 import { useMediaQuery } from '@mantine/hooks';
@@ -213,6 +214,10 @@ const App = () => {
                             <Route
                               path="/vods/profiles"
                               element={<VODProfilesPage />}
+                            />
+                            <Route
+                              path="/vods/lists"
+                              element={<VODListsPage />}
                             />
                           </>
                         ) : (
