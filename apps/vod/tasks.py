@@ -75,6 +75,10 @@ def build_vod_profile_catalogs(self, profile_ids=None, queue_key=None):
         if queue_key:
             cache.delete(queue_key)
         with TaskLockRenewer("build_vod_profile_catalogs", "all"):
+            if profile_ids is None:
+                # Library and provider changes also change rules lists and
+                # which TMDB entries are available; lists come first.
+                _update_vod_lists_locally()
             profiles = VODProfile.objects.filter(is_active=True)
             if profile_ids is not None:
                 profiles = profiles.filter(pk__in=profile_ids)
@@ -86,6 +90,75 @@ def build_vod_profile_catalogs(self, profile_ids=None, queue_key=None):
                     logger.exception("VOD profile %s catalogue failed", profile.pk)
     finally:
         release_task_lock("build_vod_profile_catalogs", "all")
+
+
+def _update_vod_lists_locally():
+    from .lists import build_list
+    from .models import VODList
+
+    for vod_list in VODList.objects.filter(is_enabled=True).exclude(
+        list_type=VODList.ListType.MANUAL
+    ):
+        try:
+            build_list(vod_list, fetch=False)
+        except Exception:
+            logger.exception("VOD list %s could not be updated", vod_list.pk)
+
+
+@shared_task
+def refresh_vod_list(list_id, fetch=True, scheduled=False):
+    """Rebuild one list on its schedule or after an edit, then its profiles."""
+    from .lists import build_list, is_visible, refresh_profiles
+    from .models import VODList
+
+    vod_list = VODList.objects.filter(pk=list_id).first()
+    if vod_list is None:
+        return
+    # Clients do not see hidden lists; they are downloaded when they show again.
+    if scheduled and not is_visible(vod_list):
+        logger.info("VOD list %s is hidden; scheduled refresh skipped", list_id)
+        return
+    try:
+        counts = build_list(vod_list, fetch=fetch)
+        logger.info("VOD list %s built: %s", list_id, counts)
+    except Exception:
+        logger.exception("VOD list %s failed", list_id)
+        return
+    refresh_profiles(vod_list)
+
+
+@shared_task
+def refresh_dated_vod_lists():
+    """Follow the date: rules lists with relative dates, then visible periods.
+
+    Rules lists for this season or the last days are rebuilt once a day and
+    scheduled TMDB lists are downloaded when they show again; profiles then
+    rebuild only if one of their lists or periods changed.
+    """
+    from .lists import build_list, dated, revealed
+    from .models import VODList, VODProfile
+    from .profile_catalog import refresh_catalog
+
+    for vod_list in VODList.objects.filter(
+        is_enabled=True, list_type=VODList.ListType.RULES
+    ):
+        if dated(vod_list):
+            try:
+                build_list(vod_list, fetch=False)
+            except Exception:
+                logger.exception("VOD list %s could not be updated", vod_list.pk)
+    for vod_list in VODList.objects.filter(
+        is_enabled=True, list_type=VODList.ListType.TMDB
+    ):
+        if revealed(vod_list):
+            try:
+                build_list(vod_list)
+            except Exception:
+                logger.exception("VOD list %s could not be updated", vod_list.pk)
+    for profile in VODProfile.objects.filter(
+        is_active=True, output_groups=VODProfile.OutputGroups.LISTS
+    ):
+        refresh_catalog(profile)
 
 
 @shared_task(bind=True, max_retries=None)

@@ -1,9 +1,10 @@
 """Database-side Library filters using the source metadata precedence."""
 
+import calendar
 import hashlib
 import json
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db.models import (
     Case,
@@ -18,10 +19,11 @@ from django.db.models import (
     When,
 )
 from django.db.models.fields.json import KeyTransform, KeyTextTransform
+from django.db.models.expressions import RawSQL
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .models import M3UEpisodeRelation, M3UVODCategoryRelation
+from .models import M3UEpisodeRelation, M3UVODCategoryRelation, Movie, Series
 
 TECHNICAL_FILTERS = {
     "audio_language": "audio_languages",
@@ -29,6 +31,118 @@ TECHNICAL_FILTERS = {
     "resolution": "resolution",
     "video_feature": "video_features",
 }
+
+
+# Anime seasons as they are announced: Winter starts in January.
+SEASONS = ("Winter", "Spring", "Summer", "Fall")
+
+
+def season_start(day, offset=0):
+    """First day of the season of ``day``, moved by ``offset`` seasons."""
+    index = day.year * 4 + (day.month - 1) // 3 + offset
+    return date(index // 4, index % 4 * 3 + 1, 1)
+
+
+def season_name(day):
+    return SEASONS[(day.month - 1) // 3]
+
+
+def _day_of(year, month_day):
+    month, day = map(int, month_day.split("-"))
+    return date(year, month, min(day, calendar.monthrange(year, month)[1]))
+
+
+def period_window(period, today, from_day=None, until_day=None):
+    """First and last day of the week, month, season or year of ``today``.
+
+    A yearly day range such as 12-01 to 01-06 may span the turn of the year;
+    it is the latest occurrence that has started by today.
+    """
+    if period == "week":
+        start = today - timedelta(days=today.weekday())
+        return start, start + timedelta(days=6)
+    if period == "month":
+        return today.replace(day=1), today.replace(
+            day=calendar.monthrange(today.year, today.month)[1]
+        )
+    if period == "season":
+        return season_start(today), season_start(today, 1) - timedelta(days=1)
+    if period == "year":
+        return date(today.year, 1, 1), date(today.year, 12, 31)
+    year = today.year if _day_of(today.year, from_day) <= today else today.year - 1
+    start = _day_of(year, from_day)
+    end = _day_of(year, until_day)
+    return start, end if end >= start else _day_of(year + 1, until_day)
+
+
+def date_window(filters, prefix, today):
+    """First and last day a date filter allows; None leaves a side open."""
+    period = filters.get(f"{prefix}_period")
+    if period:
+        # A chosen week, month, season or year stays; else the current one.
+        anchor = filters.get(f"{prefix}_period_anchor") if period != "yearly" else None
+        return period_window(
+            period,
+            anchor or today,
+            filters.get(f"{prefix}_from_day"),
+            filters.get(f"{prefix}_until_day"),
+        )
+    return filters.get(f"{prefix}_since"), filters.get(f"{prefix}_until")
+
+
+def date_conflict(filters, today):
+    """Whether Released starts after the Added period ends: nothing can match.
+
+    A title reaches the Library at its release at the earliest.
+    """
+    if not any(
+        filters.get(f"added_{key}")
+        for key in ("since", "until", "after_days", "period")
+    ):
+        return False
+    added = date_window(filters, "added", today)
+    if filters.get("added_after_days"):
+        added = narrowed(added, filters["added_after_days"], today)
+    released = date_window(filters, "released", today)
+    if filters.get("released_last_days"):
+        released = narrowed(released, filters["released_last_days"], today)
+    return bool(released[0]) and released[0] > (added[1] or today)
+
+
+def narrowed(window, days, today):
+    """A window limited to the last ``days`` days up to today."""
+    since, until = window
+    start = today - timedelta(days=days - 1)
+    return max(filter(None, (since, start))), min(filter(None, (until, today)))
+
+
+def _age_rating_titles(kind, maximum, country=None):
+    """IDs of titles whose numeric age rating is at most ``maximum``.
+
+    With a country only its TMDB rating counts (FSK for DE). Otherwise the
+    lowest rating of any country counts, else the single rating, else the
+    provider's age; text ratings such as R or TV-MA have no number.
+    """
+    table = (Movie if kind == "movie" else Series)._meta.db_table
+    first_number = "substring({} from '[0-9]+')::int <= %s"
+    if country:
+        return RawSQL(
+            f"SELECT c.id FROM {table} c WHERE "
+            + first_number.format("c.tmdb_metadata->'age_ratings'->>%s"),
+            [country, maximum],
+        )
+    sql = (
+        f"SELECT c.id FROM {table} c WHERE EXISTS (SELECT 1 FROM jsonb_each_text("
+        "CASE WHEN jsonb_typeof(c.tmdb_metadata->'age_ratings') = 'object' "
+        "THEN c.tmdb_metadata->'age_ratings' ELSE '{}'::jsonb END) r WHERE "
+        + first_number.format("r.value")
+        + ") OR "
+        + first_number.format("c.tmdb_metadata->>'age_rating'")
+        + " OR (NOT c.tmdb_metadata ? 'age_rating' AND "
+        + first_number.format("c.custom_properties->>'age'")
+        + ")"
+    )
+    return RawSQL(sql, [maximum, maximum, maximum])
 
 
 SOURCE_METADATA_PATHS = (
@@ -207,6 +321,20 @@ def filter_relations(queryset, kind, filters):
                 & Q(**{f"{kind}__genre__icontains": genre})
             )
         queryset = queryset.filter(matching)
+    keywords = [part.strip() for part in (filters.get("keyword") or "").split(",")]
+    if any(keywords):
+        matching = Q()
+        for keyword in filter(None, keywords):
+            matching |= Q(**{f"{kind}__tmdb_metadata__keywords__icontains": keyword})
+        queryset = queryset.filter(matching)
+    if filters.get("max_age_rating") is not None:
+        queryset = queryset.filter(
+            **{
+                f"{kind}_id__in": _age_rating_titles(
+                    kind, filters["max_age_rating"], filters.get("age_rating_country")
+                )
+            }
+        )
     if filters.get("anime_mode"):
         anime = Q(**{f"{kind}__tmdb_metadata__is_anime": True}) & Q(
             **{f"{kind}__tmdb_metadata__is_anime__isnull": False}
@@ -226,15 +354,19 @@ def filter_relations(queryset, kind, filters):
                 - timedelta(days=filters["added_after_days"])
             }
         )
-    if filters.get("added_since"):
-        queryset = queryset.filter(
-            **{f"{kind}__library_added_at__date__gte": filters["added_since"]}
-        )
-    if filters.get("added_until"):
-        queryset = queryset.filter(
-            **{f"{kind}__library_added_at__date__lte": filters["added_until"]}
-        )
-    if filters.get("released_since") or filters.get("released_until"):
+    today = timezone.localdate()
+    added = date_window(filters, "added", today)
+    if filters.get("added_after_days"):
+        added = narrowed(added, filters["added_after_days"], today)
+    for value, lookup in zip(added, ("gte", "lte")):
+        if value:
+            queryset = queryset.filter(
+                **{f"{kind}__library_added_at__date__{lookup}": value}
+            )
+    released = date_window(filters, "released", today)
+    if filters.get("released_last_days"):
+        released = narrowed(released, filters["released_last_days"], today)
+    if any(released):
         queryset = queryset.annotate(
             _library_release_date=Case(
                 When(
@@ -247,10 +379,10 @@ def filter_relations(queryset, kind, filters):
                 output_field=CharField(),
             )
         ).filter(_library_release_date__regex=r"^\d{4}-\d{2}-\d{2}$")
-        for parameter, lookup in (("released_since", "gte"), ("released_until", "lte")):
-            if filters.get(parameter):
+        for value, lookup in zip(released, ("gte", "lte")):
+            if value:
                 queryset = queryset.filter(
-                    **{f"_library_release_date__{lookup}": str(filters[parameter])}
+                    **{f"_library_release_date__{lookup}": str(value)}
                 )
     return queryset
 

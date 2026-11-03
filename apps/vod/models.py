@@ -570,6 +570,7 @@ class VODProfile(models.Model):
     class OutputGroups(models.TextChoices):
         PROVIDER = "provider", "Provider"
         MOVIE_SERIES = "movie_series", "Movie & Series"
+        LISTS = "lists", "Lists"
 
     class MetadataSource(models.TextChoices):
         PROVIDER = "provider", "Provider"
@@ -592,6 +593,11 @@ class VODProfile(models.Model):
     name_labels = models.JSONField(default=list, blank=True)
     output_groups = models.CharField(
         max_length=12, choices=OutputGroups.choices, default=OutputGroups.PROVIDER
+    )
+    # With list output, titles in none of the profile's lists go to "Unsorted".
+    include_unsorted = models.BooleanField(default=True)
+    lists = models.ManyToManyField(
+        "VODList", through="VODProfileList", related_name="profiles", blank=True
     )
     # "provider", "clean" for the cleaned Library titles, or a Library
     # metadata language.
@@ -722,6 +728,8 @@ class VODProfileEntry(models.Model):
     # Full lists show primary entries; a category request also gets the best
     # source within that category, as the live output always did.
     primary = models.BooleanField(default=True)
+    # With list output, the profile lists this entry represents the title in.
+    list_ids = models.JSONField(default=list)
 
     class Meta:
         indexes = [
@@ -733,4 +741,160 @@ class VODProfileEntry(models.Model):
                 fields=("profile", "generation", "content_type", "content_id"),
                 name="vod_profile_entry_content",
             ),
+        ]
+
+
+class VODList(models.Model):
+    """A curated VOD collection that profiles can offer as client categories.
+
+    Manual lists are filled from the Library, rules lists are saved Library
+    filters and TMDB lists follow a TMDB chart or list. Items are rebuilt as a
+    whole, so profiles always read a complete list.
+    """
+
+    class ListType(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        RULES = "rules", "Rules"
+        TMDB = "tmdb", "TMDB"
+
+    class ContentType(models.TextChoices):
+        ALL = "all", "Movies & Series"
+        MOVIE = "movie", "Movies"
+        SERIES = "series", "Series"
+
+    class SortMode(models.TextChoices):
+        LIST = "list", "List order"
+        RELEASE = "release", "Newest release first"
+        ADDED = "added", "Recently added first"
+
+    class BuildStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        BUILDING = "building", "Building"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+
+    name = models.CharField(max_length=255, unique=True)
+    list_type = models.CharField(
+        max_length=10, choices=ListType.choices, default=ListType.MANUAL
+    )
+    content_type = models.CharField(
+        max_length=10, choices=ContentType.choices, default=ContentType.ALL
+    )
+    # Rules lists: the Library filters a source has to match.
+    filters = models.JSONField(default=dict, blank=True)
+    # TMDB lists: the source ("trending", "list", "discover", ...) and its
+    # options such as the list ID, the release period, genres or the
+    # streaming service; the list's content picks movies, series or both.
+    tmdb_source = models.CharField(max_length=32, blank=True)
+    tmdb_settings = models.JSONField(default=dict, blank=True)
+    sort_mode = models.CharField(
+        max_length=10, choices=SortMode.choices, default=SortMode.LIST
+    )
+    is_enabled = models.BooleanField(default=True)
+    # Clients only see the list every year within this MM-DD period, which
+    # may span the turn of the year; empty means always.
+    visible_from = models.CharField(max_length=5, blank=True)
+    visible_until = models.CharField(max_length=5, blank=True)
+    # Rebuild schedule like M3U accounts and EPG sources: every N hours, or a
+    # cron expression that takes precedence; 0 without cron means no schedule.
+    refresh_interval = models.PositiveIntegerField(default=0)
+    cron_expression = models.CharField(max_length=100, blank=True)
+    build_status = models.CharField(
+        max_length=10, choices=BuildStatus.choices, default=BuildStatus.PENDING
+    )
+    build_counts = models.JSONField(default=dict, blank=True)
+    build_error = models.TextField(blank=True)
+    built_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name", "id")
+
+    def __str__(self):
+        return self.name
+
+
+class VODListItem(models.Model):
+    """One ordered title of a list; the profile chooses its source.
+
+    TMDB items keep the title, year and poster of titles that are not in the
+    Library, so previews can show them as unavailable.
+    """
+
+    vod_list = models.ForeignKey(
+        VODList, on_delete=models.CASCADE, related_name="items"
+    )
+    content_type = models.CharField(
+        max_length=6, choices=(("movie", "Movie"), ("series", "Series"))
+    )
+    movie = models.ForeignKey(
+        Movie,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_items",
+    )
+    series = models.ForeignKey(
+        Series,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vod_list_items",
+    )
+    tmdb_id = models.CharField(max_length=50, blank=True)
+    title = models.CharField(max_length=500, blank=True)
+    year = models.IntegerField(null=True, blank=True)
+    poster_url = models.CharField(max_length=1000, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("position", "id")
+        indexes = [
+            models.Index(fields=("vod_list", "position"), name="vod_list_item_order"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(content_type="movie", series__isnull=True)
+                | Q(content_type="series", movie__isnull=True),
+                name="vod_list_item_content",
+            ),
+            models.UniqueConstraint(
+                fields=("vod_list", "movie"),
+                condition=Q(movie__isnull=False),
+                name="vod_list_item_unique_movie",
+            ),
+            models.UniqueConstraint(
+                fields=("vod_list", "series"),
+                condition=Q(series__isnull=False),
+                name="vod_list_item_unique_series",
+            ),
+        ]
+
+    @property
+    def content(self):
+        return self.movie if self.content_type == "movie" else self.series
+
+    def __str__(self):
+        return self.title or str(self.content or self.tmdb_id)
+
+
+class VODProfileList(models.Model):
+    """A list a profile offers as a client category, in the profile's order."""
+
+    profile = models.ForeignKey(
+        VODProfile, on_delete=models.CASCADE, related_name="list_links"
+    )
+    vod_list = models.ForeignKey(
+        VODList, on_delete=models.CASCADE, related_name="profile_links"
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("order", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("profile", "vod_list"), name="vod_profile_list_unique"
+            )
         ]

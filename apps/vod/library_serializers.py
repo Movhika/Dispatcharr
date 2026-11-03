@@ -1,3 +1,7 @@
+import re
+
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .metadata import (
@@ -17,14 +21,49 @@ class StrictSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
+@extend_schema_field(OpenApiTypes.STR)
+class IdListField(serializers.Field):
+    """One or more positive IDs, sent as "3", "3,5" or a list."""
+
+    default_error_messages = {"invalid": "Select valid IDs."}
+
+    def to_internal_value(self, data):
+        values = data if isinstance(data, (list, tuple)) else str(data).split(",")
+        try:
+            ids = [int(str(value).strip()) for value in values if str(value).strip()]
+        except ValueError:
+            self.fail("invalid")
+        if not ids or any(pk < 1 for pk in ids):
+            self.fail("invalid")
+        return list(dict.fromkeys(ids))
+
+    def to_representation(self, value):
+        return ",".join(map(str, value)) if isinstance(value, list) else str(value)
+
+
+# Periods that move on with the date, for recurring VOD lists; "yearly" is a
+# day range every year.
+PERIODS = ["week", "month", "season", "year", "yearly"]
+MONTH_DAY = r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"
+
+
 class LibraryFilterSerializer(StrictSerializer):
     type = serializers.ChoiceField(choices=["all", "movie", "series"], default="all")
     view = serializers.ChoiceField(
         choices=["posters", "titles", "sources"], default="titles"
     )
     search = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    account = serializers.IntegerField(required=False, min_value=1)
-    category = serializers.IntegerField(required=False, min_value=1)
+    account = IdListField(
+        required=False, help_text="One or more provider account IDs, comma-separated."
+    )
+    category = IdListField(
+        required=False, help_text="One or more provider category IDs, comma-separated."
+    )
+    category_match = serializers.CharField(
+        required=False,
+        max_length=500,
+        help_text="Regular expression a provider category name must match, ignoring case.",
+    )
     content_id = serializers.IntegerField(required=False, min_value=1)
     locked = serializers.ChoiceField(choices=["true", "false"], required=False)
     blocked = serializers.ChoiceField(choices=["true", "false"], required=False)
@@ -51,25 +90,69 @@ class LibraryFilterSerializer(StrictSerializer):
         max_length=2000,
         help_text="One or more comma-separated terms; a title matches if its genre contains any of them.",
     )
+    keyword = serializers.CharField(
+        required=False,
+        max_length=2000,
+        help_text="One or more comma-separated terms; a title matches if a TMDB keyword contains any of them.",
+    )
     anime_mode = serializers.ChoiceField(choices=["only", "exclude"], required=False)
     adult_mode = serializers.ChoiceField(choices=["only", "exclude"], required=False)
+    max_age_rating = serializers.IntegerField(
+        min_value=0,
+        max_value=21,
+        required=False,
+        help_text="Highest minimum viewer age; FSK 12 counts as 12 and PG-13 as 13. Titles without a numeric rating do not match.",
+    )
+    age_rating_country = serializers.RegexField(
+        r"^[A-Z]{2}$",
+        required=False,
+        help_text="Country whose rating counts, e.g. DE for FSK; else the lowest of all.",
+    )
     added_after_days = serializers.IntegerField(
         min_value=1, max_value=36500, required=False
     )
     added_since = serializers.DateField(required=False)
     added_until = serializers.DateField(required=False)
+    added_period = serializers.ChoiceField(choices=PERIODS, required=False)
+    added_period_anchor = serializers.DateField(required=False)
+    added_from_day = serializers.RegexField(MONTH_DAY, required=False)
+    added_until_day = serializers.RegexField(MONTH_DAY, required=False)
+    released_last_days = serializers.IntegerField(
+        min_value=1, max_value=36500, required=False
+    )
     released_since = serializers.DateField(required=False)
     released_until = serializers.DateField(required=False)
+    released_period = serializers.ChoiceField(
+        choices=PERIODS,
+        required=False,
+        help_text="A week, month, season or year, or a day range every year.",
+    )
+    released_period_anchor = serializers.DateField(
+        required=False,
+        help_text="A day in the chosen week, month, season or year; without it the current one.",
+    )
+    released_from_day = serializers.RegexField(MONTH_DAY, required=False)
+    released_until_day = serializers.RegexField(MONTH_DAY, required=False)
 
     def validate(self, data):
-        for start, end in (
-            ("added_since", "added_until"),
-            ("released_since", "released_until"),
-        ):
+        for prefix in ("added", "released"):
+            start, end = f"{prefix}_since", f"{prefix}_until"
             if data.get(start) and data.get(end) and data[start] > data[end]:
                 raise serializers.ValidationError(
                     {end: "The end date must not precede the start date."}
                 )
+            days = data.get(f"{prefix}_from_day"), data.get(f"{prefix}_until_day")
+            if data.get(f"{prefix}_period") == "yearly" and not all(days):
+                raise serializers.ValidationError(
+                    {f"{prefix}_until_day": "Enter both days of the yearly period."}
+                )
+        if data.get("category_match"):
+            try:
+                re.compile(data["category_match"])
+            except re.error as exc:
+                raise serializers.ValidationError(
+                    {"category_match": f"Invalid regular expression: {exc}"}
+                ) from exc
         for field, normalize in (
             ("audio_language", normalize_language_code),
             ("subtitle_language", normalize_language_code),
