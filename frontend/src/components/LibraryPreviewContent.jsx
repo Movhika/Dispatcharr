@@ -299,8 +299,10 @@ export function PreviewSources({
 }) {
   // A narrow first column explains restricted rows: the failover order of a
   // VOD profile, or why a source is left out or outside the account filter.
+  // The Library filter may hold several accounts, comma-separated.
   const isOutside = (source) =>
-    !!accountId && String(source.account.id) !== String(accountId);
+    !!accountId &&
+    !String(accountId).split(',').includes(String(source.account.id));
   const marked =
     Object.keys(notes).length > 0 ||
     sources.some((source) => isOutside(source));

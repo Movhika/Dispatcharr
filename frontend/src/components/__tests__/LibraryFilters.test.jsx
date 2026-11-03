@@ -9,10 +9,13 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
-import LibraryFilters from '../LibraryFilters.jsx';
+import LibraryFilters, { LibraryFilterFields } from '../LibraryFilters.jsx';
 
 const options = {
-  accounts: [{ id: 3, name: 'Provider' }],
+  accounts: [
+    { id: 3, name: 'Provider' },
+    { id: 5, name: 'Backup' },
+  ],
   categories: [{ id: 4, name: 'English category', category_type: 'movie' }],
   audio_languages: ['eng'],
   subtitle_languages: ['ger'],
@@ -40,6 +43,84 @@ function Harness({ initial = {}, admin = true }) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('Library filter popover', () => {
+  it.each([
+    [
+      { added_after_days: 30, released_until: '1990-12-31' },
+      'Titles need to match both Added and Released.',
+    ],
+    [
+      { added_until: '2020-12-31', released_since: '2021-01-01' },
+      'Released starts after the Added period ends, so no title can match.',
+    ],
+  ])('explains combined Added and Released rules', (filters, message) => {
+    render(
+      <MantineProvider env="test">
+        <LibraryFilterFields filters={filters} periods onChange={changed} />
+      </MantineProvider>
+    );
+    expect(screen.getByText(message)).toBeTruthy();
+  });
+
+  it('checks category name patterns', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Category name (regex)' }),
+      { target: { value: 'amazon|(' } }
+    );
+    expect(screen.getByText('Invalid regular expression.')).toBeTruthy();
+  });
+
+  it('offers lists one date over a period that follows the date', async () => {
+    function Fields() {
+      const [filters, setFilters] = useState({});
+      return (
+        <MantineProvider env="test">
+          <LibraryFilterFields
+            filters={filters}
+            periods
+            onChange={(patch) => {
+              changed(patch);
+              setFilters((current) => ({ ...current, ...patch }));
+            }}
+          />
+        </MantineProvider>
+      );
+    }
+    render(<Fields />);
+    const dates = screen.getByRole('region', { name: 'Metadata filters' });
+    expect(
+      within(
+        screen.getByRole('region', { name: 'Provider filters' })
+      ).getByRole('textbox', { name: 'Added' })
+    ).toBeTruthy();
+    fireEvent.click(within(dates).getByRole('textbox', { name: 'Released' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Season' }));
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ released_period: 'season', released_since: '' })
+    );
+    expect(within(dates).getByText(/^Now: /)).toBeTruthy();
+    // A chosen season stays, e.g. a past one.
+    fireEvent.click(within(dates).getByRole('textbox', { name: 'Which' }));
+    fireEvent.click(
+      await screen.findByRole('option', { name: 'Choose a season' })
+    );
+    expect(changed).toHaveBeenLastCalledWith({
+      released_period_anchor: expect.stringMatching(/^\d{4}-(01|04|07|10)-01$/),
+    });
+    expect(within(dates).getByText(/^Covers: /)).toBeTruthy();
+    expect(within(dates).getByRole('textbox', { name: 'Season' })).toBeTruthy();
+    fireEvent.click(within(dates).getByRole('textbox', { name: 'Released' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Every year' }));
+    fireEvent.change(
+      within(dates).getByRole('textbox', { name: 'Every year from' }),
+      { target: { value: '01.12' } }
+    );
+    expect(changed).toHaveBeenLastCalledWith({ released_from_day: '12-01' });
+    // The Library itself keeps plain date ranges.
+    expect(screen.queryByLabelText('Released from')).toBeNull();
+  });
+
   it.each([
     ['DUB', 'audio_language', 'English (eng)', 'eng'],
     ['SUB', 'subtitle_language', 'German (ger)', 'ger'],
@@ -153,6 +234,13 @@ describe('Library filter popover', () => {
     expect(
       screen.getByRole('button', { name: 'Filter library' })
     ).toHaveAccessibleDescription('1 filter active');
+  });
+  it('combines several provider accounts', async () => {
+    render(<Harness initial={{ account: '3' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter library' }));
+    fireEvent.click(screen.getByRole('textbox', { name: 'Provider account' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Backup' }));
+    expect(changed).toHaveBeenLastCalledWith({ account: '3,5' });
   });
   it('preserves a selected value absent from new scoped options', () => {
     render(<Harness initial={{ audio_language: 'ger' }} />);

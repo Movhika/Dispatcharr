@@ -10,7 +10,7 @@ export default function LibraryView({ view, displayMode }) {
   const openPreview = (item) =>
     setPreview({
       item,
-      accountId: useLibraryStore.getState().filters.account || '',
+      accountId: String(useLibraryStore.getState().filters.account || ''),
     });
   return (
     <LibraryWorkspace

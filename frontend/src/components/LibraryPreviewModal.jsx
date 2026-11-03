@@ -117,7 +117,8 @@ export default function LibraryPreviewModal({
       page_size: pageSize,
     });
     if (sourceId) params.set('source_id', sourceId);
-    if (accountId) params.set('preferred_account', accountId);
+    if (accountId)
+      params.set('preferred_account', String(accountId).split(',')[0]);
     if (season !== null) params.set('season', season);
     api
       .getVODLibraryDetails(params)

@@ -28,6 +28,7 @@ export const OUTPUT_MODES = [
 export const OUTPUT_GROUPS = [
   { value: 'provider', label: 'Provider' },
   { value: 'movie_series', label: 'Movie & Series' },
+  { value: 'lists', label: 'Lists' },
 ];
 
 export const METADATA_SOURCES = [
@@ -67,6 +68,8 @@ export const newProfile = () => ({
   is_default: false,
   output_mode: 'compact',
   output_groups: 'provider',
+  lists: [],
+  include_unsorted: true,
   name_template: '{title}',
   name_labels: [],
   title_source: 'provider',
@@ -593,12 +596,15 @@ export const countsText = (counts, field = 'titles') =>
     )
     .join(' · ');
 
+export const durationText = (seconds) =>
+  seconds < 60
+    ? `${seconds.toFixed(1)} s`
+    : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
+
 export const buildDuration = (startedAt, completedAt) => {
   const seconds = (new Date(completedAt) - new Date(startedAt)) / 1000;
   if (!startedAt || !completedAt || !(seconds >= 0)) return '';
-  return seconds < 60
-    ? `${seconds.toFixed(1)} s`
-    : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
+  return durationText(seconds);
 };
 
 const TAB_FIELDS = {
@@ -612,6 +618,7 @@ const TAB_FIELDS = {
     'name_template',
   ],
   categories: ['category_choices'],
+  lists: ['lists'],
   content: ['content_filters'],
   editions: ['edition_rules'],
   failover: [
