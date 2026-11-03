@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from apps.accounts.permissions import IsAdmin
 from apps.m3u.models import M3UAccount
 from . import profile_catalog, profiles
-from .models import VODProfile, VODProfileAssignment
+from .models import VODList, VODProfile, VODProfileAssignment
 from .profile_serializers import (
     VODProfileDraftSerializer,
     VODProfileEditionCountsSerializer,
@@ -33,7 +33,8 @@ class VODProfileViewSet(viewsets.ModelViewSet):
         return VODProfile.objects.prefetch_related(
             Prefetch(
                 "assignments", queryset=VODProfileAssignment.objects.only("user_id")
-            )
+            ),
+            "list_links",
         )
 
     def perform_destroy(self, instance):
@@ -72,6 +73,9 @@ class VODProfileViewSet(viewsets.ModelViewSet):
                     .order_by("name")
                     .values("id", "name"),
                     "metadata_languages": library_settings()["languages"],
+                    "lists": VODList.objects.values(
+                        "id", "name", "list_type", "content_type", "is_enabled"
+                    ),
                 }
             ).data
         )
@@ -123,7 +127,11 @@ class VODProfileViewSet(viewsets.ModelViewSet):
         serializer = VODProfileDraftSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        profile = VODProfile(**data["profile"])
+        settings = dict(data["profile"])
+        lists = settings.pop("lists", None)
+        profile = VODProfile(**settings)
+        if lists is not None:
+            profile.draft_list_ids = lists
         return Response(
             VODProfileEditionCountsSerializer(
                 profile_catalog.edition_counts(profile)
