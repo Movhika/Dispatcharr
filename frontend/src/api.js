@@ -4312,6 +4312,54 @@ export default class API {
     });
   }
 
+  static async getVODLists() {
+    return request(`${host}/api/vod/lists/`);
+  }
+
+  static async saveVODList(vodList, id = null) {
+    return request(
+      id ? `${host}/api/vod/lists/${id}/` : `${host}/api/vod/lists/`,
+      { method: id ? 'PATCH' : 'POST', body: vodList }
+    );
+  }
+
+  static async deleteVODList(id) {
+    return request(`${host}/api/vod/lists/${id}/`, { method: 'DELETE' });
+  }
+
+  static async rebuildVODList(id) {
+    return request(`${host}/api/vod/lists/${id}/rebuild/`, { method: 'POST' });
+  }
+
+  static async getVODListItems(id, params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(
+        ([, value]) => value !== '' && value != null
+      )
+    );
+    return request(`${host}/api/vod/lists/${id}/items/?${query}`);
+  }
+
+  // action: add-items (a Library selection), remove-items or reorder-items.
+  static async editVODListItems(id, action, body) {
+    return request(`${host}/api/vod/lists/${id}/${action}/`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  static async getVODTmdbKeywords(query) {
+    return request(
+      `${host}/api/vod/lists/tmdb-keywords/?${new URLSearchParams({ query })}`
+    );
+  }
+
+  static async getVODTmdbOptions(contentType, region = '') {
+    const query = new URLSearchParams({ content_type: contentType });
+    if (region) query.set('region', region);
+    return request(`${host}/api/vod/lists/tmdb-options/?${query}`);
+  }
+
   static async vodLibraryAction(action, body = {}, method = 'POST') {
     const actions = new Set([
       'cleanup-preview',

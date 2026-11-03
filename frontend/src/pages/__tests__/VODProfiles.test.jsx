@@ -86,6 +86,22 @@ const options = {
   metadata_languages: ['en-US', 'de-DE'],
   resolutions: ['2160p', '1080p', '720p', 'SD'],
   video_features: ['3d', 'dv', 'hdr'],
+  lists: [
+    {
+      id: 4,
+      name: 'Picks',
+      list_type: 'manual',
+      content_type: 'all',
+      is_enabled: true,
+    },
+    {
+      id: 5,
+      name: 'Horror',
+      list_type: 'rules',
+      content_type: 'movie',
+      is_enabled: false,
+    },
+  ],
 };
 
 const renderPage = () =>
@@ -772,6 +788,38 @@ describe('VODProfilesPage', () => {
     await waitFor(() =>
       expect(api.saveVODProfile).toHaveBeenCalledWith(
         expect.objectContaining({ ranking: ['resolution_desc'] }),
+        1
+      )
+    );
+  });
+
+  it('offers ordered lists as client categories', async () => {
+    api.getVODProfiles.mockResolvedValue([profile()]);
+    api.saveVODProfile.mockResolvedValue(profile());
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit Default' })
+    );
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('tab', { name: 'Lists' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Lists' }));
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Lists' }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /Horror/ }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /Picks/ }));
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Move Picks up' })
+    );
+    fireEvent.click(
+      within(dialog).getByRole('switch', { name: /Include Unsorted/ })
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.saveVODProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          output_groups: 'lists',
+          lists: [4, 5],
+          include_unsorted: false,
+        }),
         1
       )
     );

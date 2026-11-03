@@ -4,6 +4,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Flex,
   Group,
   MultiSelect,
@@ -22,7 +23,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, Plus, Trash2 } from 'lucide-react';
 import { useMediaQuery } from '@mantine/hooks';
 import API from '../../api';
 import ConfirmationDialog from '../ConfirmationDialog.jsx';
@@ -75,9 +76,12 @@ import {
   RuleIntro,
   RuleMarker,
   RuleRow,
+  Section,
   SortableItem,
   SortableList,
 } from './VODProfileRuleEditors.jsx';
+import VODListTitles from './VODListTitles.jsx';
+import { LIST_CONTENT, LIST_TYPES } from '../../utils/vodLists';
 import editorClasses from './AccountEditor.module.css';
 
 const initialValues = (profile) => ({ ...newProfile(), ...profile });
@@ -105,19 +109,12 @@ const hideUnchecked = (errors, rowEdit) => {
   return next;
 };
 
-function Section({ title, action, children }) {
-  return (
-    <Paper withBorder p="sm">
-      <Stack gap={4} style={{ minWidth: 0 }} role="group" aria-label={title}>
-        <Group justify="space-between" wrap="nowrap">
-          <Text fw={600}>{title}</Text>
-          {action}
-        </Group>
-        {children}
-      </Stack>
-    </Paper>
-  );
-}
+const LIST_TYPE_LABELS = Object.fromEntries(
+  LIST_TYPES.map((item) => [item.value, item.label])
+);
+const LIST_CONTENT_LABELS = Object.fromEntries(
+  LIST_CONTENT.map((item) => [item.value, item.label])
+);
 
 const ANY_OTHER = { value: OTHER, label: 'Any other', name: 'Any other value' };
 
@@ -339,7 +336,7 @@ function GeneralTab({ values, saved, options, errors, set }) {
             <Text size="sm" fw={500}>
               {helpLabel(
                 'Categories',
-                'Provider keeps the categories of the providers. Movie & Series offers all movies in one category and all series in another.'
+                'Provider keeps the categories of the providers. Movie & Series offers all movies in one category and all series in another. Lists replaces them with your VOD lists, chosen in the Lists tab.'
               )}
             </Text>
             <SegmentedControl
@@ -713,6 +710,128 @@ function UsersTab({ values, saved, options, profiles }) {
   );
 }
 
+function ListsTab({ values, options, set }) {
+  const [previewing, setPreviewing] = useState(null);
+  const selected = values.lists;
+  const byId = new Map(options.lists.map((item) => [item.id, item]));
+  const rows = [
+    ...selected.filter((id) => byId.has(id)).map((id) => byId.get(id)),
+    ...options.lists.filter((item) => !selected.includes(item.id)),
+  ];
+  const move = (id, offset) => {
+    const next = [...selected];
+    const index = next.indexOf(id);
+    next.splice(index, 1);
+    next.splice(index + offset, 0, id);
+    set('lists', next);
+  };
+  return (
+    <Stack gap="md">
+      <Section
+        title="Lists"
+        action={
+          <Switch
+            size="sm"
+            labelPosition="left"
+            label={helpLabel(
+              'Include Unsorted',
+              'Offer the titles that are in none of the chosen lists in an Unsorted category.'
+            )}
+            checked={values.include_unsorted}
+            onChange={(event) =>
+              set('include_unsorted', event.currentTarget.checked)
+            }
+          />
+        }
+      >
+        {!rows.length && (
+          <Text size="sm" c="dimmed">
+            No lists yet. Create them under Video on Demand → Lists.
+          </Text>
+        )}
+        {rows.map((item) => {
+          const position = selected.indexOf(item.id);
+          const chosen = position >= 0;
+          return (
+            <Paper key={item.id} withBorder px="sm" py={6}>
+              <Group justify="space-between" wrap="nowrap">
+                <Checkbox
+                  label={
+                    <Group gap={6} wrap="nowrap">
+                      <Text size="sm">
+                        {chosen ? `${position + 1}. ` : ''}
+                        {item.name}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {[
+                          LIST_TYPE_LABELS[item.list_type],
+                          LIST_CONTENT_LABELS[item.content_type],
+                          !item.is_enabled && 'Disabled',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    </Group>
+                  }
+                  checked={chosen}
+                  onChange={(event) =>
+                    set(
+                      'lists',
+                      event.currentTarget.checked
+                        ? [...selected, item.id]
+                        : selected.filter((id) => id !== item.id)
+                    )
+                  }
+                />
+                <Group gap={2} wrap="nowrap">
+                  {chosen && (
+                    <>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        aria-label={`Move ${item.name} up`}
+                        disabled={position === 0}
+                        onClick={() => move(item.id, -1)}
+                      >
+                        <ArrowUp size={16} />
+                      </ActionIcon>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        aria-label={`Move ${item.name} down`}
+                        disabled={position === selected.length - 1}
+                        onClick={() => move(item.id, 1)}
+                      >
+                        <ArrowDown size={16} />
+                      </ActionIcon>
+                    </>
+                  )}
+                  <ActionIcon
+                    variant="subtle"
+                    aria-label={`Preview ${item.name}`}
+                    onClick={() => setPreviewing(item)}
+                  >
+                    <Eye size={16} />
+                  </ActionIcon>
+                </Group>
+              </Group>
+            </Paper>
+          );
+        })}
+      </Section>
+      {previewing && (
+        <LibraryDialog
+          title={previewing.name}
+          onClose={() => setPreviewing(null)}
+          size="lg"
+        >
+          <VODListTitles list={previewing} readOnly />
+        </LibraryDialog>
+      )}
+    </Stack>
+  );
+}
+
 export default function VODProfileDialog({
   profile,
   profiles,
@@ -766,8 +885,8 @@ export default function VODProfileDialog({
   };
 
   const firstTab = (found) =>
-    ['general', 'content', 'editions', 'failover', 'labels'].find((name) =>
-      tabHasError(name, found)
+    ['general', 'lists', 'content', 'editions', 'failover', 'labels'].find(
+      (name) => tabHasError(name, found)
     );
 
   // Problems are named in a notification; the fields are outlined.
@@ -990,6 +1109,7 @@ export default function VODProfileDialog({
         <Tabs value={tab} onChange={changeTab} className={editorClasses.tabs}>
           <TabsList className={editorClasses.tabList}>
             {tabLabel('general', 'General')}
+            {values.output_groups === 'lists' && tabLabel('lists', 'Lists')}
             {tabLabel('content', 'Content')}
             {onlyFor('Compact', 'editions', 'Editions')}
             {onlyFor('Compact', 'failover', 'Failover')}
@@ -998,6 +1118,9 @@ export default function VODProfileDialog({
           </TabsList>
           <TabsPanel value="general" className={editorClasses.panel}>
             <GeneralTab {...props} />
+          </TabsPanel>
+          <TabsPanel value="lists" className={editorClasses.panel}>
+            {values.output_groups === 'lists' && <ListsTab {...props} />}
           </TabsPanel>
           <TabsPanel value="content" className={editorClasses.panel}>
             <ContentRulesEditor

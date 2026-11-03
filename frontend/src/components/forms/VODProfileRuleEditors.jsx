@@ -71,7 +71,7 @@ import {
 // A field label with its help in a tooltip.
 export function HelpLabel({ label, help }) {
   return (
-    <Group gap={5} wrap="nowrap">
+    <Group gap={5} wrap="nowrap" display="inline-flex">
       <Text span inherit>
         {label}
       </Text>
@@ -94,6 +94,20 @@ export function HelpLabel({ label, help }) {
         </Text>
       </Tooltip>
     </Group>
+  );
+}
+
+export function Section({ title, action, children }) {
+  return (
+    <Paper withBorder p="sm">
+      <Stack gap={4} style={{ minWidth: 0 }} role="group" aria-label={title}>
+        <Group justify="space-between" wrap="nowrap">
+          <Text fw={600}>{title}</Text>
+          {action}
+        </Group>
+        {children}
+      </Stack>
+    </Paper>
   );
 }
 
