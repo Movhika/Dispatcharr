@@ -557,8 +557,18 @@ def metadata_origins(values):
     return origins
 
 
-def page_documents(rows, request, *, sources=False, filters=None):
+def poster_url(request, kind, content, prefer_artwork):
+    """The poster a Library row shows: TMDB artwork if preferred, else the logo."""
     from .image_proxy import rewrite_single_image_url, vodlogo_cache_url
+
+    if prefer_artwork and content.tmdb_poster_url:
+        return rewrite_single_image_url(
+            request, kind, content.pk, "tmdb_poster", content.tmdb_poster_url
+        )
+    return vodlogo_cache_url(request, content.logo) if content.logo else ""
+
+
+def page_documents(rows, request, *, sources=False, filters=None):
     from .library_preview import series_video_facts
 
     rows = list(rows)
@@ -643,14 +653,7 @@ def page_documents(rows, request, *, sources=False, filters=None):
                 "source_id": relation.pk if sources else None,
             }
         )
-        if prefer_artwork and content.tmdb_poster_url:
-            item["poster_url"] = rewrite_single_image_url(
-                request, kind, content.pk, "tmdb_poster", content.tmdb_poster_url
-            )
-        else:
-            item["poster_url"] = (
-                vodlogo_cache_url(request, content.logo) if content.logo else ""
-            )
+        item["poster_url"] = poster_url(request, kind, content, prefer_artwork)
         visible_relations = [relation] if sources else relations
         values = [
             with_episode_resolutions(
