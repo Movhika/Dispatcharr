@@ -10,6 +10,10 @@ on:
         description: Branch or commit to deploy to the VOD test instance
         required: true
         default: codex/vod-management-01-foundation
+      image_tag:
+        description: Image tag to publish in addition to the commit SHA
+        required: false
+        default: vod-split-test
 
 permissions:
   contents: read
@@ -17,7 +21,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_TAG: vod-split-test
+  IMAGE_TAG: ${{ inputs.image_tag || 'vod-split-test' }}
   SOURCE_REF: ${{ inputs.source_ref || 'codex/vod-management-01-foundation' }}
 
 jobs:
