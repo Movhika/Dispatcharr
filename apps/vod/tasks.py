@@ -14,6 +14,7 @@ from apps.m3u.group_rules import (
 from apps.m3u.utils import parse_is_adult
 from core.xtream_codes import Client as XtreamCodesClient
 from core.utils import TaskLockRenewer, acquire_task_lock, release_task_lock, ensure_custom_properties_dict
+from .provider_details import details_due, mark_details_fetched, mark_episodes_fetched
 from .models import (
     VODCategory, Series, Movie, Episode, VODLogo,
     M3USeriesRelation, M3UMovieRelation, M3UEpisodeRelation, M3UVODCategoryRelation
@@ -2044,12 +2045,14 @@ def refresh_series_episodes(account, series, external_series_id, episodes_data=N
                 custom_props['detailed_fetched'] = has_details
             if episode_count > 0:
                 custom_props['episodes_fetched'] = True
+                mark_episodes_fetched(series_relation, custom_props)
             else:
                 has_stored_episodes = M3UEpisodeRelation.objects.filter(
                     series_relation=series_relation,
                 ).exists()
                 if has_stored_episodes:
                     custom_props['episodes_fetched'] = True
+                    mark_episodes_fetched(series_relation, custom_props)
                     logger.info(
                         "Provider returned no episodes for series %s "
                         "(external_id=%s); keeping stored episode relations",
@@ -2896,19 +2899,13 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
     """
     Fetch advanced movie data from provider and update Movie and M3UMovieRelation.
 
-    Skips when detailed_fetched is set and last_advanced_refresh is within 24h,
-    unless force_refresh is True.
+    Skips unless the details are due (see provider_details.details_due) or
+    force_refresh is True.
     """
     try:
         relation = M3UMovieRelation.objects.select_related('movie', 'm3u_account__user_agent').get(id=m3u_movie_relation_id)
         now = timezone.now()
-        detailed_fetched = (relation.custom_properties or {}).get('detailed_fetched', False)
-        if (
-            not force_refresh
-            and detailed_fetched
-            and relation.last_advanced_refresh
-            and (now - relation.last_advanced_refresh).total_seconds() < 86400
-        ):
+        if not force_refresh and not details_due(relation, now):
             return "Advanced data recently fetched, skipping."
 
         account = relation.m3u_account
@@ -2970,6 +2967,7 @@ def refresh_movie_advanced_data(m3u_movie_relation_id, force_refresh=False):
                 if cleaned_movie_data:
                     relation_custom_props['movie_data'] = cleaned_movie_data
                 relation_custom_props['detailed_fetched'] = True
+                mark_details_fetched(relation, relation_custom_props)
 
                 relation.custom_properties = relation_custom_props
                 update_declared_metadata(relation, info)

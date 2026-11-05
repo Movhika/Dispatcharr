@@ -53,6 +53,7 @@ from core.image_proxy import RawImageContentNegotiationMixin
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 from .utils import is_vod_movies_enabled, is_vod_series_enabled, parse_category_filter_value
+from .provider_details import details_due, episodes_due
 from .provider_refresh import queue_provider_refresh
 from django.utils import timezone
 from datetime import timedelta
@@ -285,13 +286,7 @@ class MovieViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewSe
 
         force_refresh = request.query_params.get('force_refresh', 'false').lower() == 'true'
         now = timezone.now()
-        detailed_fetched = (relation.custom_properties or {}).get('detailed_fetched', False)
-        needs_refresh = (
-            force_refresh or
-            not detailed_fetched or
-            not relation.last_advanced_refresh or
-            (now - relation.last_advanced_refresh).total_seconds() > 86400
-        )
+        needs_refresh = force_refresh or details_due(relation, now)
 
         refresh_status = queue_provider_refresh(
             "movie", relation.id, required=needs_refresh, force=force_refresh
@@ -638,10 +633,10 @@ class SeriesViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewS
             # Check if we should refresh data (optional force refresh parameter)
             force_refresh = request.query_params.get('force_refresh', 'false').lower() == 'true'
             explicit_force_refresh = force_refresh
-            refresh_interval_hours = int(request.query_params.get("refresh_interval", 24))  # Default to 24 hours
+            refresh_interval = request.query_params.get("refresh_interval")
+            max_age = timedelta(hours=int(refresh_interval)) if refresh_interval else None
 
             now = timezone.now()
-            last_refreshed = relation.last_episode_refresh
 
             # Check if detailed data has been fetched
             custom_props = relation.custom_properties or {}
@@ -652,9 +647,9 @@ class SeriesViewSet(RawImageContentNegotiationMixin, viewsets.ReadOnlyModelViewS
             if not episodes_fetched or not detailed_fetched or force_refresh:
                 force_refresh = True
                 logger.debug(f"Series {series.id} needs detailed/episode refresh, forcing refresh")
-            elif last_refreshed is None or (now - last_refreshed) > timedelta(hours=refresh_interval_hours):
+            elif episodes_due(relation, now, max_age):
                 force_refresh = True
-                logger.debug(f"Series {series.id} refresh interval exceeded or never refreshed, forcing refresh")
+                logger.debug(f"Series {series.id} changed at the provider or is due, forcing refresh")
 
             refresh_status = queue_provider_refresh(
                 "series", relation.id,
