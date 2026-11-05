@@ -35,6 +35,7 @@ from apps.vod.profiles import (
     source_title_expression,
     uses_enriched_metadata,
 )
+from apps.vod.provider_details import details_due, episodes_due, refresh_series_sources
 from apps.vod.selection import (
     content_is_blocked,
     resolve_content,
@@ -1756,18 +1757,8 @@ def xc_get_series_info(request, user, series_id):
 
     # Check if we need to refresh detailed info (similar to vod api_views pattern)
     try:
-        should_refresh = (
-            not series_relation.last_episode_refresh or
-            series_relation.last_episode_refresh < django_timezone.now() - timedelta(hours=24)
-        )
-
-        # Check if detailed data has been fetched
-        custom_props = series_relation.custom_properties or {}
-        episodes_fetched = custom_props.get('episodes_fetched', False)
-        detailed_fetched = custom_props.get('detailed_fetched', False)
-
-        # Force refresh if episodes/details have never been fetched or time interval exceeded
-        if not episodes_fetched or not detailed_fetched or should_refresh:
+        # Fetch again only when the provider changed the series (or as a safety net).
+        if episodes_due(series_relation):
             from apps.vod.tasks import refresh_series_episodes
             account = series_relation.m3u_account
             if account and account.is_active:
@@ -1782,6 +1773,20 @@ def xc_get_series_info(request, user, series_id):
     selected_metadata = effective_source_metadata(series_relation)['values']
     if not metadata_satisfies(selected_metadata, requirements):
         raise Http404()
+
+    # Further offered sources add the episodes the first one lacks.
+    further = source_candidates(
+        order_sources(
+            M3USeriesRelation.objects.select_related('m3u_account')
+            .filter(**filters)
+            .exclude(pk=series_relation.pk)
+            .order_by('-m3u_account__priority', 'id'),
+            source_order,
+        ),
+        requirements=requirements,
+        preserve_selection=False,
+    )
+    refresh_series_sources(series, [source for source in further if episodes_due(source)])
 
     # Include episodes from any active provider for this shared Series (XC clients
     # see a unified catalog). Prefer the highest-priority account's stream metadata.
@@ -2054,8 +2059,6 @@ def xc_get_vod_info(request, user, vod_id):
         raise Http404()
 
     from apps.vod.models import M3UMovieRelation
-    from django.utils import timezone
-    from datetime import timedelta
 
     if not vod_id:
         raise Http404()
@@ -2110,12 +2113,7 @@ def xc_get_vod_info(request, user, vod_id):
     # Duplicate the provider_info logic for detailed information
     try:
         # Check if we need to refresh detailed info (same logic as provider_info)
-        detailed_fetched = (movie_relation.custom_properties or {}).get('detailed_fetched', False)
-        should_refresh = (
-            not detailed_fetched or
-            not movie_relation.last_advanced_refresh or
-            movie_relation.last_advanced_refresh < timezone.now() - timedelta(hours=24)
-        )
+        should_refresh = details_due(movie_relation)
 
         if should_refresh:
             # Trigger refresh of detailed info
