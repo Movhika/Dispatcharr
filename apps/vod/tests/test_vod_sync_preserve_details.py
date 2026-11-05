@@ -180,7 +180,8 @@ class VODSyncPreserveDetailsTests(TestCase):
 
     @patch("core.xtream_codes.Client")
     def test_refresh_runs_after_age_window(self, mock_client_cls):
-        self.relation.last_advanced_refresh = timezone.now() - timedelta(hours=25)
+        # Unchanged details are fetched again after a week (safety net).
+        self.relation.last_advanced_refresh = timezone.now() - timedelta(days=8)
         self.relation.save(update_fields=["last_advanced_refresh"])
 
         mock_client = MagicMock()

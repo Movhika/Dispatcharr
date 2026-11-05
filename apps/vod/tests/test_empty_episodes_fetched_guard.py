@@ -272,7 +272,8 @@ class EmptyEpisodesFetchedGuardTests(TestCase):
             self.assertEqual(len(first.data['episodes']['1']), 1)
 
             self.relation.refresh_from_db()
-            self.relation.last_episode_refresh = timezone.now() - timedelta(hours=25)
+            # Unchanged episode lists are fetched again after a week (safety net).
+            self.relation.last_episode_refresh = timezone.now() - timedelta(days=8)
             self.relation.save(update_fields=['last_episode_refresh'])
             get_series_info.return_value = {'info': {}, 'episodes': {}}
 
