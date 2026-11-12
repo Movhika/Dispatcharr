@@ -383,6 +383,11 @@ def _refresh_vod_content_impl(account_id):
 
         logger.info(f"Starting batch VOD refresh for account {account.name}")
         start_time = timezone.now()
+        source_models = {"movie": M3UMovieRelation, "series": M3USeriesRelation}
+        had_sources = {
+            kind: model.objects.filter(m3u_account_id=account_id).exists()
+            for kind, model in source_models.items()
+        }
         progress = VODRefreshProgress(account_id)
 
         # Send start notification
@@ -431,26 +436,55 @@ def _refresh_vod_content_impl(account_id):
                 scan_start_time=start_time, progress=progress,
             )
 
+        # A provider that suddenly lists no movies or no series answered
+        # incompletely: keep those sources until it lists titles again.
+        kept = [
+            kind
+            for kind, total in (
+                ("movie", movie_provider_total),
+                ("series", series_provider_total),
+            )
+            if not total and had_sources[kind]
+        ]
+        for kind in kept:
+            logger.warning(
+                "Provider listed no %s for account %s; keeping the existing %s sources",
+                "movies" if kind == "movie" else "series",
+                account.name,
+                kind,
+            )
+
         # Cleanup orphaned VOD content after refresh (scoped to this account only)
         logger.info(f"Starting cleanup of orphaned VOD content for account {account.name}")
         progress.send("Cleaning up stale content", 97)
-        cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
+        cleanup_result = cleanup_orphaned_vod_content(
+            account_id=account_id, scan_start_time=start_time, keep=kept
+        )
         logger.info(f"VOD cleanup completed: {cleanup_result}")
-        selected_movies = M3UMovieRelation.objects.filter(
-            m3u_account_id=account_id, last_seen__gte=start_time
-        ).count()
-        selected_series = M3USeriesRelation.objects.filter(
-            m3u_account_id=account_id, last_seen__gte=start_time
-        ).count()
+        selected = {
+            kind: model.objects.filter(
+                m3u_account_id=account_id,
+                **({} if kind in kept else {"last_seen__gte": start_time}),
+            ).count()
+            for kind, model in source_models.items()
+        }
+        selected_movies, selected_series = selected["movie"], selected["series"]
+        if "movie" in kept:
+            movie_provider_total = known_provider_total(account, "movie")
+        if "series" in kept:
+            series_provider_total = known_provider_total(account, "series")
         end_time = timezone.now()
         duration = (end_time - start_time).total_seconds()
         completion = f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds"
         logger.info(completion)
 
         for scope, categories in zip(("movie", "series"), category_maps):
-            publish_live_filter_catalog(
-                account_id, getattr(categories, "catalog_stage", None), scope=scope
-            )
+            stage = getattr(categories, "catalog_stage", None)
+            if scope in kept:
+                # An empty listing must not replace the known category contents.
+                discard_live_filter_catalog(stage)
+            else:
+                publish_live_filter_catalog(account_id, stage, scope=scope)
             if isinstance(categories, CategoryImportMap):
                 categories.catalog_stage = None
 
@@ -485,8 +519,15 @@ def _refresh_vod_content_impl(account_id):
         )
 
         # Send completion notification
+        message = f"VOD refresh completed in {duration:.2f} seconds"
+        if kept:
+            message += (
+                ". The provider listed no "
+                + " and no ".join("movies" if kind == "movie" else "series" for kind in kept)
+                + ", so the existing sources were kept"
+            )
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
-                       message=f"VOD refresh completed in {duration:.2f} seconds",
+                       message=message,
                        first_vod_import=first_vod_import)
 
         from .profile_catalog import request_catalog_build
@@ -2532,8 +2573,12 @@ def batch_refresh_series_episodes(account_id, series_ids=None):
 
 
 @shared_task
-def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=None):
-    """Clean up VOD content that has no M3U relations or has stale relations"""
+def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=None, keep=()):
+    """Clean up VOD content that has no M3U relations or has stale relations.
+
+    ``keep`` names content types ("movie", "series") whose stale relations stay,
+    for example because the provider listed none of them in this refresh.
+    """
     from datetime import timedelta
 
     # Use scan start time as reference, or current time if not provided
@@ -2552,12 +2597,16 @@ def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=
 
     # Clean up stale movie relations (haven't been seen in the specified days)
     stale_movie_relations = M3UMovieRelation.objects.filter(**base_filters)
+    if "movie" in keep:
+        stale_movie_relations = stale_movie_relations.none()
     stale_movie_count = stale_movie_relations.count()
     stale_movie_relations.delete()
 
     # Clean up stale series relations.
     # Episode relations are removed via CASCADE on the series_relation FK.
     stale_series_relations = M3USeriesRelation.objects.filter(**base_filters)
+    if "series" in keep:
+        stale_series_relations = stale_series_relations.none()
     stale_series_count = stale_series_relations.count()
     stale_series_relations.delete()
 
