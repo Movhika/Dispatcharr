@@ -29,6 +29,7 @@ from core.utils import (
     natural_sort_key,
     log_system_event,
     ensure_custom_properties_dict,
+    redact_display_data,
     truncate_with_warning,
 )
 from core.models import CoreSettings
@@ -141,7 +142,7 @@ def _set_m3u_account_status(
                 ws_action,
                 100,
                 status="error",
-                error=error_msg,
+                error=redact_display_data(error_msg),
             )
             name = account_name or str(account_id)
             log_system_event(

@@ -65,6 +65,7 @@ from core.utils import (
     cleanup_memory,
     log_system_event,
     _is_celery_worker_context,
+    redact_display_data,
     truncate_with_warning,
 )
 
@@ -199,7 +200,7 @@ def _set_epg_source_status(
                 ws_action,
                 100,
                 status="error",
-                error=error_msg,
+                error=redact_display_data(error_msg),
             )
             name = source_name or str(source_id)
             log_system_event(
