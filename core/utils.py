@@ -931,6 +931,30 @@ def _dispatch_system_event_integrations(
         _run()
 
 
+# Detail keys whose values are secrets even without a recognisable pattern.
+_SECRET_DETAIL_KEY = re.compile(
+    r"(?i)(?:^|_)(?:password|passwd|secret|token|api_?key)$"
+)
+
+
+def redact_display_data(value, key=None):
+    """Mask provider credentials in data shown in the interface.
+
+    Status messages and System Events often quote provider URLs. Strings are
+    masked with the log collector's rules; dicts and lists are copied with
+    their keys, and values under secret keys are masked whole.
+    """
+    from dispatcharr.log_redaction import redact_text
+
+    if isinstance(key, str) and _SECRET_DETAIL_KEY.search(key) and value:
+        return f"[{key}]"
+    if isinstance(value, dict):
+        return {name: redact_display_data(item, name) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_display_data(item, key) for item in value]
+    return redact_text(value)
+
+
 def log_system_event(event_type, channel_id=None, channel_name=None, **details):
     """
     Log a system event and maintain the configured max history.
@@ -949,12 +973,12 @@ def log_system_event(event_type, channel_id=None, channel_name=None, **details):
     from django.db import close_old_connections
 
     try:
-        # Create the event
+        # Store a masked copy; integrations below still receive the original.
         SystemEvent.objects.create(
             event_type=event_type,
             channel_id=channel_id,
-            channel_name=channel_name,
-            details=details
+            channel_name=redact_display_data(channel_name),
+            details=redact_display_data(details)
         )
 
         # Connect integrations and plugin event hooks (non-blocking on gevent uWSGI)

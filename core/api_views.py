@@ -47,6 +47,7 @@ from apps.accounts.permissions import (
     permissions_for_action,
 )
 from dispatcharr.utils import get_client_ip
+from core.utils import redact_display_data
 
 
 logger = logging.getLogger(__name__)
@@ -638,8 +639,9 @@ def get_system_events(request):
             'event_type_display': event.get_event_type_display(),
             'timestamp': event.timestamp.isoformat(),
             'channel_id': str(event.channel_id) if event.channel_id else None,
-            'channel_name': event.channel_name,
-            'details': event.details
+            # Events stored before masking existed are masked on the way out.
+            'channel_name': redact_display_data(event.channel_name),
+            'details': redact_display_data(event.details)
         } for event in events]
 
         return Response({

@@ -3,7 +3,11 @@ from apps.epg.sd_utils import (
     sd_credential_fingerprint,
 )
 from apps.epg.utils import sd_poster_proxy_path
-from core.utils import validate_flexible_url, build_absolute_uri_with_port
+from core.utils import (
+    build_absolute_uri_with_port,
+    redact_display_data,
+    validate_flexible_url,
+)
 from rest_framework import serializers
 from .models import EPGSource, EPGData, ProgramData
 from apps.channels.access import channels_queryset_for_user, is_admin_user
@@ -51,6 +55,8 @@ class EPGSourceSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        # Provider URLs in status messages may carry credentials.
+        data['last_message'] = redact_display_data(data.get('last_message'))
         # Derive cron_expression from the linked PeriodicTask's crontab (single source of truth)
         # But first check if we have a transient _cron_expression (from create/update before signal runs)
         cron_expr = ''
