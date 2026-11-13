@@ -1,4 +1,8 @@
-from core.utils import validate_flexible_url, ensure_custom_properties_dict
+from core.utils import (
+    ensure_custom_properties_dict,
+    redact_display_data,
+    validate_flexible_url,
+)
 from rest_framework import serializers, status
 from rest_framework.response import Response
 from .models import M3UAccount, M3UFilter, ServerGroup, M3UAccountProfile
@@ -240,6 +244,8 @@ class M3UAccountSerializer(serializers.ModelSerializer):
             }
 
         data = super().to_representation(instance)
+        # Provider URLs in status messages may carry credentials.
+        data["last_message"] = redact_display_data(data.get("last_message"))
 
         # write_only strips password for everyone; re-add only for admins so
         # operator tooling / profile regex helpers still see credentials.
