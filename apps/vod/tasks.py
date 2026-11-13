@@ -109,6 +109,8 @@ def refresh_vod_content(account_id):
 
         logger.info(f"Starting batch VOD refresh for account {account.name}")
         start_time = timezone.now()
+        had_movies = M3UMovieRelation.objects.filter(m3u_account=account).exists()
+        had_series = M3USeriesRelation.objects.filter(m3u_account=account).exists()
 
         # Send start notification
         send_m3u_update(account_id, "vod_refresh", 0, status="processing")
@@ -140,10 +142,27 @@ def refresh_vod_content(account_id):
             }
 
             # Refresh movies with batch processing (pass scan start time)
-            refresh_movies(client, account, movie_categories, relations, scan_start_time=start_time)
+            movie_total = refresh_movies(client, account, movie_categories, relations, scan_start_time=start_time)
 
             # Refresh series with batch processing (pass scan start time)
-            refresh_series(client, account, series_categories, relations, scan_start_time=start_time)
+            series_total = refresh_series(client, account, series_categories, relations, scan_start_time=start_time)
+
+        # The cleanup below deletes every source this refresh did not see. A
+        # provider that suddenly lists no movies or no series answered
+        # incompletely, so keep those sources until it lists titles again.
+        keep = [
+            content_type
+            for content_type, total, had_sources in (
+                ("movie", movie_total, had_movies),
+                ("series", series_total, had_series),
+            )
+            if not total and had_sources
+        ]
+        for content_type in keep:
+            logger.warning(
+                f"Provider listed no {'movies' if content_type == 'movie' else 'series'} "
+                f"for account {account.name}; keeping the existing {content_type} sources"
+            )
 
         # Reconcile language once per account refresh, not per batch. Relations
         # stay pinned during the batch (see process_movie_batch /
@@ -157,17 +176,23 @@ def refresh_vod_content(account_id):
         duration = (end_time - start_time).total_seconds()
 
         skip_note = _language_skip_note(movie_summary, series_summary)
-        completion = f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds{skip_note}"
+        keep_note = ""
+        if keep:
+            listed = " and no ".join("movies" if kind == "movie" else "series" for kind in keep)
+            keep_note = f". The provider listed no {listed}, so the existing sources were kept"
+        completion = f"Batch VOD refresh completed for account {account.name} in {duration:.2f} seconds{skip_note}{keep_note}"
         logger.info(completion)
 
         # Cleanup orphaned VOD content after refresh (scoped to this account only)
         logger.info(f"Starting cleanup of orphaned VOD content for account {account.name}")
-        cleanup_result = cleanup_orphaned_vod_content(account_id=account_id, scan_start_time=start_time)
+        cleanup_result = cleanup_orphaned_vod_content(
+            account_id=account_id, scan_start_time=start_time, keep=keep
+        )
         logger.info(f"VOD cleanup completed: {cleanup_result}")
 
         # Send completion notification
         send_m3u_update(account_id, "vod_refresh", 100, status="success",
-                       message=f"VOD refresh completed in {duration:.2f} seconds{skip_note}")
+                       message=f"VOD refresh completed in {duration:.2f} seconds{skip_note}{keep_note}")
 
         return completion
 
@@ -289,6 +314,7 @@ def refresh_movies(client, account, categories_by_provider, relations, scan_star
 
     del all_movies_data
     logger.info(f"Completed processing all {total_movies} movies in {total_chunks} chunks")
+    return total_movies
 
 
 def refresh_series(client, account, categories_by_provider, relations, scan_start_time=None):
@@ -344,6 +370,7 @@ def refresh_series(client, account, categories_by_provider, relations, scan_star
 
     del all_series_data
     logger.info(f"Completed processing all {total_series} series in {total_chunks} chunks")
+    return total_series
 
 
 def batch_create_categories(categories_data, category_type, account):
@@ -2738,8 +2765,12 @@ def reconcile_series_language_identity(account, scan_start_time):
 
 
 @shared_task
-def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=None):
-    """Clean up VOD content that has no M3U relations or has stale relations"""
+def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=None, keep=()):
+    """Clean up VOD content that has no M3U relations or has stale relations.
+
+    ``keep`` names content types ("movie", "series") whose stale relations stay,
+    for example because the provider listed none of them in this refresh.
+    """
     from datetime import timedelta
 
     # Use scan start time as reference, or current time if not provided
@@ -2758,12 +2789,16 @@ def cleanup_orphaned_vod_content(stale_days=0, scan_start_time=None, account_id=
 
     # Clean up stale movie relations (haven't been seen in the specified days)
     stale_movie_relations = M3UMovieRelation.objects.filter(**base_filters)
+    if "movie" in keep:
+        stale_movie_relations = stale_movie_relations.none()
     stale_movie_count = stale_movie_relations.count()
     stale_movie_relations.delete()
 
     # Clean up stale series relations.
     # Episode relations are removed via CASCADE on the series_relation FK.
     stale_series_relations = M3USeriesRelation.objects.filter(**base_filters)
+    if "series" in keep:
+        stale_series_relations = stale_series_relations.none()
     stale_series_count = stale_series_relations.count()
     stale_series_relations.delete()
 
