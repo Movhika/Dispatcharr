@@ -4480,3 +4480,64 @@ def set_channels_tvg_ids_from_epg(self, channel_ids):
             'error': str(e)
         })
         raise
+
+
+STREAM_TEST_LOCK = "channels:stream_test:running"
+STREAM_TEST_LOCK_SECONDS = 6 * 60 * 60
+
+
+@shared_task
+def test_channel_streams(channel_ids, sort="none", low_fps=None):
+    """Test the streams of channels with ffprobe and optionally sort them.
+
+    The view takes the lock; this task releases it when it ends.
+    """
+    from django.core.cache import cache
+
+    from core.utils import send_websocket_update
+
+    from .stream_probe import BUSY, DEFAULT_LOW_FPS, FAILED, OK, test_channels
+
+    def progress(done, summary, _name):
+        send_websocket_update(
+            "updates",
+            "update",
+            {
+                "type": "stream_test_progress",
+                "stage": "testing",
+                "done": done,
+                "total": summary["total"],
+                "ok": summary[OK],
+                "failed": summary[FAILED],
+                "busy": summary[BUSY],
+                "black": summary["black"],
+                "frozen": summary["frozen"],
+                "low_fps": summary["low_fps"],
+            },
+        )
+
+    try:
+        summary = test_channels(
+            channel_ids, sort, progress, low_fps=low_fps or DEFAULT_LOW_FPS
+        )
+        send_websocket_update(
+            "updates",
+            "update",
+            {
+                "type": "stream_test",
+                "success": True,
+                "refresh_channels": True,
+                **summary,
+            },
+        )
+        return summary
+    except Exception as exc:
+        logger.exception("Stream test run failed")
+        send_websocket_update(
+            "updates",
+            "update",
+            {"type": "stream_test", "success": False, "message": str(exc)},
+        )
+        raise
+    finally:
+        cache.delete(STREAM_TEST_LOCK)

@@ -97,6 +97,7 @@ from .serializers import (
     RecurringRecordingRuleSerializer,
     StreamMatchRequestSerializer,
     StreamMatchResponseSerializer,
+    StreamTestRequestSerializer,
 )
 from .tasks import (
     match_epg_channels,
@@ -2614,6 +2615,40 @@ class ChannelViewSet(viewsets.ModelViewSet):
     # ─────────────────────────────────────────────────────────
     # 6) EPG Fuzzy Matching
     # ─────────────────────────────────────────────────────────
+    @extend_schema(
+        description=(
+            "Test the streams of channels with ffprobe in the background, using "
+            "free connection slots only, and optionally sort them by the result."
+        ),
+        request=StreamTestRequestSerializer,
+        responses={202: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT},
+    )
+    @action(detail=False, methods=["post"], url_path="test-streams", permission_classes=[IsAdmin])
+    def test_streams(self, request):
+        from django.core.cache import cache
+
+        from .tasks import STREAM_TEST_LOCK, STREAM_TEST_LOCK_SECONDS, test_channel_streams
+
+        serializer = StreamTestRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if not cache.add(STREAM_TEST_LOCK, True, STREAM_TEST_LOCK_SECONDS):
+            return Response(
+                {"error": "A stream test is already running."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            test_channel_streams.delay(
+                data["channel_ids"], data["sort"], data["low_fps_threshold"]
+            )
+        except Exception:
+            cache.delete(STREAM_TEST_LOCK)
+            raise
+        return Response(
+            {"message": f"Testing the streams of {len(data['channel_ids'])} channels."},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
     @extend_schema(
         description=(
             "Propose or apply stream lists for channels by matching their names "

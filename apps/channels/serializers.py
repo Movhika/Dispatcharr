@@ -1074,3 +1074,24 @@ class StreamMatchResponseSerializer(serializers.Serializer):
     applied = serializers.BooleanField()
     aliases = serializers.JSONField()
     countries = serializers.DictField(child=serializers.IntegerField())
+
+
+class StreamTestRequestSerializer(serializers.Serializer):
+    channel_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=2000
+    )
+    sort = serializers.ChoiceField(
+        choices=["none", "quality", "startup"],
+        default="none",
+        help_text=(
+            "After the test: keep the order, put the best quality first, or put "
+            "the fastest start first. Sorting moves streams with problems to "
+            "the end: low frame rate, frozen, black, then failed."
+        ),
+    )
+    low_fps_threshold = serializers.IntegerField(
+        min_value=1,
+        max_value=60,
+        default=20,
+        help_text="Streams delivering fewer frames per second are marked as low frame rate.",
+    )
