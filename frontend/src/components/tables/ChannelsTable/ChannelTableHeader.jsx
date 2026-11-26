@@ -26,6 +26,7 @@ import {
   Activity,
   ArrowDown01,
   Binary,
+  CalendarClock,
   CircleCheck,
   EllipsisVertical,
   Eye,
@@ -57,6 +58,7 @@ import ProfileModal, { renderProfileOption } from '../../modals/ProfileModal';
 import EPGMatchModal from '../../modals/EPGMatchModal';
 import StreamMatchModal from '../../modals/StreamMatchModal';
 import StreamTestModal from '../../modals/StreamTestModal';
+import EventGroupsModal from '../../modals/EventGroupsModal';
 import AddToProfileModal from '../../modals/AddToProfileModal';
 import {
   addChannelProfile,
@@ -162,6 +164,7 @@ const ChannelTableHeader = ({
   const [epgMatchModalOpen, setEpgMatchModalOpen] = useState(false);
   const [streamMatchModalOpen, setStreamMatchModalOpen] = useState(false);
   const [streamTestModalOpen, setStreamTestModalOpen] = useState(false);
+  const [eventGroupsOpen, setEventGroupsOpen] = useState(false);
   const [addToProfileModalOpen, setAddToProfileModalOpen] = useState(false);
   const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] =
     useState(false);
@@ -569,6 +572,14 @@ const ChannelTableHeader = ({
               </MenuItem>
 
               <MenuItem
+                leftSection={<CalendarClock size={18} />}
+                disabled={authUser.user_level != USER_LEVELS.ADMIN}
+                onClick={() => setEventGroupsOpen(true)}
+              >
+                <Text size="xs">Event Groups</Text>
+              </MenuItem>
+
+              <MenuItem
                 leftSection={<Settings size={18} />}
                 disabled={authUser.user_level != USER_LEVELS.ADMIN}
                 onClick={() => setGroupManagerOpen(true)}
@@ -614,6 +625,14 @@ const ChannelTableHeader = ({
         onClose={() => setStreamMatchModalOpen(false)}
         channelIds={selectedTableIds}
         onApplied={() => API.requeryChannels()}
+      />
+
+      <EventGroupsModal
+        opened={eventGroupsOpen}
+        onClose={() => {
+          setEventGroupsOpen(false);
+          API.requeryChannels();
+        }}
       />
 
       <StreamTestModal

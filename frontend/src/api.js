@@ -3101,6 +3101,52 @@ export default class API {
     }
   }
 
+  // Event groups. Errors are shown by the caller next to the form.
+  static async getEventGroups() {
+    return request(`${host}/api/channels/event-groups/`);
+  }
+
+  static async saveEventGroup(id, values) {
+    return request(`${host}/api/channels/event-groups/${id ? `${id}/` : ''}`, {
+      method: id ? 'PATCH' : 'POST',
+      body: values,
+    });
+  }
+
+  static async deleteEventGroup(id) {
+    return request(`${host}/api/channels/event-groups/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async buildEventGroup(id) {
+    return request(`${host}/api/channels/event-groups/${id}/build/`, {
+      method: 'POST',
+    });
+  }
+
+  static async previewEventGroup(values) {
+    return request(`${host}/api/channels/event-groups/preview/`, {
+      method: 'POST',
+      body: values,
+    });
+  }
+
+  static async getEventGroupSourceOptions() {
+    return request(`${host}/api/channels/event-groups/source-options/`);
+  }
+
+  static async getEventTeamAliases() {
+    return request(`${host}/api/channels/event-groups/team-aliases/`);
+  }
+
+  static async saveEventTeamAliases(aliases) {
+    return request(`${host}/api/channels/event-groups/team-aliases/`, {
+      method: 'PUT',
+      body: { aliases },
+    });
+  }
+
   // Errors are shown by the caller: the dialog keeps them next to the form.
   static async testChannelStreams(channelIds, sort, lowFpsThreshold) {
     return request(`${host}/api/channels/channels/test-streams/`, {

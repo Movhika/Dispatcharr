@@ -474,6 +474,10 @@ export const WebsocketProvider = ({ children }) => {
               break;
             }
 
+            case 'event_groups_built':
+              API.requeryChannels();
+              break;
+
             case 'stream_test_progress':
             case 'stream_test':
               handleStreamTestEvent(parsedEvent.data.type, parsedEvent.data);
