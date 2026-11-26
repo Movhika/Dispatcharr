@@ -3136,6 +3136,17 @@ export default class API {
     return request(`${host}/api/channels/event-groups/source-options/`);
   }
 
+  static async getEventFixtureSettings() {
+    return request(`${host}/api/channels/event-groups/fixture-settings/`);
+  }
+
+  static async saveEventFixtureSettings(values) {
+    return request(`${host}/api/channels/event-groups/fixture-settings/`, {
+      method: 'PUT',
+      body: values,
+    });
+  }
+
   static async getEventTeamAliases() {
     return request(`${host}/api/channels/event-groups/team-aliases/`);
   }

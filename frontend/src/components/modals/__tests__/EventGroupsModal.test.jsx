@@ -17,6 +17,10 @@ vi.mock('../../../api', () => ({
   },
 }));
 
+vi.mock('../../forms/EventFixtureSettings', () => ({
+  default: () => <div>Fixture settings</div>,
+}));
+
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
@@ -45,6 +49,7 @@ const GROUP = {
   include_untimed: false,
   name_format: 'title_time',
   channel_profile_ids: [],
+  epg_enabled: true,
   channel_count: 3,
 };
 
@@ -95,6 +100,7 @@ describe('EventGroupsModal', () => {
     API.previewEventGroup.mockResolvedValue([
       {
         title: 'Lille - Bayern Munich',
+        competition: 'Champions League',
         start: '2026-11-25T19:55:00Z',
         status: 'upcoming',
         streams: [
@@ -111,6 +117,7 @@ describe('EventGroupsModal', () => {
       await screen.findByText('Lille - Bayern Munich')
     ).toBeInTheDocument();
     expect(screen.getByText('2 from ProviderC, ProviderT')).toBeInTheDocument();
+    expect(screen.getByText('Champions League')).toBeInTheDocument();
     expect(API.previewEventGroup).toHaveBeenCalledWith(
       expect.objectContaining({ sources: [11], channel_group: 7 })
     );
@@ -118,7 +125,11 @@ describe('EventGroupsModal', () => {
     await waitFor(() =>
       expect(API.saveEventGroup).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ name: 'PPV events', sources: [11] })
+        expect.objectContaining({
+          name: 'PPV events',
+          sources: [11],
+          epg_enabled: true,
+        })
       )
     );
   });

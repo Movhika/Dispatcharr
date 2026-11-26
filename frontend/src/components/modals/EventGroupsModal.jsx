@@ -27,6 +27,7 @@ import { notifications } from '@mantine/notifications';
 import { Hammer, Pencil, Trash2 } from 'lucide-react';
 import API from '../../api';
 import ConfirmationDialog from '../ConfirmationDialog';
+import EventFixtureSettings from '../forms/EventFixtureSettings';
 import useChannelsStore from '../../store/channels';
 import { formatApiError } from '../../utils';
 import { aliasesToText, textToAliases } from '../../utils/streamMatchAliases';
@@ -46,6 +47,7 @@ const NEW_GROUP = {
   include_untimed: false,
   name_format: 'title_time',
   channel_profile_ids: [],
+  epg_enabled: true,
 };
 
 const STATUS_COLORS = { live: 'red', upcoming: 'blue', unknown: 'gray' };
@@ -182,6 +184,13 @@ const EventGroupForm = ({ value, sourceOptions, onCancel, onSaved }) => {
           }
         />
         <Switch
+          label="Programme guide"
+          checked={form.epg_enabled}
+          onChange={(event) =>
+            set({ epg_enabled: event.currentTarget.checked })
+          }
+        />
+        <Switch
           label="Enabled"
           checked={form.enabled}
           onChange={(event) => set({ enabled: event.currentTarget.checked })}
@@ -217,6 +226,11 @@ const EventGroupForm = ({ value, sourceOptions, onCancel, onSaved }) => {
                   <TableTd>
                     <Group gap={6} wrap="nowrap">
                       <Text size="xs">{event.title}</Text>
+                      {event.competition && (
+                        <Text size="xs" c="dimmed">
+                          {event.competition}
+                        </Text>
+                      )}
                       <Badge
                         size="xs"
                         variant="light"
@@ -493,6 +507,7 @@ const EventGroupsModal = ({ opened, onClose }) => {
               Save aliases
             </Button>
           </Group>
+          <EventFixtureSettings />
         </Stack>
       )}
     </Modal>
