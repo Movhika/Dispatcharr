@@ -4256,6 +4256,14 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
         except Exception as e:
             logger.error(f"Could not start event group build for account {account_id}: {e}")
 
+        # Channels with stream rules pick up new streams and drop gone ones.
+        try:
+            from apps.channels.tasks import apply_channel_stream_rules
+
+            apply_channel_stream_rules.delay()
+        except Exception as e:
+            logger.error(f"Could not start stream rules after refresh of account {account_id}: {e}")
+
         try:
             rollup_channel_catchup_fields(account_id)
             logger.debug(f"Catch-up field rollup complete for account {account_id}")

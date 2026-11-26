@@ -25,6 +25,12 @@ from .api_views import (
     ComskipConfigAPIView,
 )
 
+from .channel_rule_api import (
+    BulkStreamRuleView,
+    ChannelStreamOriginView,
+    ChannelStreamRulePreviewView,
+    ChannelStreamRuleView,
+)
 from .event_group_api import EventChannelGroupViewSet
 
 app_name = 'channels'  # for DRF routing
@@ -47,6 +53,10 @@ urlpatterns = [
     path('logos/cleanup/', CleanupUnusedLogosAPIView.as_view(), name='cleanup_unused_logos'),
     path('channels/<int:channel_id>/streams/', GetChannelStreamsAPIView.as_view(), name='get_channel_streams'),
     path('channels/<int:channel_id>/streams/stats/', GetChannelStreamStatsAPIView.as_view(), name='get_channel_stream_stats'),
+    path('channels/<int:channel_id>/stream-rule/', ChannelStreamRuleView.as_view(), name='channel_stream_rule'),
+    path('channels/<int:channel_id>/stream-rule/preview/', ChannelStreamRulePreviewView.as_view(), name='channel_stream_rule_preview'),
+    path('channels/<int:channel_id>/streams/<int:stream_id>/origin/', ChannelStreamOriginView.as_view(), name='channel_stream_origin'),
+    path('channels/stream-rules/bulk/', BulkStreamRuleView.as_view(), name='bulk_stream_rules'),
     path('profiles/<int:profile_id>/channels/<int:channel_id>/', UpdateChannelMembershipAPIView.as_view(), name='update_channel_membership'),
     path('profiles/<int:profile_id>/channels/bulk-update/', BulkUpdateChannelMembershipAPIView.as_view(), name='bulk_update_channel_membership'),
     # DVR series rules (order matters: specific routes before catch-all slug)

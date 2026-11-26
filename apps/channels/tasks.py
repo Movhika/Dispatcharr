@@ -4570,3 +4570,18 @@ def rebuild_event_groups():
     from .event_groups import build_all
 
     return _announce_event_group_changes(build_all())
+
+
+@shared_task
+def apply_channel_stream_rules():
+    """Bring the rule streams of all channels up to date after a refresh."""
+    from .channel_rules import apply_rules
+
+    summary = apply_rules()
+    if summary["added"] or summary["removed"]:
+        from core.utils import send_websocket_update
+
+        send_websocket_update(
+            "updates", "update", {"type": "stream_rules_applied", "refresh_channels": True, **summary}
+        )
+    return summary

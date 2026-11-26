@@ -483,6 +483,7 @@ class ChannelSerializer(serializers.ModelSerializer):
         required=False,
     )
 
+    rule_stream_ids = serializers.SerializerMethodField()
     streams = serializers.PrimaryKeyRelatedField(
         queryset=Stream.objects.all(), many=True, required=False
     )
@@ -534,6 +535,7 @@ class ChannelSerializer(serializers.ModelSerializer):
             "tvc_guide_stationid",
             "epg_data_id",
             "streams",
+            "rule_stream_ids",
             "stream_profile_id",
             "uuid",
             "logo_id",
@@ -654,6 +656,14 @@ class ChannelSerializer(serializers.ModelSerializer):
 
     def get_stream_ids(self, obj):
         return [cs.stream_id for cs in obj.channelstream_set.all()]
+
+    def get_rule_stream_ids(self, obj):
+        """Streams a stream rule added; the others were added by hand."""
+        return [
+            cs.stream_id
+            for cs in obj.channelstream_set.all()
+            if cs.origin == ChannelStream.Origin.RULE
+        ]
 
     def get_logo(self, obj):
         return LogoSerializer(obj.logo).data
@@ -807,6 +817,11 @@ class ChannelSerializer(serializers.ModelSerializer):
 
                 # Delete any links not in the new list
                 to_remove = existing_ids - new_ids
+                rule_streams_removed = [
+                    stream_id
+                    for stream_id in to_remove
+                    if current_links[stream_id].origin == ChannelStream.Origin.RULE
+                ]
                 if to_remove:
                     instance.channelstream_set.filter(stream_id__in=to_remove).delete()
 
@@ -825,6 +840,12 @@ class ChannelSerializer(serializers.ModelSerializer):
 
                 if to_update:
                     ChannelStream.objects.bulk_update(to_update, ["order"])
+
+                from .channel_rules import note_manual_changes
+
+                note_manual_changes(
+                    instance, rule_streams_removed, list(new_ids - existing_ids)
+                )
 
         return instance
 

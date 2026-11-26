@@ -1369,9 +1369,17 @@ class ChannelProfileMembership(models.Model):
 
 
 class ChannelStream(models.Model):
+    class Origin(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        RULE = "rule", "Stream rule"
+
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE)
     stream = models.ForeignKey(Stream, on_delete=models.CASCADE)
     order = models.PositiveIntegerField(default=0)  # Ordering field
+    # Rule streams follow the channel's stream rule; manual ones stay.
+    origin = models.CharField(
+        max_length=10, choices=Origin.choices, default=Origin.MANUAL
+    )
 
     class Meta:
         ordering = ["order"]  # Ensure streams are retrieved in order
@@ -1586,3 +1594,45 @@ class EventChannel(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=("group", "event_key"), name="event_channel_key_idx")]
+
+
+class ChannelStreamRule(models.Model):
+    """Finds the streams of a channel, like a Library title finds its sources."""
+
+    class Catchup(models.TextChoices):
+        INCLUDE = "include", "Catch-up streams too"
+        EXCLUDE = "exclude", "Without catch-up streams"
+        ONLY = "only", "Only catch-up streams"
+
+    channel = models.OneToOneField(
+        Channel, on_delete=models.CASCADE, related_name="stream_rule"
+    )
+    enabled = models.BooleanField(default=True)
+    match_name = models.BooleanField(
+        default=True, help_text="Find streams whose names match the channel name."
+    )
+    names = models.JSONField(
+        default=list, blank=True, help_text="Further names of this channel."
+    )
+    include_regex = models.CharField(
+        max_length=500, blank=True, help_text="Also find streams whose names match this."
+    )
+    exclude_regex = models.CharField(
+        max_length=500, blank=True, help_text="Leave out streams whose names match this."
+    )
+    catchup = models.CharField(
+        max_length=10, choices=Catchup.choices, default=Catchup.INCLUDE
+    )
+    account_ids = models.JSONField(
+        default=list, blank=True, help_text="Only streams of these accounts; empty means all."
+    )
+    countries = models.JSONField(
+        default=list, blank=True, help_text="Only these country prefixes; streams without one always count."
+    )
+    excluded_stream_ids = models.JSONField(
+        default=list, blank=True, help_text="Streams removed by hand that the rule must not add again."
+    )
+    last_applied_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Stream rule of {self.channel}"
