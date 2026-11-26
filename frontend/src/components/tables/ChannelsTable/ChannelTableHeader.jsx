@@ -23,6 +23,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import {
+  Activity,
   ArrowDown01,
   Binary,
   CircleCheck,
@@ -55,6 +56,7 @@ import useWarningsStore from '../../../store/warnings';
 import ProfileModal, { renderProfileOption } from '../../modals/ProfileModal';
 import EPGMatchModal from '../../modals/EPGMatchModal';
 import StreamMatchModal from '../../modals/StreamMatchModal';
+import StreamTestModal from '../../modals/StreamTestModal';
 import AddToProfileModal from '../../modals/AddToProfileModal';
 import {
   addChannelProfile,
@@ -159,6 +161,7 @@ const ChannelTableHeader = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
   const [epgMatchModalOpen, setEpgMatchModalOpen] = useState(false);
   const [streamMatchModalOpen, setStreamMatchModalOpen] = useState(false);
+  const [streamTestModalOpen, setStreamTestModalOpen] = useState(false);
   const [addToProfileModalOpen, setAddToProfileModalOpen] = useState(false);
   const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] =
     useState(false);
@@ -551,6 +554,21 @@ const ChannelTableHeader = ({
               </MenuItem>
 
               <MenuItem
+                leftSection={<Activity size={18} />}
+                disabled={
+                  selectedTableIds.length == 0 ||
+                  authUser.user_level != USER_LEVELS.ADMIN
+                }
+                onClick={() => setStreamTestModalOpen(true)}
+              >
+                <Text size="xs">
+                  {selectedTableIds.length > 0
+                    ? `Test Streams (${selectedTableIds.length} selected)`
+                    : 'Test Streams'}
+                </Text>
+              </MenuItem>
+
+              <MenuItem
                 leftSection={<Settings size={18} />}
                 disabled={authUser.user_level != USER_LEVELS.ADMIN}
                 onClick={() => setGroupManagerOpen(true)}
@@ -596,6 +614,12 @@ const ChannelTableHeader = ({
         onClose={() => setStreamMatchModalOpen(false)}
         channelIds={selectedTableIds}
         onApplied={() => API.requeryChannels()}
+      />
+
+      <StreamTestModal
+        opened={streamTestModalOpen}
+        onClose={() => setStreamTestModalOpen(false)}
+        channelIds={selectedTableIds}
       />
 
       <AddToProfileModal

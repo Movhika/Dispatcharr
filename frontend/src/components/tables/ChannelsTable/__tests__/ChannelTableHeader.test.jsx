@@ -61,6 +61,15 @@ vi.mock('../../../modals/StreamMatchModal', () => ({
     ) : null,
 }));
 
+vi.mock('../../../modals/StreamTestModal', () => ({
+  default: ({ opened, onClose, channelIds }) =>
+    opened ? (
+      <div data-testid="stream-test-modal" data-ids={channelIds.join(',')}>
+        <button onClick={onClose}>Close Stream Test</button>
+      </div>
+    ) : null,
+}));
+
 vi.mock('../../../../api', () => ({ default: { requeryChannels: vi.fn() } }));
 
 vi.mock('../../../modals/AddToProfileModal', () => ({
@@ -213,6 +222,7 @@ vi.mock('@mantine/core', () => ({
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowDown01: () => <svg data-testid="icon-arrow-down-01" />,
+  Activity: () => <svg data-testid="icon-activity" />,
   Binary: () => <svg data-testid="icon-binary" />,
   Link2: () => <svg data-testid="icon-link2" />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
@@ -754,6 +764,22 @@ describe('ChannelTableHeader', () => {
       expect(
         screen.queryByTestId('stream-match-modal')
       ).not.toBeInTheDocument();
+    });
+
+    it('opens StreamTestModal with the selected channels', () => {
+      setupMocks({ userLevel: ADMIN });
+      render(
+        <ChannelTableHeader
+          {...makeDefaultProps({ selectedTableIds: ['ch-1'] })}
+        />
+      );
+      fireEvent.click(screen.getByText('Test Streams (1 selected)'));
+      expect(screen.getByTestId('stream-test-modal')).toHaveAttribute(
+        'data-ids',
+        'ch-1'
+      );
+      fireEvent.click(screen.getByText('Close Stream Test'));
+      expect(screen.queryByTestId('stream-test-modal')).not.toBeInTheDocument();
     });
 
     it('opens GroupManager when Edit Groups is clicked', () => {

@@ -3102,6 +3102,18 @@ export default class API {
   }
 
   // Errors are shown by the caller: the dialog keeps them next to the form.
+  static async testChannelStreams(channelIds, sort, lowFpsThreshold) {
+    return request(`${host}/api/channels/channels/test-streams/`, {
+      method: 'POST',
+      body: {
+        channel_ids: channelIds,
+        sort,
+        low_fps_threshold: lowFpsThreshold,
+      },
+    });
+  }
+
+  // Errors are shown by the caller: the dialog keeps them next to the form.
   static async matchChannelStreams(payload) {
     return request(`${host}/api/channels/channels/match-streams/`, {
       method: 'POST',

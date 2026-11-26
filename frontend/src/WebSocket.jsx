@@ -17,6 +17,7 @@ import useAuthStore from './store/auth';
 import useUsersStore from './store/users';
 import { refreshAfterPluginAction, usePluginStore } from './store/plugins.jsx';
 import { computeBackoffDelay } from './utils/backoff';
+import { handleStreamTestEvent } from './utils/streamTestNotifications';
 import { WebsocketContext } from './WebSocketContext';
 
 // UI WebSocket reconnect: grow slowly, cap at 30s, half-jitter so many tabs
@@ -472,6 +473,11 @@ export const WebsocketProvider = ({ children }) => {
               }
               break;
             }
+
+            case 'stream_test_progress':
+            case 'stream_test':
+              handleStreamTestEvent(parsedEvent.data.type, parsedEvent.data);
+              break;
 
             case 'epg_logo_setting_progress': {
               const progress = parsedEvent.data;
