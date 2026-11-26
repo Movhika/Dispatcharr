@@ -56,7 +56,7 @@ import ConfirmationDialog from '../../ConfirmationDialog';
 import useWarningsStore from '../../../store/warnings';
 import ProfileModal, { renderProfileOption } from '../../modals/ProfileModal';
 import EPGMatchModal from '../../modals/EPGMatchModal';
-import StreamMatchModal from '../../modals/StreamMatchModal';
+import StreamRuleModal from '../../modals/StreamRuleModal';
 import StreamTestModal from '../../modals/StreamTestModal';
 import EventGroupsModal from '../../modals/EventGroupsModal';
 import AddToProfileModal from '../../modals/AddToProfileModal';
@@ -162,7 +162,7 @@ const ChannelTableHeader = ({
   const [assignNumbersModalOpen, setAssignNumbersModalOpen] = useState(false);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
   const [epgMatchModalOpen, setEpgMatchModalOpen] = useState(false);
-  const [streamMatchModalOpen, setStreamMatchModalOpen] = useState(false);
+  const [streamRuleModalOpen, setStreamRuleModalOpen] = useState(false);
   const [streamTestModalOpen, setStreamTestModalOpen] = useState(false);
   const [eventGroupsOpen, setEventGroupsOpen] = useState(false);
   const [addToProfileModalOpen, setAddToProfileModalOpen] = useState(false);
@@ -547,12 +547,12 @@ const ChannelTableHeader = ({
                   selectedTableIds.length == 0 ||
                   authUser.user_level != USER_LEVELS.ADMIN
                 }
-                onClick={() => setStreamMatchModalOpen(true)}
+                onClick={() => setStreamRuleModalOpen(true)}
               >
                 <Text size="xs">
                   {selectedTableIds.length > 0
-                    ? `Match Streams (${selectedTableIds.length} selected)`
-                    : 'Match Streams'}
+                    ? `Stream Rules (${selectedTableIds.length} selected)`
+                    : 'Stream Rules'}
                 </Text>
               </MenuItem>
 
@@ -620,11 +620,10 @@ const ChannelTableHeader = ({
         selectedChannelIds={selectedTableIds}
       />
 
-      <StreamMatchModal
-        opened={streamMatchModalOpen}
-        onClose={() => setStreamMatchModalOpen(false)}
+      <StreamRuleModal
+        opened={streamRuleModalOpen}
+        onClose={() => setStreamRuleModalOpen(false)}
         channelIds={selectedTableIds}
-        onApplied={() => API.requeryChannels()}
       />
 
       <EventGroupsModal

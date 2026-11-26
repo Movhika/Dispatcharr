@@ -137,12 +137,23 @@ vi.mock('@mantine/core', () => ({
   })),
 }));
 
+vi.mock('../../modals/StreamRuleModal', () => ({
+  default: ({ opened, channel }) =>
+    opened ? <div data-testid="stream-rule-modal">{channel.name}</div> : null,
+}));
+
+vi.mock('../../../api', () => ({
+  default: { keepChannelStream: vi.fn(), requeryChannels: vi.fn() },
+}));
+
 // ── lucide-react ───────────────────────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="icon-chevron-down" />,
   ChevronRight: () => <svg data-testid="icon-chevron-right" />,
   Eye: () => <svg data-testid="icon-eye" />,
   GripHorizontal: () => <svg data-testid="icon-grip" />,
+  Pin: () => <svg data-testid="icon-pin" />,
+  Wand2: () => <svg data-testid="icon-wand" />,
   SquareMinus: ({ onClick, disabled, color }) => (
     <svg
       data-testid="icon-square-minus"
@@ -162,6 +173,7 @@ import useAuthStore from '../../../store/auth';
 import { buildLiveStreamUrl } from '../../../utils/components/FloatingVideoUtils.js';
 import * as ChannelTableStreamsUtils from '../../../utils/tables/ChannelTableStreamsUtils.js';
 import { copyToClipboard } from '../../../utils';
+import API from '../../../api';
 import { DndContext } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 
@@ -232,6 +244,41 @@ const setupMocks = ({
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
+
+describe('ChannelStreams stream rules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(ChannelTableStreamsUtils.getChannelStreamStats).mockResolvedValue(
+      []
+    );
+  });
+
+  it('marks rule streams and keeps one as manual on request', async () => {
+    setupMocks();
+    render(
+      <ChannelStreams channel={{ ...makeChannel(), rule_stream_ids: ['s-1'] }} />
+    );
+    expect(screen.getByText('Rule')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Keep Stream One'));
+    await waitFor(() =>
+      expect(API.keepChannelStream).toHaveBeenCalledWith('ch-1', 's-1')
+    );
+    expect(API.requeryChannels).toHaveBeenCalled();
+  });
+
+  it('opens the rule of the channel but not for auto sync channels', () => {
+    setupMocks();
+    const { unmount } = render(<ChannelStreams channel={makeChannel()} />);
+    expect(screen.queryByText('Rule')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Stream rule'));
+    expect(screen.getByTestId('stream-rule-modal')).toHaveTextContent('HBO');
+    unmount();
+    render(
+      <ChannelStreams channel={{ ...makeChannel(), auto_created: true }} />
+    );
+    expect(screen.queryByText('Stream rule')).not.toBeInTheDocument();
+  });
+});
 
 describe('ChannelStreams', () => {
   beforeEach(() => {

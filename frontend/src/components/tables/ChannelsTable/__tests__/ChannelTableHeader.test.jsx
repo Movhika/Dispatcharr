@@ -52,11 +52,11 @@ vi.mock('../../../modals/EPGMatchModal', () => ({
     ) : null,
 }));
 
-vi.mock('../../../modals/StreamMatchModal', () => ({
+vi.mock('../../../modals/StreamRuleModal', () => ({
   default: ({ opened, onClose, channelIds }) =>
     opened ? (
-      <div data-testid="stream-match-modal" data-ids={channelIds.join(',')}>
-        <button onClick={onClose}>Close Stream Match</button>
+      <div data-testid="stream-rule-modal" data-ids={channelIds.join(',')}>
+        <button onClick={onClose}>Close Stream Rules</button>
       </div>
     ) : null,
 }));
@@ -751,30 +751,26 @@ describe('ChannelTableHeader', () => {
       expect(screen.getByText('Auto-Match (2 selected)')).toBeInTheDocument();
     });
 
-    it('Match Streams is disabled until rows are selected', () => {
+    it('Stream Rules is disabled until rows are selected', () => {
       setupMocks({ userLevel: ADMIN });
       render(<ChannelTableHeader {...makeDefaultProps()} />);
-      expect(
-        screen.getByText('Match Streams').closest('button')
-      ).toBeDisabled();
+      expect(screen.getByText('Stream Rules').closest('button')).toBeDisabled();
     });
 
-    it('opens StreamMatchModal with the selected channels', () => {
+    it('opens StreamRuleModal with the selected channels', () => {
       setupMocks({ userLevel: ADMIN });
       render(
         <ChannelTableHeader
           {...makeDefaultProps({ selectedTableIds: ['ch-1', 'ch-2'] })}
         />
       );
-      fireEvent.click(screen.getByText('Match Streams (2 selected)'));
-      expect(screen.getByTestId('stream-match-modal')).toHaveAttribute(
+      fireEvent.click(screen.getByText('Stream Rules (2 selected)'));
+      expect(screen.getByTestId('stream-rule-modal')).toHaveAttribute(
         'data-ids',
         'ch-1,ch-2'
       );
-      fireEvent.click(screen.getByText('Close Stream Match'));
-      expect(
-        screen.queryByTestId('stream-match-modal')
-      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Close Stream Rules'));
+      expect(screen.queryByTestId('stream-rule-modal')).not.toBeInTheDocument();
     });
 
     it('opens StreamTestModal with the selected channels', () => {

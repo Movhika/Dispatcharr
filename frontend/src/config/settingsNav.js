@@ -12,6 +12,7 @@ import {
   Palette,
   Settings2,
   SlidersHorizontal,
+  SpellCheck,
   Tv,
   Users,
   Video,
@@ -31,6 +32,7 @@ const SystemSettingsForm = lazy(() => import('../components/forms/settings/Syste
 const UserLimitsForm = lazy(() => import('../components/forms/settings/UserLimitsForm.jsx'));
 const ReverseProxyAuthForm = lazy(() => import('../components/forms/settings/ReverseProxyAuthForm.jsx'));
 const BackupManager = lazy(() => import('../components/backups/BackupManager.jsx'));
+const NameMatchingSettingsForm = lazy(() => import('../components/forms/settings/NameMatchingSettingsForm.jsx'));
 const MetadataSettingsForm = lazy(() =>
   import('../components/forms/settings/VODSettingsForm.jsx').then((module) => ({
     default: module.MetadataSettingsForm,
@@ -80,6 +82,19 @@ export const SETTINGS_GROUPS = [
     adminOnly: true,
     sections: [
       { id: 'epg-settings', label: 'EPG Settings', icon: CalendarDays, Component: EpgSettingsForm },
+    ],
+  },
+  {
+    id: 'live',
+    label: 'Live TV',
+    adminOnly: true,
+    sections: [
+      {
+        id: 'live-name-matching',
+        label: 'Name matching',
+        icon: SpellCheck,
+        Component: NameMatchingSettingsForm,
+      },
     ],
   },
   {

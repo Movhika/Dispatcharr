@@ -156,3 +156,16 @@ class ChannelRuleTests(TestCase):
         response = self.client.put(f"/api/channels/channels/{auto.id}/stream-rule/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertIn(self.zdf_fhd.id, self.client.get(f"/api/channels/channels/{self.channel.id}/").data["rule_stream_ids"])
+
+    def test_name_aliases_are_shared_settings(self):
+        from core.models import CoreSettings
+
+        self.addCleanup(CoreSettings.set_stream_matching_aliases, None)
+        url = "/api/channels/channels/stream-rules/aliases/"
+        self.assertIn(["RTL Nitro", "Nitro"], self.client.get(url).data["aliases"])
+        response = self.client.put(url, {"aliases": [["ZDF", "Zweites"]]}, format="json")
+        self.assertEqual(response.data["aliases"], [["ZDF", "Zweites"]])
+        zweites = self.stream(self.provider_t, self.group_t, "DE┃ ZWEITES FHD")
+        self.put_rule()
+        self.assertIn(zweites.id, [link.stream_id for link in ChannelStream.objects.filter(channel=self.channel)])
+        self.assertEqual(self.client.put(url, {"aliases": "x"}, format="json").status_code, 400)

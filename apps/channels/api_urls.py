@@ -30,6 +30,7 @@ from .channel_rule_api import (
     ChannelStreamOriginView,
     ChannelStreamRulePreviewView,
     ChannelStreamRuleView,
+    NameAliasView,
 )
 from .event_group_api import EventChannelGroupViewSet
 
@@ -57,6 +58,7 @@ urlpatterns = [
     path('channels/<int:channel_id>/stream-rule/preview/', ChannelStreamRulePreviewView.as_view(), name='channel_stream_rule_preview'),
     path('channels/<int:channel_id>/streams/<int:stream_id>/origin/', ChannelStreamOriginView.as_view(), name='channel_stream_origin'),
     path('channels/stream-rules/bulk/', BulkStreamRuleView.as_view(), name='bulk_stream_rules'),
+    path('channels/stream-rules/aliases/', NameAliasView.as_view(), name='stream_rule_aliases'),
     path('profiles/<int:profile_id>/channels/<int:channel_id>/', UpdateChannelMembershipAPIView.as_view(), name='update_channel_membership'),
     path('profiles/<int:profile_id>/channels/bulk-update/', BulkUpdateChannelMembershipAPIView.as_view(), name='bulk_update_channel_membership'),
     # DVR series rules (order matters: specific routes before catch-all slug)

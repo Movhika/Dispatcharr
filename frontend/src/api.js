@@ -3101,6 +3101,63 @@ export default class API {
     }
   }
 
+  // Stream rules. Errors are shown by the caller next to the form.
+  static async getChannelStreamRule(channelId) {
+    try {
+      return await request(
+        `${host}/api/channels/channels/${channelId}/stream-rule/`
+      );
+    } catch (error) {
+      if (error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  static async saveChannelStreamRule(channelId, values) {
+    return request(`${host}/api/channels/channels/${channelId}/stream-rule/`, {
+      method: 'PUT',
+      body: values,
+    });
+  }
+
+  static async deleteChannelStreamRule(channelId) {
+    return request(`${host}/api/channels/channels/${channelId}/stream-rule/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async previewChannelStreamRule(channelId, values) {
+    return request(
+      `${host}/api/channels/channels/${channelId}/stream-rule/preview/`,
+      { method: 'POST', body: values }
+    );
+  }
+
+  static async keepChannelStream(channelId, streamId) {
+    return request(
+      `${host}/api/channels/channels/${channelId}/streams/${streamId}/origin/`,
+      { method: 'PATCH', body: { origin: 'manual' } }
+    );
+  }
+
+  static async saveStreamRules(channelIds, rule) {
+    return request(`${host}/api/channels/channels/stream-rules/bulk/`, {
+      method: 'POST',
+      body: { channel_ids: channelIds, rule },
+    });
+  }
+
+  static async getNameAliases() {
+    return request(`${host}/api/channels/channels/stream-rules/aliases/`);
+  }
+
+  static async saveNameAliases(aliases) {
+    return request(`${host}/api/channels/channels/stream-rules/aliases/`, {
+      method: 'PUT',
+      body: { aliases },
+    });
+  }
+
   // Event groups. Errors are shown by the caller next to the form.
   static async getEventGroups() {
     return request(`${host}/api/channels/event-groups/`);
@@ -3167,15 +3224,6 @@ export default class API {
         sort,
         low_fps_threshold: lowFpsThreshold,
       },
-    });
-  }
-
-  // Errors are shown by the caller: the dialog keeps them next to the form.
-  static async matchChannelStreams(payload) {
-    return request(`${host}/api/channels/channels/match-streams/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
     });
   }
 

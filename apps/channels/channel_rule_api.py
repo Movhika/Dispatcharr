@@ -223,3 +223,36 @@ class ChannelStreamOriginView(APIView):
         if not updated:
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NameAliasSerializer(serializers.Serializer):
+    aliases = serializers.JSONField(
+        help_text="Lists of names that mean the same channel, first name first."
+    )
+
+    def validate_aliases(self, value):
+        from .stream_matching import normalize_alias_groups
+
+        try:
+            return normalize_alias_groups(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+
+class NameAliasView(APIView):
+    permission_classes = [IsAdmin]
+
+    @extend_schema(responses=NameAliasSerializer, description="Name aliases used by stream rules.")
+    def get(self, request):
+        from .channel_rules import global_aliases
+
+        return Response({"aliases": global_aliases()})
+
+    @extend_schema(request=NameAliasSerializer, responses=NameAliasSerializer)
+    def put(self, request):
+        from core.models import CoreSettings
+
+        serializer = NameAliasSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        CoreSettings.set_stream_matching_aliases(serializer.validated_data["aliases"])
+        return Response({"aliases": serializer.validated_data["aliases"]})

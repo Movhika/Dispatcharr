@@ -12,7 +12,9 @@ import {
   ChevronRight,
   Eye,
   GripHorizontal,
+  Pin,
   SquareMinus,
+  Wand2,
 } from 'lucide-react';
 import {
   ActionIcon,
@@ -59,6 +61,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { shallow } from 'zustand/shallow';
 import useAuthStore from '../../store/auth';
+import API from '../../api';
+import StreamRuleModal from '../modals/StreamRuleModal';
 import { USER_LEVELS } from '../../constants';
 import {
   categorizeStreamStats,
@@ -471,6 +475,9 @@ const ChannelStreams = ({ channel }) => {
   const showVideo = useVideoStore((s) => s.showVideo);
   const isVideoVisible = useVideoStore((s) => s.isVisible);
   const env_mode = useSettingsStore((s) => s.environment.env_mode);
+  const [ruleOpen, setRuleOpen] = useState(false);
+  const ruleStreamIds = channel.rule_stream_ids;
+  const isAdmin = authUser.user_level == USER_LEVELS.ADMIN;
 
   const handleWatchStream = useCallback(
     (streamHash, streamName, streamId) => {
@@ -623,6 +630,35 @@ const ChannelStreams = ({ channel }) => {
         },
       },
       {
+        id: 'origin',
+        header: '',
+        size: 70,
+        cell: ({ row }) =>
+          (ruleStreamIds || []).includes(row.original.id) ? (
+            <Group gap={4} wrap="nowrap" justify="center">
+              <Tooltip label="Found by the stream rule; removing it excludes it">
+                <Badge size="xs" variant="light">
+                  Rule
+                </Badge>
+              </Tooltip>
+              <Tooltip label="Keep as manual stream">
+                <ActionIcon
+                  variant="transparent"
+                  size="xs"
+                  aria-label={`Keep ${row.original.name}`}
+                  disabled={!isAdmin}
+                  onClick={async () => {
+                    await API.keepChannelStream(channel.id, row.original.id);
+                    await API.requeryChannels();
+                  }}
+                >
+                  <Pin size={14} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          ) : null,
+      },
+      {
         id: 'actions',
         header: '',
         size: 30,
@@ -645,6 +681,9 @@ const ChannelStreams = ({ channel }) => {
       authUser.user_level,
       toggleAdvancedStats,
       handleWatchStream,
+      ruleStreamIds,
+      channel.id,
+      isAdmin,
     ]
   );
 
@@ -699,6 +738,23 @@ const ChannelStreams = ({ channel }) => {
       className="channel-streams-container"
       style={{ width: '100%', padding: 10, backgroundColor: '#163632' }}
     >
+      {isAdmin && !channel.auto_created && (
+        <Group justify="flex-end" mb={6}>
+          <Button
+            size="compact-xs"
+            variant="light"
+            leftSection={<Wand2 size={14} />}
+            onClick={() => setRuleOpen(true)}
+          >
+            Stream rule
+          </Button>
+          <StreamRuleModal
+            opened={ruleOpen}
+            onClose={() => setRuleOpen(false)}
+            channel={channel}
+          />
+        </Group>
+      )}
       <DndContext
         collisionDetection={closestCenter}
         modifiers={[restrictToVerticalAxis]}
