@@ -292,6 +292,7 @@ PROXY_SETTINGS_KEY = "proxy_settings"
 NETWORK_ACCESS_KEY = "network_access"
 SYSTEM_SETTINGS_KEY = "system_settings"
 EPG_SETTINGS_KEY = "epg_settings"
+STREAM_MATCHING_SETTINGS_KEY = "stream_matching_settings"
 # Guide-history defaults. Every day limit is clamped to 0..EPG_DAYS_LIMIT.
 EPG_HISTORY_MIN_DAYS_DEFAULT = 1
 EPG_HISTORY_MAX_DAYS_DEFAULT = 30
@@ -696,6 +697,20 @@ class CoreSettings(models.Model):
     @classmethod
     def get_auto_import_mapped_files(cls):
         return cls.get_system_settings().get("auto_import_mapped_files")
+
+    # Stream matching settings
+    @classmethod
+    def get_stream_matching_aliases(cls):
+        """Saved alias groups, or None while the defaults apply."""
+        return cls._get_group(STREAM_MATCHING_SETTINGS_KEY, {"aliases": None}).get(
+            "aliases"
+        )
+
+    @classmethod
+    def set_stream_matching_aliases(cls, aliases):
+        cls._update_group(
+            STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"aliases": aliases}
+        )
 
     # EPG Settings
     @classmethod

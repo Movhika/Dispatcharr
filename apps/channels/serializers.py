@@ -1010,3 +1010,67 @@ class RecurringRecordingRuleSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         return super().create(validated_data)
+
+
+class StreamMatchRequestSerializer(serializers.Serializer):
+    channel_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=5000
+    )
+    account_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, default=list
+    )
+    countries = serializers.ListField(
+        child=serializers.RegexField(r"^[A-Za-z]{2,3}$"), required=False, default=list
+    )
+    catchup = serializers.ChoiceField(
+        choices=["include", "exclude", "only"], default="include",
+        help_text="Use catch-up streams too, leave them out or use only them.",
+    )
+    keep_unmatched = serializers.BooleanField(
+        default=True,
+        help_text="Keep current streams that no longer match at the end of the list.",
+    )
+    aliases = serializers.JSONField(
+        required=False,
+        help_text=(
+            "Lists of names that mean the same channel. Saved when the result "
+            "is applied."
+        ),
+    )
+    dry_run = serializers.BooleanField(default=True)
+
+    def validate_aliases(self, value):
+        from .stream_matching import normalize_alias_groups
+
+        try:
+            return normalize_alias_groups(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+
+class StreamMatchStreamSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    account = serializers.CharField(allow_null=True)
+    group = serializers.CharField(allow_null=True)
+    catchup = serializers.BooleanField()
+    country = serializers.CharField(allow_null=True, required=False)
+    match = serializers.ChoiceField(choices=["exact", "similar", "kept"], required=False)
+    new = serializers.BooleanField(required=False)
+
+
+class StreamMatchChannelSerializer(serializers.Serializer):
+    id = serializers.IntegerField(source="channel_id")
+    name = serializers.CharField()
+    channel_number = serializers.FloatField(source="number", allow_null=True)
+    changed = serializers.BooleanField()
+    streams = StreamMatchStreamSerializer(many=True)
+    removed = StreamMatchStreamSerializer(many=True)
+
+
+class StreamMatchResponseSerializer(serializers.Serializer):
+    channels = StreamMatchChannelSerializer(many=True)
+    changed = serializers.IntegerField()
+    applied = serializers.BooleanField()
+    aliases = serializers.JSONField()
+    countries = serializers.DictField(child=serializers.IntegerField())

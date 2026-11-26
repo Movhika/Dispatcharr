@@ -95,6 +95,8 @@ from .serializers import (
     ChannelProfileSerializer,
     RecordingSerializer,
     RecurringRecordingRuleSerializer,
+    StreamMatchRequestSerializer,
+    StreamMatchResponseSerializer,
 )
 from .tasks import (
     match_epg_channels,
@@ -2612,6 +2614,58 @@ class ChannelViewSet(viewsets.ModelViewSet):
     # ─────────────────────────────────────────────────────────
     # 6) EPG Fuzzy Matching
     # ─────────────────────────────────────────────────────────
+    @extend_schema(
+        description=(
+            "Propose or apply stream lists for channels by matching their names "
+            "with provider stream names. Streams of event categories are left out."
+        ),
+        request=StreamMatchRequestSerializer,
+        responses=StreamMatchResponseSerializer,
+    )
+    @action(detail=False, methods=["post"], url_path="match-streams", permission_classes=[IsAdmin])
+    def match_streams(self, request):
+        from .stream_matching import (
+            DEFAULT_NAME_ALIASES,
+            apply_matches,
+            match_channels,
+        )
+
+        serializer = StreamMatchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        aliases = data.get("aliases")
+        if aliases is None:
+            aliases = CoreSettings.get_stream_matching_aliases()
+            if aliases is None:
+                aliases = DEFAULT_NAME_ALIASES
+        channels = Channel.objects.filter(id__in=data["channel_ids"]).order_by(
+            "channel_number", "name", "id"
+        )
+        results, countries = match_channels(
+            channels,
+            account_ids=data["account_ids"],
+            countries=data["countries"],
+            catchup=data["catchup"],
+            keep_unmatched=data["keep_unmatched"],
+            alias_groups=aliases,
+        )
+        applied = not data["dry_run"]
+        if applied:
+            apply_matches(results)
+            if "aliases" in data:
+                CoreSettings.set_stream_matching_aliases(aliases)
+        return Response(
+            StreamMatchResponseSerializer(
+                {
+                    "channels": results,
+                    "changed": sum(1 for result in results if result.changed),
+                    "applied": applied,
+                    "aliases": aliases,
+                    "countries": countries,
+                }
+            ).data
+        )
+
     @extend_schema(
         methods=["POST"],
         description="Kick off a Celery task that tries to fuzzy-match channels with EPG data. If channel_ids are provided, only those channels will be processed.",
