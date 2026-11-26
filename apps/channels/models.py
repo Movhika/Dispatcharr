@@ -1558,6 +1558,10 @@ class EventChannelGroup(models.Model):
     channel_profile_ids = models.JSONField(
         default=list, blank=True, help_text="Channel profiles of new channels; empty means all."
     )
+    epg_enabled = models.BooleanField(
+        default=True,
+        help_text="Give the channels a programme guide with upcoming, live and ended entries.",
+    )
     last_built_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

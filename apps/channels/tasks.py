@@ -4543,12 +4543,7 @@ def test_channel_streams(channel_ids, sort="none", low_fps=None):
         cache.delete(STREAM_TEST_LOCK)
 
 
-@shared_task
-def build_event_groups_for_account(account_id):
-    """Rebuild the event groups fed by an account after its refresh."""
-    from .event_groups import build_for_account
-
-    results = build_for_account(account_id)
+def _announce_event_group_changes(results):
     if any(
         result.get("created") or result.get("removed") or result.get("updated")
         for result in results.values()
@@ -4559,3 +4554,19 @@ def build_event_groups_for_account(account_id):
             "updates", "update", {"type": "event_groups_built", "refresh_channels": True}
         )
     return results
+
+
+@shared_task
+def build_event_groups_for_account(account_id):
+    """Rebuild the event groups fed by an account after its refresh."""
+    from .event_groups import build_for_account
+
+    return _announce_event_group_changes(build_for_account(account_id))
+
+
+@shared_task
+def rebuild_event_groups():
+    """Rebuild all event groups so started and ended events show up in time."""
+    from .event_groups import build_all
+
+    return _announce_event_group_changes(build_all())

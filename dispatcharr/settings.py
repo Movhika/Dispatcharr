@@ -527,6 +527,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.vod.tasks.refresh_dated_vod_lists",
         "schedule": 3600.0,  # Hourly; profiles only rebuild when a list changes
     },
+    # Event channels follow the clock: events start and end between refreshes
+    "rebuild-event-groups": {
+        "task": "apps.channels.tasks.rebuild_event_groups",
+        "schedule": 600.0,  # Every 10 minutes
+    },
 }
 
 MEDIA_ROOT = BASE_DIR / "media"

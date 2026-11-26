@@ -25,6 +25,20 @@ from .event_matching import (
 logger = logging.getLogger(__name__)
 
 CHANNEL_NAME_MAX = 512
+EPG_SOURCE_NAME = "Event channels"
+# Channel names end with " · 26 Nov 19:55" in the server timezone; the
+# managed dummy guide reads title, date and time back from them.
+NAME_TIME_FORMAT = "%d %b %H:%M"
+_NAME_SUFFIX = r" · \d{1,2} [A-Za-z]{3} \d{2}:\d{2}$"
+EPG_PROPERTIES = {
+    "title_pattern": r"^(?<title>.+?)(?:" + _NAME_SUFFIX[:-1] + r")?$",
+    "time_pattern": r" · \d{1,2} [A-Za-z]{3} (?<hour>\d{2}):(?<minute>\d{2})$",
+    "date_pattern": r" · (?<day>\d{1,2}) (?<month>[A-Za-z]{3}) \d{2}:\d{2}$",
+    "program_duration": 180,
+    "title_template": "{title}",
+    "upcoming_title_template": "Upcoming: {title}",
+    "ended_title_template": "Ended: {title}",
+}
 
 
 def team_aliases():
@@ -93,8 +107,29 @@ def channel_name(group, cluster):
     name = cluster.title
     if group.name_format == group.NameFormat.TITLE_TIME and cluster.start:
         local = timezone.localtime(cluster.start)
-        name = f"{name} · {local.strftime('%d %b %H:%M')}"
+        name = f"{name} · {local.strftime(NAME_TIME_FORMAT)}"
     return name[:CHANNEL_NAME_MAX]
+
+
+def event_epg_data():
+    """The guide entry of the managed dummy source for event channels."""
+    from django.conf import settings
+
+    from apps.epg.models import EPGData, EPGSource
+
+    source, _created = EPGSource.objects.get_or_create(
+        name=EPG_SOURCE_NAME,
+        defaults={
+            "source_type": "dummy",
+            "custom_properties": {
+                **EPG_PROPERTIES,
+                "timezone": settings.TIME_ZONE or "UTC",
+            },
+        },
+    )
+    if source.source_type != "dummy":
+        return None
+    return EPGData.objects.filter(epg_source=source).first()
 
 
 def _base_key(key):
@@ -172,6 +207,7 @@ def build(group, now=None):
     profiles = list(
         ChannelProfile.objects.filter(id__in=profile_ids) if profile_ids else ChannelProfile.objects.all()
     )
+    epg_data = event_epg_data() if group.epg_enabled else None
     with transaction.atomic():
         removed = [event_channel.channel for event_channel in existing]
         summary["removed"] = _delete_channels_stopping_streams(removed)
@@ -180,10 +216,16 @@ def build(group, now=None):
             channel = event_channel.channel
             changed = _set_streams(channel, [item.stream_id for item in cluster.items])
             name = channel_name(group, cluster)
+            fields = []
             if channel.name != name or channel.channel_group_id != group.channel_group_id:
                 channel.name = name
                 channel.channel_group_id = group.channel_group_id
-                channel.save(update_fields=["name", "channel_group"])
+                fields += ["name", "channel_group"]
+            if epg_data is not None and channel.epg_data_id is None:
+                channel.epg_data = epg_data
+                fields.append("epg_data")
+            if fields:
+                channel.save(update_fields=fields)
                 changed = True
             if event_channel.start != cluster.start or event_channel.title != cluster.title:
                 event_channel.start = cluster.start
@@ -198,6 +240,7 @@ def build(group, now=None):
                 name=channel_name(group, cluster),
                 channel_number=number,
                 channel_group_id=group.channel_group_id,
+                epg_data=epg_data,
             )
             _set_streams(channel, [item.stream_id for item in cluster.items])
             ChannelProfileMembership.objects.bulk_create(
@@ -218,6 +261,19 @@ def build(group, now=None):
         group.last_built_at = timezone.now()
         group.save(update_fields=["last_built_at"])
     return summary
+
+
+def build_all():
+    """Rebuild every enabled event group: events start and end over time."""
+    from .models import EventChannelGroup
+
+    results = {}
+    for group in EventChannelGroup.objects.filter(enabled=True):
+        try:
+            results[group.name] = build(group)
+        except Exception:
+            logger.exception("Building event group %s failed", group.name)
+    return results
 
 
 def build_for_account(account_id):

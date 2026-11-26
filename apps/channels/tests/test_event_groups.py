@@ -93,6 +93,44 @@ class EventGroupTests(TestCase):
         self.assertEqual(list(self.channels()), [2951.0])
         self.assertEqual(EventChannel.objects.filter(group=self.group).count(), 1)
 
+    def test_event_channels_get_a_guide_with_the_event_time(self):
+        from apps.output.dummy_epg import generate_custom_dummy_programs
+
+        build(self.group)
+        lille = Channel.objects.get(channel_number=2951)
+        self.assertEqual(lille.epg_data.epg_source.name, "Event channels")
+        self.assertEqual(lille.epg_data.epg_source.source_type, "dummy")
+        programs = generate_custom_dummy_programs(
+            lille.id, lille.name, self.now, 2, lille.epg_data.epg_source.custom_properties
+        )
+        main = [p for p in programs if p["title"] == "Lille - Bayern Munich"]
+        self.assertEqual(len(main), 1)
+        # The guide starts at the event start in the name (minute precision).
+        self.assertEqual(
+            main[0]["start_time"],
+            (self.now + timedelta(hours=2)).replace(second=0),
+        )
+        self.assertTrue(any(p["title"].startswith("Upcoming") for p in programs))
+
+        self.group.epg_enabled = False
+        self.group.save()
+        lille.epg_data = None
+        lille.save()
+        build(self.group)
+        lille.refresh_from_db()
+        self.assertIsNone(lille.epg_data)
+
+    def test_periodic_rebuild_covers_enabled_groups(self):
+        from apps.channels.tasks import rebuild_event_groups
+
+        paused = EventChannelGroup.objects.create(name="Paused", channel_group=self.target, enabled=False)
+        paused.sources.set(self.relations)
+        with patch("core.utils.send_websocket_update") as announce:
+            results = rebuild_event_groups()
+        self.assertEqual(list(results), ["PPV events"])
+        self.assertEqual(results["PPV events"]["created"], 2)
+        announce.assert_called_once()
+
     def test_paused_groups_keep_their_channels_and_ranges_limit_new_ones(self):
         self.group.end_number = 2950
         self.group.save()
