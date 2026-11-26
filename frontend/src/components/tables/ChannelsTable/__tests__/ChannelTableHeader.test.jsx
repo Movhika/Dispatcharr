@@ -52,6 +52,17 @@ vi.mock('../../../modals/EPGMatchModal', () => ({
     ) : null,
 }));
 
+vi.mock('../../../modals/StreamMatchModal', () => ({
+  default: ({ opened, onClose, channelIds }) =>
+    opened ? (
+      <div data-testid="stream-match-modal" data-ids={channelIds.join(',')}>
+        <button onClick={onClose}>Close Stream Match</button>
+      </div>
+    ) : null,
+}));
+
+vi.mock('../../../../api', () => ({ default: { requeryChannels: vi.fn() } }));
+
 vi.mock('../../../modals/AddToProfileModal', () => ({
   default: ({ opened, onClose, channelIds, excludeProfileId }) =>
     opened ? (
@@ -203,6 +214,7 @@ vi.mock('@mantine/core', () => ({
 vi.mock('lucide-react', () => ({
   ArrowDown01: () => <svg data-testid="icon-arrow-down-01" />,
   Binary: () => <svg data-testid="icon-binary" />,
+  Link2: () => <svg data-testid="icon-link2" />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   EllipsisVertical: () => <svg data-testid="icon-ellipsis" />,
   Eye: () => <svg data-testid="icon-eye" />,
@@ -716,6 +728,32 @@ describe('ChannelTableHeader', () => {
         />
       );
       expect(screen.getByText('Auto-Match (2 selected)')).toBeInTheDocument();
+    });
+
+    it('Match Streams is disabled until rows are selected', () => {
+      setupMocks({ userLevel: ADMIN });
+      render(<ChannelTableHeader {...makeDefaultProps()} />);
+      expect(
+        screen.getByText('Match Streams').closest('button')
+      ).toBeDisabled();
+    });
+
+    it('opens StreamMatchModal with the selected channels', () => {
+      setupMocks({ userLevel: ADMIN });
+      render(
+        <ChannelTableHeader
+          {...makeDefaultProps({ selectedTableIds: ['ch-1', 'ch-2'] })}
+        />
+      );
+      fireEvent.click(screen.getByText('Match Streams (2 selected)'));
+      expect(screen.getByTestId('stream-match-modal')).toHaveAttribute(
+        'data-ids',
+        'ch-1,ch-2'
+      );
+      fireEvent.click(screen.getByText('Close Stream Match'));
+      expect(
+        screen.queryByTestId('stream-match-modal')
+      ).not.toBeInTheDocument();
     });
 
     it('opens GroupManager when Edit Groups is clicked', () => {

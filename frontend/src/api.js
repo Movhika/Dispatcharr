@@ -3086,6 +3086,15 @@ export default class API {
     }
   }
 
+  // Errors are shown by the caller: the dialog keeps them next to the form.
+  static async matchChannelStreams(payload) {
+    return request(`${host}/api/channels/channels/match-streams/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
   static async matchChannelEpg(channelId) {
     try {
       const response = await request(

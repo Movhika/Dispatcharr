@@ -30,6 +30,7 @@ import {
   Eye,
   EyeOff,
   Filter,
+  Link2,
   FolderPlus,
   Lock,
   LockOpen,
@@ -42,6 +43,7 @@ import {
   SquarePen,
   SquarePlus,
 } from 'lucide-react';
+import API from '../../../api';
 import useChannelsStore from '../../../store/channels';
 import useChannelsTableStore from '../../../store/channelsTable';
 import useAuthStore from '../../../store/auth';
@@ -52,6 +54,7 @@ import ConfirmationDialog from '../../ConfirmationDialog';
 import useWarningsStore from '../../../store/warnings';
 import ProfileModal, { renderProfileOption } from '../../modals/ProfileModal';
 import EPGMatchModal from '../../modals/EPGMatchModal';
+import StreamMatchModal from '../../modals/StreamMatchModal';
 import AddToProfileModal from '../../modals/AddToProfileModal';
 import {
   addChannelProfile,
@@ -155,6 +158,7 @@ const ChannelTableHeader = ({
   const [assignNumbersModalOpen, setAssignNumbersModalOpen] = useState(false);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
   const [epgMatchModalOpen, setEpgMatchModalOpen] = useState(false);
+  const [streamMatchModalOpen, setStreamMatchModalOpen] = useState(false);
   const [addToProfileModalOpen, setAddToProfileModalOpen] = useState(false);
   const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] =
     useState(false);
@@ -532,6 +536,21 @@ const ChannelTableHeader = ({
               </MenuItem>
 
               <MenuItem
+                leftSection={<Link2 size={18} />}
+                disabled={
+                  selectedTableIds.length == 0 ||
+                  authUser.user_level != USER_LEVELS.ADMIN
+                }
+                onClick={() => setStreamMatchModalOpen(true)}
+              >
+                <Text size="xs">
+                  {selectedTableIds.length > 0
+                    ? `Match Streams (${selectedTableIds.length} selected)`
+                    : 'Match Streams'}
+                </Text>
+              </MenuItem>
+
+              <MenuItem
                 leftSection={<Settings size={18} />}
                 disabled={authUser.user_level != USER_LEVELS.ADMIN}
                 onClick={() => setGroupManagerOpen(true)}
@@ -570,6 +589,13 @@ const ChannelTableHeader = ({
         opened={epgMatchModalOpen}
         onClose={() => setEpgMatchModalOpen(false)}
         selectedChannelIds={selectedTableIds}
+      />
+
+      <StreamMatchModal
+        opened={streamMatchModalOpen}
+        onClose={() => setStreamMatchModalOpen(false)}
+        channelIds={selectedTableIds}
+        onApplied={() => API.requeryChannels()}
       />
 
       <AddToProfileModal
