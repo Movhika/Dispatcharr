@@ -236,10 +236,12 @@ class ChannelGroupM3UAccountSerializer(serializers.ModelSerializer):
             "auto_sync_channel_start",
             "auto_sync_channel_end",
             "custom_properties",
+            "metadata_defaults",
             "is_stale",
             "last_seen",
             "stream_count",
         ]
+        read_only_fields = ["metadata_defaults"]
 
     def get_stream_count(self, obj):
         """

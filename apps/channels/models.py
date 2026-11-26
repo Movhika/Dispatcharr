@@ -1390,6 +1390,8 @@ class ChannelGroupM3UAccount(models.Model):
         M3UAccount, on_delete=models.CASCADE, related_name="channel_group"
     )
     custom_properties = models.JSONField(default=dict, blank=True, null=True)
+    # Category metadata from import rules or the category editor, e.g. is_event.
+    metadata_defaults = models.JSONField(default=dict, blank=True)
     enabled = models.BooleanField(default=True)
     ignored = models.BooleanField(default=False)
     auto_channel_sync = models.BooleanField(

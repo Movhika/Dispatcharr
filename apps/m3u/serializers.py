@@ -205,12 +205,9 @@ class M3UGroupRuleSerializer(UniqueRuleMatchMixin, serializers.ModelSerializer):
         return data
 
     def validate_metadata_defaults(self, value):
-        from apps.vod.metadata import validate_source_metadata
-
-        try:
-            return validate_source_metadata(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Metadata defaults must be an object.")
+        return value
 
     def validate(self, attrs):
         scope = attrs.get("scope", getattr(self.instance, "scope", None))
@@ -244,15 +241,22 @@ class M3UGroupRuleSerializer(UniqueRuleMatchMixin, serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"match_field": "Import rules match category names only."}
             )
-        metadata = attrs.get(
-            "metadata_defaults", getattr(self.instance, "metadata_defaults", {})
-        )
-        if scope == M3UGroupRule.Scope.LIVE and metadata:
-            raise serializers.ValidationError(
-                {"metadata_defaults": (
-                    "Metadata defaults are available for VOD categories only."
-                )}
+        if "metadata_defaults" in attrs:
+            from apps.vod.metadata import validate_source_metadata
+
+            from .live_metadata import validate_live_metadata
+
+            validate = (
+                validate_live_metadata
+                if scope == M3UGroupRule.Scope.LIVE
+                else validate_source_metadata
             )
+            try:
+                attrs["metadata_defaults"] = validate(attrs["metadata_defaults"])
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    {"metadata_defaults": str(exc)}
+                ) from exc
         return attrs
 
 

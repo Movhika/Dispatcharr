@@ -46,6 +46,7 @@ from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_acc
 from .utils import hash_key_fields
 from .rule_previews import StreamFilterPreviewMixin
 from .category_selection import category_selection_state
+from .live_metadata import merge_category_metadata, validate_live_metadata
 from core.tasks import (
     rehash_streams,
     release_rehash_locks,
@@ -735,7 +736,20 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
+            validated_group_defaults = {}
             for setting in group_settings:
+                if "metadata_defaults" in setting:
+                    try:
+                        validated_group_defaults[setting.get("channel_group")] = (
+                            validate_live_metadata(
+                                setting["metadata_defaults"], allow_reset=True
+                            )
+                        )
+                    except ValueError as e:
+                        return Response(
+                            {"error": f"Channel group {setting.get('channel_group')}: {e}"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                 custom_properties = ensure_custom_properties_dict(
                     setting.get("custom_properties")
                 )
@@ -792,6 +806,10 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                                 setting.get("custom_properties")
                             )
                         ),
+                        metadata_defaults=merge_category_metadata(
+                            existing_groups.get(setting["channel_group"]),
+                            validated_group_defaults.get(setting["channel_group"], {}),
+                        ),
                     )
                     for setting in group_settings
                     if setting.get("channel_group")
@@ -809,6 +827,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                             "auto_sync_channel_start",
                             "auto_sync_channel_end",
                             "custom_properties",
+                            "metadata_defaults",
                         ],
                     )
 

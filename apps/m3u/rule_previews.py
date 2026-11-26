@@ -162,8 +162,7 @@ def _apply_group_matches(account, scope, matches):
         if match["would_ignore"] is not None:
             row.ignored = match["would_ignore"]
         patch = match["metadata_defaults"]
-        if scope != M3UGroupRule.Scope.LIVE:
-            row.metadata_defaults = dict(patch)
+        row.metadata_defaults = dict(patch)
         category_updates.append({
             "target_id": match["target_id"],
             "enabled": match["would_enable"],
@@ -172,7 +171,7 @@ def _apply_group_matches(account, scope, matches):
         })
     if rows:
         model.objects.bulk_update(
-            rows, ["enabled", "ignored"] if scope == "live" else ["enabled", "ignored", "metadata_defaults"]
+            rows, ["enabled", "ignored", "metadata_defaults"]
         )
         if scope != M3UGroupRule.Scope.LIVE:
             # Category states and metadata decide which sources profiles offer.
@@ -701,7 +700,6 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
             serializer.validated_data["dry_run"],
         )
         rules = list(account.group_rules.filter(scope=scope).order_by("order", "id"))
-        live = scope == M3UGroupRule.Scope.LIVE
         try:
             with transaction.atomic():
                 M3UAccount.objects.select_for_update().get(pk=account.pk)
@@ -719,10 +717,7 @@ class M3UGroupRuleViewSet(viewsets.ModelViewSet):
                         match["would_enable"] != match["currently_enabled"]
                         or match["currently_ignored"]
                     )
-                    metadata = (
-                        not live
-                        and match["metadata_defaults"] != match["current_metadata"]
-                    )
+                    metadata = match["metadata_defaults"] != match["current_metadata"]
                     counts["ignore"] += ignore
                     counts["enable" if match["would_enable"] else "disable"] += toggle
                     counts["metadata"] += metadata

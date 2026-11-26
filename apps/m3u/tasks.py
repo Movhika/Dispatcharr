@@ -881,6 +881,7 @@ def process_groups(account, groups, scan_start_time=None):
                     custom_properties=custom_props,
                     enabled=decisions[group.name].enabled,
                     ignored=decisions[group.name].ignored,
+                    metadata_defaults=decisions[group.name].metadata_defaults,
                     last_seen=scan_start_time,
                     is_stale=False,
                 )
