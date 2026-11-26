@@ -12,7 +12,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../../store/channels', () => ({ default: vi.fn() }));
 vi.mock('../../../store/streamProfiles', () => ({ default: vi.fn() }));
 vi.mock('../../../api.js', () => ({
-  default: { getM3UGroupContent: vi.fn(), loadM3UGroupContent: vi.fn() },
+  default: {
+    getM3UGroupContent: vi.fn(),
+    loadM3UGroupContent: vi.fn(),
+    getEventGroups: vi.fn().mockResolvedValue([{ id: 7, name: 'Fights' }]),
+    previewEventCategory: vi.fn(),
+  },
 }));
 
 // ── Hook mocks ────────────────────────────────────────────────────────────────
@@ -134,39 +139,49 @@ vi.mock('../Logo.jsx', () => ({
 }));
 
 // ── Utility mocks ─────────────────────────────────────────────────────────────
-vi.mock('../../../utils/forms/LiveGroupFilterUtils.js', () => ({
-  // Real cleanup so debounced regex-preview timers do not leak across tests.
-  abortTimers: (timerRef, abortRef) => {
-    Object.values(timerRef.current).forEach((t) => clearTimeout(t));
-    timerRef.current = {};
-    Object.values(abortRef.current).forEach((c) => {
-      try {
-        c.abort();
-      } catch {
-        // ignore
-      }
-    });
-    abortRef.current = {};
-  },
-  computeAutoSyncStart: vi.fn(() => 101),
-  getChannelsInRange: vi.fn().mockResolvedValue({ occupants: [] }),
-  getEPGs: vi.fn().mockResolvedValue([]),
-  getRegexOptions: vi.fn((find, replace, match, exclude) => ({
-    find,
-    replace,
-    match,
-    exclude,
-  })),
-  getStreamsRegexPreview: vi.fn().mockResolvedValue(null),
-  isExpectedOccupantForGroup: vi.fn(() => true),
-  isGroupVisible: vi.fn((group, filter, status) => {
-    if (status === 'enabled') return group.enabled;
-    if (status === 'disabled') return !group.enabled;
-    if (filter) return group.name.toLowerCase().includes(filter.toLowerCase());
-    return true;
-  }),
-  rangeFor: vi.fn(() => null),
-}));
+vi.mock(
+  '../../../utils/forms/LiveGroupFilterUtils.js',
+  async (importOriginal) => ({
+    // The category mode helpers run for real.
+    ...(({ CATEGORY_MODES, getCategoryMode, withCategoryMode }) => ({
+      CATEGORY_MODES,
+      getCategoryMode,
+      withCategoryMode,
+    }))(await importOriginal()),
+    // Real cleanup so debounced regex-preview timers do not leak across tests.
+    abortTimers: (timerRef, abortRef) => {
+      Object.values(timerRef.current).forEach((t) => clearTimeout(t));
+      timerRef.current = {};
+      Object.values(abortRef.current).forEach((c) => {
+        try {
+          c.abort();
+        } catch {
+          // ignore
+        }
+      });
+      abortRef.current = {};
+    },
+    computeAutoSyncStart: vi.fn(() => 101),
+    getChannelsInRange: vi.fn().mockResolvedValue({ occupants: [] }),
+    getEPGs: vi.fn().mockResolvedValue([]),
+    getRegexOptions: vi.fn((find, replace, match, exclude) => ({
+      find,
+      replace,
+      match,
+      exclude,
+    })),
+    getStreamsRegexPreview: vi.fn().mockResolvedValue(null),
+    isExpectedOccupantForGroup: vi.fn(() => true),
+    isGroupVisible: vi.fn((group, filter, status) => {
+      if (status === 'enabled') return group.enabled;
+      if (status === 'disabled') return !group.enabled;
+      if (filter)
+        return group.name.toLowerCase().includes(filter.toLowerCase());
+      return true;
+    }),
+    rangeFor: vi.fn(() => null),
+  })
+);
 
 // ── Mantine core mock ─────────────────────────────────────────────────────────
 vi.mock('@mantine/core', async () => ({
@@ -519,11 +534,9 @@ describe('LiveGroupFilter', () => {
     it('keeps auto-sync help available without a large info banner', () => {
       renderWith();
       expect(screen.queryByTestId('alert')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Category use help')).toBeInTheDocument();
       expect(
-        screen.getByLabelText('Auto channel sync help')
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Auto channel sync help' })
+        screen.queryByRole('button', { name: 'Category use help' })
       ).not.toBeInTheDocument();
     });
 
@@ -934,12 +947,10 @@ describe('LiveGroupFilter', () => {
       expect(
         within(screen.getByText('News').closest('tr')).getByText('Fixed')
       ).toBeInTheDocument();
-      expect(
-        screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
-      ).toBeDisabled();
+      expect(screen.getByLabelText('Use of Sports')).toBeDisabled();
     });
 
-    it('toggles the event mark of one category', () => {
+    it('chooses how each category is used', () => {
       renderWith({
         initialGroups: [
           makeGroup(),
@@ -950,16 +961,16 @@ describe('LiveGroupFilter', () => {
           }),
         ],
       });
-      const sports = screen.getByRole('checkbox', {
-        name: 'Event category Sports',
-      });
-      const ppv = screen.getByRole('checkbox', { name: 'Event category PPV' });
-      expect(sports).not.toBeChecked();
-      expect(ppv).toBeChecked();
-      fireEvent.click(sports);
-      fireEvent.click(ppv);
-      expect(sports).toBeChecked();
-      expect(ppv).not.toBeChecked();
+      const sports = screen.getByLabelText('Use of Sports');
+      const ppv = screen.getByLabelText('Use of PPV');
+      expect(sports).toHaveValue('channels');
+      expect(ppv).toHaveValue('events');
+      fireEvent.change(sports, { target: { value: 'events' } });
+      fireEvent.change(ppv, { target: { value: 'streams' } });
+      expect(sports).toHaveValue('events');
+      expect(ppv).toHaveValue('streams');
+      fireEvent.change(ppv, { target: { value: 'channels' } });
+      expect(ppv).toHaveValue('channels');
     });
 
     it('canceling a bulk edit leaves group settings unchanged', () => {
@@ -985,15 +996,17 @@ describe('LiveGroupFilter', () => {
     it('shows compact summaries and enables configuration before auto sync is enabled', () => {
       renderWith({ initialGroups: [makeGroup({ auto_channel_sync: false })] });
       expect(screen.queryByTestId('auto-sync-basic')).not.toBeInTheDocument();
-      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Numbering mode')).not.toBeInTheDocument();
       const gear = screen.getByTestId('icon-cog').closest('button');
       expect(gear).toBeEnabled();
       fireEvent.click(gear);
-      fireEvent.click(
-        within(screen.getByTestId('configure-modal')).getByRole('checkbox', {
-          name: 'Auto sync',
-        })
-      );
+      const modal = screen.getByTestId('configure-modal');
+      expect(
+        within(modal).getByText(/available to the stream rules/)
+      ).toBeInTheDocument();
+      fireEvent.change(within(modal).getByLabelText('Use this category for'), {
+        target: { value: 'channels' },
+      });
       expect(screen.getByTestId('auto-sync-basic')).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText('Numbering mode'), {
         target: { value: 'provider' },
@@ -1002,9 +1015,7 @@ describe('LiveGroupFilter', () => {
         target: { value: 'never' },
       });
       fireEvent.click(screen.getByTestId('modal-cancel'));
-      expect(
-        screen.getByRole('checkbox', { name: 'Auto Channel Sync for Sports' })
-      ).not.toBeChecked();
+      expect(screen.getByLabelText('Use of Sports')).toHaveValue('streams');
       expect(
         within(screen.getByText('Sports').closest('tr')).getByText('Fixed')
       ).toBeInTheDocument();

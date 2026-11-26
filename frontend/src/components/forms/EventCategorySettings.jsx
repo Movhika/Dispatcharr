@@ -8,7 +8,9 @@ import {
   Group,
   NumberInput,
   Paper,
+  Radio,
   ScrollArea,
+  Select,
   Stack,
   Switch,
   Table,
@@ -48,14 +50,37 @@ const STATUS_BADGES = {
   none: { color: 'dark', label: 'No event' },
 };
 
-const EventCategorySettings = ({ group, playlist, onApplyGroupChange }) => {
+// showToggle: the category editor decides the mode, so it hides the checkbox.
+const EventCategorySettings = ({
+  group,
+  playlist,
+  onApplyGroupChange,
+  eventGroups = [],
+  showToggle = true,
+}) => {
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const { dateFormat, timeFormat } = useDateTimeFormat();
   const { toUserTime } = useTimeHelpers();
   const props = group.custom_properties || {};
-  const isEvent = !!group.metadata_defaults?.is_event;
+  const isEvent = !showToggle || !!group.metadata_defaults?.is_event;
+  const output = group.event_group
+    ? 'group'
+    : group.auto_channel_sync
+      ? 'category'
+      : null;
+
+  const chooseOutput = (value) =>
+    onApplyGroupChange(
+      value === 'group'
+        ? {
+            ...group,
+            auto_channel_sync: false,
+            event_group: group.event_group ?? eventGroups[0]?.id ?? null,
+          }
+        : { ...group, auto_channel_sync: true, event_group: null }
+    );
 
   const setProps = (values) =>
     onApplyGroupChange({
@@ -97,12 +122,14 @@ const EventCategorySettings = ({ group, playlist, onApplyGroupChange }) => {
     <Paper withBorder p="sm">
       <Stack gap="sm" role="group" aria-label="Event settings">
         <Text fw={600}>Events</Text>
-        <Checkbox
-          label="Event category"
-          description="The streams are numbered slots whose names describe the current event."
-          checked={isEvent}
-          onChange={(event) => toggleEvent(event.currentTarget.checked)}
-        />
+        {showToggle && (
+          <Checkbox
+            label="Event category"
+            description="The streams are numbered slots whose names describe the current event."
+            checked={isEvent}
+            onChange={(event) => toggleEvent(event.currentTarget.checked)}
+          />
+        )}
         {isEvent && (
           <>
             <Group grow align="flex-start">
@@ -135,24 +162,73 @@ const EventCategorySettings = ({ group, playlist, onApplyGroupChange }) => {
                 setProps({ event_pattern: event.currentTarget.value })
               }
             />
-            <Switch
-              label="Only create channels for current events"
-              description="Auto sync leaves out slots without an event and events that have ended."
-              checked={props.event_filter === 'current'}
-              onChange={(event) =>
-                setProps({
-                  event_filter: event.currentTarget.checked ? 'current' : 'all',
-                })
-              }
-            />
-            <Switch
-              label="Name channels after the event"
-              description="Uses the event title; the rename settings still apply to it."
-              checked={!!props.event_channel_name}
-              onChange={(event) =>
-                setProps({ event_channel_name: event.currentTarget.checked })
-              }
-            />
+            {!showToggle && (
+              <Radio.Group
+                label="Event channels"
+                description="Choose how the events of this category become channels."
+                value={output}
+                onChange={chooseOutput}
+              >
+                <Stack gap="xs" mt="xs">
+                  <Radio
+                    value="category"
+                    label="One channel per event of this category"
+                    description="Auto sync of this category, with the channel range below."
+                  />
+                  <Radio
+                    value="group"
+                    label="Combined with other providers in an event group"
+                    description="One channel per event with the streams of every provider."
+                    disabled={!eventGroups.length}
+                  />
+                </Stack>
+              </Radio.Group>
+            )}
+            {output === 'group' && (
+              <Select
+                label="Event group"
+                data={eventGroups.map((eventGroup) => ({
+                  value: String(eventGroup.id),
+                  label: eventGroup.name,
+                }))}
+                value={group.event_group ? String(group.event_group) : null}
+                allowDeselect={false}
+                onChange={(value) =>
+                  onApplyGroupChange({ ...group, event_group: Number(value) })
+                }
+              />
+            )}
+            {!showToggle && !eventGroups.length && (
+              <Text size="xs" c="dimmed">
+                Create event groups on the Events page to combine providers.
+              </Text>
+            )}
+            {(showToggle || output === 'category') && (
+              <>
+                <Switch
+                  label="Only create channels for current events"
+                  description="Auto sync leaves out slots without an event and events that have ended."
+                  checked={props.event_filter === 'current'}
+                  onChange={(event) =>
+                    setProps({
+                      event_filter: event.currentTarget.checked
+                        ? 'current'
+                        : 'all',
+                    })
+                  }
+                />
+                <Switch
+                  label="Name channels after the event"
+                  description="Uses the event title; the rename settings still apply to it."
+                  checked={!!props.event_channel_name}
+                  onChange={(event) =>
+                    setProps({
+                      event_channel_name: event.currentTarget.checked,
+                    })
+                  }
+                />
+              </>
+            )}
             <Group justify="space-between">
               <Text size="sm" c="dimmed">
                 {preview

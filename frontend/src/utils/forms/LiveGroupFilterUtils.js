@@ -150,3 +150,46 @@ export const isGroupVisible = (group, groupFilter, statusFilter) => {
     (statusFilter === 'disabled' && !group.enabled);
   return matchesText && matchesStatus;
 };
+
+// How a live category is used: its streams only, one channel per stream,
+// or events (per-category event channels or an event group).
+export const CATEGORY_MODES = [
+  { value: 'streams', label: 'Streams only' },
+  { value: 'channels', label: 'Channel per stream' },
+  { value: 'events', label: 'Events' },
+];
+
+export const getCategoryMode = (group) => {
+  if (group.metadata_defaults?.is_event) return 'events';
+  return group.auto_channel_sync ? 'channels' : 'streams';
+};
+
+export const withCategoryMode = (prev, id, mode) =>
+  prev.map((group) => {
+    if (group.channel_group !== id) return group;
+    const { is_event: _event, ...metadata } = group.metadata_defaults || {};
+    if (mode === 'events') {
+      return {
+        ...group,
+        metadata_defaults: { ...metadata, is_event: true },
+        // An event category starts without channels until you choose
+        // per-category event channels or an event group.
+        auto_channel_sync: false,
+        event_group: group.event_group ?? null,
+      };
+    }
+    const next = {
+      ...group,
+      metadata_defaults: metadata,
+      event_group: null,
+      auto_channel_sync: mode === 'channels',
+    };
+    if (
+      mode === 'channels' &&
+      !group.auto_channel_sync &&
+      !(group.auto_sync_channel_start > 1)
+    ) {
+      next.auto_sync_channel_start = computeAutoSyncStart(prev, id);
+    }
+    return next;
+  });

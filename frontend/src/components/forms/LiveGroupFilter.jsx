@@ -46,6 +46,7 @@ import StreamFilterControl from './StreamFilterControl.jsx';
 import editorClasses from './AccountEditor.module.css';
 import GroupConfigureModal from './GroupConfigureModal';
 import StackedModal from '../StackedModal.jsx';
+import API from '../../api';
 import useChannelsStore from '../../store/channels';
 import useStreamProfilesStore from '../../store/streamProfiles';
 import { useChannelLogoSelection } from '../../hooks/useSmartLogos';
@@ -57,7 +58,10 @@ const AutoSyncAdvanced = React.lazy(() => import('./AutoSyncAdvanced.jsx'));
 const LogoForm = React.lazy(() => import('./Logo.jsx'));
 import {
   abortTimers,
+  CATEGORY_MODES,
   computeAutoSyncStart,
+  getCategoryMode,
+  withCategoryMode,
   getChannelsInRange,
   getEPGs,
   getRegexOptions,
@@ -87,9 +91,8 @@ const LiveGroupCard = memo(function LiveGroupCard({
   refreshLabel,
   hasChannelConflict,
   overlaps,
-  onToggleAutoSync,
   onToggleEnabled,
-  onToggleEvent,
+  onChangeMode,
   onConfigure,
   onPreview,
   selected,
@@ -149,25 +152,15 @@ const LiveGroupCard = memo(function LiveGroupCard({
         />
       </TableTd>
       <TableTd>
-        <Flex justify="center">
-          <Checkbox
-            aria-label={`Event category ${group.name}`}
-            checked={!!group.metadata_defaults?.is_event}
-            onChange={() => onToggleEvent(group.channel_group)}
-            size="xs"
-          />
-        </Flex>
-      </TableTd>
-      <TableTd>
-        <Flex justify="center">
-          <Checkbox
-            aria-label={`Auto Channel Sync for ${group.name}`}
-            checked={!!(group.auto_channel_sync && group.enabled)}
-            disabled={!group.enabled}
-            onChange={() => onToggleAutoSync(group.channel_group)}
-            size="xs"
-          />
-        </Flex>
+        <Select
+          aria-label={`Use of ${group.name}`}
+          size="xs"
+          data={CATEGORY_MODES}
+          value={getCategoryMode(group)}
+          disabled={!group.enabled}
+          allowDeselect={false}
+          onChange={(value) => onChangeMode(group.channel_group, value)}
+        />
       </TableTd>
       <TableTd>
         <Text size="xs" c={showAutoSyncControls ? undefined : 'dimmed'}>
@@ -753,41 +746,18 @@ const LiveGroupFilter = ({
     [setGroupStates]
   );
 
-  const toggleEvent = useCallback(
-    (id) => {
-      setGroupStates((current) =>
-        current.map((group) => {
-          if (group.channel_group !== id) return group;
-          const { is_event: isEvent, ...rest } = group.metadata_defaults || {};
-          return {
-            ...group,
-            metadata_defaults: isEvent ? rest : { ...rest, is_event: true },
-          };
-        })
-      );
-    },
-    [setGroupStates]
-  );
+  const [eventGroups, setEventGroups] = useState([]);
+  const configuringId = configuringGroup?.channel_group;
+  useEffect(() => {
+    if (configuringId == null) return;
+    API.getEventGroups()
+      .then((rows) => setEventGroups(rows || []))
+      .catch(() => setEventGroups([]));
+  }, [configuringId]);
 
-  const toggleAutoSync = useCallback(
-    (id) => {
-      setGroupStates((prev) =>
-        prev.map((state) => {
-          if (state.channel_group != id) return state;
-          const turningOn = !state.auto_channel_sync;
-          const next = { ...state, auto_channel_sync: turningOn };
-          if (!turningOn) return next;
-
-          // Pick a sensible start when enabling auto-sync: max of other
-          // groups' end (or start) plus 1, so multiple groups don't all
-          // default to 1. Skipped if a non-default start is already set.
-          const currentStart = state.auto_sync_channel_start;
-          if (currentStart && currentStart > 1) return next;
-
-          next.auto_sync_channel_start = computeAutoSyncStart(prev, id);
-          return next;
-        })
-      );
+  const changeMode = useCallback(
+    (id, mode) => {
+      setGroupStates((current) => withCategoryMode(current, id, mode));
     },
     [setGroupStates]
   );
@@ -1059,38 +1029,18 @@ const LiveGroupFilter = ({
               <TableTh w={100} ta="center">
                 Status
               </TableTh>
-              <TableTh w={76}>
-                <Group gap={4} wrap="nowrap" justify="center">
-                  Event
+              <TableTh w={190}>
+                <Group gap={4} wrap="nowrap">
+                  Use
                   <Tooltip
-                    label="Event categories hold changing event streams. Matching streams to channels by name leaves them out."
+                    label="Streams only: the streams are available to channel stream rules. Channel per stream: auto sync creates and maintains one channel per stream. Events: the streams are slots with changing events, for event channels of this category or an event group."
                     multiline
-                    maw={320}
+                    maw={380}
                     withArrow
                     events={{ hover: true, focus: true, touch: true }}
                   >
                     <span
-                      aria-label="Event category help"
-                      tabIndex={0}
-                      style={{ display: 'inline-flex', cursor: 'help' }}
-                    >
-                      <Info size={14} aria-hidden="true" />
-                    </span>
-                  </Tooltip>
-                </Group>
-              </TableTh>
-              <TableTh w="12%">
-                <Group gap={4} wrap="nowrap" justify="center">
-                  Auto sync
-                  <Tooltip
-                    label="Auto sync creates and maintains channels for imported streams in each enabled category. Number ranges and advanced options can be configured per category."
-                    multiline
-                    maw={360}
-                    withArrow
-                    events={{ hover: true, focus: true, touch: true }}
-                  >
-                    <span
-                      aria-label="Auto channel sync help"
+                      aria-label="Category use help"
                       tabIndex={0}
                       style={{ display: 'inline-flex', cursor: 'help' }}
                     >
@@ -1109,7 +1059,7 @@ const LiveGroupFilter = ({
           <TableTbody>
             {!visibleGroups.length && (
               <TableTr>
-                <TableTd colSpan={9} ta="center" py="xl">
+                <TableTd colSpan={8} ta="center" py="xl">
                   <Text size="sm" c="dimmed">
                     No categories match the current filters.
                   </Text>
@@ -1139,9 +1089,8 @@ const LiveGroupFilter = ({
                   overlaps={
                     overlapsByGroup.get(group.channel_group) || EMPTY_OVERLAPS
                   }
-                  onToggleAutoSync={toggleAutoSync}
                   onToggleEnabled={toggleEnabled}
-                  onToggleEvent={toggleEvent}
+                  onChangeMode={changeMode}
                   onConfigure={openConfigure}
                   onPreview={setPreviewGroup}
                   selected={selectedGroupIds.has(group.channel_group)}
@@ -1283,74 +1232,88 @@ const LiveGroupFilter = ({
       >
         {configuringGroup && (
           <Stack>
-            <Paper withBorder p="sm">
-              <Stack gap="sm" role="group" aria-label="Channel sync settings">
-                <Text fw={600}>Channel sync</Text>
-                <Checkbox
-                  label="Auto sync"
-                  checked={!!configuringGroup.auto_channel_sync}
-                  onChange={() =>
-                    toggleAutoSync(configuringGroup.channel_group)
-                  }
-                />
-                <Select
-                  label="Numbering mode"
-                  value={
-                    configuringGroup.custom_properties
-                      ?.channel_numbering_mode || 'fixed'
-                  }
-                  data={NUMBERING_MODE_OPTIONS}
-                  disabled={!configuringGroup.auto_channel_sync}
-                  allowDeselect={false}
-                  onChange={(value) =>
-                    updateNumberingMode(configuringGroup.channel_group, value)
-                  }
-                />
-                {configuringGroup.auto_channel_sync && (
-                  <AutoSyncBasic
-                    group={configuringGroup}
-                    overlaps={
-                      overlapsByGroup.get(configuringGroup.channel_group) ||
-                      EMPTY_OVERLAPS
-                    }
-                    groupConflicts={groupConflicts}
-                    onApplyGroupChange={applyGroupChange}
-                  />
-                )}
-                <Select
-                  label="Auto-sync orphan cleanup"
-                  description="What to do with this group's auto-created channels when their source stream disappears. Manual and hidden channels are preserved."
-                  value={
-                    configuringGroup.custom_properties
-                      ?.orphan_channel_cleanup || 'always'
-                  }
-                  disabled={!configuringGroup.auto_channel_sync}
-                  allowDeselect={false}
-                  data={[
-                    { value: 'always', label: 'Always remove' },
-                    {
-                      value: 'preserve_customized',
-                      label: 'Preserve customized',
-                    },
-                    { value: 'never', label: 'Never remove' },
-                  ]}
-                  onChange={(value) =>
-                    applyGroupChange({
-                      ...configuringGroup,
-                      custom_properties: {
-                        ...configuringGroup.custom_properties,
-                        orphan_channel_cleanup: value || 'always',
-                      },
-                    })
-                  }
-                />
-              </Stack>
-            </Paper>
-            <EventCategorySettings
-              group={configuringGroup}
-              playlist={playlist}
-              onApplyGroupChange={applyGroupChange}
+            <Select
+              label="Use this category for"
+              data={CATEGORY_MODES}
+              value={getCategoryMode(configuringGroup)}
+              allowDeselect={false}
+              onChange={(value) =>
+                changeMode(configuringGroup.channel_group, value)
+              }
             />
+            {getCategoryMode(configuringGroup) === 'streams' && (
+              <Text size="sm" c="dimmed">
+                The streams of this category are available to the stream rules
+                of your channels. No channels are created for them.
+              </Text>
+            )}
+            {getCategoryMode(configuringGroup) === 'events' && (
+              <EventCategorySettings
+                group={configuringGroup}
+                playlist={playlist}
+                eventGroups={eventGroups}
+                onApplyGroupChange={applyGroupChange}
+                showToggle={false}
+              />
+            )}
+            {configuringGroup.auto_channel_sync && (
+              <Paper withBorder p="sm">
+                <Stack gap="sm" role="group" aria-label="Channel sync settings">
+                  <Text fw={600}>Channel sync</Text>
+                  <Select
+                    label="Numbering mode"
+                    value={
+                      configuringGroup.custom_properties
+                        ?.channel_numbering_mode || 'fixed'
+                    }
+                    data={NUMBERING_MODE_OPTIONS}
+                    disabled={!configuringGroup.auto_channel_sync}
+                    allowDeselect={false}
+                    onChange={(value) =>
+                      updateNumberingMode(configuringGroup.channel_group, value)
+                    }
+                  />
+                  {configuringGroup.auto_channel_sync && (
+                    <AutoSyncBasic
+                      group={configuringGroup}
+                      overlaps={
+                        overlapsByGroup.get(configuringGroup.channel_group) ||
+                        EMPTY_OVERLAPS
+                      }
+                      groupConflicts={groupConflicts}
+                      onApplyGroupChange={applyGroupChange}
+                    />
+                  )}
+                  <Select
+                    label="Auto-sync orphan cleanup"
+                    description="What to do with this group's auto-created channels when their source stream disappears. Manual and hidden channels are preserved."
+                    value={
+                      configuringGroup.custom_properties
+                        ?.orphan_channel_cleanup || 'always'
+                    }
+                    disabled={!configuringGroup.auto_channel_sync}
+                    allowDeselect={false}
+                    data={[
+                      { value: 'always', label: 'Always remove' },
+                      {
+                        value: 'preserve_customized',
+                        label: 'Preserve customized',
+                      },
+                      { value: 'never', label: 'Never remove' },
+                    ]}
+                    onChange={(value) =>
+                      applyGroupChange({
+                        ...configuringGroup,
+                        custom_properties: {
+                          ...configuringGroup.custom_properties,
+                          orphan_channel_cleanup: value || 'always',
+                        },
+                      })
+                    }
+                  />
+                </Stack>
+              </Paper>
+            )}
             {configuringGroup.auto_channel_sync && (
               <ErrorBoundary inline>
                 <Suspense fallback={<Loader />}>

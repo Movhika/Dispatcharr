@@ -101,6 +101,53 @@ describe('EventCategorySettings', () => {
     expect(screen.getByText('No event')).toBeInTheDocument();
   });
 
+  it('lets the category editor choose own event channels or an event group', () => {
+    const onApplyGroupChange = vi.fn();
+    const { rerender } = render(
+      <MantineProvider>
+        <EventCategorySettings
+          group={group({ auto_channel_sync: false, event_group: null })}
+          playlist={{ id: 3 }}
+          onApplyGroupChange={onApplyGroupChange}
+          eventGroups={[{ id: 7, name: 'Fights' }]}
+          showToggle={false}
+        />
+      </MantineProvider>
+    );
+    expect(screen.queryByLabelText(/Event category/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Only create channels for current events/)
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Combined with other providers/));
+    expect(onApplyGroupChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ auto_channel_sync: false, event_group: 7 })
+    );
+    fireEvent.click(screen.getByLabelText(/One channel per event/));
+    expect(onApplyGroupChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ auto_channel_sync: true, event_group: null })
+    );
+    rerender(
+      <MantineProvider>
+        <EventCategorySettings
+          group={group({ auto_channel_sync: true, event_group: null })}
+          playlist={{ id: 3 }}
+          onApplyGroupChange={onApplyGroupChange}
+          eventGroups={[]}
+          showToggle={false}
+        />
+      </MantineProvider>
+    );
+    expect(
+      screen.getByLabelText(/Only create channels for current events/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Combined with other providers/)
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/Create event groups on the Events page/)
+    ).toBeInTheDocument();
+  });
+
   it('shows preview errors', async () => {
     API.previewEventCategory.mockRejectedValue(
       new Error('Invalid event pattern')

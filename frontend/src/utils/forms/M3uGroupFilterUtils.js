@@ -90,6 +90,9 @@ const prepareGroupSettings = (groupStates) => {
     custom_properties: state.custom_properties || undefined,
     // null clears the mark; the other keys are kept by the server.
     metadata_defaults: { is_event: state.metadata_defaults?.is_event || null },
+    ...(state.event_group !== undefined
+      ? { event_group: state.event_group }
+      : {}),
   }));
 };
 

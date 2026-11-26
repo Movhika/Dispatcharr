@@ -10,6 +10,8 @@ import {
   getRegexOptions,
   computeAutoSyncStart,
   isGroupVisible,
+  getCategoryMode,
+  withCategoryMode,
 } from '../LiveGroupFilterUtils.js';
 
 // ── API mock ─────────────────────────────────────────────────────────────────
@@ -604,6 +606,58 @@ describe('LiveGroupFilterUtils', () => {
     it('returns true with empty text filter', () => {
       const group = makeGroup({ name: 'Sports', enabled: true });
       expect(isGroupVisible(group, '', 'all')).toBe(true);
+    });
+  });
+});
+
+describe('category modes', () => {
+  const groups = [
+    {
+      channel_group: 1,
+      enabled: true,
+      auto_channel_sync: false,
+      auto_sync_channel_start: 1,
+    },
+    {
+      channel_group: 2,
+      enabled: true,
+      auto_channel_sync: true,
+      auto_sync_channel_start: 500,
+      auto_sync_channel_end: 510,
+    },
+  ];
+
+  it('reads the mode from auto sync and the event mark', () => {
+    expect(getCategoryMode(groups[0])).toBe('streams');
+    expect(getCategoryMode(groups[1])).toBe('channels');
+    expect(
+      getCategoryMode({ ...groups[1], metadata_defaults: { is_event: true } })
+    ).toBe('events');
+  });
+
+  it('switches modes without leftovers of the previous one', () => {
+    const channels = withCategoryMode(groups, 1, 'channels')[0];
+    expect(channels.auto_channel_sync).toBe(true);
+    expect(channels.auto_sync_channel_start).toBe(511);
+    const events = withCategoryMode(
+      [{ ...channels, metadata_defaults: { other: 1 } }],
+      1,
+      'events'
+    )[0];
+    expect(events).toMatchObject({
+      auto_channel_sync: false,
+      event_group: null,
+      metadata_defaults: { other: 1, is_event: true },
+    });
+    const streams = withCategoryMode(
+      [{ ...events, event_group: 7 }],
+      1,
+      'streams'
+    )[0];
+    expect(streams).toMatchObject({
+      auto_channel_sync: false,
+      event_group: null,
+      metadata_defaults: { other: 1 },
     });
   });
 });
