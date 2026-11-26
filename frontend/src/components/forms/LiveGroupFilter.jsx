@@ -36,6 +36,7 @@ import ListPagination from '../ListPagination.jsx';
 import M3UGroupContentPreview from './M3UGroupContentPreview.jsx';
 import CategoryVisibilityFilter from './CategoryVisibilityFilter.jsx';
 import CategoryStatusBadge from './CategoryStatusBadge.jsx';
+import EventCategorySettings from './EventCategorySettings.jsx';
 import {
   DEFAULT_CATEGORY_VISIBILITY,
   matchesCategoryVisibility,
@@ -1345,6 +1346,11 @@ const LiveGroupFilter = ({
                 />
               </Stack>
             </Paper>
+            <EventCategorySettings
+              group={configuringGroup}
+              playlist={playlist}
+              onApplyGroupChange={applyGroupChange}
+            />
             {configuringGroup.auto_channel_sync && (
               <ErrorBoundary inline>
                 <Suspense fallback={<Loader />}>

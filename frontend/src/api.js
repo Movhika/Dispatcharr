@@ -1563,6 +1563,21 @@ export default class API {
     }
   }
 
+  // Errors are shown by the caller next to the event settings.
+  static async previewEventCategory(
+    playlistId,
+    channelGroup,
+    customProperties
+  ) {
+    return request(`${host}/api/m3u/accounts/${playlistId}/event-preview/`, {
+      method: 'POST',
+      body: {
+        channel_group: channelGroup,
+        custom_properties: customProperties,
+      },
+    });
+  }
+
   static async updateM3UGroupSettings(
     playlistId,
     groupSettings = [],
