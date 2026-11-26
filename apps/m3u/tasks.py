@@ -13,6 +13,12 @@ from apps.plugins.internal_tasks import plugin_callable_task
 from django.conf import settings
 from django.db import models, transaction
 from .models import CUSTOM_M3U_ACCOUNT_NAME, M3UAccount
+from .event_parser import (
+    CURRENT_STATUSES as CURRENT_EVENT_STATUSES,
+    is_event_relation,
+    normalize_config as normalize_event_config,
+    parse_event,
+)
 from apps.channels.models import (
     Stream,
     ChannelGroup,
@@ -2502,6 +2508,33 @@ def sync_auto_channels(account_id, scan_start_time=None):
                         f"Invalid name_match_exclude_regex '{name_match_exclude_regex}' for group '{channel_group.name}': {e}. Skipping exclude filter."
                     )
 
+            # Event categories reuse numbered slots. Their parsed event can
+            # drop slots without a current event and name the channels.
+            event_config = None
+            event_info = {}
+            if is_event_relation(group_relation):
+                try:
+                    event_config = normalize_event_config(group_custom_props)
+                except ValueError as e:
+                    logger.warning(
+                        f"Invalid event settings for group '{channel_group.name}': {e}. Using defaults."
+                    )
+                    event_config = normalize_event_config({})
+                if not streams_is_list:
+                    current_streams = list(current_streams)
+                    streams_is_list = True
+                parse_time = timezone.now()
+                event_info = {
+                    stream.id: parse_event(stream.name, event_config, parse_time)
+                    for stream in current_streams
+                }
+                if event_config["event_filter"] == "current":
+                    current_streams = [
+                        stream
+                        for stream in current_streams
+                        if event_info[stream.id].status in CURRENT_EVENT_STATUSES
+                    ]
+
             # --- APPLY CHANNEL SORT ORDER ---
             if channel_sort_order and channel_sort_order != "":
                 if channel_sort_order == "name":
@@ -2962,6 +2995,14 @@ def sync_auto_channels(account_id, scan_start_time=None):
 
                     # --- REGEX FIND/REPLACE LOGIC ---
                     original_name = stream.name
+                    event = event_info.get(stream.id)
+                    if (
+                        event_config
+                        and event_config["event_channel_name"]
+                        and event is not None
+                        and event.title
+                    ):
+                        original_name = event.title
                     new_name = original_name
                     if name_regex_pattern is not None:
                         # If replace is None, treat as empty string (remove match)

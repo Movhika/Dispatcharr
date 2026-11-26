@@ -1075,3 +1075,34 @@ class ServerGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServerGroup
         fields = ["id", "name"]
+
+
+class EventPreviewRequestSerializer(serializers.Serializer):
+    channel_group = serializers.IntegerField(min_value=1)
+    custom_properties = serializers.DictField(
+        required=False,
+        default=dict,
+        help_text="Event settings to test: event_timezone, event_duration_minutes, "
+        "event_pattern, event_filter and event_channel_name.",
+    )
+
+
+class EventPreviewRowSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=["none", "upcoming", "live", "ended", "unknown"]
+    )
+    title = serializers.CharField(allow_blank=True)
+    home = serializers.CharField(allow_null=True)
+    away = serializers.CharField(allow_null=True)
+    start = serializers.DateTimeField(allow_null=True)
+    end = serializers.DateTimeField(allow_null=True)
+    kept = serializers.BooleanField(
+        help_text="Whether auto sync keeps this stream with the event filter."
+    )
+
+
+class EventPreviewResponseSerializer(serializers.Serializer):
+    rows = EventPreviewRowSerializer(many=True)
+    counts = serializers.DictField(child=serializers.IntegerField())

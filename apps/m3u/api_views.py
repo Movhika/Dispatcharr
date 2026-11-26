@@ -40,6 +40,8 @@ from .serializers import (
     M3UMatchingEPGResponseSerializer,
     M3UConnectionCheckSerializer,
     M3UConnectionCheckResultSerializer,
+    EventPreviewRequestSerializer,
+    EventPreviewResponseSerializer,
 )
 
 from .tasks import refresh_single_m3u_account, refresh_m3u_accounts, refresh_account_info
@@ -47,6 +49,13 @@ from .utils import hash_key_fields
 from .rule_previews import StreamFilterPreviewMixin
 from .category_selection import category_selection_state
 from .live_metadata import merge_category_metadata, validate_live_metadata
+from .event_parser import (
+    CURRENT_STATUSES as CURRENT_EVENT_STATUSES,
+    normalize_config as normalize_event_config,
+    parse_event,
+)
+
+EVENT_PREVIEW_LIMIT = 500
 from core.tasks import (
     rehash_streams,
     release_rehash_locks,
@@ -704,6 +713,52 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        description=(
+            "Parse the stream names of one Live TV category with event settings "
+            "that are not saved yet."
+        ),
+        request=EventPreviewRequestSerializer,
+        responses=EventPreviewResponseSerializer,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="event-preview",
+        permission_classes=[IsAdmin],
+    )
+    def event_preview(self, request, pk=None):
+        from django.utils import timezone
+
+        from apps.channels.models import Stream
+
+        account = self.get_object()
+        serializer = EventPreviewRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            config = normalize_event_config(serializer.validated_data["custom_properties"])
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        streams = Stream.objects.filter(
+            m3u_account=account,
+            channel_group_id=serializer.validated_data["channel_group"],
+            is_stale=False,
+        ).order_by("name")[:EVENT_PREVIEW_LIMIT]
+        now = timezone.now()
+        rows = []
+        counts = {}
+        for stream in streams:
+            event = parse_event(stream.name, config, now)
+            counts[event.status] = counts.get(event.status, 0) + 1
+            rows.append({
+                "id": stream.id,
+                "name": stream.name,
+                "kept": config["event_filter"] == "all"
+                or event.status in CURRENT_EVENT_STATUSES,
+                **event.as_dict(),
+            })
+        return Response(EventPreviewResponseSerializer({"rows": rows, "counts": counts}).data)
+
     @action(
         detail=True,
         methods=["patch"],
@@ -753,6 +808,15 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                 custom_properties = ensure_custom_properties_dict(
                     setting.get("custom_properties")
                 )
+                if any(key.startswith("event_") for key in custom_properties):
+                    try:
+                        custom_properties.update(normalize_event_config(custom_properties))
+                    except ValueError as e:
+                        return Response(
+                            {"error": f"Channel group {setting.get('channel_group')}: {e}"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    setting["custom_properties"] = custom_properties
                 cleanup_mode = custom_properties.get("orphan_channel_cleanup")
                 if cleanup_mode not in (None, "always", "preserve_customized", "never"):
                     return Response(
