@@ -4247,6 +4247,15 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
             auto_sync_result = {"status": "error", "error": str(e)}
             auto_sync_message = f" Auto-sync error: {e}."
 
+        # Event groups combine the events of several accounts; rebuild the
+        # ones this account feeds now that its streams are current.
+        try:
+            from apps.channels.tasks import build_event_groups_for_account
+
+            build_event_groups_for_account.delay(account_id)
+        except Exception as e:
+            logger.error(f"Could not start event group build for account {account_id}: {e}")
+
         try:
             rollup_channel_catchup_fields(account_id)
             logger.debug(f"Catch-up field rollup complete for account {account_id}")

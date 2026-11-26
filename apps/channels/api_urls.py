@@ -25,6 +25,8 @@ from .api_views import (
     ComskipConfigAPIView,
 )
 
+from .event_group_api import EventChannelGroupViewSet
+
 app_name = 'channels'  # for DRF routing
 
 router = DefaultRouter()
@@ -35,6 +37,7 @@ router.register(r'logos', LogoViewSet, basename='logo')
 router.register(r'profiles', ChannelProfileViewSet, basename='profile')
 router.register(r'recordings', RecordingViewSet, basename='recording')
 router.register(r'recurring-rules', RecurringRecordingRuleViewSet, basename='recurring-rule')
+router.register(r'event-groups', EventChannelGroupViewSet, basename='event-group')
 
 urlpatterns = [
     # Bulk delete is a single APIView, not a ViewSet

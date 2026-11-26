@@ -712,6 +712,19 @@ class CoreSettings(models.Model):
             STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"aliases": aliases}
         )
 
+    @classmethod
+    def get_event_team_aliases(cls):
+        """Saved team alias groups of event groups, or None for the defaults."""
+        return cls._get_group(STREAM_MATCHING_SETTINGS_KEY, {"team_aliases": None}).get(
+            "team_aliases"
+        )
+
+    @classmethod
+    def set_event_team_aliases(cls, aliases):
+        cls._update_group(
+            STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"team_aliases": aliases}
+        )
+
     # EPG Settings
     @classmethod
     def get_epg_settings(cls):

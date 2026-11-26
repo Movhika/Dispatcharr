@@ -4,6 +4,7 @@ from datetime import datetime
 
 from rest_framework import serializers
 from .models import (
+    EventChannelGroup,
     Stream,
     Channel,
     ChannelGroup,
@@ -1095,3 +1096,64 @@ class StreamTestRequestSerializer(serializers.Serializer):
         default=20,
         help_text="Streams delivering fewer frames per second are marked as low frame rate.",
     )
+
+
+class EventChannelGroupSerializer(serializers.ModelSerializer):
+    channel_count = serializers.IntegerField(source="event_channels.count", read_only=True)
+
+    class Meta:
+        model = EventChannelGroup
+        fields = [
+            "id",
+            "name",
+            "enabled",
+            "channel_group",
+            "sources",
+            "start_number",
+            "end_number",
+            "lookahead_hours",
+            "include_untimed",
+            "name_format",
+            "channel_profile_ids",
+            "last_built_at",
+            "channel_count",
+        ]
+        read_only_fields = ["last_built_at"]
+        extra_kwargs = {"start_number": {"min_value": 1}, "lookahead_hours": {"max_value": 24 * 14}}
+
+    def validate_channel_profile_ids(self, value):
+        if not isinstance(value, list) or not all(str(pid).isdigit() for pid in value):
+            raise serializers.ValidationError("Channel profiles must be a list of ids.")
+        return [int(pid) for pid in value]
+
+    def validate(self, attrs):
+        start = attrs.get("start_number", getattr(self.instance, "start_number", 1))
+        end = attrs.get("end_number", getattr(self.instance, "end_number", None))
+        if end is not None and end < start:
+            raise serializers.ValidationError(
+                {"end_number": "The last channel number must not be below the first."}
+            )
+        return attrs
+
+
+class EventPreviewStreamSerializer(serializers.Serializer):
+    id = serializers.IntegerField(source="stream_id")
+    name = serializers.CharField(source="stream_name")
+    account = serializers.CharField(source="account_name")
+    title = serializers.CharField()
+    status = serializers.CharField()
+
+
+class EventGroupPreviewSerializer(serializers.Serializer):
+    title = serializers.CharField()
+    start = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField()
+    streams = EventPreviewStreamSerializer(source="items", many=True)
+
+
+class EventGroupBuildResultSerializer(serializers.Serializer):
+    events = serializers.IntegerField()
+    created = serializers.IntegerField()
+    updated = serializers.IntegerField()
+    removed = serializers.IntegerField()
+    skipped = serializers.IntegerField(help_text="Events without a free channel number.")

@@ -1519,3 +1519,66 @@ class RecurringRecordingRule(models.Model):
             return sorted({int(d) for d in (self.days_of_week or []) if 0 <= int(d) <= 6})
         except Exception:
             return []
+
+
+class EventChannelGroup(models.Model):
+    """Builds one channel per event from event categories of several accounts."""
+
+    class NameFormat(models.TextChoices):
+        TITLE = "title", "Event title"
+        TITLE_TIME = "title_time", "Event title and start time"
+
+    name = models.CharField(max_length=255, unique=True)
+    enabled = models.BooleanField(default=True)
+    channel_group = models.ForeignKey(
+        ChannelGroup,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="event_channel_groups",
+        help_text="Group of the built channels.",
+    )
+    sources = models.ManyToManyField(
+        ChannelGroupM3UAccount,
+        blank=True,
+        related_name="event_channel_groups",
+        help_text="Event categories whose events are combined.",
+    )
+    start_number = models.FloatField(default=1)
+    end_number = models.FloatField(null=True, blank=True)
+    lookahead_hours = models.PositiveIntegerField(
+        default=24, help_text="Only events starting within this many hours get a channel."
+    )
+    include_untimed = models.BooleanField(
+        default=False, help_text="Also build channels for events without a start time."
+    )
+    name_format = models.CharField(
+        max_length=20, choices=NameFormat.choices, default=NameFormat.TITLE_TIME
+    )
+    channel_profile_ids = models.JSONField(
+        default=list, blank=True, help_text="Channel profiles of new channels; empty means all."
+    )
+    last_built_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    def __str__(self):
+        return self.name
+
+
+class EventChannel(models.Model):
+    """A channel an event group built for one event."""
+
+    group = models.ForeignKey(
+        EventChannelGroup, on_delete=models.CASCADE, related_name="event_channels"
+    )
+    channel = models.OneToOneField(
+        Channel, on_delete=models.CASCADE, related_name="event_channel"
+    )
+    event_key = models.CharField(max_length=255)
+    title = models.CharField(max_length=512, blank=True)
+    start = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=("group", "event_key"), name="event_channel_key_idx")]

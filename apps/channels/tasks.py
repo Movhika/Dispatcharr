@@ -4541,3 +4541,21 @@ def test_channel_streams(channel_ids, sort="none", low_fps=None):
         raise
     finally:
         cache.delete(STREAM_TEST_LOCK)
+
+
+@shared_task
+def build_event_groups_for_account(account_id):
+    """Rebuild the event groups fed by an account after its refresh."""
+    from .event_groups import build_for_account
+
+    results = build_for_account(account_id)
+    if any(
+        result.get("created") or result.get("removed") or result.get("updated")
+        for result in results.values()
+    ):
+        from core.utils import send_websocket_update
+
+        send_websocket_update(
+            "updates", "update", {"type": "event_groups_built", "refresh_channels": True}
+        )
+    return results
