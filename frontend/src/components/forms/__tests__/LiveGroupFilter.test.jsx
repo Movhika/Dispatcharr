@@ -939,6 +939,29 @@ describe('LiveGroupFilter', () => {
       ).toBeDisabled();
     });
 
+    it('toggles the event mark of one category', () => {
+      renderWith({
+        initialGroups: [
+          makeGroup(),
+          makeGroup({
+            channel_group: 2,
+            name: 'PPV',
+            metadata_defaults: { is_event: true },
+          }),
+        ],
+      });
+      const sports = screen.getByRole('checkbox', {
+        name: 'Event category Sports',
+      });
+      const ppv = screen.getByRole('checkbox', { name: 'Event category PPV' });
+      expect(sports).not.toBeChecked();
+      expect(ppv).toBeChecked();
+      fireEvent.click(sports);
+      fireEvent.click(ppv);
+      expect(sports).toBeChecked();
+      expect(ppv).not.toBeChecked();
+    });
+
     it('canceling a bulk edit leaves group settings unchanged', () => {
       renderWith({ initialGroups: [makeGroup()] });
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select Sports' }));

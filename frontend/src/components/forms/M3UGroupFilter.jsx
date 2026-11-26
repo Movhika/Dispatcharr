@@ -39,6 +39,7 @@ const groupSettingsSnapshot = (groups = []) =>
       auto_sync_channel_start: row.auto_sync_channel_start || 1,
       auto_sync_channel_end: row.auto_sync_channel_end ?? null,
       custom_properties: row.custom_properties || {},
+      is_event: !!row.metadata_defaults?.is_event,
     }))
   );
 

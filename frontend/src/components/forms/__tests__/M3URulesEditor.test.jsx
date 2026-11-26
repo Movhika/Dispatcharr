@@ -1686,6 +1686,42 @@ describe('M3URulesEditor', () => {
     }
   );
 
+  it('marks live rule matches as event categories', async () => {
+    API.saveM3URule.mockImplementation(async (_account, _kind, id, values) => ({
+      ...rule(),
+      ...values,
+      id,
+    }));
+    await load([rule()]);
+    expect(
+      screen.getByRole('columnheader', { name: 'Event' })
+    ).toBeInTheDocument();
+    const event = screen.getByRole('switch', { name: 'Event category' });
+    expect(event).not.toBeChecked();
+    expect(event).toBeDisabled();
+    editRow();
+    fireEvent.click(event);
+    expect(event).toBeChecked();
+    fireEvent.click(screen.getByLabelText('Save rule'));
+    await waitFor(() =>
+      expect(API.saveM3URule).toHaveBeenCalledWith(
+        7,
+        'group-rules',
+        1,
+        expect.objectContaining({ metadata_defaults: { is_event: true } })
+      )
+    );
+  });
+
+  it('offers the event mark only for live import rules', async () => {
+    API.getM3URules.mockResolvedValue([rule({ scope: 'movie' })]);
+    renderEditor({ scope: 'movie' });
+    await screen.findByDisplayValue('News');
+    expect(
+      screen.queryByRole('switch', { name: 'Event category' })
+    ).not.toBeInTheDocument();
+  });
+
   it('keeps stream filter fields without exposing category-only controls or legacy import notices', async () => {
     API.getM3URules.mockResolvedValue([
       {
@@ -2914,7 +2950,9 @@ describe('M3URulesEditor', () => {
       await waitFor(() =>
         expect(screen.getAllByLabelText(`Edit ${noun}`)[0]).toBeEnabled()
       );
-      const [enabled, disabled] = screen.getAllByRole('switch');
+      const [enabled, disabled] = screen.getAllByRole('switch', {
+        name: streamFilters ? 'Filter enabled' : 'Rule enabled',
+      });
       expect(enabled).toBeVisible();
       expect(enabled).toBeChecked();
       expect(enabled).toBeDisabled();

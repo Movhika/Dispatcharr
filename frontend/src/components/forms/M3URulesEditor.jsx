@@ -243,6 +243,7 @@ const M3URulesEditor = ({
   const [regexHelpOpen, setRegexHelpOpen] = useState(false);
   const [metadataTarget, setMetadataTarget] = useState(null);
   const vodRules = !streamFilters && ['movie', 'series'].includes(scope);
+  const liveRules = !streamFilters && scope === 'live';
   const [coverage, setCoverage] = useState({ causes: {}, coveredBy: {} });
   const [matchCheck, setMatchCheck] = useState(null);
   const [inventoryCount, setInventoryCount] = useState(null);
@@ -289,11 +290,11 @@ const M3URulesEditor = ({
             case_sensitive: rule.case_sensitive,
             enabled: !isRetiredImportRule(rule) && rule.enabled,
             order: rule.order,
-            ...(vodRules
+            ...(vodRules || liveRules
               ? { metadata_defaults: rule.metadata_defaults || {} }
               : {}),
           },
-    [streamFilters, scope, vodRules]
+    [streamFilters, scope, vodRules, liveRules]
   );
 
   const rememberMatches = useCallback(
@@ -889,7 +890,10 @@ const M3URulesEditor = ({
         summary.enable && `${summary.enable} enabled`,
         summary.disable && `${summary.disable} disabled`,
         summary.ignore && `${summary.ignore} ignored`,
-        summary.metadata && `${summary.metadata} get new metadata`,
+        summary.metadata &&
+          (scope === 'live'
+            ? `${summary.metadata} change their event mark`
+            : `${summary.metadata} get new metadata`),
       ].filter(Boolean);
       setApplyAll({
         message: `Apply all rules in their order to the existing ${unitLabel}? ${summary.changed} change: ${changes.join(', ')}. The first matching rule replaces their manual choices. ${unitLabel[0].toUpperCase()}${unitLabel.slice(1)} without a matching rule stay as they are.`,
@@ -1217,7 +1221,7 @@ const M3URulesEditor = ({
               <Table
                 striped
                 withTableBorder
-                miw={vodRules ? 1100 : 760}
+                miw={vodRules ? 1100 : liveRules ? 836 : 760}
                 className={classes.ruleTable}
               >
                 <colgroup>
@@ -1234,6 +1238,7 @@ const M3URulesEditor = ({
                         style={{ width: field === 'video_features' ? 110 : 90 }}
                       />
                     ))}
+                  {liveRules && <col style={{ width: 76 }} />}
                   <col style={{ width: 76 }} />
                   <col style={{ width: 106 }} />
                 </colgroup>
@@ -1320,6 +1325,9 @@ const M3URulesEditor = ({
                           {VOD_METADATA_LABELS[field]}
                         </TableTh>
                       ))}
+                    {liveRules && (
+                      <TableTh className={classes.centeredCell}>Event</TableTh>
+                    )}
                     <TableTh className={classes.centeredCell}>Enabled</TableTh>
                     <TableTh className={classes.centeredCell}>Actions</TableTh>
                   </TableTr>
@@ -1575,6 +1583,33 @@ const M3URulesEditor = ({
                           >
                             <Settings size={20} aria-hidden="true" />
                           </UnstyledButton>
+                        </TableTd>
+                      )}
+                      {liveRules && (
+                        <TableTd className={classes.centeredCell}>
+                          <Tooltip label="Mark matching categories as event categories">
+                            <span className={classes.centeredCheckbox}>
+                              <Switch
+                                aria-label="Event category"
+                                disabled={
+                                  busy ||
+                                  activeRuleId !== rule.id ||
+                                  isRetiredImportRule(rule)
+                                }
+                                checked={Boolean(
+                                  rule.metadata_defaults?.is_event
+                                )}
+                                onChange={(event) =>
+                                  update(rule.id, {
+                                    metadata_defaults: event.currentTarget
+                                      .checked
+                                      ? { is_event: true }
+                                      : {},
+                                  })
+                                }
+                              />
+                            </span>
+                          </Tooltip>
                         </TableTd>
                       )}
                       <TableTd className={classes.centeredCell}>

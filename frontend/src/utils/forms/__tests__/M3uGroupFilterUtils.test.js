@@ -307,6 +307,25 @@ describe('M3uGroupFilterUtils', () => {
       );
     });
 
+    it('sends the event mark of every category and clears it with null', async () => {
+      await saveAndRefreshPlaylist(
+        makePlaylist(),
+        [
+          { channel_group: 1, metadata_defaults: { is_event: true } },
+          { channel_group: 2, metadata_defaults: {} },
+        ],
+        [],
+        [],
+        makeAutoEnableSettings()
+      );
+
+      const [, groups] = vi.mocked(API.updateM3UGroupSettings).mock.calls[0];
+      expect(groups.map((group) => group.metadata_defaults)).toEqual([
+        { is_event: true },
+        { is_event: null },
+      ]);
+    });
+
     it('calls refreshPlaylist with playlist', async () => {
       const playlist = makePlaylist();
 

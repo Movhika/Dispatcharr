@@ -88,6 +88,7 @@ const LiveGroupCard = memo(function LiveGroupCard({
   overlaps,
   onToggleAutoSync,
   onToggleEnabled,
+  onToggleEvent,
   onConfigure,
   onPreview,
   selected,
@@ -145,6 +146,16 @@ const LiveGroupCard = memo(function LiveGroupCard({
           category={group}
           onToggle={() => onToggleEnabled(group.channel_group)}
         />
+      </TableTd>
+      <TableTd>
+        <Flex justify="center">
+          <Checkbox
+            aria-label={`Event category ${group.name}`}
+            checked={!!group.metadata_defaults?.is_event}
+            onChange={() => onToggleEvent(group.channel_group)}
+            size="xs"
+          />
+        </Flex>
       </TableTd>
       <TableTd>
         <Flex justify="center">
@@ -741,6 +752,22 @@ const LiveGroupFilter = ({
     [setGroupStates]
   );
 
+  const toggleEvent = useCallback(
+    (id) => {
+      setGroupStates((current) =>
+        current.map((group) => {
+          if (group.channel_group !== id) return group;
+          const { is_event: isEvent, ...rest } = group.metadata_defaults || {};
+          return {
+            ...group,
+            metadata_defaults: isEvent ? rest : { ...rest, is_event: true },
+          };
+        })
+      );
+    },
+    [setGroupStates]
+  );
+
   const toggleAutoSync = useCallback(
     (id) => {
       setGroupStates((prev) =>
@@ -1031,6 +1058,26 @@ const LiveGroupFilter = ({
               <TableTh w={100} ta="center">
                 Status
               </TableTh>
+              <TableTh w={76}>
+                <Group gap={4} wrap="nowrap" justify="center">
+                  Event
+                  <Tooltip
+                    label="Event categories hold changing event streams. Matching streams to channels by name leaves them out."
+                    multiline
+                    maw={320}
+                    withArrow
+                    events={{ hover: true, focus: true, touch: true }}
+                  >
+                    <span
+                      aria-label="Event category help"
+                      tabIndex={0}
+                      style={{ display: 'inline-flex', cursor: 'help' }}
+                    >
+                      <Info size={14} aria-hidden="true" />
+                    </span>
+                  </Tooltip>
+                </Group>
+              </TableTh>
               <TableTh w="12%">
                 <Group gap={4} wrap="nowrap" justify="center">
                   Auto sync
@@ -1061,7 +1108,7 @@ const LiveGroupFilter = ({
           <TableTbody>
             {!visibleGroups.length && (
               <TableTr>
-                <TableTd colSpan={8} ta="center" py="xl">
+                <TableTd colSpan={9} ta="center" py="xl">
                   <Text size="sm" c="dimmed">
                     No categories match the current filters.
                   </Text>
@@ -1093,6 +1140,7 @@ const LiveGroupFilter = ({
                   }
                   onToggleAutoSync={toggleAutoSync}
                   onToggleEnabled={toggleEnabled}
+                  onToggleEvent={toggleEvent}
                   onConfigure={openConfigure}
                   onPreview={setPreviewGroup}
                   selected={selectedGroupIds.has(group.channel_group)}
