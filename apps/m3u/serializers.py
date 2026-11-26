@@ -763,6 +763,17 @@ class M3UAccountSerializer(serializers.ModelSerializer):
                 (instance.id, row["channel_group_id"]): row["c"] for row in counts_qs
             }
 
+        if "event_groups_by_relation" not in self.context:
+            from apps.channels.models import EventChannelGroup
+
+            # Few rows: one query serves every category of every account.
+            self.context["event_groups_by_relation"] = {
+                row["channelgroupm3uaccount_id"]: row["eventchannelgroup_id"]
+                for row in EventChannelGroup.sources.through.objects.order_by(
+                    "eventchannelgroup_id"
+                ).values("channelgroupm3uaccount_id", "eventchannelgroup_id")
+            }
+
         data = super().to_representation(instance)
         # Provider URLs in status messages may carry credentials.
         data["last_message"] = redact_display_data(data.get("last_message"))

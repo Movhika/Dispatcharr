@@ -129,3 +129,68 @@ class LiveEventCategoryTests(TestCase):
         relation.refresh_from_db()
         self.assertEqual(relation.metadata_defaults, {})
         self.assertEqual(patch(metadata_defaults={"is_event": 1}).status_code, 400)
+
+
+class CategoryModeTests(TestCase):
+    """A live category is used for streams, one channel per stream or events."""
+
+    def setUp(self):
+        from apps.channels.models import EventChannelGroup
+
+        self.account = M3UAccount.objects.create(name="mode-account", account_type="XC")
+        self.client = APIClient()
+        self.client.force_authenticate(
+            get_user_model().objects.create_user(username="mode-admin", user_level=10)
+        )
+        group = ChannelGroup.objects.create(name="PPV┃ UFC")
+        self.relation = ChannelGroupM3UAccount.objects.create(
+            channel_group=group, m3u_account=self.account, enabled=True, auto_channel_sync=True
+        )
+        self.events = EventChannelGroup.objects.create(name="Fights")
+        self.other = EventChannelGroup.objects.create(name="Other")
+        self.url = f"/api/m3u/accounts/{self.account.pk}/group-settings/"
+
+    def patch(self, **values):
+        return self.client.patch(
+            self.url,
+            {"group_settings": [{
+                "channel_group": self.relation.channel_group_id,
+                "enabled": True,
+                **values,
+            }]},
+            format="json",
+        )
+
+    def test_event_categories_feed_one_event_group_without_own_auto_sync(self):
+        response = self.patch(
+            auto_channel_sync=True,
+            metadata_defaults={"is_event": True},
+            event_group=self.events.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.relation.refresh_from_db()
+        self.assertFalse(self.relation.auto_channel_sync)
+        self.assertEqual(list(self.relation.event_channel_groups.all()), [self.events])
+
+        self.patch(metadata_defaults={"is_event": True}, event_group=self.other.id)
+        self.assertEqual(list(self.relation.event_channel_groups.all()), [self.other])
+        # Leaving out event_group keeps the choice.
+        self.patch(metadata_defaults={"is_event": True})
+        self.assertEqual(list(self.relation.event_channel_groups.all()), [self.other])
+
+        account = self.client.get(f"/api/m3u/accounts/{self.account.pk}/").data
+        rows = {row["channel_group"]: row for row in account["channel_groups"]}
+        self.assertEqual(rows[self.relation.channel_group_id]["event_group"], self.other.id)
+
+        # One channel per current event: no group, auto sync may be on.
+        self.patch(metadata_defaults={"is_event": True}, event_group=None, auto_channel_sync=True)
+        self.relation.refresh_from_db()
+        self.assertTrue(self.relation.auto_channel_sync)
+        self.assertFalse(self.relation.event_channel_groups.exists())
+
+    def test_leaving_events_mode_leaves_event_groups_and_unknown_groups_fail(self):
+        self.patch(metadata_defaults={"is_event": True}, event_group=self.events.id)
+        self.patch(metadata_defaults={"is_event": None}, auto_channel_sync=True)
+        self.assertFalse(self.relation.event_channel_groups.exists())
+        response = self.patch(metadata_defaults={"is_event": True}, event_group=999999)
+        self.assertEqual(response.status_code, 400)

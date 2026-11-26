@@ -222,6 +222,7 @@ class ChannelGroupM3UAccountSerializer(serializers.ModelSerializer):
         allow_null=True, required=False, min_value=1
     )
     custom_properties = serializers.JSONField(required=False)
+    event_group = serializers.SerializerMethodField()
     # Provider stream count for this group+account. Lets users size an
     # optional end-range without first running a blind sync.
     stream_count = serializers.SerializerMethodField()
@@ -238,11 +239,20 @@ class ChannelGroupM3UAccountSerializer(serializers.ModelSerializer):
             "auto_sync_channel_end",
             "custom_properties",
             "metadata_defaults",
+            "event_group",
             "is_stale",
             "last_seen",
             "stream_count",
         ]
         read_only_fields = ["metadata_defaults"]
+
+    def get_event_group(self, obj):
+        """The event group this event category feeds, if any."""
+        groups = self.context.get("event_groups_by_relation")
+        if groups is None:
+            group = obj.event_channel_groups.order_by("id").first()
+            return group.id if group else None
+        return groups.get(obj.id)
 
     def get_stream_count(self, obj):
         """

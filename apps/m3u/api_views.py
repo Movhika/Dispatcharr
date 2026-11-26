@@ -67,6 +67,34 @@ import json
 _HASH_KEY_INVALID = object()
 
 
+def apply_event_group_choices(account, group_objects, event_choices):
+    """Keep the event group sources in step with the category modes.
+
+    A category in events mode feeds at most one event group, and then its own
+    auto sync stays off so the same events do not get two channels. A
+    category that is no event category leaves every event group.
+    """
+    from apps.channels.models import EventChannelGroup
+
+    relations = ChannelGroupM3UAccount.objects.filter(
+        m3u_account=account,
+        channel_group_id__in=[row.channel_group_id for row in group_objects],
+    )
+    for relation in relations:
+        if not (relation.metadata_defaults or {}).get("is_event"):
+            relation.event_channel_groups.clear()
+            continue
+        if relation.channel_group_id not in event_choices:
+            continue
+        target = event_choices[relation.channel_group_id]
+        relation.event_channel_groups.clear()
+        if target:
+            EventChannelGroup.objects.get(id=target).sources.add(relation)
+            if relation.auto_channel_sync:
+                relation.auto_channel_sync = False
+                relation.save(update_fields=["auto_channel_sync"])
+
+
 class M3UAccountViewSet(viewsets.ModelViewSet):
     """Handles CRUD operations for M3U accounts"""
 
@@ -791,6 +819,29 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
+            from apps.channels.models import EventChannelGroup
+
+            event_choices = {
+                setting.get("channel_group"): setting["event_group"]
+                for setting in group_settings
+                if setting.get("channel_group") and "event_group" in setting
+            }
+            known_event_groups = set(
+                EventChannelGroup.objects.filter(
+                    id__in=[group for group in event_choices.values() if group]
+                ).values_list("id", flat=True)
+            )
+            unknown = [
+                group
+                for group in event_choices.values()
+                if group and group not in known_event_groups
+            ]
+            if unknown:
+                return Response(
+                    {"error": f"Event group {unknown[0]} does not exist."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             validated_group_defaults = {}
             for setting in group_settings:
                 if "metadata_defaults" in setting:
@@ -894,6 +945,7 @@ class M3UAccountViewSet(viewsets.ModelViewSet):
                             "metadata_defaults",
                         ],
                     )
+                    apply_event_group_choices(account, group_objects, event_choices)
 
                 category_ids = [
                     setting["id"] for setting in category_settings if setting.get("id")
