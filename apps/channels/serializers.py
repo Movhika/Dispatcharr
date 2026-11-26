@@ -1147,6 +1147,9 @@ class EventPreviewStreamSerializer(serializers.Serializer):
 
 class EventGroupPreviewSerializer(serializers.Serializer):
     title = serializers.CharField()
+    competition = serializers.CharField(
+        allow_blank=True, help_text="Competition of the matching public fixture."
+    )
     start = serializers.DateTimeField(allow_null=True)
     status = serializers.CharField()
     streams = EventPreviewStreamSerializer(source="items", many=True)

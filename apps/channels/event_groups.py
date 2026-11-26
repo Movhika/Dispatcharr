@@ -97,10 +97,17 @@ def collect_items(group, now=None, sources=None):
     return items
 
 
-def preview(group, now=None, sources=None):
-    return cluster_events(
-        collect_items(group, now, sources), team_alias_map(team_aliases())
-    )
+def preview(group, now=None, sources=None, fixtures=None):
+    """Grouped current events; public fixtures correct names and kick-off."""
+    from .fixtures import apply_fixtures, fixture_aliases, load_fixtures
+
+    items = collect_items(group, now, sources)
+    if fixtures is None:
+        fixtures = load_fixtures() if items else []
+    aliases = team_alias_map(list(team_aliases()) + fixture_aliases(fixtures))
+    clusters = apply_fixtures(cluster_events(items, aliases), fixtures, aliases)
+    clusters.sort(key=lambda c: (c.start is None, c.start or 0, c.title))
+    return clusters
 
 
 def channel_name(group, cluster):

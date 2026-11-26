@@ -110,6 +110,11 @@ class EventCluster:
     start: object = None
     teams: tuple | None = None
     items: list = field(default_factory=list)
+    fixture: object = None
+
+    @property
+    def competition(self):
+        return getattr(self.fixture, "competition", "") or ""
 
     @property
     def status(self):

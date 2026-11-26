@@ -720,6 +720,19 @@ class CoreSettings(models.Model):
         )
 
     @classmethod
+    def get_event_fixture_settings(cls):
+        """Saved fixture sources of event groups, or None for the defaults."""
+        return cls._get_group(STREAM_MATCHING_SETTINGS_KEY, {"fixtures": None}).get(
+            "fixtures"
+        )
+
+    @classmethod
+    def set_event_fixture_settings(cls, settings):
+        cls._update_group(
+            STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"fixtures": settings}
+        )
+
+    @classmethod
     def set_event_team_aliases(cls, aliases):
         cls._update_group(
             STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"team_aliases": aliases}

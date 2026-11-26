@@ -31,6 +31,10 @@ def ufc(number, title, start, minutes=180):
 
 class EventGroupTests(TestCase):
     def setUp(self):
+        # Public fixtures are covered in test_event_fixtures.
+        fixtures = patch("apps.channels.fixtures.load_fixtures", return_value=[])
+        fixtures.start()
+        self.addCleanup(fixtures.stop)
         self.now = timezone.now().replace(microsecond=0).astimezone(timezone.get_fixed_timezone(0))
         self.target = ChannelGroup.objects.create(name="Events")
         self.relations = []

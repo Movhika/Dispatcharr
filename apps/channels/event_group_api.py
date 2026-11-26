@@ -33,6 +33,22 @@ class TeamAliasSerializer(serializers.Serializer):
             raise serializers.ValidationError(str(exc)) from exc
 
 
+class FixtureSettingsSerializer(serializers.Serializer):
+    openligadb_leagues = serializers.ListField(
+        child=serializers.RegexField(r"^[A-Za-z0-9_-]{1,40}$"), required=False,
+        help_text="OpenLigaDB league shortcuts, e.g. bl1, bl2, dfb, ucl.",
+    )
+    thesportsdb_leagues = serializers.ListField(
+        child=serializers.RegexField(r"^\d{1,8}$"), required=False,
+        help_text="TheSportsDB league ids.",
+    )
+    thesportsdb_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, write_only=True,
+        help_text="Personal TheSportsDB API key; omit or null to keep, empty to remove.",
+    )
+    thesportsdb_key_set = serializers.BooleanField(read_only=True)
+
+
 class EventChannelGroupViewSet(viewsets.ModelViewSet):
     queryset = EventChannelGroup.objects.prefetch_related("sources")
     serializer_class = EventChannelGroupSerializer
@@ -101,6 +117,40 @@ class EventChannelGroupViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             CoreSettings.set_event_team_aliases(serializer.validated_data["aliases"])
         return Response({"aliases": saved_team_aliases()})
+
+    @extend_schema(
+        methods=["GET"],
+        description="Public fixture sources that correct event names and kick-off times.",
+        responses=FixtureSettingsSerializer,
+    )
+    @extend_schema(methods=["PUT"], request=FixtureSettingsSerializer, responses=FixtureSettingsSerializer)
+    @action(detail=False, methods=["get", "put"], url_path="fixture-settings")
+    def fixture_settings(self, request):
+        from django.core.cache import cache
+
+        from core.models import CoreSettings
+
+        from .fixtures import fixture_settings
+
+        settings = fixture_settings()
+        if request.method == "PUT":
+            serializer = FixtureSettingsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            for key in ("openligadb_leagues", "thesportsdb_leagues"):
+                if key in data:
+                    settings[key] = list(dict.fromkeys(data[key]))
+            if data.get("thesportsdb_key") is not None:
+                settings["thesportsdb_key"] = data["thesportsdb_key"].strip()
+            CoreSettings.set_event_fixture_settings(settings)
+            # Changed sources take effect now instead of after the cache time.
+            if hasattr(cache, "delete_pattern"):
+                cache.delete_pattern("event-fixtures:*")
+        return Response({
+            "openligadb_leagues": settings["openligadb_leagues"],
+            "thesportsdb_leagues": settings["thesportsdb_leagues"],
+            "thesportsdb_key_set": bool(settings["thesportsdb_key"]),
+        })
 
     @extend_schema(
         description="Live TV categories that can feed event groups, marked event categories first.",
