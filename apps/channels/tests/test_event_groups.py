@@ -170,6 +170,30 @@ class EventGroupTests(TestCase):
         self.assertNotIn(empty.id, guides)
         self.assertNotIn(plain.id, guides)
 
+    def test_events_list_shows_live_events_first_with_their_source(self):
+        build(self.group)
+        relation = self.relations[1]
+        slot = Channel.objects.create(
+            name="UFC 8", channel_number=7000, auto_created=True,
+            auto_created_by=relation.m3u_account, auto_created_from=relation,
+        )
+        slot.streams.add(self.streams["t-far"])
+        Channel.objects.create(name="ZDF", channel_number=3)
+        client = APIClient()
+        client.force_authenticate(
+            get_user_model().objects.create_user(username="events-admin", user_level=10)
+        )
+        rows = client.get("/api/channels/event-groups/events/").data
+        self.assertEqual(
+            [(row["title"], row["status"], row["source"], row["source_name"], row["stream_count"]) for row in rows],
+            [
+                ("Inter - Stuttgart", "live", "group", "PPV events", 1),
+                ("Lille - Bayern Munich", "upcoming", "group", "PPV events", 2),
+                ("Next Week", "upcoming", "category", "ProviderT · ProviderT PPV", 1),
+            ],
+        )
+        self.assertEqual(rows[0]["channel_number"], 2950.0)
+
     def test_periodic_rebuild_covers_enabled_groups(self):
         from apps.channels.tasks import rebuild_event_groups
 

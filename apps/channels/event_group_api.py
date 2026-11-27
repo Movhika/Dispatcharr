@@ -49,6 +49,20 @@ class FixtureSettingsSerializer(serializers.Serializer):
     thesportsdb_key_set = serializers.BooleanField(read_only=True)
 
 
+class EventChannelRowSerializer(serializers.Serializer):
+    channel_id = serializers.IntegerField()
+    channel_number = serializers.FloatField(allow_null=True)
+    channel_name = serializers.CharField()
+    source = serializers.ChoiceField(choices=["group", "category"])
+    source_name = serializers.CharField(allow_blank=True)
+    title = serializers.CharField()
+    competition = serializers.CharField(allow_blank=True)
+    start = serializers.DateTimeField(allow_null=True)
+    end = serializers.DateTimeField(allow_null=True)
+    status = serializers.ChoiceField(choices=["live", "upcoming", "unknown", "ended"])
+    stream_count = serializers.IntegerField()
+
+
 class EventChannelGroupViewSet(viewsets.ModelViewSet):
     queryset = EventChannelGroup.objects.prefetch_related("sources")
     serializer_class = EventChannelGroupSerializer
@@ -151,6 +165,19 @@ class EventChannelGroupViewSet(viewsets.ModelViewSet):
             "thesportsdb_leagues": settings["thesportsdb_leagues"],
             "thesportsdb_key_set": bool(settings["thesportsdb_key"]),
         })
+
+    @extend_schema(
+        description=(
+            "Every channel whose guide comes from an event, from event groups and "
+            "from event categories with their own event channels; live events first."
+        ),
+        responses=EventChannelRowSerializer(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="events")
+    def events(self, request):
+        from .event_guide import event_channel_rows
+
+        return Response(EventChannelRowSerializer(event_channel_rows(), many=True).data)
 
     @extend_schema(
         description="Live TV categories that can feed event groups, marked event categories first.",
