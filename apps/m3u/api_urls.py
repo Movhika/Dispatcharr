@@ -12,6 +12,7 @@ from .api_views import (
 )
 
 from .rule_previews import M3UGroupRuleViewSet
+from .manual_streams import ManualStreamViewSet
 
 app_name = "m3u"
 
@@ -26,6 +27,11 @@ router.register(
     r"accounts/(?P<account_id>\d+)/filters",
     M3UFilterViewSet,
     basename="m3u-filters",
+)
+router.register(
+    r"accounts/(?P<account_id>\d+)/streams",
+    ManualStreamViewSet,
+    basename="m3u-manual-streams",
 )
 router.register(r"server-groups", ServerGroupViewSet, basename="server-group")
 router.register(

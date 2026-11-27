@@ -28,7 +28,8 @@ def refresh_account_on_save(sender, instance, created, **kwargs):
     """
     if (
         created and not instance.setup_step
-        and instance.account_type != M3UAccount.Types.XC
+        and instance.account_type
+        not in (M3UAccount.Types.XC, M3UAccount.Types.MANUAL)
     ):
         refresh_m3u_groups.delay(instance.id)
 

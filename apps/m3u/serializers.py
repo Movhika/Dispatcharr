@@ -728,10 +728,18 @@ class M3UAccountSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
+        manual = M3UAccount.Types.MANUAL
         if self.instance is not None:
             attrs.pop("start_setup", None)
+            new_type = attrs.get("account_type", self.instance.account_type)
+            # Manual streams and fetched streams cannot turn into each other.
+            if (new_type == manual) != (self.instance.account_type == manual):
+                raise serializers.ValidationError({
+                    "account_type": "A manual account cannot change its type. "
+                    "Create a new account instead.",
+                })
             return attrs
-        if not attrs.get("start_setup"):
+        if not attrs.get("start_setup") or attrs.get("account_type") == manual:
             return attrs
         errors = {}
         if attrs.get("account_type", M3UAccount.Types.STADNARD) == "XC":
@@ -1001,7 +1009,8 @@ class M3UAccountSerializer(serializers.ModelSerializer):
 
         # Build instance manually so we can attach transient attr before save triggers signal
         instance = M3UAccount(**validated_data)
-        if start_setup:
+        # A manual account needs no setup: its streams are entered afterwards.
+        if start_setup and instance.account_type != M3UAccount.Types.MANUAL:
             instance.setup_step = (
                 M3UAccount.SetupStep.EPG
                 if instance.account_type == M3UAccount.Types.XC

@@ -25,6 +25,8 @@ class M3UAccount(models.Model):
     class Types(models.TextChoices):
         STADNARD = "STD", "Standard"
         XC = "XC", "Xtream Codes"
+        # Streams are entered in Dispatcharr; there is no source to fetch.
+        MANUAL = "MAN", "Manual"
 
     class Status(models.TextChoices):
         IDLE = "idle", "Idle"

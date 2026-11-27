@@ -3848,6 +3848,9 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
 
         return f"M3UAccount with ID={account_id} not found or inactive, task cleaned up"
 
+    if account.account_type == M3UAccount.Types.MANUAL:
+        return _finish_manual_refresh(account, refresh_start_timestamp, start_time)
+
     # Fetch M3U lines and handle potential issues
     extinf_data = []
     groups = None
@@ -4406,6 +4409,81 @@ def _refresh_single_m3u_account_impl(account_id, include_vod=None):
             pass
 
     return f"Dispatched jobs complete."
+
+
+def _finish_manual_refresh(account, scan_start_time, start_time):
+    """Refresh of a manual account: there is nothing to fetch.
+
+    Its streams and categories stay current, and everything that follows a
+    refresh runs: auto sync of its categories, event groups, stream rules.
+    """
+    from apps.channels.tasks import apply_channel_stream_rules, build_event_groups_for_account
+    from apps.output.streaming_chunk_cache import invalidate_output_caches_after_m3u_refresh
+
+    now = timezone.now()
+    stream_count = Stream.objects.filter(m3u_account=account).update(last_seen=now, is_stale=False)
+    ChannelGroupM3UAccount.objects.filter(m3u_account=account).update(last_seen=now, is_stale=False)
+
+    try:
+        auto_sync = sync_auto_channels(account.id, scan_start_time=str(scan_start_time)) or {}
+    except Exception as exc:
+        logger.error(f"Error running auto channel sync for manual account {account.id}: {exc}")
+        auto_sync = {"status": "error", "error": str(exc)}
+    counts = {
+        key: auto_sync.get(f"channels_{key}", 0)
+        for key in ("created", "updated", "deleted", "failed")
+    }
+    message = f"Manual streams: {stream_count}."
+    if auto_sync.get("status") == "error":
+        message += f" Auto-sync error: {auto_sync.get('error', 'unknown')}."
+    elif any(counts.values()):
+        message += " Auto-sync: " + ", ".join(
+            f"{count} {key}" for key, count in counts.items() if count
+        ) + "."
+
+    try:
+        build_event_groups_for_account.delay(account.id)
+        apply_channel_stream_rules.delay()
+    except Exception as exc:
+        logger.error(f"Could not start event groups or stream rules for account {account.id}: {exc}")
+    try:
+        rollup_channel_catchup_fields(account.id)
+    except Exception as exc:
+        logger.error(f"Error rolling up catch-up fields for account {account.id}: {exc}")
+    invalidate_output_caches_after_m3u_refresh()
+
+    elapsed_time = time.time() - start_time
+    account.status = M3UAccount.Status.SUCCESS
+    account.last_message = message
+    account.updated_at = timezone.now()
+    account.save(update_fields=["status", "last_message", "updated_at"])
+    from apps.m3u.refresh_metrics import record_refresh_metrics
+
+    record_refresh_metrics(
+        account.id,
+        "live",
+        {"provider_total": stream_count, "selected_total": stream_count},
+        elapsed_time,
+        account.updated_at,
+        auto_sync=auto_sync,
+    )
+    send_m3u_update(
+        account.id,
+        "parsing",
+        100,
+        status="success",
+        elapsed_time=elapsed_time,
+        time_remaining=0,
+        # Nothing is fetched, so there are no created or stale streams.
+        manual_streams=stream_count,
+        channels_created=counts["created"],
+        channels_updated=counts["updated"],
+        channels_deleted=counts["deleted"],
+        channels_failed=counts["failed"],
+        failed_stream_details=auto_sync.get("failed_stream_details", []),
+        message=message,
+    )
+    return message
 
 
 def should_refresh_vod_after_live(account, include_vod=None):
