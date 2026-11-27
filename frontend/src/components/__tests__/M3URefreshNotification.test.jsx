@@ -614,5 +614,29 @@ describe('M3URefreshNotification', () => {
       expect(container.textContent).toContain('3 removed');
       expect(container.textContent).toContain('Total processed: 1200');
     });
+
+    it('shows how many streams a manual account holds', async () => {
+      mockPlaylistsStore.refreshProgress = {
+        1: {
+          account: 1,
+          action: 'parsing',
+          progress: 100,
+          status: 'success',
+          manual_streams: 4,
+        },
+      };
+
+      renderWithProviders(<M3URefreshNotification />);
+
+      await waitFor(() => {
+        expect(showNotification).toHaveBeenCalled();
+      });
+      const call = showNotification.mock.calls.find(
+        (c) => typeof c[0]?.message === 'object'
+      );
+      const { container } = render(<>{call[0].message}</>);
+      expect(container.textContent).toContain('Streams: 4.');
+      expect(container.textContent).not.toContain('created');
+    });
   });
 });

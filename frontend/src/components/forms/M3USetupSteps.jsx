@@ -6,12 +6,19 @@ const M3USetupSteps = ({
   onSelect,
   contentAvailable = false,
 }) => {
-  const steps = [
-    ['account', 'Account'],
-    ['content', 'Settings'],
-    ...(accountType === 'XC' ? [['epg', 'EPG']] : []),
-    ['categories', 'Content'],
-  ];
+  // Manual accounts have no settings to fetch with: their streams follow.
+  const steps =
+    accountType === 'MAN'
+      ? [
+          ['account', 'Account'],
+          ['streams', 'Streams'],
+        ]
+      : [
+          ['account', 'Account'],
+          ['content', 'Settings'],
+          ...(accountType === 'XC' ? [['epg', 'EPG']] : []),
+          ['categories', 'Content'],
+        ];
   return (
     <Stepper
       active={Math.max(

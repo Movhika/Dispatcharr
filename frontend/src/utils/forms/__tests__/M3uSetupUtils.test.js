@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  accountTypeForSource,
   getM3USourceType,
   getM3UStreamLabel,
   getM3UConnectionDetails,
@@ -8,9 +9,42 @@ import {
   validateNewM3UAccount,
 } from '../M3uSetupUtils.js';
 
+describe('manual accounts', () => {
+  it('have their own source and account type', () => {
+    expect(getM3USourceType({ account_type: 'MAN' })).toBe('MANUAL');
+    expect(accountTypeForSource('MANUAL')).toBe('MAN');
+    expect(accountTypeForSource('M3U_FILE')).toBe('STD');
+    expect(accountTypeForSource('XC')).toBe('XC');
+  });
+  it('need only a name and no connection check', () => {
+    const values = { account_type: 'MAN', server_url: 'left over' };
+    expect(validateNewM3UAccount({}, null, { sourceType: 'MANUAL' })).toEqual({
+      name: 'Enter an account name.',
+    });
+    expect(
+      validateNewM3UAccount({ ...values, name: 'Mine' }, null, {
+        sourceType: 'MANUAL',
+      })
+    ).toEqual({});
+    expect(needsM3UConnectionCheck(values, 'MANUAL', null)).toBe(false);
+    expect(
+      prepareM3USourceValues(
+        { ...values, file_path: 'x.m3u', username: 'u', password: 'p' },
+        'MANUAL'
+      )
+    ).toMatchObject({
+      server_url: '',
+      file_path: '',
+      username: '',
+      password: '',
+    });
+  });
+});
+
 describe('new M3U connection validation', () => {
   it.each([
     ['STD', 'Streams'],
+    ['MAN', 'Streams'],
     ['XC', 'Live TV'],
     [undefined, 'Live TV'],
   ])('uses the content label for account type %s', (type, label) => {

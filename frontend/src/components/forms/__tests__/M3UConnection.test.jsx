@@ -44,6 +44,9 @@ vi.mock('../M3UProfiles', () => ({ default: () => null }));
 vi.mock('../M3UGroupFilter', () => ({ default: () => null }));
 vi.mock('../M3UAccountCategories.jsx', () => ({ default: () => null }));
 vi.mock('../M3UAccountEPG.jsx', () => ({ default: () => null }));
+vi.mock('../M3UManualStreams.jsx', () => ({
+  default: ({ account }) => <div>Streams of {account.name}</div>,
+}));
 vi.mock('../../ServerGroupsManagerModal', () => ({ default: () => null }));
 
 const account = {
@@ -333,6 +336,62 @@ describe('guided Settings and connection preflight', () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText('Content', { exact: true })).toBeVisible();
     expect(API.checkM3UConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe('manual accounts', () => {
+  it('need no source or connection check', async () => {
+    const onClose = open();
+    selectSource('Manual streams');
+    expect(
+      screen.queryByRole('textbox', { name: 'URL' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Streams are entered in this account/)
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'My streams' },
+    });
+    // No Settings step: the account is created from the Account step.
+    expect(screen.getByText('Streams', { selector: 'span' })).toBeVisible();
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+    addPlaylist.mockResolvedValue({
+      ...account,
+      account_type: 'MAN',
+      setup_step: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(addPlaylist).toHaveBeenCalled());
+    expect(addPlaylist.mock.calls[0][0]).toMatchObject({
+      name: 'My streams',
+      account_type: 'MAN',
+      server_url: '',
+    });
+    expect(API.checkM3UConnection).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ account_type: 'MAN' })
+      )
+    );
+  });
+
+  it('enter streams in their own tab and keep their type', () => {
+    open({
+      m3uAccount: { ...account, account_type: 'MAN', server_url: '' },
+      initialTab: 'streams',
+    });
+    expect(screen.getByRole('tab', { name: 'Streams' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(
+      screen.queryByRole('tab', { name: 'Settings' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Streams of Example account')).toBeInTheDocument();
+    // The Account tab is hidden behind the Streams tab.
+    expect(
+      screen.getByRole('textbox', { name: 'Account Type', hidden: true })
+    ).toBeDisabled();
   });
 });
 

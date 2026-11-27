@@ -211,6 +211,7 @@ const M3UTable = () => {
   const [playlistModalOpen, setPlaylistModalOpen] = useState(false);
   const [playlistCreated, setPlaylistCreated] = useState(false);
   const [setupAccount, setSetupAccount] = useState(null);
+  const [editorTab, setEditorTab] = useState('account');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playlistToDelete, setPlaylistToDelete] = useState(null);
@@ -603,6 +604,14 @@ const M3UTable = () => {
   );
 
   const closeModal = (newPlaylist = null) => {
+    if (newPlaylist?.account_type === 'MAN') {
+      // A new manual account goes straight to entering its streams.
+      setPlaylist(newPlaylist);
+      setPlaylistCreated(false);
+      setEditorTab('streams');
+      return;
+    }
+    setEditorTab('account');
     if (newPlaylist) {
       setPlaylistModalOpen(false);
       setPlaylist(null);
@@ -806,7 +815,8 @@ const M3UTable = () => {
                           </Text>
                         </Tooltip>
                         <Badge variant="light">
-                          {account.account_type === 'XC' ? 'XC' : 'M3U'}
+                          {{ XC: 'XC', MAN: 'Manual' }[account.account_type] ||
+                            'M3U'}
                         </Badge>
                         {account.account_type === 'XC' &&
                           isTrialProfile(
@@ -879,6 +889,7 @@ const M3UTable = () => {
         onClose={closeModal}
         onSaved={(account) => closeModal(account.setup_step ? account : null)}
         playlistCreated={playlistCreated}
+        initialTab={editorTab}
       />
       {setupAccount && (
         <M3USetup
@@ -906,7 +917,7 @@ const M3UTable = () => {
                 {`Delete the following M3U account?
 
 Name: ${playlistToDelete.name}
-Type: ${playlistToDelete.account_type === 'XC' ? 'Xtream Codes' : 'Standard'}
+Type: ${{ XC: 'Xtream Codes', MAN: 'Manual' }[playlistToDelete.account_type] || 'Standard'}
 Server: ${playlistToDelete.server_url || 'Local file'}
 
 Streams owned by this provider will be removed. Manual channels that include those streams will lose them, but the channels and any other streams on them survive.

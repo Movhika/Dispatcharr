@@ -51,6 +51,7 @@ import ConfirmationDialog from '../ConfirmationDialog.jsx';
 import StackedModal from '../StackedModal.jsx';
 import M3USetupSteps from './M3USetupSteps.jsx';
 import {
+  accountTypeForSource,
   getM3UConnectionDetails,
   getM3USourceType,
   getM3UStreamLabel,
@@ -61,6 +62,7 @@ import {
 import { Upload } from 'lucide-react';
 import M3UAccountEPG from './M3UAccountEPG.jsx';
 import M3UAccountCategories from './M3UAccountCategories.jsx';
+import M3UManualStreams from './M3UManualStreams.jsx';
 import API from '../../api.js';
 
 const helpLabel = (label, help) => (
@@ -132,6 +134,7 @@ const M3U = ({
   setupBusy = false,
   onSetupNext,
   onSetupBack,
+  initialTab = 'account',
 }) => {
   const userAgents = useUserAgentsStore((s) => s.userAgents);
   const serverGroups = useServerGroupsStore((s) => s.serverGroups);
@@ -210,7 +213,7 @@ const M3U = ({
     initializedSetupAccount.current = setupMode ? m3uAccount?.id : null;
     setFile(null);
     setCategoryPlaylist(null);
-    setActiveTab(setupMode ? m3uAccount.setup_step : 'account');
+    setActiveTab(setupMode ? m3uAccount.setup_step : initialTab);
     setContentAvailable(false);
     setDiscardOpen(false);
     setConnectionFailure(null);
@@ -360,7 +363,8 @@ const M3U = ({
       return;
     submitAttemptRef.current = true;
     try {
-      if (!playlist?.id && activeTab === 'account') {
+      // A manual account is created from the Account step: it has no settings.
+      if (!playlist?.id && activeTab === 'account' && sourceType !== 'MANUAL') {
         await next();
         return;
       }
@@ -575,7 +579,11 @@ const M3U = ({
             {playlist?.id && !setupMode && (
               <TabsList className={editorClasses.tabList}>
                 <TabsTab value="account">Account</TabsTab>
-                <TabsTab value="content">Settings</TabsTab>
+                {playlist.account_type === 'MAN' ? (
+                  <TabsTab value="streams">Streams</TabsTab>
+                ) : (
+                  <TabsTab value="content">Settings</TabsTab>
+                )}
                 {accountType === 'XC' && playlist.account_type === 'XC' && (
                   <TabsTab value="epg">EPG</TabsTab>
                 )}
@@ -625,12 +633,24 @@ const M3U = ({
                         { value: 'XC', label: 'Xtream Codes' },
                         { value: 'M3U_URL', label: 'M3U URL' },
                         { value: 'M3U_FILE', label: 'M3U File' },
+                        {
+                          value: 'MANUAL',
+                          label: 'Manual streams',
+                          disabled: !!playlist?.id,
+                        },
                       ]}
+                      description={
+                        sourceType === 'MANUAL'
+                          ? 'Streams are entered in this account after it is created.'
+                          : undefined
+                      }
+                      // Manual and fetched streams cannot turn into each other.
+                      disabled={playlist?.account_type === 'MAN'}
                       allowDeselect={false}
                       value={sourceType}
                       onChange={(value) => {
                         if (!value) return;
-                        const type = value === 'XC' ? 'XC' : 'STD';
+                        const type = accountTypeForSource(value);
                         form.setFieldValue('account_type', type);
                         form.clearErrors();
                         setAccountType(type);
@@ -639,7 +659,7 @@ const M3U = ({
                       }}
                     />
 
-                    {sourceType !== 'M3U_FILE' && (
+                    {sourceType !== 'M3U_FILE' && sourceType !== 'MANUAL' && (
                       <TextInput
                         id="server_url"
                         name="server_url"
@@ -711,7 +731,7 @@ const M3U = ({
                         }}
                       />
                     )}
-                    {accountType !== 'XC' && (
+                    {accountType !== 'XC' && accountType !== 'MAN' && (
                       <DateTimePicker
                         label={helpLabel(
                           'Expiration Date',
@@ -1089,6 +1109,17 @@ const M3U = ({
               )}
             </TabsPanel>
             <TabsPanel
+              value="streams"
+              className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
+              data-editor-active={activeTab === 'streams'}
+              aria-hidden={activeTab !== 'streams'}
+              inert={activeTab !== 'streams'}
+            >
+              {playlist?.account_type === 'MAN' && activeTab === 'streams' && (
+                <M3UManualStreams account={playlist} />
+              )}
+            </TabsPanel>
+            <TabsPanel
               value="profiles"
               className={`${editorClasses.panel} ${editorClasses.accountPanel}`}
               data-editor-active={activeTab === 'profiles'}
@@ -1140,10 +1171,15 @@ const M3U = ({
                   loading={checkingConnection}
                   onClick={(event) => {
                     event.preventDefault();
-                    next();
+                    if (sourceType === 'MANUAL') onSubmit();
+                    else next();
                   }}
                 >
-                  {checkingConnection ? 'Checking connection…' : 'Next'}
+                  {checkingConnection
+                    ? 'Checking connection…'
+                    : sourceType === 'MANUAL'
+                      ? 'Create'
+                      : 'Next'}
                 </Button>
               ) : (
                 <Button

@@ -3189,6 +3189,24 @@ export default class API {
     });
   }
 
+  // Streams of manual accounts. Errors are shown next to the form.
+  static async getManualStreams(accountId) {
+    return request(`${host}/api/m3u/accounts/${accountId}/streams/`);
+  }
+
+  static async saveManualStream(accountId, id, values) {
+    return request(
+      `${host}/api/m3u/accounts/${accountId}/streams/${id ? `${id}/` : ''}`,
+      { method: id ? 'PATCH' : 'POST', body: values }
+    );
+  }
+
+  static async deleteManualStream(accountId, id) {
+    return request(`${host}/api/m3u/accounts/${accountId}/streams/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
   static async getEventChannels() {
     return request(`${host}/api/channels/event-groups/events/`);
   }

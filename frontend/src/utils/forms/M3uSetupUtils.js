@@ -1,14 +1,22 @@
 export const getM3USourceType = (account) => {
   if (!account || account.account_type === 'XC') return 'XC';
+  if (account.account_type === 'MAN') return 'MANUAL';
   return account.server_url || !account.file_path ? 'M3U_URL' : 'M3U_FILE';
 };
 
 export const getM3UStreamLabel = (accountType) =>
-  accountType === 'STD' ? 'Streams' : 'Live TV';
+  accountType === 'STD' || accountType === 'MAN' ? 'Streams' : 'Live TV';
+
+// Account type stored for each choice of the editor.
+export const accountTypeForSource = (sourceType) =>
+  sourceType === 'XC' ? 'XC' : sourceType === 'MANUAL' ? 'MAN' : 'STD';
 
 export const prepareM3USourceValues = (values, sourceType) => {
   const prepared = { ...values };
-  if (sourceType === 'M3U_FILE') {
+  if (sourceType === 'MANUAL') {
+    prepared.server_url = '';
+    prepared.file_path = '';
+  } else if (sourceType === 'M3U_FILE') {
     prepared.server_url = '';
   } else {
     prepared.file_path = '';
@@ -34,7 +42,7 @@ export const getM3UConnectionDetails = (values, sourceType, account) => ({
 });
 
 export const needsM3UConnectionCheck = (values, sourceType, account) => {
-  if (sourceType === 'M3U_FILE') return false;
+  if (sourceType === 'M3U_FILE' || sourceType === 'MANUAL') return false;
   if (!account?.id) return true;
   return (
     sourceType !== getM3USourceType(account) ||
@@ -61,6 +69,8 @@ export const validateNewM3UAccount = (
 ) => {
   const errors = {};
   if (!values.name?.trim()) errors.name = 'Enter an account name.';
+  // Manual accounts have no source: their streams are entered later.
+  if (sourceType === 'MANUAL') return errors;
   if (sourceType !== 'M3U_FILE' && values.server_url) {
     try {
       const url = new URL(values.server_url);

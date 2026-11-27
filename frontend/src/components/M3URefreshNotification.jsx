@@ -104,6 +104,8 @@ const M3uSetupSuccess = ({ data }) => {
 
 // One-line outcome summary for the notification body.
 const buildStreamSummary = (data) => {
+  // Manual accounts fetch nothing; they report the streams they hold.
+  if (data.manual_streams != null) return `Streams: ${data.manual_streams}.`;
   if (data.streams_processed == null && data.streams_created == null) {
     return null;
   }

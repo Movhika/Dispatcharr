@@ -9,6 +9,16 @@ const show = (props) => (
   </MantineProvider>
 );
 
+describe('manual account progress', () => {
+  it('goes from the account straight to its streams', () => {
+    render(show({ stage: 'account', accountType: 'MAN' }));
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getByText('Account')).toBeInTheDocument();
+    expect(screen.getByText('Streams')).toBeInTheDocument();
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+  });
+});
+
 describe('shared Settings and Content setup progress', () => {
   it.each([
     ['XC', ['Account', 'Settings', 'EPG', 'Content']],
