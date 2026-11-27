@@ -1,31 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
-import EventGroupsModal from '../EventGroupsModal';
-import API from '../../../api';
+import { MemoryRouter } from 'react-router-dom';
+import EventsPage from '../Events';
+import API from '../../api';
 
-vi.mock('../../../api', () => ({
+vi.mock('../../api', () => ({
   default: {
+    getEventChannels: vi.fn(),
     getEventGroups: vi.fn(),
     getEventGroupSourceOptions: vi.fn(),
-    getEventTeamAliases: vi.fn(),
     saveEventGroup: vi.fn(),
     deleteEventGroup: vi.fn(),
     buildEventGroup: vi.fn(),
     previewEventGroup: vi.fn(),
-    saveEventTeamAliases: vi.fn(),
+    requeryChannels: vi.fn(),
   },
 }));
 
-vi.mock('../../forms/EventFixtureSettings', () => ({
-  default: () => <div>Fixture settings</div>,
+vi.mock('../../store/auth', () => ({
+  default: vi.fn((selector) => selector({ user: { user_level: 10 } })),
 }));
 
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
 
-vi.mock('../../../store/channels', () => ({
+vi.mock('../../store/channels', () => ({
   default: vi.fn((selector) =>
     selector({
       channelGroups: { 7: { id: 7, name: 'Events' } },
@@ -52,16 +53,33 @@ const GROUP = {
   channel_count: 3,
 };
 
-const renderModal = () =>
+const EVENT = {
+  channel_id: 40,
+  channel_number: 2950,
+  channel_name: 'Inter - Stuttgart · 27 Nov 20:00',
+  source: 'group',
+  source_name: 'PPV events',
+  title: 'Inter - Stuttgart',
+  competition: 'Serie A',
+  start: '2026-11-27T19:00:00Z',
+  end: '2026-11-27T21:00:00Z',
+  status: 'live',
+  stream_count: 2,
+};
+
+const renderPage = () =>
   render(
     <MantineProvider>
-      <EventGroupsModal opened onClose={vi.fn()} />
+      <MemoryRouter>
+        <EventsPage />
+      </MemoryRouter>
     </MantineProvider>
   );
 
-describe('EventGroupsModal', () => {
+describe('EventsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    API.getEventChannels.mockResolvedValue([EVENT]);
     API.getEventGroups.mockResolvedValue([GROUP]);
     API.getEventGroupSourceOptions.mockResolvedValue([
       {
@@ -71,9 +89,29 @@ describe('EventGroupsModal', () => {
         is_event: true,
       },
     ]);
-    API.getEventTeamAliases.mockResolvedValue({
-      aliases: [['Bayern Munich', 'FC Bayern']],
-    });
+  });
+
+  it('lists event channels with their event and source', async () => {
+    renderPage();
+    expect(await screen.findByText('Inter - Stuttgart')).toBeInTheDocument();
+    expect(screen.getByText('live')).toBeInTheDocument();
+    expect(screen.getByText('Serie A')).toBeInTheDocument();
+    expect(
+      screen.getByText('2950 · Inter - Stuttgart · 27 Nov 20:00')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', {
+        name: 'Settings → Live TV → Events and fixtures',
+      })
+    ).toHaveAttribute('href', '/settings#live-events');
+  });
+
+  it('explains how event channels appear when there are none', async () => {
+    API.getEventChannels.mockResolvedValue([]);
+    API.getEventGroups.mockResolvedValue([]);
+    renderPage();
+    expect(await screen.findByText(/No event channels/)).toBeInTheDocument();
+    expect(screen.getByText('No event groups yet.')).toBeInTheDocument();
   });
 
   it('lists groups and builds one on request', async () => {
@@ -84,15 +122,12 @@ describe('EventGroupsModal', () => {
       removed: 0,
       skipped: 0,
     });
-    renderModal();
-    expect(await screen.findByText('PPV events')).toBeInTheDocument();
-    expect(screen.getByText('Events')).toBeInTheDocument();
-    expect(screen.getByText('2950–2999')).toBeInTheDocument();
-    expect(screen.getByLabelText('Team aliases')).toHaveValue(
-      'Bayern Munich = FC Bayern'
-    );
+    renderPage();
+    expect(await screen.findByText('2950–2999')).toBeInTheDocument();
+    expect(screen.getByText('Events', { selector: 'p' })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Build PPV events'));
     await waitFor(() => expect(API.buildEventGroup).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(API.requeryChannels).toHaveBeenCalled());
   });
 
   it('edits, previews and saves a group with numeric ids', async () => {
@@ -109,9 +144,11 @@ describe('EventGroupsModal', () => {
       },
     ]);
     API.saveEventGroup.mockResolvedValue({});
-    renderModal();
+    renderPage();
     fireEvent.click(await screen.findByLabelText('Edit PPV events'));
-    fireEvent.click(screen.getByRole('button', { name: 'Preview events' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Preview events' })
+    );
     expect(
       await screen.findByText('Lille - Bayern Munich')
     ).toBeInTheDocument();
@@ -134,7 +171,7 @@ describe('EventGroupsModal', () => {
 
   it('asks before deleting a group with its channels', async () => {
     API.deleteEventGroup.mockResolvedValue({});
-    renderModal();
+    renderPage();
     fireEvent.click(await screen.findByLabelText('Delete PPV events'));
     expect(
       await screen.findByText(

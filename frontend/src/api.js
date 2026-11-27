@@ -3189,6 +3189,10 @@ export default class API {
     });
   }
 
+  static async getEventChannels() {
+    return request(`${host}/api/channels/event-groups/events/`);
+  }
+
   static async getEventGroupSourceOptions() {
     return request(`${host}/api/channels/event-groups/source-options/`);
   }
@@ -3216,14 +3220,22 @@ export default class API {
   }
 
   // Errors are shown by the caller: the dialog keeps them next to the form.
-  static async testChannelStreams(channelIds, sort, lowFpsThreshold) {
+  // The frame rate limit comes from the stream test settings.
+  static async testChannelStreams(channelIds, sort) {
     return request(`${host}/api/channels/channels/test-streams/`, {
       method: 'POST',
-      body: {
-        channel_ids: channelIds,
-        sort,
-        low_fps_threshold: lowFpsThreshold,
-      },
+      body: { channel_ids: channelIds, sort },
+    });
+  }
+
+  static async getStreamTestSettings() {
+    return request(`${host}/api/channels/channels/stream-test-settings/`);
+  }
+
+  static async saveStreamTestSettings(values) {
+    return request(`${host}/api/channels/channels/stream-test-settings/`, {
+      method: 'PUT',
+      body: values,
     });
   }
 

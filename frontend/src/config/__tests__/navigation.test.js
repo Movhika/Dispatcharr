@@ -119,6 +119,7 @@ describe('navigation config', () => {
       const customOrder = [
         'system',
         'channels',
+        'events',
         'vods',
         'vodProfiles',
         'vodLists',
@@ -133,23 +134,29 @@ describe('navigation config', () => {
       expect(result.map((item) => item.id)).toEqual(customOrder);
     });
 
-    it('appends missing items to end of saved order', () => {
+    it('adds missing items after their default predecessor', () => {
       // Simulate a saved order that is missing some newer items
-      const savedOrder = ['channels', 'vods', 'sources'];
+      const savedOrder = ['vods', 'channels', 'sources'];
       const result = getOrderedNavItems(savedOrder, true);
 
-      // First items should be in saved order
-      expect(result[0].id).toBe('channels');
-      expect(result[1].id).toBe('vods');
-      expect(result[2].id).toBe('sources');
-
-      // All items should be present
+      // All items should be present, saved items keep their order
       expect(result).toHaveLength(DEFAULT_ADMIN_ORDER.length);
-
-      // Missing items should be appended at the end
       const resultIds = result.map((item) => item.id);
-      expect(resultIds).toContain('guide');
-      expect(resultIds).toContain('system');
+      expect(resultIds.filter((id) => savedOrder.includes(id))).toEqual(
+        savedOrder
+      );
+
+      // Missing items follow their default neighbours: Events stays in Live TV
+      expect(resultIds.slice(0, 7)).toEqual([
+        'vods',
+        'vodProfiles',
+        'vodLists',
+        'channels',
+        'events',
+        'guide',
+        'dvr',
+      ]);
+      expect(resultIds.slice(-3)).toEqual(['stats', 'plugins', 'system']);
     });
 
     it('filters out admin-only items for non-admin users', () => {

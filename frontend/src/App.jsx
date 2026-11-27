@@ -24,6 +24,7 @@ import Users from './pages/Users';
 import LogosPage from './pages/Logos';
 import VODsPage from './pages/VODs';
 import VODProfilesPage from './pages/VODProfiles';
+import EventsPage from './pages/Events';
 import VODListsPage from './pages/VODLists';
 import useAuthStore from './store/auth';
 import useBrowserStorage from './hooks/useBrowserStorage';
@@ -177,6 +178,7 @@ const App = () => {
                         {authReady ? (
                           <>
                             <Route path="/channels" element={<Channels />} />
+                            <Route path="/events" element={<EventsPage />} />
                             <Route
                               path="/sources"
                               element={<ContentSources />}

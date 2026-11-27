@@ -61,15 +61,6 @@ vi.mock('../../../modals/StreamRuleModal', () => ({
     ) : null,
 }));
 
-vi.mock('../../../modals/EventGroupsModal', () => ({
-  default: ({ opened, onClose }) =>
-    opened ? (
-      <div data-testid="event-groups-modal">
-        <button onClick={onClose}>Close Event Groups</button>
-      </div>
-    ) : null,
-}));
-
 vi.mock('../../../modals/StreamTestModal', () => ({
   default: ({ opened, onClose, channelIds }) =>
     opened ? (
@@ -78,8 +69,6 @@ vi.mock('../../../modals/StreamTestModal', () => ({
       </div>
     ) : null,
 }));
-
-vi.mock('../../../../api', () => ({ default: { requeryChannels: vi.fn() } }));
 
 vi.mock('../../../modals/AddToProfileModal', () => ({
   default: ({ opened, onClose, channelIds, excludeProfileId }) =>
@@ -233,7 +222,6 @@ vi.mock('lucide-react', () => ({
   ArrowDown01: () => <svg data-testid="icon-arrow-down-01" />,
   Activity: () => <svg data-testid="icon-activity" />,
   Binary: () => <svg data-testid="icon-binary" />,
-  CalendarClock: () => <svg data-testid="icon-calendar-clock" />,
   Link2: () => <svg data-testid="icon-link2" />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   EllipsisVertical: () => <svg data-testid="icon-ellipsis" />,
@@ -259,7 +247,6 @@ import useChannelsTableStore from '../../../../store/channelsTable';
 import useAuthStore from '../../../../store/auth';
 import useWarningsStore from '../../../../store/warnings';
 import * as ChannelsTableUtils from '../../../../utils/tables/ChannelsTableUtils.js';
-import API from '../../../../api';
 import ChannelTableHeader from '../ChannelTableHeader';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -787,15 +774,6 @@ describe('ChannelTableHeader', () => {
       );
       fireEvent.click(screen.getByText('Close Stream Test'));
       expect(screen.queryByTestId('stream-test-modal')).not.toBeInTheDocument();
-    });
-
-    it('opens EventGroupsModal and reloads channels when it closes', () => {
-      setupMocks({ userLevel: ADMIN });
-      render(<ChannelTableHeader {...makeDefaultProps()} />);
-      fireEvent.click(screen.getByText('Event Groups'));
-      expect(screen.getByTestId('event-groups-modal')).toBeInTheDocument();
-      fireEvent.click(screen.getByText('Close Event Groups'));
-      expect(API.requeryChannels).toHaveBeenCalled();
     });
 
     it('opens GroupManager when Edit Groups is clicked', () => {

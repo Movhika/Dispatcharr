@@ -14,6 +14,7 @@ import {
   ScrollText,
   SlidersHorizontal,
   ListVideo,
+  CalendarClock,
 } from 'lucide-react';
 
 // Shared by the top-level `settings` entry and the nested entry under
@@ -31,6 +32,14 @@ export const NAV_ITEMS = {
     path: '/channels',
     adminOnly: false,
     hasBadge: true,
+    section: 'Live TV',
+  },
+  events: {
+    id: 'events',
+    label: 'Events',
+    icon: CalendarClock,
+    path: '/events',
+    adminOnly: true,
     section: 'Live TV',
   },
   vods: {
@@ -126,6 +135,7 @@ export const NAV_ITEMS = {
 
 export const DEFAULT_ADMIN_ORDER = [
   'channels',
+  'events',
   'guide',
   'dvr',
   'vods',
@@ -195,12 +205,17 @@ export const getOrderedNavItems = (
     // Filter saved order to only include allowed items
     const filteredOrder = userOrder.filter((id) => defaultOrder.includes(id));
 
-    // Find any new items that aren't in the saved order and append them
-    const missingItems = defaultOrder.filter(
-      (id) => !filteredOrder.includes(id)
-    );
-
-    order = [...filteredOrder, ...missingItems];
+    // New items join the saved order after their default predecessor, so a
+    // new Live TV entry stays in the Live TV block.
+    order = [...filteredOrder];
+    defaultOrder.forEach((id, index) => {
+      if (order.includes(id)) return;
+      const before = defaultOrder
+        .slice(0, index)
+        .reverse()
+        .find((other) => order.includes(other));
+      order.splice(before ? order.indexOf(before) + 1 : 0, 0, id);
+    });
   } else {
     order = defaultOrder;
   }

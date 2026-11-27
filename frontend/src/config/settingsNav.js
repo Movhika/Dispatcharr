@@ -1,6 +1,8 @@
 import { lazy } from 'react';
 import {
+  Activity,
   ArrowLeftRight,
+  CalendarClock,
   CalendarDays,
   DatabaseBackup,
   Eraser,
@@ -33,6 +35,8 @@ const UserLimitsForm = lazy(() => import('../components/forms/settings/UserLimit
 const ReverseProxyAuthForm = lazy(() => import('../components/forms/settings/ReverseProxyAuthForm.jsx'));
 const BackupManager = lazy(() => import('../components/backups/BackupManager.jsx'));
 const NameMatchingSettingsForm = lazy(() => import('../components/forms/settings/NameMatchingSettingsForm.jsx'));
+const EventSettingsForm = lazy(() => import('../components/forms/settings/EventSettingsForm.jsx'));
+const StreamTestSettingsForm = lazy(() => import('../components/forms/settings/StreamTestSettingsForm.jsx'));
 const MetadataSettingsForm = lazy(() =>
   import('../components/forms/settings/VODSettingsForm.jsx').then((module) => ({
     default: module.MetadataSettingsForm,
@@ -94,6 +98,18 @@ export const SETTINGS_GROUPS = [
         label: 'Name matching',
         icon: SpellCheck,
         Component: NameMatchingSettingsForm,
+      },
+      {
+        id: 'live-events',
+        label: 'Events and fixtures',
+        icon: CalendarClock,
+        Component: EventSettingsForm,
+      },
+      {
+        id: 'live-stream-tests',
+        label: 'Stream tests',
+        icon: Activity,
+        Component: StreamTestSettingsForm,
       },
     ],
   },
