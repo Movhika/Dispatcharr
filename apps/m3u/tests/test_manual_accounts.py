@@ -118,3 +118,41 @@ class ManualAccountTests(TestCase):
             account.custom_properties["live_catalog_counts"],
             {"provider_total": 1, "selected_total": 1},
         )
+
+
+class CustomStreamMigrationTests(TestCase):
+    def test_custom_streams_move_into_a_manual_account(self):
+        from importlib import import_module
+
+        from django.apps import apps
+
+        from apps.channels.models import ChannelGroup
+
+        migration = import_module("apps.m3u.migrations.0023_custom_streams_to_manual_account")
+        custom = M3UAccount.get_custom_account()
+        group = ChannelGroup.objects.create(name="My cams")
+        grouped = Stream.objects.create(name="Cam", url="http://example.test/cam", channel_group=group)
+        loose = Stream.objects.create(name="Radio", url="http://example.test/radio")
+        self.assertEqual(grouped.m3u_account, custom)
+        channel = Channel.objects.create(name="Cam", channel_number=50)
+        channel.streams.add(grouped)
+        M3UAccount.objects.create(name="Custom streams", server_url="http://example.test/x.m3u")
+
+        migration.move_custom_streams(apps, None)
+
+        account = M3UAccount.objects.get(name="Custom streams (2)")
+        self.assertEqual(account.account_type, M3UAccount.Types.MANUAL)
+        self.assertTrue(account.profiles.filter(is_default=True).exists())
+        grouped.refresh_from_db()
+        loose.refresh_from_db()
+        self.assertEqual((grouped.m3u_account, loose.m3u_account), (account, account))
+        self.assertEqual(loose.channel_group.name, "Custom streams")
+        self.assertEqual(
+            set(ChannelGroupM3UAccount.objects.filter(m3u_account=account).values_list("channel_group__name", flat=True)),
+            {"My cams", "Custom streams"},
+        )
+        self.assertEqual(list(channel.streams.all()), [grouped])
+        self.assertFalse(Stream.objects.filter(m3u_account=custom).exists())
+        # Running again finds nothing left to move.
+        migration.move_custom_streams(apps, None)
+        self.assertFalse(M3UAccount.objects.filter(name="Custom streams (3)").exists())
