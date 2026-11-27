@@ -98,6 +98,7 @@ from .serializers import (
     StreamMatchRequestSerializer,
     StreamMatchResponseSerializer,
     StreamTestRequestSerializer,
+    StreamTestSettingsSerializer,
 )
 from .tasks import (
     match_epg_channels,
@@ -2629,9 +2630,12 @@ class ChannelViewSet(viewsets.ModelViewSet):
 
         from .tasks import STREAM_TEST_LOCK, STREAM_TEST_LOCK_SECONDS, test_channel_streams
 
+        from .stream_probe import stream_test_settings
+
         serializer = StreamTestRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        settings = stream_test_settings()
         if not cache.add(STREAM_TEST_LOCK, True, STREAM_TEST_LOCK_SECONDS):
             return Response(
                 {"error": "A stream test is already running."},
@@ -2639,7 +2643,9 @@ class ChannelViewSet(viewsets.ModelViewSet):
             )
         try:
             test_channel_streams.delay(
-                data["channel_ids"], data["sort"], data["low_fps_threshold"]
+                data["channel_ids"],
+                data.get("sort", settings["sort"]),
+                data.get("low_fps_threshold", settings["low_fps"]),
             )
         except Exception:
             cache.delete(STREAM_TEST_LOCK)
@@ -2648,6 +2654,31 @@ class ChannelViewSet(viewsets.ModelViewSet):
             {"message": f"Testing the streams of {len(data['channel_ids'])} channels."},
             status=status.HTTP_202_ACCEPTED,
         )
+
+    @extend_schema(
+        methods=["GET"],
+        description="Defaults of stream tests: frame rate limit, sample length and sorting.",
+        responses=StreamTestSettingsSerializer,
+    )
+    @extend_schema(
+        methods=["PUT"], request=StreamTestSettingsSerializer, responses=StreamTestSettingsSerializer
+    )
+    @action(
+        detail=False,
+        methods=["get", "put"],
+        url_path="stream-test-settings",
+        permission_classes=[IsAdmin],
+    )
+    def stream_test_settings(self, request):
+        from core.models import CoreSettings
+
+        from .stream_probe import stream_test_settings
+
+        if request.method == "PUT":
+            serializer = StreamTestSettingsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            CoreSettings.set_stream_test_settings(dict(serializer.validated_data))
+        return Response(stream_test_settings())
 
     @extend_schema(
         description=(

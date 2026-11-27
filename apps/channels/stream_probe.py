@@ -39,6 +39,11 @@ RETRY_DELAY_SECONDS = 2
 ACCOUNT_HOLD_SECONDS = 10
 ACCOUNT_SPACING_SECONDS = 1.5
 DEFAULT_LOW_FPS = 20
+DEFAULT_TEST_SETTINGS = {
+    "low_fps": DEFAULT_LOW_FPS,
+    "sample_seconds": SAMPLE_SECONDS,
+    "sort": "quality",
+}
 # Average luma in TV range: 16 is pure black, normal pictures are about
 # 40-90. Below 20 are black screens, dark slates and off-air pictures.
 BLACK_LUMA_THRESHOLD = 20
@@ -268,9 +273,20 @@ def summarize(data):
     return {key: value for key, value in stats.items() if value is not None}
 
 
-def check_url(url, user_agent=None, low_fps=DEFAULT_LOW_FPS):
+def stream_test_settings():
+    """Saved defaults of stream tests merged over the built-in ones."""
+    from core.models import CoreSettings
+
+    saved = CoreSettings.get_stream_test_settings() or {}
+    return {
+        **DEFAULT_TEST_SETTINGS,
+        **{key: value for key, value in saved.items() if key in DEFAULT_TEST_SETTINGS},
+    }
+
+
+def check_url(url, user_agent=None, low_fps=DEFAULT_LOW_FPS, sample_seconds=SAMPLE_SECONDS):
     """Test one URL; returns (stats, probe details) or raises ProbeError."""
-    sample = download_sample(url, user_agent)
+    sample = download_sample(url, user_agent, seconds=sample_seconds)
     if sample is None:
         data, elapsed = run_ffprobe(url, user_agent, url=url)
         return summarize(data), {"startup_ms": elapsed}
@@ -310,7 +326,9 @@ def _store(stream, stats, probe):
     stream.save(update_fields=["stream_stats", "stream_stats_updated_at"])
 
 
-def probe_stream(stream, redis_client=None, low_fps=DEFAULT_LOW_FPS, retries=1):
+def probe_stream(
+    stream, redis_client=None, low_fps=DEFAULT_LOW_FPS, retries=1, sample_seconds=SAMPLE_SECONDS
+):
     """Test one stream with a free profile slot.
 
     Returns (result, error); result is ok, failed or busy.
@@ -341,7 +359,9 @@ def probe_stream(stream, redis_client=None, low_fps=DEFAULT_LOW_FPS, retries=1):
         attempt = 0
         while True:
             try:
-                stats, details = check_url(url, account.get_user_agent_string(), low_fps)
+                stats, details = check_url(
+                    url, account.get_user_agent_string(), low_fps, sample_seconds
+                )
                 break
             except ProbeError as exc:
                 if attempt >= retries or not exc.transient:
@@ -439,9 +459,16 @@ def _wait_for_account(account_id, held_until, last_end):
         time.sleep(wait)
 
 
-def test_channels(channel_ids, sort="none", progress=None, low_fps=DEFAULT_LOW_FPS):
-    """Test every stream of the channels once, then sort them if asked."""
+def test_channels(channel_ids, sort="none", progress=None, low_fps=None, sample_seconds=None):
+    """Test every stream of the channels once, then sort them if asked.
+
+    Missing values come from the saved stream test settings.
+    """
     from apps.channels.models import Channel, Stream
+
+    settings = stream_test_settings()
+    low_fps = low_fps or settings["low_fps"]
+    sample_seconds = sample_seconds or settings["sample_seconds"]
 
     channels = list(Channel.objects.filter(id__in=channel_ids).order_by("channel_number", "id"))
     stream_ids = list(
@@ -466,7 +493,7 @@ def test_channels(channel_ids, sort="none", progress=None, low_fps=DEFAULT_LOW_F
             continue
         _wait_for_account(account_id, held_until, last_end)
         try:
-            result, error = probe_stream(stream, low_fps=low_fps)
+            result, error = probe_stream(stream, low_fps=low_fps, sample_seconds=sample_seconds)
         except Exception:  # one broken stream must not end the run
             logger.exception("Stream test failed unexpectedly for stream %s", stream_id)
             result, error = FAILED, None

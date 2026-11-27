@@ -1108,24 +1108,47 @@ class StreamMatchResponseSerializer(serializers.Serializer):
     countries = serializers.DictField(child=serializers.IntegerField())
 
 
+STREAM_TEST_SORTS = ["none", "quality", "startup"]
+
+
 class StreamTestRequestSerializer(serializers.Serializer):
     channel_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=2000
     )
     sort = serializers.ChoiceField(
-        choices=["none", "quality", "startup"],
-        default="none",
+        choices=STREAM_TEST_SORTS,
+        required=False,
         help_text=(
             "After the test: keep the order, put the best quality first, or put "
             "the fastest start first. Sorting moves streams with problems to "
-            "the end: low frame rate, frozen, black, then failed."
+            "the end: low frame rate, frozen, black, then failed. Defaults to "
+            "the saved stream test settings."
         ),
     )
     low_fps_threshold = serializers.IntegerField(
         min_value=1,
         max_value=60,
-        default=20,
+        required=False,
+        help_text=(
+            "Streams delivering fewer frames per second are marked as low frame "
+            "rate. Defaults to the saved stream test settings."
+        ),
+    )
+
+
+class StreamTestSettingsSerializer(serializers.Serializer):
+    low_fps = serializers.IntegerField(
+        min_value=1,
+        max_value=60,
         help_text="Streams delivering fewer frames per second are marked as low frame rate.",
+    )
+    sample_seconds = serializers.IntegerField(
+        min_value=3,
+        max_value=30,
+        help_text="Seconds recorded per stream; longer samples catch more problems.",
+    )
+    sort = serializers.ChoiceField(
+        choices=STREAM_TEST_SORTS, help_text="Sorting offered first after a test."
     )
 
 

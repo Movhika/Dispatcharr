@@ -4496,7 +4496,7 @@ def test_channel_streams(channel_ids, sort="none", low_fps=None):
 
     from core.utils import send_websocket_update
 
-    from .stream_probe import BUSY, DEFAULT_LOW_FPS, FAILED, OK, test_channels
+    from .stream_probe import BUSY, FAILED, OK, test_channels
 
     def progress(done, summary, _name):
         send_websocket_update(
@@ -4517,9 +4517,7 @@ def test_channel_streams(channel_ids, sort="none", low_fps=None):
         )
 
     try:
-        summary = test_channels(
-            channel_ids, sort, progress, low_fps=low_fps or DEFAULT_LOW_FPS
-        )
+        summary = test_channels(channel_ids, sort, progress, low_fps=low_fps)
         send_websocket_update(
             "updates",
             "update",

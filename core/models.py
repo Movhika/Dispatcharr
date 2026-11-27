@@ -738,6 +738,19 @@ class CoreSettings(models.Model):
             STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"team_aliases": aliases}
         )
 
+    @classmethod
+    def get_stream_test_settings(cls):
+        """Saved defaults of stream tests, or None for the defaults."""
+        return cls._get_group(STREAM_MATCHING_SETTINGS_KEY, {"stream_tests": None}).get(
+            "stream_tests"
+        )
+
+    @classmethod
+    def set_stream_test_settings(cls, settings):
+        cls._update_group(
+            STREAM_MATCHING_SETTINGS_KEY, "Stream Matching Settings", {"stream_tests": settings}
+        )
+
     # EPG Settings
     @classmethod
     def get_epg_settings(cls):

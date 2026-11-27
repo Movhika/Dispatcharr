@@ -245,7 +245,7 @@ class ProbeAndSortTests(TestCase):
             (stream_probe.OK, None),
         ])
 
-        def fake_probe(stream, low_fps):
+        def fake_probe(stream, low_fps, sample_seconds):
             outcome = next(results)
             if outcome[0] == stream_probe.OK:
                 stream.stream_stats = {"probe": {"ok": True, "black": stream.name == "ZDF SD"}}
@@ -280,3 +280,39 @@ class ProbeAndSortTests(TestCase):
             client.post(url, {"channel_ids": [1], "low_fps_threshold": 0}, format="json").status_code,
             400,
         )
+
+    def test_saved_settings_are_the_defaults_of_every_test(self):
+        from core.models import CoreSettings
+
+        self.addCleanup(CoreSettings.set_stream_test_settings, None)
+        client = APIClient()
+        client.force_authenticate(
+            get_user_model().objects.create_user(username="probe-settings", user_level=10)
+        )
+        url = "/api/channels/channels/stream-test-settings/"
+        self.assertEqual(
+            client.get(url).data, {"low_fps": 20, "sample_seconds": 6, "sort": "quality"}
+        )
+        saved = {"low_fps": 25, "sample_seconds": 10, "sort": "startup"}
+        self.assertEqual(client.put(url, saved, format="json").data, saved)
+        self.assertEqual(
+            client.put(url, {**saved, "sample_seconds": 99}, format="json").status_code, 400
+        )
+
+        with patch("apps.channels.tasks.test_channel_streams.delay") as delay:
+            response = client.post(
+                "/api/channels/channels/test-streams/", {"channel_ids": [self.channel.id]}, format="json"
+            )
+            self.assertEqual(response.status_code, 202, response.data)
+            delay.assert_called_once_with([self.channel.id], "startup", 25)
+        cache.delete(STREAM_TEST_LOCK)
+
+        with patch.object(
+            stream_probe, "probe_stream", return_value=(stream_probe.BUSY, None)
+        ) as probe, patch.object(stream_probe.time, "sleep"):
+            stream_probe.test_channels([self.channel.id])
+        self.assertEqual(probe.call_args.kwargs, {"low_fps": 25, "sample_seconds": 10})
+
+        user = get_user_model().objects.create_user(username="probe-viewer", user_level=1)
+        client.force_authenticate(user)
+        self.assertEqual(client.get(url).status_code, 403)
