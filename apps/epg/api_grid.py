@@ -338,6 +338,12 @@ def _iter_dummy_for_channels(
     """Yield on-demand dummy programs for a prepared channel list."""
     if custom_source:
         prefetch_streams_for_stream_named_sources(channels)
+        event_guides = {}
+    else:
+        from apps.channels.event_guide import event_guides_for_channels
+
+        channels = list(channels)
+        event_guides = event_guides_for_channels(channels)
 
     for channel in channels:
         dummy_tvg_id = str(channel.uuid)
@@ -362,6 +368,7 @@ def _iter_dummy_for_channels(
                 export_cutoff=cutoff,
                 generation_start=dummy_start,
                 clock=clock,
+                event=event_guides.get(channel.id),
             )
         except Exception:
             logger.exception(

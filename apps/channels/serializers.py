@@ -1146,7 +1146,6 @@ class EventChannelGroupSerializer(serializers.ModelSerializer):
             "include_untimed",
             "name_format",
             "channel_profile_ids",
-            "epg_enabled",
             "last_built_at",
             "channel_count",
         ]

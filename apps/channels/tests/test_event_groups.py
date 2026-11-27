@@ -97,32 +97,78 @@ class EventGroupTests(TestCase):
         self.assertEqual(list(self.channels()), [2951.0])
         self.assertEqual(EventChannel.objects.filter(group=self.group).count(), 1)
 
-    def test_event_channels_get_a_guide_with_the_event_time(self):
-        from apps.output.dummy_epg import generate_custom_dummy_programs
+    def test_event_channels_get_their_guide_from_the_event(self):
+        from apps.channels.event_guide import event_guides_for_channels
+        from apps.output.dummy_epg import generate_dummy_programs
 
         build(self.group)
         lille = Channel.objects.get(channel_number=2951)
-        self.assertEqual(lille.epg_data.epg_source.name, "Event channels")
-        self.assertEqual(lille.epg_data.epg_source.source_type, "dummy")
-        programs = generate_custom_dummy_programs(
-            lille.id, lille.name, self.now, 2, lille.epg_data.epg_source.custom_properties
-        )
-        main = [p for p in programs if p["title"] == "Lille - Bayern Munich"]
-        self.assertEqual(len(main), 1)
-        # The guide starts at the event start in the name (minute precision).
-        self.assertEqual(
-            main[0]["start_time"],
-            (self.now + timedelta(hours=2)).replace(second=0),
-        )
-        self.assertTrue(any(p["title"].startswith("Upcoming") for p in programs))
-
-        self.group.epg_enabled = False
-        self.group.save()
-        lille.epg_data = None
-        lille.save()
-        build(self.group)
-        lille.refresh_from_db()
         self.assertIsNone(lille.epg_data)
+        guide = event_guides_for_channels([lille])[lille.id]
+        start = self.now + timedelta(hours=2)
+        self.assertEqual((guide.title, guide.start), ("Lille - Bayern Munich", start))
+        # Earliest start and latest end of the grouped streams.
+        self.assertEqual(guide.end, start + timedelta(hours=3, minutes=5))
+        programs = generate_dummy_programs(
+            lille.id, lille.name, num_days=1, event=guide,
+            export_lookback=self.now - timedelta(hours=1),
+            export_cutoff=self.now + timedelta(hours=12),
+        )
+        titles = [(p["title"], p["start_time"]) for p in programs]
+        self.assertIn(("Lille - Bayern Munich", start), titles)
+        main = next(p for p in programs if p["title"] == "Lille - Bayern Munich")
+        self.assertEqual(main["end_time"], guide.end)
+        self.assertTrue(main["custom_properties"]["live"])
+        self.assertEqual(programs[0]["title"], "Upcoming: Lille - Bayern Munich")
+        self.assertEqual(programs[0]["start_time"], self.now - timedelta(hours=1))
+        self.assertEqual(programs[-1]["title"], "Ended: Lille - Bayern Munich")
+        self.assertEqual(programs[-1]["end_time"], self.now + timedelta(hours=12))
+        # Upcoming entries end exactly at the start of the event.
+        upcoming = [p for p in programs if p["title"].startswith("Upcoming")]
+        self.assertEqual(upcoming[-1]["end_time"], start)
+
+    def test_xmltv_output_shows_the_event(self):
+        from django.http import StreamingHttpResponse
+        from django.test import RequestFactory
+
+        from apps.output.epg import generate_epg
+
+        build(self.group)
+        request = RequestFactory().get("/output/epg", {"days": "1"})
+        with patch(
+            "apps.output.epg.stream_cached_response",
+            side_effect=lambda key, source, **kwargs: StreamingHttpResponse(source()),
+        ):
+            response = generate_epg(request)
+            body = b"".join(response.streaming_content).decode()
+        self.assertIn("<title>Lille - Bayern Munich</title>", body)
+        self.assertIn("<title>Upcoming: Lille - Bayern Munich</title>", body)
+        self.assertIn("<live />", body)
+
+    def test_single_category_event_channels_parse_their_stream(self):
+        from apps.channels.event_guide import event_guides_for_channels
+
+        relation = self.relations[0]
+        slot = Channel.objects.create(
+            name="UFC 1", channel_number=7000, auto_created=True,
+            auto_created_by=relation.m3u_account, auto_created_from=relation,
+        )
+        slot.streams.add(self.streams["c-main"])
+        empty = Channel.objects.create(
+            name="UFC 5", channel_number=7001, auto_created=True,
+            auto_created_by=relation.m3u_account, auto_created_from=relation,
+        )
+        empty_stream = Stream.objects.create(
+            name="UFC 05 :", url="http://example.test/empty", m3u_account=relation.m3u_account,
+            channel_group=relation.channel_group,
+        )
+        empty.streams.add(empty_stream)
+        plain = Channel.objects.create(name="ZDF", channel_number=3)
+        guides = event_guides_for_channels([slot, empty, plain])
+        self.assertEqual(guides[slot.id].title, "Lille vs Bayern Munich")
+        self.assertEqual(guides[slot.id].start, self.now + timedelta(hours=2))
+        self.assertNotIn(empty.id, guides)
+        self.assertNotIn(plain.id, guides)
 
     def test_periodic_rebuild_covers_enabled_groups(self):
         from apps.channels.tasks import rebuild_event_groups

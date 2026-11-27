@@ -49,7 +49,6 @@ const GROUP = {
   include_untimed: false,
   name_format: 'title_time',
   channel_profile_ids: [],
-  epg_enabled: true,
   channel_count: 3,
 };
 
@@ -128,7 +127,6 @@ describe('EventGroupsModal', () => {
         expect.objectContaining({
           name: 'PPV events',
           sources: [11],
-          epg_enabled: true,
         })
       )
     );

@@ -25,20 +25,8 @@ from .event_matching import (
 logger = logging.getLogger(__name__)
 
 CHANNEL_NAME_MAX = 512
-EPG_SOURCE_NAME = "Event channels"
-# Channel names end with " · 26 Nov 19:55" in the server timezone; the
-# managed dummy guide reads title, date and time back from them.
+# Channel names end with " · 26 Nov 19:55" in the server timezone.
 NAME_TIME_FORMAT = "%d %b %H:%M"
-_NAME_SUFFIX = r" · \d{1,2} [A-Za-z]{3} \d{2}:\d{2}$"
-EPG_PROPERTIES = {
-    "title_pattern": r"^(?<title>.+?)(?:" + _NAME_SUFFIX[:-1] + r")?$",
-    "time_pattern": r" · \d{1,2} [A-Za-z]{3} (?<hour>\d{2}):(?<minute>\d{2})$",
-    "date_pattern": r" · (?<day>\d{1,2}) (?<month>[A-Za-z]{3}) \d{2}:\d{2}$",
-    "program_duration": 180,
-    "title_template": "{title}",
-    "upcoming_title_template": "Upcoming: {title}",
-    "ended_title_template": "Ended: {title}",
-}
 
 
 def team_aliases():
@@ -93,6 +81,7 @@ def collect_items(group, now=None, sources=None):
                 title=event.title,
                 start=event.start,
                 status=event.status,
+                end=event.end,
             ))
     return items
 
@@ -118,25 +107,14 @@ def channel_name(group, cluster):
     return name[:CHANNEL_NAME_MAX]
 
 
-def event_epg_data():
-    """The guide entry of the managed dummy source for event channels."""
-    from django.conf import settings
-
-    from apps.epg.models import EPGData, EPGSource
-
-    source, _created = EPGSource.objects.get_or_create(
-        name=EPG_SOURCE_NAME,
-        defaults={
-            "source_type": "dummy",
-            "custom_properties": {
-                **EPG_PROPERTIES,
-                "timezone": settings.TIME_ZONE or "UTC",
-            },
-        },
-    )
-    if source.source_type != "dummy":
-        return None
-    return EPGData.objects.filter(epg_source=source).first()
+def _event_values(cluster):
+    """What the guide of an event channel shows."""
+    return {
+        "title": cluster.title[:512],
+        "competition": cluster.competition[:255],
+        "start": cluster.start,
+        "end": cluster.end,
+    }
 
 
 def _base_key(key):
@@ -214,7 +192,6 @@ def build(group, now=None):
     profiles = list(
         ChannelProfile.objects.filter(id__in=profile_ids) if profile_ids else ChannelProfile.objects.all()
     )
-    epg_data = event_epg_data() if group.epg_enabled else None
     with transaction.atomic():
         removed = [event_channel.channel for event_channel in existing]
         summary["removed"] = _delete_channels_stopping_streams(removed)
@@ -223,21 +200,16 @@ def build(group, now=None):
             channel = event_channel.channel
             changed = _set_streams(channel, [item.stream_id for item in cluster.items])
             name = channel_name(group, cluster)
-            fields = []
             if channel.name != name or channel.channel_group_id != group.channel_group_id:
                 channel.name = name
                 channel.channel_group_id = group.channel_group_id
-                fields += ["name", "channel_group"]
-            if epg_data is not None and channel.epg_data_id is None:
-                channel.epg_data = epg_data
-                fields.append("epg_data")
-            if fields:
-                channel.save(update_fields=fields)
+                channel.save(update_fields=["name", "channel_group"])
                 changed = True
-            if event_channel.start != cluster.start or event_channel.title != cluster.title:
-                event_channel.start = cluster.start
-                event_channel.title = cluster.title[:512]
-                event_channel.save(update_fields=["start", "title"])
+            event_values = _event_values(cluster)
+            if any(getattr(event_channel, k) != v for k, v in event_values.items()):
+                for key, value in event_values.items():
+                    setattr(event_channel, key, value)
+                event_channel.save(update_fields=list(event_values))
             summary["updated"] += changed
 
         numbers = _free_numbers(group, len(new))
@@ -247,7 +219,6 @@ def build(group, now=None):
                 name=channel_name(group, cluster),
                 channel_number=number,
                 channel_group_id=group.channel_group_id,
-                epg_data=epg_data,
             )
             _set_streams(channel, [item.stream_id for item in cluster.items])
             ChannelProfileMembership.objects.bulk_create(
@@ -261,8 +232,7 @@ def build(group, now=None):
                 group=group,
                 channel=channel,
                 event_key=_base_key(cluster.key),
-                title=cluster.title[:512],
-                start=cluster.start,
+                **_event_values(cluster),
             )
             summary["created"] += 1
         group.last_built_at = timezone.now()

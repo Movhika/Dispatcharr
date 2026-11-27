@@ -154,5 +154,8 @@ def apply_fixtures(clusters, fixtures, aliases):
         )
         cluster.fixture = fixture
         cluster.title = f"{fixture.home} - {fixture.away}"
+        # The kick-off moves the whole event; its length stays.
+        if cluster.start is not None and cluster.end is not None:
+            cluster.end = fixture.start + (cluster.end - cluster.start)
         cluster.start = fixture.start
     return clusters

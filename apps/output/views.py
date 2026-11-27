@@ -978,7 +978,9 @@ def xc_get_epg(request, user, short=False):
                     qs = qs.filter(start_time__lt=forward_cutoff)
                 programs = qs.order_by('start_time')
     else:
-        # No EPG data assigned, generate default dummy
+        # No EPG data assigned: the event of an event channel, else default dummy
+        from apps.channels.event_guide import event_guides_for_channels
+
         programs = generate_dummy_programs(
             channel_id=channel_id,
             channel_name=effective_name,
@@ -987,6 +989,7 @@ def xc_get_epg(request, user, short=False):
             export_lookback=dummy_lookback,
             export_cutoff=forward_cutoff,
             max_programs=dummy_max_programs,
+            event=event_guides_for_channels([channel]).get(channel.id),
         )
 
     output = {"epg_listings": []}

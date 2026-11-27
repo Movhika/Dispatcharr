@@ -101,6 +101,7 @@ class EventItem:
     title: str
     start: object = None
     status: str = "unknown"
+    end: object = None
 
 
 @dataclass
@@ -109,6 +110,7 @@ class EventCluster:
     title: str
     start: object = None
     teams: tuple | None = None
+    end: object = None
     items: list = field(default_factory=list)
     fixture: object = None
 
@@ -160,5 +162,7 @@ def cluster_events(items, aliases=None):
         match.items.append(item)
     for cluster in clusters:
         cluster.title = _display_title(cluster.items, cluster.teams)
+        ends = [item.end for item in cluster.items if item.end is not None]
+        cluster.end = max(ends) if ends else None
         cluster.items.sort(key=lambda i: (-i.account_priority, i.account_name, i.stream_name))
     return clusters

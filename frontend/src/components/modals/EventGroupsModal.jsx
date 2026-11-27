@@ -47,7 +47,6 @@ const NEW_GROUP = {
   include_untimed: false,
   name_format: 'title_time',
   channel_profile_ids: [],
-  epg_enabled: true,
 };
 
 const STATUS_COLORS = { live: 'red', upcoming: 'blue', unknown: 'gray' };
@@ -181,13 +180,6 @@ const EventGroupForm = ({ value, sourceOptions, onCancel, onSaved }) => {
           checked={form.include_untimed}
           onChange={(event) =>
             set({ include_untimed: event.currentTarget.checked })
-          }
-        />
-        <Switch
-          label="Programme guide"
-          checked={form.epg_enabled}
-          onChange={(event) =>
-            set({ epg_enabled: event.currentTarget.checked })
           }
         />
         <Switch

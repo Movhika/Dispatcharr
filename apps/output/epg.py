@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone as django_timezone
 
 from apps.channels.access import channels_queryset_for_user
+from apps.channels.event_guide import event_guides_for_channels
 from apps.channels.models import Channel, ChannelProfile
 from apps.channels.utils import format_channel_number, resolve_epg_output_window
 from apps.epg.models import ProgramData
@@ -103,6 +104,7 @@ def generate_epg(request, profile_name=None, user=None):
             .select_related('epg_data__epg_source', 'override__epg_data__epg_source')
         )
         prefetch_streams_for_stream_named_sources(channels)
+        event_guides = event_guides_for_channels(channels)
         channel_count = len(channels)
 
         # For dummy EPG, use either the specified value or default to 3 days
@@ -229,9 +231,13 @@ def generate_epg(request, profile_name=None, user=None):
                 channel_xml_batch = []
 
             if not effective_epg_data:
-                dummy_program_list.append((channel_id, pattern_match_name, None))
+                dummy_program_list.append(
+                    (channel_id, pattern_match_name, None, event_guides.get(channel.id))
+                )
             elif effective_epg_data.epg_source and effective_epg_data.epg_source.source_type == 'dummy':
-                dummy_program_list.append((channel_id, pattern_match_name, effective_epg_data.epg_source))
+                dummy_program_list.append(
+                    (channel_id, pattern_match_name, effective_epg_data.epg_source, None)
+                )
             else:
                 real_epg_map.setdefault(effective_epg_data_id, []).append(channel_id)
 
@@ -546,7 +552,7 @@ def generate_epg(request, profile_name=None, user=None):
 
         del real_epg_map
 
-        for channel_id, pattern_match_name, epg_source in dummy_program_list:
+        for channel_id, pattern_match_name, epg_source, event in dummy_program_list:
             program_length_hours = 4
             dummy_programs = generate_dummy_programs(
                 channel_id, pattern_match_name,
@@ -555,6 +561,7 @@ def generate_epg(request, profile_name=None, user=None):
                 epg_source=epg_source,
                 export_lookback=lookback_cutoff,
                 export_cutoff=cutoff_date,
+                event=event,
             )
             if not dummy_programs:
                 continue

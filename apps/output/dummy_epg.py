@@ -1025,6 +1025,7 @@ def generate_dummy_programs(
     max_programs=None,
     generation_start=None,
     clock=None,
+    event=None,
 ):
     now = (
         generation_start
@@ -1033,6 +1034,18 @@ def generate_dummy_programs(
     )
     if clock is None:
         clock = django_timezone.now()
+
+    # Event channels get their guide from the event itself.
+    if event is not None:
+        from apps.channels.event_guide import event_programs
+
+        return event_programs(
+            event,
+            export_lookback or now,
+            export_cutoff or now + timedelta(days=num_days),
+            program_length_hours,
+            max_programs,
+        )
 
     if epg_source and epg_source.source_type == 'dummy' and epg_source.custom_properties:
         custom_programs = generate_custom_dummy_programs(
