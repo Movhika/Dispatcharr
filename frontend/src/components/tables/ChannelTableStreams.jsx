@@ -63,6 +63,7 @@ import { shallow } from 'zustand/shallow';
 import useAuthStore from '../../store/auth';
 import API from '../../api';
 import StreamRuleModal from '../modals/StreamRuleModal';
+import AddChannelStream from '../forms/AddChannelStream';
 import { USER_LEVELS } from '../../constants';
 import {
   categorizeStreamStats,
@@ -739,7 +740,10 @@ const ChannelStreams = ({ channel }) => {
       style={{ width: '100%', padding: 10, backgroundColor: '#163632' }}
     >
       {isAdmin && !channel.auto_created && (
-        <Group justify="flex-end" mb={6}>
+        <Group justify="space-between" align="flex-start" mb={6} wrap="nowrap">
+          <Box style={{ flex: 1, maxWidth: 640 }}>
+            <AddChannelStream channel={channel} streams={data} />
+          </Box>
           <Button
             size="compact-xs"
             variant="light"

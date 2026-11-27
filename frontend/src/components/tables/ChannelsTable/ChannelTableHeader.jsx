@@ -32,6 +32,7 @@ import {
   EyeOff,
   Filter,
   Link2,
+  ListVideo,
   FolderPlus,
   Lock,
   LockOpen,
@@ -56,6 +57,7 @@ import ProfileModal, { renderProfileOption } from '../../modals/ProfileModal';
 import EPGMatchModal from '../../modals/EPGMatchModal';
 import StreamRuleModal from '../../modals/StreamRuleModal';
 import StreamTestModal from '../../modals/StreamTestModal';
+import StreamsDialog from '../../modals/StreamsDialog';
 import AddToProfileModal from '../../modals/AddToProfileModal';
 import {
   addChannelProfile,
@@ -161,6 +163,7 @@ const ChannelTableHeader = ({
   const [epgMatchModalOpen, setEpgMatchModalOpen] = useState(false);
   const [streamRuleModalOpen, setStreamRuleModalOpen] = useState(false);
   const [streamTestModalOpen, setStreamTestModalOpen] = useState(false);
+  const [streamsDialogOpen, setStreamsDialogOpen] = useState(false);
   const [addToProfileModalOpen, setAddToProfileModalOpen] = useState(false);
   const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] =
     useState(false);
@@ -481,6 +484,19 @@ const ChannelTableHeader = ({
             </Button>
           </Tooltip>
 
+          <Tooltip label="Channels from streams" openDelay={500}>
+            <Button
+              variant="default"
+              size="xs"
+              aria-label="Channels from streams"
+              onClick={() => setStreamsDialogOpen(true)}
+              disabled={authUser.user_level != USER_LEVELS.ADMIN}
+              p={5}
+            >
+              <ListVideo size={18} />
+            </Button>
+          </Tooltip>
+
           <Menu>
             <MenuTarget>
               <ActionIcon variant="default" size={30}>
@@ -612,6 +628,11 @@ const ChannelTableHeader = ({
         opened={streamRuleModalOpen}
         onClose={() => setStreamRuleModalOpen(false)}
         channelIds={selectedTableIds}
+      />
+
+      <StreamsDialog
+        opened={streamsDialogOpen}
+        onClose={() => setStreamsDialogOpen(false)}
       />
 
       <StreamTestModal

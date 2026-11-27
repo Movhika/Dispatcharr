@@ -1659,23 +1659,6 @@ const StreamsTable = ({ onReady }) => {
               </MenuDropdown>
             </Menu>
 
-            <Tooltip label="Create a new custom stream" openDelay={500}>
-              <Button
-                variant="light"
-                size="xs"
-                onClick={() => editStream()}
-                p={5}
-                color={theme.tailwind.green[5]}
-                style={{
-                  borderWidth: '1px',
-                  borderColor: theme.tailwind.green[5],
-                  color: 'white',
-                }}
-              >
-                <SquarePlus size={18} />
-              </Button>
-            </Tooltip>
-
             <Tooltip label="Delete selected stream(s)" openDelay={500}>
               <Button
                 variant="default"
@@ -1790,8 +1773,8 @@ const StreamsTable = ({ onReady }) => {
                   Getting started
                 </Title>
                 <Text size="sm" color="dimmed">
-                  In order to get started, add your M3U or start <br />
-                  adding custom streams.
+                  In order to get started, add your M3U or a Manual <br />
+                  streams account with streams of your own.
                 </Text>
                 {getFilterParams(filters).toString() && (
                   <Button

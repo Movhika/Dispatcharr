@@ -3207,6 +3207,16 @@ export default class API {
     });
   }
 
+  // Stream search of one channel; leaves the streams table untouched.
+  static async searchStreams({ search, unassigned }) {
+    const params = new URLSearchParams({ search, page: 1, page_size: 25 });
+    if (unassigned) params.set('unassigned', 'true');
+    const response = await request(
+      `${host}/api/channels/streams/?${params.toString()}`
+    );
+    return response.results || [];
+  }
+
   static async getEventChannels() {
     return request(`${host}/api/channels/event-groups/events/`);
   }

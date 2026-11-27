@@ -137,6 +137,12 @@ vi.mock('@mantine/core', () => ({
   })),
 }));
 
+vi.mock('../../forms/AddChannelStream', () => ({
+  default: ({ channel }) => (
+    <div data-testid="add-channel-stream">{channel.name}</div>
+  ),
+}));
+
 vi.mock('../../modals/StreamRuleModal', () => ({
   default: ({ opened, channel }) =>
     opened ? <div data-testid="stream-rule-modal">{channel.name}</div> : null,

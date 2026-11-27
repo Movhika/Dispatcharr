@@ -632,12 +632,12 @@ describe('StreamsTable', () => {
       expect(setSorting).toHaveBeenCalledWith([{ id: 'name', desc: false }]);
     });
 
-    it('renders the Create Stream button', () => {
+    it('leaves streams of your own to manual accounts', () => {
       setupMocks();
       render(<StreamsTable />);
       expect(
-        screen.getByLabelText('Create a new custom stream')
-      ).toBeInTheDocument();
+        screen.queryByLabelText('Create a new custom stream')
+      ).not.toBeInTheDocument();
     });
 
     it('renders the Delete button', () => {
@@ -705,38 +705,6 @@ describe('StreamsTable', () => {
       // After the initial fetch resolves, the overlay is hidden
       await waitFor(() => {
         expect(screen.queryByTestId('loading-overlay')).not.toBeInTheDocument();
-      });
-    });
-  });
-
-  // ── Stream form (Create/Edit) ──────────────────────────────────────────────
-
-  describe('Create Stream modal', () => {
-    it('opens the stream form with no stream when "Create Stream" is clicked', () => {
-      setupMocks();
-      render(<StreamsTable />);
-      fireEvent.click(screen.getByLabelText('Create a new custom stream'));
-      expect(screen.getByTestId('stream-form')).toBeInTheDocument();
-      expect(screen.getByTestId('form-stream-name')).toHaveTextContent('new');
-    });
-
-    it('closes the stream form when onClose is called', async () => {
-      setupMocks();
-      render(<StreamsTable />);
-      fireEvent.click(screen.getByLabelText('Create a new custom stream'));
-      fireEvent.click(screen.getByTestId('form-close'));
-      await waitFor(() => {
-        expect(screen.queryByTestId('stream-form')).not.toBeInTheDocument();
-      });
-    });
-
-    it('calls requeryStreams after form is closed', async () => {
-      setupMocks();
-      render(<StreamsTable />);
-      fireEvent.click(screen.getByLabelText('Create a new custom stream'));
-      fireEvent.click(screen.getByTestId('form-close'));
-      await waitFor(() => {
-        expect(StreamsTableUtils.requeryStreams).toHaveBeenCalled();
       });
     });
   });

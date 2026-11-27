@@ -70,6 +70,15 @@ vi.mock('../../../modals/StreamTestModal', () => ({
     ) : null,
 }));
 
+vi.mock('../../../modals/StreamsDialog', () => ({
+  default: ({ opened, onClose }) =>
+    opened ? (
+      <div data-testid="streams-dialog">
+        <button onClick={onClose}>Close Streams</button>
+      </div>
+    ) : null,
+}));
+
 vi.mock('../../../modals/AddToProfileModal', () => ({
   default: ({ opened, onClose, channelIds, excludeProfileId }) =>
     opened ? (
@@ -223,6 +232,7 @@ vi.mock('lucide-react', () => ({
   Activity: () => <svg data-testid="icon-activity" />,
   Binary: () => <svg data-testid="icon-binary" />,
   Link2: () => <svg data-testid="icon-link2" />,
+  ListVideo: () => <svg data-testid="icon-list-video" />,
   CircleCheck: () => <svg data-testid="icon-circle-check" />,
   EllipsisVertical: () => <svg data-testid="icon-ellipsis" />,
   Eye: () => <svg data-testid="icon-eye" />,
@@ -758,6 +768,15 @@ describe('ChannelTableHeader', () => {
       );
       fireEvent.click(screen.getByText('Close Stream Rules'));
       expect(screen.queryByTestId('stream-rule-modal')).not.toBeInTheDocument();
+    });
+
+    it('opens the streams dialog from the header', () => {
+      setupMocks({ userLevel: ADMIN });
+      render(<ChannelTableHeader {...makeDefaultProps()} />);
+      fireEvent.click(screen.getByLabelText('Channels from streams'));
+      expect(screen.getByTestId('streams-dialog')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Close Streams'));
+      expect(screen.queryByTestId('streams-dialog')).not.toBeInTheDocument();
     });
 
     it('opens StreamTestModal with the selected channels', () => {
